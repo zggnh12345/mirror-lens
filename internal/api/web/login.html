@@ -52,6 +52,8 @@ $('#btnTheme').addEventListener('click', function(){
 });
 applyTheme(curTheme());
 
+try{ var last = localStorage.getItem('ml_user'); if (last) $('#u').value = last; }catch(e){}
+
 $('#f').addEventListener('submit', async function(e){
   e.preventDefault();
   var err = $('#err'), btn = $('#btn');
@@ -62,6 +64,7 @@ $('#f').addEventListener('submit', async function(e){
     var d = {};
     try { d = await r.json(); } catch(e2){}
     if (!r.ok) throw new Error(d.error || '登录失败');
+    try { localStorage.setItem('ml_user', $('#u').value.trim()); } catch(e2){}
     location.href = '/';
   }catch(ex){
     err.textContent = ex.message; btn.disabled = false; btn.textContent = '登录';
