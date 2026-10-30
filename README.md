@@ -5,8 +5,6 @@
 一个容器、一个面板、一个 SQLite 文件，不碰你的任何配置。
 
 > **它不代理流量。** 只负责测量和推荐，配置片段自己复制粘贴。
-> 需要"本地代理 + 多源并发下载 + 缓存"的能力，请用 [KSpeeder](https://github.com/kspeeder/docker_kspeeder)。
-> 两者互补：Mirror Lens 告诉你该用哪几个源，KSpeeder 负责把它们拼成一条加速通道。
 
 ## 为什么需要它
 
