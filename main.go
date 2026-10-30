@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/api"
+	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -32,6 +33,14 @@ func main() {
 		log.Fatalf("打开数据库: %v", err)
 	}
 	defer st.Close()
+
+	// 首次启动写入默认账号 admin/admin，并标记"请尽快改密"
+	if err := auth.EnsureAdmin(st); err != nil {
+		log.Fatalf("初始化账号: %v", err)
+	}
+	if st.GetSetting(auth.KeyMustChg, "0") == "1" {
+		log.Printf("当前仍是默认密码 admin，登录后请到设置里修改")
+	}
 
 	if !*noSeed {
 		if n, err := discover.Seed(st); err != nil {
@@ -59,8 +68,7 @@ func main() {
 					log.Printf("发现新源失败: %v", err)
 				} else if n > 0 {
 					log.Printf("发现 %d 个新候选", n)
-					eng.Run("docker", 2)
-					eng.Run("github", 2)
+					eng.Run(2)
 				}
 			}
 		}

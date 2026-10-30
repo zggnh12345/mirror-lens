@@ -67,21 +67,40 @@ func Seed(st *store.Store) (int, error) {
 		return 0, nil
 	}
 	added := 0
-	for _, s := range dockerSeeds {
-		if _, err := st.AddSource(store.Source{
-			Kind: "docker", BaseURL: "https://" + s.host, Name: s.host,
-			Origin: "seed", Enabled: true, Status: "pending", Note: s.note,
-		}); err == nil {
+	add := func(host, note, kind string) {
+		x := store.Source{
+			BaseURL: "https://" + host, Name: host,
+			Origin: "seed", Enabled: true, Status: "pending", Note: note,
+			DockerCap: store.CapUnknown, GithubCap: store.CapUnknown,
+		}
+		if kind == "docker" {
+			x.DockerCap = store.CapYes
+		} else {
+			x.GithubCap = store.CapYes
+		}
+		if _, err := st.AddSource(x); err == nil {
 			added++
+			return
+		}
+		// 同一个域名在两个清单里都出现过：合并能力，别丢掉
+		if old, err := st.ByURL(x.BaseURL); err == nil && old != nil {
+			d, g := old.DockerCap, old.GithubCap
+			if x.DockerCap == store.CapYes {
+				d = store.CapYes
+			}
+			if x.GithubCap == store.CapYes {
+				g = store.CapYes
+			}
+			if d != old.DockerCap || g != old.GithubCap {
+				_ = st.SetCaps(old.ID, d, g)
+			}
 		}
 	}
+	for _, s := range dockerSeeds {
+		add(s.host, s.note, "docker")
+	}
 	for _, s := range githubSeeds {
-		if _, err := st.AddSource(store.Source{
-			Kind: "github", BaseURL: "https://" + s.host, Name: s.host,
-			Origin: "seed", Enabled: true, Status: "pending", Note: s.note,
-		}); err == nil {
-			added++
-		}
+		add(s.host, s.note, "github")
 	}
 	return added, nil
 }

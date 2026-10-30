@@ -2,7 +2,10 @@ module github.com/zggnh12345/mirror-lens
 
 go 1.27.3
 
-require modernc.org/sqlite v1.61.0
+require (
+	golang.org/x/crypto v0.58.0
+	modernc.org/sqlite v1.61.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect

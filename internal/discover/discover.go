@@ -67,14 +67,12 @@ func LooksLikeMirror(host, kind string) bool {
 func Scan(ctx context.Context, st *store.Store) (added int, err error) {
 	client := &http.Client{Timeout: 25 * time.Second}
 	known := map[string]bool{}
-	for _, kind := range []string{"docker", "github"} {
-		srcs, e := st.ListSources(kind)
-		if e != nil {
-			return 0, e
-		}
-		for _, s := range srcs {
-			known[strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(s.BaseURL, "https://"), "http://"))] = true
-		}
+	srcs, e := st.ListSources()
+	if e != nil {
+		return 0, e
+	}
+	for _, s := range srcs {
+		known[strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(s.BaseURL, "https://"), "http://"))] = true
 	}
 
 	found := map[string]string{} // host -> kind
@@ -110,14 +108,16 @@ func Scan(ctx context.Context, st *store.Store) (added int, err error) {
 	}
 	sort.Strings(keys)
 	for _, h := range keys {
+		// 能力留空，交给探测判断：列表里说它是 docker 站，不代表真是
 		_, e := st.AddSource(store.Source{
-			Kind:    found[h],
-			BaseURL: "https://" + h,
-			Name:    h,
-			Origin:  "discovered",
-			Enabled: true,
-			Status:  "pending",
-			Note:    "自动发现，待验证",
+			BaseURL:   "https://" + h,
+			Name:      h,
+			Origin:    "discovered",
+			Enabled:   true,
+			Status:    "pending",
+			Note:      "自动发现，待验证",
+			DockerCap: store.CapUnknown,
+			GithubCap: store.CapUnknown,
 		})
 		if e == nil {
 			added++
