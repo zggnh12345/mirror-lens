@@ -51,7 +51,7 @@ header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 8
   background:linear-gradient(135deg,#2563eb,#7c3aed);display:grid;place-items:center;
   color:#fff;font-weight:700;font-size:15px;letter-spacing:-.5px;box-shadow:0 2px 8px rgba(37,99,235,.28)}
 .titles{min-width:0}
-h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowrap}
+h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{color:var(--muted);font-size:11.5px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1}
 .iconbtn{width:34px;height:34px;flex:none;border-radius:10px;border:1px solid var(--line);
@@ -142,7 +142,7 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .sw input:checked + span::after{transform:translateX(17px)}
 
 /* 历史条 */
-.hist{margin:-4px 0 0;padding:10px 13px 8px;background:var(--card2);border:1px solid var(--line);
+.hist{margin:-8px 0 0;padding:10px 13px 8px;background:var(--card2);border:1px solid var(--line);
   border-top:0;border-radius:0 0 13px 13px;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 .hist svg{width:100%;height:52px;display:block}
