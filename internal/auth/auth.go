@@ -56,6 +56,25 @@ func SetPassword(st *store.Store, pw string) error {
 	return st.SetSetting(KeyMustChg, "0")
 }
 
+// SetUser 改用户名。会话不受影响（令牌与用户名无关）。
+func SetUser(st *store.Store, name string) error {
+	return st.SetSetting(KeyUser, name)
+}
+
+// ValidUser 用户名规则：3-32 位，字母数字和 _ - . ，不能是纯空白。
+func ValidUser(name string) bool {
+	if len(name) < 3 || len(name) > 32 {
+		return false
+	}
+	for _, r := range name {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Check 校验用户名密码。
 func Check(st *store.Store, user, pass string) bool {
 	if user != st.GetSetting(KeyUser, DefaultUser) {

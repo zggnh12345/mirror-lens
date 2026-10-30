@@ -20,6 +20,9 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+// Version 面板与 /api/me 显示的版本号。
+const Version = "2.1.0"
+
 //go:embed web
 var webFS embed.FS
 
@@ -45,6 +48,12 @@ func New(st *store.Store, eng *runner.Engine) http.Handler {
 		writeJSON(w, 200, map[string]any{"ok": true, "busy": s.eng.Busy(), "ts": time.Now().Unix()})
 	})
 	mux.HandleFunc("/api/login", s.login)
+	// 样式表必须公开：登录页也要用
+	mux.HandleFunc("/app.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		http.ServeFileFS(w, r, sub, "app.css")
+	})
 
 	// 受保护
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -68,6 +77,9 @@ func New(st *store.Store, eng *runner.Engine) http.Handler {
 		}
 		http.ServeFileFS(w, r, sub, "index.html")
 	}))
+	mux.HandleFunc("/settings", guard(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, sub, "settings.html")
+	}))
 	mux.HandleFunc("/api/logout", guard(s.logout))
 	mux.HandleFunc("/api/me", guard(s.me))
 	mux.HandleFunc("/api/health", guard(s.health))
@@ -79,6 +91,7 @@ func New(st *store.Store, eng *runner.Engine) http.Handler {
 	mux.HandleFunc("/api/discover", guard(s.discover))
 	mux.HandleFunc("/api/settings", guard(s.settings))
 	mux.HandleFunc("/api/password", guard(s.password))
+	mux.HandleFunc("/api/account", guard(s.account))
 
 	return logRequests(mux)
 }
@@ -140,7 +153,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"user":        s.st.GetSetting(auth.KeyUser, auth.DefaultUser),
 		"must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1",
-		"version":     "2.0.0",
+		"version":     Version,
 	})
 }
 
@@ -441,6 +454,68 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method"})
 	}
+}
+
+// account 同时改用户名和密码：两个字段都可选，但必须带当前密码。
+func (s *Server) account(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	var in struct {
+		Old  string `json:"old"`
+		User string `json:"user"`
+		New  string `json:"new"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return
+	}
+	cur := s.st.GetSetting(auth.KeyUser, auth.DefaultUser)
+	if !auth.Check(s.st, cur, in.Old) {
+		writeJSON(w, 403, map[string]string{"error": "当前密码不对"})
+		return
+	}
+	in.User = strings.TrimSpace(in.User)
+	if in.User == "" {
+		in.User = cur
+	}
+	if !auth.ValidUser(in.User) {
+		writeJSON(w, 400, map[string]string{"error": "用户名 3-32 位，只能用字母、数字、_ - ."})
+		return
+	}
+	if in.New != "" && len(in.New) < 8 {
+		writeJSON(w, 400, map[string]string{"error": "新密码至少 8 位"})
+		return
+	}
+	if in.User == cur && in.New == "" {
+		writeJSON(w, 400, map[string]string{"error": "用户名和密码都没改"})
+		return
+	}
+
+	passChanged := in.New != ""
+	if passChanged {
+		if err := auth.SetPassword(s.st, in.New); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if in.User != cur {
+		if err := auth.SetUser(s.st, in.User); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	if passChanged {
+		// 密码变了，其他设备上的会话全部作废，当前浏览器换一个新令牌
+		s.st.DeleteAllSessions()
+		if err := auth.Login(w, s.st); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "user": in.User, "password_changed": passChanged})
 }
 
 func (s *Server) password(w http.ResponseWriter, r *http.Request) {
