@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mirror Lens · 镜像加速监测</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --line:#e6e8ec; --ink:#111827; --muted:#6b7280;
+  --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --idle:#94a3b8; --poison:#7c3aed;
+  --brand:#2563eb;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:18px 14px 80px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#2563eb,#7c3aed);
+  display:grid;place-items:center;color:#fff;font-weight:700;font-size:15px}
+h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+.sub{color:var(--muted);font-size:12px;margin-top:1px}
+.spacer{flex:1}
+.iconbtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--card);
+  display:grid;place-items:center;cursor:pointer;color:var(--ink);transition:.15s}
+.iconbtn:hover{border-color:#cbd5e1;transform:translateY(-1px)}
+.iconbtn:active{transform:scale(.94)}
+.iconbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.tabs{display:flex;gap:6px;background:#eceef2;padding:4px;border-radius:12px;margin-bottom:14px}
+.tab{flex:1;padding:9px 0;border:0;border-radius:9px;background:transparent;color:var(--muted);
+  font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.tab.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 11px}
+.stat b{display:block;font-size:19px;font-weight:680;letter-spacing:-.3px}
+.stat span{color:var(--muted);font-size:11px}
+.bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:10px;
+  border:1px solid var(--line);background:var(--card);font-size:13px;font-weight:600;cursor:pointer;
+  color:var(--ink);transition:.15s}
+.btn:hover{border-color:#cbd5e1}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn[disabled]{opacity:.55;cursor:default;transform:none}
+.btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.list{display:flex;flex-direction:column;gap:8px}
+.row{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 13px;
+  display:flex;align-items:center;gap:11px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+.row:hover{border-color:#cbd5e1;box-shadow:0 2px 10px rgba(15,23,42,.05)}
+.row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--idle)}
+.row.ok::before{background:var(--ok)} .row.warn::before{background:var(--warn)}
+.row.bad::before{background:var(--bad)} .row.poison::before{background:var(--poison)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--idle);flex:none}
+.row.ok .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(22,163,74,.14)}
+.row.warn .dot{background:var(--warn);box-shadow:0 0 0 3px rgba(245,158,11,.14)}
+.row.bad .dot{background:var(--bad);box-shadow:0 0 0 3px rgba(239,68,68,.13)}
+.row.poison .dot{background:var(--poison);box-shadow:0 0 0 3px rgba(124,58,237,.14)}
+.main{min-width:0;flex:1}
+.name{font-weight:620;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{color:var(--muted);font-size:11.5px;margin-top:2px;display:flex;gap:9px;flex-wrap:wrap}
+.meta i{font-style:normal;display:inline-flex;align-items:center;gap:3px}
+.metrics{display:flex;gap:12px;text-align:right;flex:none}
+.metric b{display:block;font-size:13px;font-weight:640;font-variant-numeric:tabular-nums}
+.metric span{font-size:10px;color:var(--muted)}
+.metric.bad b{color:var(--bad)} .metric.good b{color:var(--ok)}
+.acts{display:flex;gap:4px;flex:none}
+.mini{width:28px;height:28px;border-radius:8px;border:0;background:#f1f3f6;display:grid;place-items:center;
+  cursor:pointer;color:var(--muted)}
+.mini:hover{background:#e8ebf0;color:var(--ink)}
+.mini svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+.empty{text-align:center;color:var(--muted);padding:50px 0;font-size:13px}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:5px}
+.sheet{position:fixed;inset:0;background:rgba(15,23,42,.4);display:none;align-items:flex-end;
+  justify-content:center;z-index:20;backdrop-filter:blur(2px)}
+.sheet.on{display:flex}
+.panel{background:var(--card);width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:18px 16px 26px;
+  animation:up .2s ease}
+@keyframes up{from{transform:translateY(16px);opacity:.6}to{transform:none;opacity:1}}
+@media(min-width:640px){.sheet{align-items:center}.panel{border-radius:18px}}
+.panel h2{font-size:15px;margin:0 0 14px;font-weight:650}
+label{display:block;font-size:12px;color:var(--muted);margin:11px 0 5px}
+input,select{width:100%;height:40px;border:1px solid var(--line);border-radius:10px;padding:0 11px;
+  font-size:14px;background:#fbfcfd;color:var(--ink);outline:none}
+input:focus,select:focus{border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.panel .btn{width:100%;justify-content:center;margin-top:16px;height:40px}
+pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px;font-size:12px;overflow:auto;
+  line-height:1.55;margin:0}
+.hint{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.55}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);background:#111827;color:#fff;
+  padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.22s;z-index:30}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.spin{animation:sp .9s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.hist{padding:12px 13px 6px;background:#fbfcfd;border:1px solid var(--line);border-top:0;
+  border-radius:0 0 14px 14px;margin-top:-8px}
+.hist svg{width:100%;height:46px;display:block}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">M</div>
+    <div>
+      <h1>Mirror Lens</h1>
+      <div class="sub" id="sub">正在加载…</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="iconbtn" id="btnRefresh" title="立即检测">
+      <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+    </button>
+    <button class="iconbtn" id="btnAdd" title="添加加速源">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </header>
+
+  <div class="tabs">
+    <button class="tab on" data-kind="docker">Docker Hub</button>
+    <button class="tab" data-kind="github">GitHub</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b id="sUsable">–</b><span>可用</span></div>
+    <div class="stat"><b id="sTotal">–</b><span>监测中</span></div>
+    <div class="stat"><b id="sSpeed">–</b><span>最快 KB/s</span></div>
+    <div class="stat"><b id="sLat">–</b><span>最低延迟</span></div>
+  </div>
+
+  <div class="bar">
+    <button class="btn primary" id="btnProbe">
+      <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+      <span>检测全部</span>
+    </button>
+    <button class="btn" id="btnDeep">
+      <svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+      <span>测速 + 校验</span>
+    </button>
+    <button class="btn" id="btnExport">
+      <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span>导出配置</span>
+    </button>
+    <button class="btn" id="btnFind">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span>发现新源</span>
+    </button>
+  </div>
+
+  <div class="list" id="list"></div>
+</div>
+
+<div class="sheet" id="sheetAdd">
+  <div class="panel">
+    <h2>添加加速源</h2>
+    <label>类型</label>
+    <select id="addKind">
+      <option value="docker">Docker Hub 镜像</option>
+      <option value="github">GitHub 代理</option>
+    </select>
+    <label>地址</label>
+    <input id="addUrl" placeholder="https://docker.example.com" autocomplete="off" spellcheck="false">
+    <label>名称（可选）</label>
+    <input id="addName" placeholder="留空则用域名" autocomplete="off">
+    <div class="hint">Docker 类型必须支持标准 <code>/v2/</code> 协议；路径前缀式的加速站填进来会被判为不可用。</div>
+    <button class="btn primary" id="addSave">添加并验证</button>
+  </div>
+</div>
+
+<div class="sheet" id="sheetExport">
+  <div class="panel">
+    <h2 id="expTitle">可用配置</h2>
+    <pre id="expCode"></pre>
+    <div class="hint" id="expNote"></div>
+    <button class="btn primary" id="expCopy">复制</button>
+  </div>
+</div>
+
+<div class="sheet" id="sheetHist">
+  <div class="panel">
+    <h2 id="histTitle">检测历史</h2>
+    <div class="hist" id="histBody"></div>
+    <div class="legend">
+      <span><i style="background:var(--ok)"></i>可用</span>
+      <span><i style="background:var(--bad)"></i>失败</span>
+      <span><i style="background:var(--poison)"></i>哈希不符</span>
+      <span style="margin-left:auto">越靠右越新</span>
+    </div>
+    <button class="btn primary" id="histClose">关闭</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let kind = 'docker', data = [], busy = false, timer = null;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n >= 1024 ? (n/1024).toFixed(1) + 'M' : n + 'K';
+
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),1900); }
+
+function statusOf(s){
+  if(s.status==='blocked') return ['poison','内容校验失败'];
+  if(s.status==='dead') return ['bad','已失效'];
+  if(s.status==='usable') return ['ok','可用'];
+  if(s.status==='degraded') return ['warn','不稳定'];
+  return ['idle','待验证'];
+}
+
+function ago(ts){
+  if(!ts) return '未检测';
+  const d = Math.floor(Date.now()/1000 - ts);
+  if(d < 60) return d+' 秒前';
+  if(d < 3600) return Math.floor(d/60)+' 分钟前';
+  if(d < 86400) return Math.floor(d/3600)+' 小时前';
+  return Math.floor(d/86400)+' 天前';
+}
+
+function render(){
+  const list = $('#list');
+  if(!data.length){ list.innerHTML = '<div class="empty"><b>还没有数据</b>点右上角 + 添加，或等首次探测完成</div>'; return; }
+  const order = {usable:0, degraded:1, pending:2, blocked:3, dead:4};
+  const rows = [...data].sort((a,b)=>{
+    const oa = order[a.status] ?? 9, ob = order[b.status] ?? 9;
+    if(oa !== ob) return oa - ob;
+    return (b.last?.speed_kbps||0) - (a.last?.speed_kbps||0);
+  });
+  list.innerHTML = rows.map(s=>{
+    const [cls, label] = statusOf(s);
+    const l = s.last || {};
+    const up = s.uptime_24h;
+    const upTxt = up < 0 ? '–' : Math.round(up*100) + '%';
+    const speed = l.speed_kbps ? fmt(l.speed_kbps) : '–';
+    const lat = l.latency_ms ? l.latency_ms + 'ms' : '–';
+    const digestBad = l.digest_ok === 0;
+    return `<div class="row ${cls}" data-id="${s.id}">
+      <div class="dot"></div>
+      <div class="main">
+        <div class="name">${esc(s.name)}</div>
+        <div class="meta">
+          <i>${label}</i>
+          <i>${upTxt} 可用率</i>
+          <i>${ago(l.ts)}</i>
+          ${l.cert_days ? `<i>证书 ${l.cert_days}天</i>` : ''}
+          ${l.tls_ok === false ? '<i style="color:var(--bad)">TLS 不可信</i>' : ''}
+          ${digestBad ? '<i style="color:var(--poison)">哈希不符</i>' : ''}
+          ${l.error ? `<i style="color:var(--bad)">${esc(l.error.slice(0,40))}</i>` : ''}
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric ${l.speed_kbps?'good':''}"><b>${speed}</b><span>KB/s</span></div>
+        <div class="metric"><b>${lat}</b><span>延迟</span></div>
+      </div>
+      <div class="acts">
+        <button class="mini" data-act="toggle" data-id="${s.id}" title="${s.enabled?'停用':'启用'}">
+          ${s.enabled
+            ? '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+            : '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>'}
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const usable = data.filter(s=>s.status==='usable');
+  $('#sUsable').textContent = usable.length;
+  $('#sTotal').textContent = data.length;
+  const speeds = usable.map(s=>s.last?.speed_kbps||0).filter(Boolean);
+  $('#sSpeed').textContent = speeds.length ? fmt(Math.max(...speeds)) : '–';
+  const lats = data.map(s=>s.last?.latency_ms||0).filter(Boolean);
+  $('#sLat').textContent = lats.length ? Math.min(...lats) + 'ms' : '–';
+  $('#sub').textContent = busy ? '检测中…' : `最近更新 ${new Date().toLocaleTimeString('zh-CN',{hour12:false})}`;
+}
+
+async function showHist(id){
+  const s = data.find(x=>x.id===id); if(!s) return;
+  const r = await fetch('/api/series/'+id);
+  const pts = (await r.json()).points || [];
+  $('#histTitle').textContent = s.name + ' · 最近 ' + pts.length + ' 次';
+  if(!pts.length){ $('#histBody').innerHTML = '<div style="color:var(--muted);font-size:12px">还没有检测记录</div>'; }
+  else{
+    const bars = pts.slice(-40).map(p=>{
+      const color = p.digest_ok===0 ? 'var(--poison)' : (p.ok ? 'var(--ok)' : 'var(--bad)');
+      const t = new Date(p.ts*1000).toLocaleTimeString('zh-CN',{hour12:false}).slice(0,5);
+      const tip = `tier${p.tier} ${p.ok?'成功':'失败'} ${p.latency_ms||0}ms ${p.speed_kbps||0}KB/s ${p.error||''}`;
+      return `<div title="${esc(tip)}" style="flex:1;height:${p.ok?34:14}px;margin-top:${p.ok?0:20}px;background:${color};border-radius:2px;opacity:.85"></div>`;
+    }).join('');
+    $('#histBody').innerHTML = `<div style="display:flex;align-items:flex-end;gap:2px;height:38px">${bars}</div>`;
+  }
+  $('#sheetHist').classList.add('on');
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/sources?kind='+kind);
+    const j = await r.json();
+    data = j.sources || []; busy = !!j.busy; render();
+  }catch(e){ $('#sub').textContent = '连接失败，重试中…'; }
+}
+
+async function act(url, opts){
+  const r = await fetch(url, opts);
+  if(!r.ok){ const j = await r.json().catch(()=>({})); toast(j.error || '操作失败'); return null; }
+  return r.json();
+}
+
+$('#list').addEventListener('click', async e=>{
+  const b = e.target.closest('[data-act]');
+  if(!b){
+    const row = e.target.closest('.row');
+    if(row) showHist(+row.dataset.id);
+    return;
+  }
+  e.stopPropagation();
+  const id = +b.dataset.id, s = data.find(x=>x.id===id);
+  if(!s) return;
+  await act('/api/sources/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled: !s.enabled})});
+  toast(s.enabled ? '已停用' : '已启用');
+  load();
+});
+
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); kind = t.dataset.kind; data = []; render(); load();
+});
+
+$('#btnRefresh').onclick = async ()=>{
+  $('#btnRefresh').classList.add('spin'); $('#sub').textContent='检测中…';
+  await act('/api/probe', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({kind, tier:2})});
+  setTimeout(()=>{ $('#btnRefresh').classList.remove('spin'); load(); }, 1200);
+};
+$('#btnDeep').onclick = async ()=>{
+  toast('开始测速与哈希校验，约需 1 分钟');
+  await act('/api/probe', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({kind, tier:3})});
+  setTimeout(load, 3000);
+};
+$('#btnFind').onclick = async ()=>{
+  toast('正在扫描公开列表…');
+  await act('/api/discover', {method:'POST'});
+  setTimeout(load, 4000);
+};
+
+$('#btnAdd').onclick = ()=>{ $('#addKind').value = kind; $('#sheetAdd').classList.add('on'); };
+$('#sheetAdd').onclick = e=>{ if(e.target.id==='sheetAdd') e.currentTarget.classList.remove('on'); };
+$('#addSave').onclick = async ()=>{
+  const btn = $('#addSave'); btn.disabled = true; btn.textContent='验证中…';
+  const j = await act('/api/sources', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({kind:$('#addKind').value, base_url:$('#addUrl').value, name:$('#addName').value})});
+  btn.disabled = false; btn.textContent='添加并验证';
+  if(j){ $('#sheetAdd').classList.remove('on'); $('#addUrl').value=''; $('#addName').value='';
+    toast('已添加，正在验证'); setTimeout(load, 2500); }
+};
+
+$('#btnExport').onclick = async ()=>{
+  const r = await fetch('/api/export?kind='+kind); const j = await r.json();
+  $('#expTitle').textContent = kind==='docker' ? 'registry-mirrors（可用源）' : 'git insteadOf（可用源）';
+  $('#expCode').textContent = j.snippet || '（暂无可用源）';
+  $('#expNote').textContent = j.note || '';
+  $('#sheetExport').classList.add('on');
+};
+$('#sheetExport').onclick = e=>{ if(e.target.id==='sheetExport') e.currentTarget.classList.remove('on'); };
+$('#sheetHist').onclick = e=>{ if(e.target.id==='sheetHist') e.currentTarget.classList.remove('on'); };
+$('#histClose').onclick = ()=> $('#sheetHist').classList.remove('on');
+$('#expCopy').onclick = async ()=>{
+  try{ await navigator.clipboard.writeText($('#expCode').textContent); toast('已复制'); }
+  catch(e){ toast('复制失败，请手动选择'); }
+};
+
+load();
+setInterval(()=>{ if(busy) load(); }, 3000);
+setInterval(load, 30000);
+</script>
+</body>
+</html>

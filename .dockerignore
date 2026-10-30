@@ -1,0 +1,6 @@
+testdata
+data
+.git
+*.db
+*.db-wal
+*.db-shm
