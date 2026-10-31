@@ -182,6 +182,8 @@ function rowHtml(x){
   if (typeof up.github === 'number' && up.github >= 0) ups.push(up.github);
   var bits = [];
   if (best && best.latency_ms) bits.push('<i>'+latText(best.latency_ms)+'</i>');
+  var p95 = Math.max((x.p95_ms||{}).docker || 0, (x.p95_ms||{}).github || 0);
+  if (p95) bits.push('<i title="近 24 小时成功样本的第 95 百分位">P95 '+latText(p95)+'</i>');
   if (best && best.speed_kbps) bits.push('<i>'+speedText(best.speed_kbps)+'</i>');
   if (ups.length) bits.push('<i>可用率 '+Math.round(Math.max.apply(null,ups)*100)+'%</i>');
   if (!best) bits.push('<i>待检测</i>');
@@ -259,7 +261,8 @@ function drawHist(id){
     var last = pts[pts.length-1];
     box.innerHTML = '<div class="kv"><span>最近一次</span><span>'+(last.ok?'正常':'失败')+' · '+(last.kind==='github'?'GitHub':'Docker')+' · L'+last.tier+'</span></div>'
       + '<div class="kv"><span>延迟 / 速度</span><span>'+latText(last.latency_ms)+' · '+speedText(last.speed_kbps)+'</span></div>'
-      + '<div class="kv"><span>内容校验</span><span>'+(last.digest_ok===1?'一致':(last.digest_ok===0?'不一致，已拦截':'未知'))+'</span></div>'
+      + '<div class="kv"><span>内容校验</span><span>'+(last.digest_ok===1?'manifest 一致':(last.digest_ok===0?'manifest 不一致，已拦截':'未知'))+' · '+(last.blob_ok===1?'字节一致':(last.blob_ok===0?'字节不符':'未整份校验'))+'</span></div>'
+      + '<div class="kv"><span>首字节</span><span>'+(last.ttfb_ms ? last.ttfb_ms+' ms' : '未测')+'</span></div>' 
       + (last.error?'<div class="kv"><span>错误</span><span style="color:var(--bad);text-align:right;max-width:62%">'+esc(last.error)+'</span></div>':'')
       + '<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn danger" data-del="'+id+'">删除这个源</button></div>';
   }).catch(function(e){ box.innerHTML = '<div class="hint bad">'+esc(e.message)+'</div>'; });

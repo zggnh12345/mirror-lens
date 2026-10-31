@@ -162,6 +162,8 @@ func (e *Engine) Run(tier int) {
 			SpeedKBps: p.res.SpeedKBps,
 			Digest:    p.res.Digest,
 			DigestOK:  p.res.DigestOK,
+			BlobOK:    p.res.BlobOK,
+			TTFBMS:    p.res.TTFBMS,
 			TLSOK:     p.res.TLSOK,
 			CertDays:  p.res.CertDays,
 			HTTPCode:  p.res.HTTPCode,
@@ -218,6 +220,7 @@ func (e *Engine) RunSource(id int64) {
 		_ = e.st.AddCheck(store.Check{
 			SourceID: s.ID, Kind: k, Tier: 2, OK: r.OK, LatencyMS: r.LatencyMS,
 			SpeedKBps: r.SpeedKBps, Digest: r.Digest, DigestOK: r.DigestOK,
+			BlobOK: r.BlobOK, TTFBMS: r.TTFBMS,
 			TLSOK: r.TLSOK, CertDays: r.CertDays, HTTPCode: r.HTTPCode,
 			Error: r.Error, TS: time.Now().Unix(),
 		})

@@ -177,13 +177,14 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 			// 测速从 blob 请求开始算：把 /v2/、token、manifest 的时间算进来，
 			// 量到的是握手速度，不是下载速度。
 			tb := time.Now()
-			n, sum, err := fetchBlob(ctx, client, base, tok, d)
+			n, sum, ttfb, err := fetchBlob(ctx, client, base, tok, d)
 			if err != nil || n == 0 {
 				// 连第一层都拿不下来，对 Docker 客户端来说这台源就是用不了。
 				res.OK = false
 				res.Error = "blob 下载失败: " + errStr(err)
 				return res
 			}
+			res.TTFBMS = ttfb
 			if full && n == size {
 				if sum != d {
 					res.BlobOK = 0
@@ -364,29 +365,31 @@ func firstLayerDigest(mf map[string]any) string {
 
 // fetchBlob 下载最多 4 MB，返回字节数和这段内容的 sha256（"sha256:..."）。
 // 只有整层都在 cap 以内时，这个值才能拿去跟 digest 比。
-func fetchBlob(ctx context.Context, c *http.Client, base, tok, digest string) (int64, string, error) {
+func fetchBlob(ctx context.Context, c *http.Client, base, tok, digest string) (int64, string, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/"+probeImage+"/blobs/"+digest, nil)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
+	start := time.Now()
 	resp, err := c.Do(req)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return 0, "", fmt.Errorf("blob %d", resp.StatusCode)
+		return 0, "", 0, fmt.Errorf("blob %d", resp.StatusCode)
 	}
 	h := sha256.New()
-	n, _ := io.CopyN(h, resp.Body, blobCap)
+	body := &ttfbReader{r: resp.Body, start: start}
+	n, _ := io.CopyN(h, body, blobCap)
 	if n == 0 {
-		return 0, "", errors.New("empty blob")
+		return 0, "", body.ms, errors.New("empty blob")
 	}
-	return n, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return n, "sha256:" + hex.EncodeToString(h.Sum(nil)), body.ms, nil
 }
 
 func min(a, b int) int {

@@ -106,7 +106,9 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		return res
 	}
 	h := sha256.New()
-	n, cpErr := io.Copy(io.Discard, io.TeeReader(io.LimitReader(resp2.Body, 16<<20), h))
+	body2 := &ttfbReader{r: io.LimitReader(resp2.Body, 16<<20), start: t1}
+	n, cpErr := io.Copy(io.Discard, io.TeeReader(body2, h))
+	res.TTFBMS = body2.ms
 	el := time.Since(t1).Seconds()
 	if el > 0 && n > 0 {
 		res.SpeedKBps = int64(float64(n) / 1024 / el)

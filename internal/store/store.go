@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -38,6 +39,8 @@ type Source struct {
 	Last map[string]*Check `json:"last,omitempty"`
 	// 每种类型 24h 可用率，-1 表示无数据
 	Uptime map[string]float64 `json:"uptime,omitempty"`
+	// 每种类型 24h 延迟 P95（毫秒，只算成功样本）；0 表示样本不足
+	P95 map[string]int64 `json:"p95_ms,omitempty"`
 }
 
 // Kinds 返回这个源被确认支持的加速类型。
@@ -74,6 +77,8 @@ type Check struct {
 	SpeedKBps int64  `json:"speed_kbps"`
 	Digest    string `json:"digest"`
 	DigestOK  int    `json:"digest_ok"` // -1 未知 0 不一致 1 一致
+	BlobOK    int    `json:"blob_ok"`   // layer 字节：-1 未校验 0 不符 1 一致
+	TTFBMS    int64  `json:"ttfb_ms"`   // 首字节耗时；0 表示这次没测
 	TLSOK     bool   `json:"tls_ok"`
 	CertDays  int    `json:"cert_days"`
 	HTTPCode  int    `json:"http_code"`
@@ -130,6 +135,8 @@ CREATE TABLE IF NOT EXISTS checks (
   speed_kbps INTEGER NOT NULL DEFAULT 0,
   digest TEXT NOT NULL DEFAULT '',
   digest_ok INTEGER NOT NULL DEFAULT -1,
+  blob_ok INTEGER NOT NULL DEFAULT -1,
+  ttfb_ms INTEGER NOT NULL DEFAULT 0,
   tls_ok INTEGER NOT NULL DEFAULT 1,
   cert_days INTEGER NOT NULL DEFAULT 0,
   http_code INTEGER NOT NULL DEFAULT 0,
@@ -158,6 +165,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 		"tls_ok":    "INTEGER NOT NULL DEFAULT 1",
 		"cert_days": "INTEGER NOT NULL DEFAULT 0",
 		"http_code": "INTEGER NOT NULL DEFAULT 0",
+		"blob_ok":   "INTEGER NOT NULL DEFAULT -1",
+		"ttfb_ms":   "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}
@@ -317,7 +326,50 @@ func (s *Store) ListSources() ([]Source, error) {
 			out[i].Uptime[k] = s.uptime(out[i].ID, since, k)
 		}
 	}
+
+	// P95 一次查完再分桶：逐源查会变成 N 条 SQL。
+	// 只算成功样本——失败那几条的「延迟」是超时时间，混进去量的是耐心，不是速度。
+	type key struct {
+		id   int64
+		kind string
+	}
+	samples := map[key][]int64{}
+	prows, err := s.db.Query(`SELECT source_id,kind,latency_ms FROM checks
+		WHERE ts>=? AND tier>=2 AND ok=1 AND latency_ms>0`, since)
+	if err == nil {
+		for prows.Next() {
+			var k key
+			var ms int64
+			if err := prows.Scan(&k.id, &k.kind, &ms); err == nil {
+				samples[k] = append(samples[k], ms)
+			}
+		}
+		prows.Close()
+	}
+	for i := range out {
+		out[i].P95 = map[string]int64{}
+		for _, k := range []string{"docker", "github"} {
+			out[i].P95[k] = p95(samples[key{out[i].ID, k}])
+		}
+	}
 	return out, nil
+}
+
+// minP95Samples 是出 P95 的最小样本数。三个样本的「95 分位」就是最大值，
+// 标成 P95 会让人误以为有统计意义。
+const minP95Samples = 5
+
+// p95 用 nearest-rank 算第 95 百分位；样本不足返回 0。
+func p95(v []int64) int64 {
+	if len(v) < minP95Samples {
+		return 0
+	}
+	sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+	idx := (len(v)*95 + 99) / 100 // ceil(0.95*n)
+	if idx < 1 {
+		idx = 1
+	}
+	return v[idx-1]
 }
 
 func (s *Store) GetSource(id int64) (*Source, error) {
@@ -408,18 +460,18 @@ func (s *Store) AddCheck(c Check) error {
 	if c.TS == 0 {
 		c.TS = time.Now().Unix()
 	}
-	_, err := s.db.Exec(`INSERT INTO checks(source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,tls_ok,cert_days,http_code,error)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.SourceID, c.Kind, c.TS, c.Tier, c.OK, c.LatencyMS, c.SpeedKBps, c.Digest, c.DigestOK, c.TLSOK, c.CertDays, c.HTTPCode, c.Error)
+	_, err := s.db.Exec(`INSERT INTO checks(source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.SourceID, c.Kind, c.TS, c.Tier, c.OK, c.LatencyMS, c.SpeedKBps, c.Digest, c.DigestOK, c.BlobOK, c.TTFBMS, c.TLSOK, c.CertDays, c.HTTPCode, c.Error)
 	return err
 }
 
 // LastCheck 返回某源某类型最近一次检测，优先 tier>=2 的真实探测。
 func (s *Store) LastCheck(sourceID int64, kind string) (*Check, error) {
 	var c Check
-	err := s.db.QueryRow(`SELECT id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,tls_ok,cert_days,http_code,error
+	err := s.db.QueryRow(`SELECT id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error
 		FROM checks WHERE source_id=? AND kind=? ORDER BY (tier>=2) DESC, ts DESC LIMIT 1`, sourceID, kind).
-		Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps, &c.Digest, &c.DigestOK, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error)
+		Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps, &c.Digest, &c.DigestOK, &c.BlobOK, &c.TTFBMS, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -463,7 +515,7 @@ func (s *Store) uptime(sourceID, since int64, kind string) float64 {
 
 // Series 返回某源最近 limit 条 tier>=2 的检测（两种类型混合），按时间正序。
 func (s *Store) Series(sourceID int64, limit int) ([]Check, error) {
-	rows, err := s.db.Query(`SELECT id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,tls_ok,cert_days,http_code,error
+	rows, err := s.db.Query(`SELECT id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error
 		FROM (SELECT * FROM checks WHERE source_id=? AND tier>=2 ORDER BY ts DESC LIMIT ?) ORDER BY ts ASC`, sourceID, limit)
 	if err != nil {
 		return nil, err
@@ -472,7 +524,7 @@ func (s *Store) Series(sourceID int64, limit int) ([]Check, error) {
 	var out []Check
 	for rows.Next() {
 		var c Check
-		if err := rows.Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps, &c.Digest, &c.DigestOK, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error); err != nil {
+		if err := rows.Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps, &c.Digest, &c.DigestOK, &c.BlobOK, &c.TTFBMS, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

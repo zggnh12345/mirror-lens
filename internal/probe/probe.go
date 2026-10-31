@@ -29,6 +29,7 @@ type Result struct {
 	Digest    string `json:"digest"`
 	DigestOK  int    `json:"digest_ok"` // manifest：-1 未知 / 0 不一致 / 1 一致
 	BlobOK    int    `json:"blob_ok"`   // layer 实际字节：-1 未校验 / 0 不符 / 1 一致
+	TTFBMS    int64  `json:"ttfb_ms"`   // 从发请求到收到正文首字节；0 表示没测
 	TLSOK     bool   `json:"tls_ok"`
 	CertDays  int    `json:"cert_days"`
 	Error     string `json:"error"`
@@ -36,6 +37,25 @@ type Result struct {
 }
 
 const userAgent = "mirror-lens/1.0 (+https://github.com/)"
+
+// ttfbReader 记下「第一次读到正文」用了多久。
+// 用 ResponseHeader 的时间不算 TTFB——镜像站在发完头之后卡住正文的情况很常见，
+// 那才是客户端真正感受到的等待。
+type ttfbReader struct {
+	r     io.Reader
+	start time.Time
+	ms    int64
+	hit   bool
+}
+
+func (t *ttfbReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 && !t.hit {
+		t.hit = true
+		t.ms = time.Since(t.start).Milliseconds()
+	}
+	return n, err
+}
 
 // 探测同样是在替别人发请求：源地址由用户填写，重定向和 Docker 的 token
 // realm 都是对方说了算。所以这里跟网关走同一套安全拨号层，而不是各写一份。
