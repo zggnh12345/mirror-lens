@@ -6,6 +6,12 @@
 GitHub Raw   https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
           →  http://<你的地址>/raw/<owner>/<repo>/<ref>/<path>
 
+Release 资产 https://github.com/<owner>/<repo>/releases/download/<tag>/<file>
+          →  http://<你的地址>/gh/<owner>/<repo>/releases/download/<tag>/<file>
+
+源码包        https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.tar.gz
+          →  http://<你的地址>/gh/<owner>/<repo>/archive/refs/tags/<tag>.tar.gz
+
 任意 HTTP    https://example.com/path/file.iso
           →  http://<你的地址>/http/https://example.com/path/file.iso
 
@@ -36,6 +42,7 @@ internal/gateway             统一入口：认证 → 适配器 → 缓存 → 
 internal/gateway/stream.go   流式填充与断点续传
 internal/adapter             协议适配：看懂请求，产出执行计划
 internal/adapter/raw         GitHub Raw
+internal/adapter/ghadapter   GitHub Release 资产与源码包（走镜像源调度）
 internal/adapter/httpadapter 通用 HTTP/HTTPS
 internal/adapter/registryadapter Docker Registry V2（只读）
 internal/cache               内容寻址存储（blobs/ab/<sha256>）+ 续传点（partial/）
@@ -142,6 +149,8 @@ registry:
 | 前缀 | 键 | 版本处理 |
 |---|---|---|
 | `/raw/` | `raw:<owner>/<repo>/<ref>/<path>` | 40 位 commit 不可变；分支/标签 5 分钟后重验 |
+| `/gh/` release 资产 | `gh:<owner>/<repo>/releases/download/<tag>/<file>` | 24 小时；`latest` 与标签同价 |
+| `/gh/` 源码包 | `gh:<owner>/<repo>/archive/...` | 1 小时（分支会动）；tag 快照同样是 1 小时 |
 | `/http/` | `http:<规范化 URL>` | 按响应头 `Cache-Control` / `Expires`；默认 5 分钟 |
 | `/git/` | `git:<scheme>://<host>/<repo>` + `Git-Protocol` | 只缓存 `info/refs`，默认 30 秒；packfile 不缓存 |
 | `/v2/` manifest | `docker:manifest:<upstream>/<name>:<ref>` + `Accept` | tag 5 分钟；digest 永久 |
@@ -191,7 +200,7 @@ registry:
 
 ### 手动清理
 
-`POST /api/accel/purge`，body `{"scope":"all"}` 或 `raw` / `http` / `git` / `docker`：
+`POST /api/accel/purge`，body `{"scope":"all"}` 或 `raw` / `gh` / `http` / `git` / `docker`：
 
 ```bash
 curl -b cookie.txt -X POST http://nas:8080/api/accel/purge \

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/adapter/ghadapter"
 	"github.com/zggnh12345/mirror-lens/internal/adapter/gitadapter"
 	"github.com/zggnh12345/mirror-lens/internal/adapter/httpadapter"
 	"github.com/zggnh12345/mirror-lens/internal/adapter/raw"
@@ -43,6 +44,7 @@ type Gateway struct {
 	cli     *http.Client
 	guard   *safehttp.Guard
 	raw     *raw.Adapter
+	ghAd    *ghadapter.Adapter
 	httpAd  *httpadapter.Adapter
 	gitAd   *gitadapter.Adapter
 	regAd   *registryadapter.Adapter
@@ -114,6 +116,7 @@ func New(st *store.Store, o Options) *Gateway {
 		cli:           cli,
 		guard:         guard,
 		raw:           raw.New(o.RawBase),
+		ghAd:          ghadapter.New(),
 		httpAd:        httpadapter.New(o.MaxBytes),
 		gitAd:         gitadapter.New(o.GitTTL),
 		regAd:         o.Registry,
@@ -178,6 +181,14 @@ func (g *Gateway) ServeRaw(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
+// ServeGH 是 release 资产与源码包的入口。和 /raw/ 一样自带 Bearer/Basic 认证：
+// 客户端是 curl、wget、gh，不会带面板 cookie。
+func (g *Gateway) ServeGH(w http.ResponseWriter, r *http.Request) {
+	g.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		g.serve(w, r, g.ghAd)
+	})(w, r)
+}
+
 func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapter) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -207,7 +218,6 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			g.serveCached(w, r, prev, "HIT-REVAL", true)
 			return
 		case err == nil:
-			setSource(w, plan)
 			setSource(w, plan)
 			g.serveCached(w, r, entry, "MISS", false)
 			return

@@ -9,7 +9,7 @@
 两件事它都做：
 
 - **测量**：哪些源还活着、谁快、实际下载到的字节和官方摘要对不对得上。
-- **加速**：`/http/`、`/raw/`、`/git/`、`/v2/` 四个前缀直接代理，带本地缓存、断点续传和多源分片。
+- **加速**：`/http/`、`/raw/`、`/gh/`、`/git/`、`/v2/` 五个前缀直接代理，带本地缓存、断点续传和多源分片。
 
 > 默认按「只在自己网络里用」设计：不开 Token、只监听容器端口。要暴露到公网，先看[安全边界](#安全边界)。
 
@@ -123,6 +123,19 @@ docker build -t mirror-lens .
 /http/https%3A%2F%2Fexample.com%2Fpath%2Ffile.iso   整体百分号编码
 ```
 
+GitHub Release 资产和源码包走 `/gh/`——这一条会经过镜像源调度，也是它和 `/http/` 的区别：
+
+```
+原始  https://github.com/cli/cli/releases/download/v2.40.0/gh_2.40.0_linux_amd64.tar.gz
+加速  http://<你的地址>:8080/gh/cli/cli/releases/download/v2.40.0/gh_2.40.0_linux_amd64.tar.gz
+
+原始  https://github.com/octocat/Hello-World/archive/refs/tags/v1.0.tar.gz
+加速  http://<你的地址>:8080/gh/octocat/Hello-World/archive/refs/tags/v1.0.tar.gz
+```
+
+`releases/latest/download/<文件>`、`archive/refs/heads/<分支>.zip`、`archive/<ref>.tar.gz` 也都认。
+release 资产缓存 24 小时、分支快照 1 小时（分支会动），两者都支持 Range 与断点续传。
+
 Git 仓库也能克隆，Token 放在用户名位：
 
 ```bash
@@ -170,7 +183,7 @@ curl -H "Authorization: Bearer ml_xxx" \
 - 回源时在可用镜像站之间按探测评分挑一个，失败自动换下一个（`X-ML-Source` 标出这次是谁供的货）；TTL 到期重新验证一律回官方源。
 - 代理流量单独记账（`proxy` / `cache_hit` / `cache_fill`），不参与源站评分。
 
-细节、验收结果和已知限制见 [docs/accelerator.md](docs/accelerator.md)。目前开了 `/raw/`、`/http/`、`/git/`、`/v2/`，缓存带定时巡检、引用计数对账和手动清理，回源带多源调度与内容校验状态（`verified` / `unverified`，校验不过不入缓存）；并行下载按阶段推进。
+细节、验收结果和已知限制见 [docs/accelerator.md](docs/accelerator.md)。目前开了 `/raw/`、`/gh/`、`/http/`、`/git/`、`/v2/`，缓存带定时巡检、引用计数对账和手动清理，回源带多源调度与内容校验状态（`verified` / `unverified`，校验不过不入缓存）；并行下载按阶段推进。
 
 ## 升级
 
@@ -230,6 +243,7 @@ DELETE /api/tokens/{id}      吊销
 GET    /api/accel/stats      缓存条目数/占用、近 7 天流量账、最近条目
 
 GET    /raw/<owner>/<repo>/<ref>/<path>    加速入口，Bearer Token 或 Basic 认证（不走 cookie）
+GET    /gh/<owner>/<repo>/releases/...     GitHub Release 资产与源码包，走镜像源调度
 GET    /http/<目标地址>                    通用 HTTP 加速，支持 Range 直通与断点续传
                                           （原样前缀 / http(s)/host/path / 整体编码 三种写法都认）
 GET    /git/<host>/<repo>.git/...          Git 克隆（info/refs）

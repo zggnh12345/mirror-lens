@@ -190,9 +190,11 @@ func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 		scope = "all"
 	}
 	switch scope {
-	case "all", "raw", "http", "git", "docker":
+	// gh 的缓存键前缀就是 gh:，所以 scope 直接用 gh 而不是 release——
+	// 键前缀决定清理范围，和调度用的 kind 是两套命名。
+	case "all", "raw", "gh", "http", "git", "docker":
 	default:
-		writeJSON(w, 400, map[string]string{"error": "scope 只能是 all / raw / http / git / docker"})
+		writeJSON(w, 400, map[string]string{"error": "scope 只能是 all / raw / gh / http / git / docker"})
 		return
 	}
 

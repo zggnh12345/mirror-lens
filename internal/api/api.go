@@ -149,6 +149,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 
 	// 加速器：/raw/ 自带 Bearer/Basic 认证（客户端不会带 cookie）
 	mux.HandleFunc("/raw/", s.gw.ServeRaw)
+	mux.HandleFunc("/gh/", s.gw.ServeGH)
 	mux.HandleFunc("/http/", s.gw.ServeHTTPProxy)
 	mux.HandleFunc("/git/", s.gw.ServeGit)
 	// Docker Registry V2：客户端只会拼 /v2/...，所以挂在根路径下
