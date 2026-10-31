@@ -208,10 +208,16 @@ type limiter struct {
 var loginLimiter = &limiter{hits: map[string][]time.Time{}}
 
 func clientIP(r *http.Request) string {
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return h
+	h := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		h = host
 	}
-	return r.RemoteAddr
+	if h == "" {
+		// 空串会变成一张「谁都能往里塞」的共享票：既算不准限流，
+		// 也会在 map 里长期占着一个键。给它一个稳定的名字。
+		return "unknown"
+	}
+	return h
 }
 
 // Allowed 判断该 IP 是否还能继续尝试登录。
@@ -225,6 +231,11 @@ func Allowed(r *http.Request) bool {
 		if t.After(cut) {
 			keep = append(keep, t)
 		}
+	}
+	if len(keep) == 0 {
+		// 没有有效记录就别把空切片留在 map 里：长期运行会被扫过的 IP 撑大。
+		delete(loginLimiter.hits, ip)
+		return true
 	}
 	loginLimiter.hits[ip] = keep
 	return len(keep) < 8

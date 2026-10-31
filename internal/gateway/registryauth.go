@@ -28,6 +28,23 @@ type tokenEntry struct {
 
 func newTokenCache() *tokenCache { return &tokenCache{m: map[string]tokenEntry{}} }
 
+// tokenCacheMax 是缓存条目上限。key 里带 scope（每个仓库一个），长期运行
+// 会一直长下去；到上限时先把过期的清掉。
+const tokenCacheMax = 256
+
+// pruneLocked 在条目过多时清掉已过期的 token。调用方持锁。
+func (c *tokenCache) pruneLocked() {
+	if len(c.m) < tokenCacheMax {
+		return
+	}
+	now := time.Now()
+	for k, e := range c.m {
+		if !now.Before(e.exp) {
+			delete(c.m, k)
+		}
+	}
+}
+
 func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, realm, service, scope string) (string, error) {
 	key := realm + "|" + service + "|" + scope
 	c.mu.Lock()
@@ -88,6 +105,7 @@ func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, realm, servi
 	}
 
 	c.mu.Lock()
+	c.pruneLocked()
 	c.m[key] = tokenEntry{tok: tok, exp: time.Now().Add(ttl)}
 	c.mu.Unlock()
 	return tok, nil

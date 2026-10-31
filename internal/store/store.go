@@ -642,16 +642,26 @@ func (s *Store) CleanupArchived(before int64) (int64, error) {
 }
 
 func (s *Store) DeleteSource(id int64) error {
+	// 三条语句必须一起成功或一起失败：删了一半会留下指向不存在源的检查记录，
+	// 面板上就会出现「幽灵源」，而且再删一次也清不掉。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	// source_events 没建外键，显式清；checks 有 CASCADE，但老库可能没开
 	// foreign_keys，也顺手清掉，不留孤儿。
-	if _, err := s.db.Exec(`DELETE FROM source_events WHERE source_id=?`, id); err != nil {
-		return err
+	for _, q := range []string{
+		`DELETE FROM source_events WHERE source_id=?`,
+		`DELETE FROM checks WHERE source_id=?`,
+		`DELETE FROM source_health WHERE source_id=?`,
+		`DELETE FROM sources WHERE id=?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM checks WHERE source_id=?`, id); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`DELETE FROM sources WHERE id=?`, id)
-	return err
+	return tx.Commit()
 }
 
 func (s *Store) AddCheck(c Check) error {
