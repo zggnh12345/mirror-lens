@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Mirror Lens">
+  <defs>
+    <linearGradient id="ml" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#ml)"/>
+  <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" transform="translate(4.5 4)" fill="#fff" stroke="#fff" stroke-width=".8" stroke-linejoin="round"/>
+</svg>

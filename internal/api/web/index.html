@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mirror Lens · 镜像加速监测</title>
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<meta name="theme-color" content="#f6f7f9">
+<script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor"/></svg></div>
+    <div class="titles">
+      <h1>Mirror Lens</h1>
+      <div class="sub" id="sub">镜像加速监测</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="iconbtn" id="btnTheme" title="切换主题" aria-label="切换主题">
+      <svg viewBox="0 0 24 24" id="themeIcon"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <a class="iconbtn" href="/settings" title="设置" aria-label="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="pwbar" style="display:none;margin-top:12px">
+    <div class="sec" style="display:flex;align-items:center;gap:10px;border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-soft);margin:0">
+      <div style="flex:1;font-size:12.5px">还在用默认密码 <b>admin</b>，建议先改掉。</div>
+      <a class="btn" href="/settings">去设置</a>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat ok"><b id="sUsable">–</b><span>可用</span></div>
+    <div class="stat dk"><b id="sDocker">–</b><span>支持 Docker</span></div>
+    <div class="stat gh"><b id="sGithub">–</b><span>支持 GitHub</span></div>
+    <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
+  </div>
+
+  <div class="toolbar">
+    <input class="search" id="q" placeholder="搜索名称或域名" autocomplete="off">
+  </div>
+
+  <div class="filters">
+    <button data-f="all" class="on">全部</button>
+    <button data-f="usable">可用</button>
+    <button data-f="docker">Docker</button>
+    <button data-f="github">GitHub</button>
+    <button data-f="manual">自定义</button>
+    <button data-f="off">已停用</button>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary grow" id="btnAdd">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>添加自定义加速
+    </button>
+    <button class="btn" id="btnProbe">
+      <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8z"/></svg>立即检测
+    </button>
+    <button class="btn" id="btnDiscover">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>发现新源
+    </button>
+    <button class="btn" id="btnExport">
+      <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>导出配置
+    </button>
+  </div>
+
+  <div class="list" id="list"></div>
+</div>
+
+<!-- 添加 -->
+<div class="sheet" id="sheetAdd">
+  <div class="panel">
+    <div class="phead">
+      <h2>添加自定义加速</h2>
+      <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="hint" style="margin-top:2px">只填地址就行，保存后会自动识别它支持 Docker Hub 还是 GitHub，两个都支持就都打勾。</p>
+    <label for="addUrl">地址</label>
+    <input type="text" id="addUrl" placeholder="docker.1panel.live 或 https://gh-proxy.com" autocomplete="off" spellcheck="false">
+    <label for="addName">备注名（可选）</label>
+    <input type="text" id="addName" placeholder="不填就用域名" autocomplete="off">
+    <div class="hint" id="addMsg"></div>
+    <button class="btn primary full" id="btnAddGo">添加并识别</button>
+  </div>
+</div>
+
+<!-- 导出 -->
+<div class="sheet" id="sheetExp">
+  <div class="panel">
+    <div class="phead">
+      <h2>导出配置</h2>
+      <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="hint" style="margin-top:2px">只包含通过内容校验、且此刻可用的源，按速度排序。本工具不改任何系统配置。</p>
+    <label>Docker · daemon.json <span id="expDc" style="color:var(--faint)"></span></label>
+    <pre id="expD">—</pre>
+    <div class="copyrow"><button class="btn" data-copy="expD">复制</button></div>
+    <label>GitHub · git config <span id="expGc" style="color:var(--faint)"></span></label>
+    <pre id="expG">—</pre>
+    <div class="copyrow"><button class="btn" data-copy="expG">复制</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+var $ = function(s){ return document.querySelector(s); };
+var DATA = [], FILTER = 'all', Q = '', OPEN = null;
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on');},2200);}
+
+async function api(path, opt){
+  opt = opt || {};
+  opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers||{});
+  var r = await fetch(path, opt);
+  if (r.status === 401){ location.href = '/login'; throw new Error('未登录'); }
+  var d = {};
+  try { d = await r.json(); } catch(e){}
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+/* ---- 主题 ---- */
+var THEMES = ['light','dark','system'];
+var TNAME = {light:'白天', dark:'黑暗', system:'跟随系统'};
+function curTheme(){ try{ return localStorage.getItem('ml_theme') || 'system'; }catch(e){ return 'system'; } }
+function applyTheme(t){
+  var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme:dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  var m = document.querySelector('meta[name=theme-color]');
+  if (m) m.setAttribute('content', dark ? '#0d1117' : '#f6f7f9');
+  var ic = $('#themeIcon');
+  ic.innerHTML = t === 'system'
+    ? '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>'
+    : (dark ? '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'
+            : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>');
+  $('#btnTheme').title = '主题：' + TNAME[t];
+}
+$('#btnTheme').addEventListener('click', function(){
+  var t = THEMES[(THEMES.indexOf(curTheme()) + 1) % 3];
+  try{ localStorage.setItem('ml_theme', t); }catch(e){}
+  applyTheme(t);
+  toast('主题：' + TNAME[t]);
+});
+window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ applyTheme(curTheme()); });
+applyTheme(curTheme());
+
+/* ---- 渲染 ---- */
+function speedText(k){ if(!k) return '—'; return k >= 1024 ? (k/1024).toFixed(1)+' MB/s' : k+' KB/s'; }
+function latText(ms){ return ms ? (ms < 1000 ? ms+'ms' : (ms/1000).toFixed(1)+'s') : '—'; }
+
+function capChip(kind, cap){
+  var label = kind === 'docker' ? 'Docker' : 'GitHub';
+  var cls = kind === 'docker' ? 'dk' : 'gh';
+  if (cap === 1) return '<span class="cap on '+cls+'"><span class="m">✓</span>'+label+'</span>';
+  if (cap === 0) return '<span class="cap no"><span class="m">—</span><span class="t">'+label+'</span></span>';
+  return '<span class="cap no"><span class="m">?</span><span class="t">'+label+'</span></span>';
+}
+
+function rowClass(x){
+  var l = x.last || {}, any = l.docker || l.github;
+  if (any && any.digest_ok === 0) return 'poison';
+  if (x.status === 'usable') return 'ok';
+  if (x.status === 'degraded') return 'warn';
+  if (x.status === 'dead' || x.status === 'blocked') return 'bad';
+  return '';
+}
+
+function rowHtml(x){
+  var l = x.last || {}, d = l.docker, g = l.github;
+  var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
+  var up = x.uptime || {}, ups = [];
+  if (typeof up.docker === 'number' && up.docker >= 0) ups.push(up.docker);
+  if (typeof up.github === 'number' && up.github >= 0) ups.push(up.github);
+  var bits = [];
+  if (best && best.latency_ms) bits.push('<i>'+latText(best.latency_ms)+'</i>');
+  if (best && best.speed_kbps) bits.push('<i>'+speedText(best.speed_kbps)+'</i>');
+  if (ups.length) bits.push('<i>可用率 '+Math.round(Math.max.apply(null,ups)*100)+'%</i>');
+  if (!best) bits.push('<i>待检测</i>');
+  else if (!best.ok && best.error) bits.push('<span class="err" title="'+esc(best.error)+'">'+esc(best.error).slice(0,40)+'</span>');
+  var originTag = {seed:'内置', discovered:'发现', manual:'自定义'}[x.origin] || x.origin;
+  return '<div class="row '+rowClass(x)+(x.enabled?'':' off')+'" data-id="'+x.id+'">'
+    + '<span class="dot"></span>'
+    + '<div class="main">'
+    +   '<div class="name">'+esc(x.name)+'<span class="tag">'+esc(originTag)+'</span></div>'
+    +   '<div class="meta">'+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)
+    +     (bits.length?'<span class="sep">·</span>'+bits.join('<span class="sep">·</span>'):'')+'</div>'
+    + '</div>'
+    + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="'+x.id+'"'+(x.enabled?' checked':'')+'><span></span></label>'
+    + '</div>'
+    + (OPEN === x.id
+        ? '<div class="hist" id="hist-'+x.id+'"><svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
+          + '<div class="legend"><span><i style="background:var(--ok)"></i>成功</span>'
+          + '<span><i style="background:var(--bad)"></i>失败</span>'
+          + '<span><i style="background:var(--poison)"></i>校验失败</span>'
+          + '<span style="margin-left:auto;color:var(--faint)">最近 60 次 · 柱高=延迟</span></div>'
+          + '<div id="histInfo-'+x.id+'" style="margin-top:8px"></div></div>'
+        : '');
+}
+
+function visible(){
+  return DATA.filter(function(x){
+    if (Q && (x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
+    if (FILTER === 'usable') return x.status === 'usable' || x.status === 'degraded';
+    if (FILTER === 'docker') return x.docker_cap === 1;
+    if (FILTER === 'github') return x.github_cap === 1;
+    if (FILTER === 'manual') return x.origin === 'manual';
+    if (FILTER === 'off') return !x.enabled;
+    return true;
+  });
+}
+
+function render(){
+  var list = visible();
+  $('#sUsable').textContent = DATA.filter(function(x){return x.status==='usable';}).length;
+  $('#sTotal').textContent = DATA.length;
+  $('#sDocker').textContent = DATA.filter(function(x){return x.docker_cap===1;}).length;
+  $('#sGithub').textContent = DATA.filter(function(x){return x.github_cap===1;}).length;
+  $('#list').innerHTML = list.length ? list.map(rowHtml).join('')
+    : '<div class="empty"><b>没有匹配的源</b>换个关键词，或者点上面「添加自定义加速」</div>';
+  if (OPEN) drawHist(OPEN);
+}
+
+async function load(quiet){
+  try{
+    var d = await api('/api/sources');
+    DATA = d.sources || [];
+    render();
+  }catch(e){ if(!quiet) toast(e.message); }
+}
+
+/* ---- 历史 ---- */
+function drawHist(id){
+  var box = $('#histInfo-'+id); if (!box) return;
+  api('/api/series/'+id).then(function(d){
+    var pts = d.points || [], svg = document.querySelector('#hist-'+id+' svg');
+    if (!svg) return;
+    if (!pts.length){
+      svg.innerHTML = '';
+      box.innerHTML = '<div class="hint">还没有真实探测记录，等下一轮。</div>';
+      return;
+    }
+    var max = Math.max.apply(null, pts.map(function(p){ return p.latency_ms || 1; }));
+    var w = 300 / Math.max(pts.length, 1), bw = Math.max(1.6, w * 0.62);
+    svg.innerHTML = pts.map(function(p, i){
+      var h = Math.max(2, (p.latency_ms || 1) / max * 48);
+      var color = (p.digest_ok === 0) ? 'var(--poison)' : (!p.ok ? 'var(--bad)' : 'var(--ok)');
+      return '<rect x="'+(i*w + (w-bw)/2).toFixed(1)+'" y="'+(52-h).toFixed(1)+'" width="'+bw.toFixed(1)
+        + '" height="'+h.toFixed(1)+'" rx="1" fill="'+color+'" opacity="'+(p.ok?0.85:0.95)+'"></rect>';
+    }).join('');
+    var last = pts[pts.length-1];
+    box.innerHTML = '<div class="kv"><span>最近一次</span><span>'+(last.ok?'正常':'失败')+' · '+(last.kind==='github'?'GitHub':'Docker')+' · L'+last.tier+'</span></div>'
+      + '<div class="kv"><span>延迟 / 速度</span><span>'+latText(last.latency_ms)+' · '+speedText(last.speed_kbps)+'</span></div>'
+      + '<div class="kv"><span>内容校验</span><span>'+(last.digest_ok===1?'一致':(last.digest_ok===0?'不一致，已拦截':'未知'))+'</span></div>'
+      + (last.error?'<div class="kv"><span>错误</span><span style="color:var(--bad);text-align:right;max-width:62%">'+esc(last.error)+'</span></div>':'')
+      + '<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn danger" data-del="'+id+'">删除这个源</button></div>';
+  }).catch(function(e){ box.innerHTML = '<div class="hint bad">'+esc(e.message)+'</div>'; });
+}
+
+/* ---- 交互 ---- */
+$('#list').addEventListener('click', async function(ev){
+  var cb = ev.target.closest('input[data-tog]');
+  if (cb){
+    var id = cb.getAttribute('data-tog');
+    try{
+      await api('/api/sources/'+id, {method:'PATCH', body: JSON.stringify({enabled: cb.checked})});
+      var x = DATA.find(function(v){return String(v.id) === id;});
+      if (x) x.enabled = cb.checked;
+      render();
+      toast(cb.checked ? '已启用，正在重新识别' : '已停用，不再探测');
+      setTimeout(function(){load(true);}, 2500);
+    }catch(e){ toast(e.message); cb.checked = !cb.checked; }
+    return;
+  }
+  var del = ev.target.closest('[data-del]');
+  if (del){
+    ev.stopPropagation();
+    if (!confirm('删除后不再监测这个源，确定？')) return;
+    try{
+      await api('/api/sources/'+del.getAttribute('data-del'), {method:'DELETE'});
+      OPEN = null; toast('已删除'); load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  var row = ev.target.closest('.row');
+  if (row){
+    var nid = Number(row.getAttribute('data-id'));
+    OPEN = (OPEN === nid) ? null : nid;
+    render();
+  }
+});
+
+$('#q').addEventListener('input', function(e){ Q = e.target.value.trim().toLowerCase(); render(); });
+document.querySelectorAll('.filters button').forEach(function(b){
+  b.addEventListener('click', function(){
+    FILTER = b.dataset.f;
+    document.querySelectorAll('.filters button').forEach(function(v){ v.classList.toggle('on', v === b); });
+    render();
+  });
+});
+
+/* 抽屉 */
+function openSheet(id){ $('#'+id).classList.add('on'); }
+function closeSheets(){ document.querySelectorAll('.sheet').forEach(function(s){ s.classList.remove('on'); }); }
+document.querySelectorAll('.sheet').forEach(function(s){
+  s.addEventListener('click', function(ev){ if (ev.target === s || ev.target.closest('[data-close]')) closeSheets(); });
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeSheets(); });
+
+$('#btnAdd').addEventListener('click', function(){
+  $('#addMsg').textContent = ''; $('#addMsg').className = 'hint';
+  openSheet('sheetAdd');
+  setTimeout(function(){ $('#addUrl').focus(); }, 240);
+});
+
+$('#btnAddGo').addEventListener('click', async function(){
+  var url = $('#addUrl').value.trim(), msg = $('#addMsg'), btn = $('#btnAddGo');
+  if (!url){ msg.className = 'hint bad'; msg.textContent = '先填个地址'; return; }
+  btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在识别这个地址支持什么…';
+  try{
+    var d = await api('/api/sources', {method:'POST', body: JSON.stringify({url: url, name: $('#addName').value.trim()})});
+    var n = 0, found = null;
+    while (n++ < 25){
+      await new Promise(function(r){ setTimeout(r, 1500); });
+      var all = await api('/api/sources');
+      DATA = all.sources || [];
+      found = DATA.find(function(x){ return x.id === d.id; });
+      if (found && found.docker_cap !== -1 && found.github_cap !== -1) break;
+    }
+    render();
+    if (found){
+      var tags = [];
+      if (found.docker_cap === 1) tags.push('Docker Hub');
+      if (found.github_cap === 1) tags.push('GitHub');
+      msg.className = tags.length ? 'hint ok' : 'hint bad';
+      msg.textContent = tags.length ? ('识别完成：支持 ' + tags.join(' + ')) : '两种加速都不通，先留在列表里等复测';
+    } else { msg.className = 'hint'; msg.textContent = '已添加，识别还在后台跑'; }
+    $('#addUrl').value = ''; $('#addName').value = '';
+    setTimeout(function(){ closeSheets(); load(true); }, 1100);
+  }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; }
+  btn.disabled = false;
+});
+$('#addUrl').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('#btnAddGo').click(); });
+
+$('#btnProbe').addEventListener('click', async function(){
+  try{
+    await api('/api/probe', {method:'POST', body: JSON.stringify({tier:2})});
+    toast('已开始检测，结果会自动刷新');
+    setTimeout(function(){load(true);}, 6000);
+    setTimeout(function(){load(true);}, 20000);
+  }catch(e){ toast(e.message); }
+});
+
+$('#btnDiscover').addEventListener('click', async function(){
+  try{
+    await api('/api/discover', {method:'POST', body:'{}'});
+    toast('正在抓公开列表，1 分钟后看结果');
+    setTimeout(function(){load(true);}, 30000);
+    setTimeout(function(){load(true);}, 75000);
+  }catch(e){ toast(e.message); }
+});
+
+$('#btnExport').addEventListener('click', async function(){
+  try{
+    var d = await api('/api/export');
+    $('#expD').textContent = d.docker.snippet || '—';
+    $('#expG').textContent = d.github.snippet || '—';
+    $('#expDc').textContent = d.docker.count + ' 条';
+    $('#expGc').textContent = d.github.count + ' 条';
+    openSheet('sheetExp');
+  }catch(e){ toast(e.message); }
+});
+
+document.querySelectorAll('[data-copy]').forEach(function(b){
+  b.addEventListener('click', async function(){
+    var txt = $('#'+b.dataset.copy).textContent;
+    try{ await navigator.clipboard.writeText(txt); toast('已复制'); }
+    catch(e){
+      var t = document.createElement('textarea'); t.value = txt; document.body.appendChild(t);
+      t.select(); document.execCommand('copy'); t.remove(); toast('已复制');
+    }
+  });
+});
+
+/* ---- 启动 ---- */
+api('/api/me').then(function(d){
+  $('#sub').textContent = d.user + ' · v' + d.version;
+  $('#pwbar').style.display = d.must_change ? '' : 'none';
+}).catch(function(){});
+load();
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) load(true); }, 15000);
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) load(true); });
+</script>
+</body>
+</html>

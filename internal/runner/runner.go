@@ -1,0 +1,416 @@
+// Package runner schedules probes, applies digest consensus and maintains
+// source status.
+//
+// v2：一个源可能同时支持 Docker Hub 和 GitHub，能力（cap）和存活状态分开记。
+// cap 回答"这个站是干什么的"，status 回答"它现在活不活"。
+package runner
+
+import (
+	"context"
+	"log"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/probe"
+	"github.com/zggnh12345/mirror-lens/internal/store"
+)
+
+var allKinds = []string{"docker", "github"}
+
+type Engine struct {
+	st *store.Store
+
+	mu       sync.Mutex
+	inflight bool
+	queued   int // 探测中又来的请求，记下最高的 tier
+	lastRun  map[int]time.Time
+
+	officialDigest string
+	officialAt     time.Time
+}
+
+func New(st *store.Store) *Engine {
+	return &Engine{st: st, lastRun: map[int]time.Time{}}
+}
+
+// Busy 表示当前是否有探测在跑，面板用来显示"检测中"。
+func (e *Engine) Busy() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.inflight
+}
+
+func (e *Engine) Run(tier int) {
+	e.mu.Lock()
+	if e.inflight {
+		// 已经在跑：记下来，等这轮结束后补跑，不能直接丢掉
+		// （否则刚发现/刚添加的源会一直停在 pending）。
+		if tier > e.queued {
+			e.queued = tier
+		}
+		e.mu.Unlock()
+		return
+	}
+	e.inflight = true
+	e.lastRun[tier] = time.Now()
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.inflight = false
+		q := e.queued
+		e.queued = 0
+		e.mu.Unlock()
+		if q > 0 {
+			go e.Run(q)
+		}
+	}()
+
+	srcs, err := e.st.EnabledSources()
+	if err != nil {
+		log.Printf("runner: list sources: %v", err)
+		return
+	}
+	// tier3 要下载真实文件，只对还活着的源做，省带宽也省对方限流额度。
+	if tier >= 3 {
+		live := srcs[:0]
+		for _, s := range srcs {
+			if s.Status == "usable" || s.Status == "degraded" || s.DockerCap < 0 || s.GithubCap < 0 {
+				live = append(live, s)
+			}
+		}
+		srcs = live
+	}
+
+	// 展开成 (源, 类型) 任务
+	type job struct {
+		src  store.Source
+		kind string
+	}
+	var jobs []job
+	for _, s := range srcs {
+		for _, k := range kindsFor(s, tier) {
+			jobs = append(jobs, job{s, k})
+		}
+	}
+	if len(jobs) == 0 {
+		return
+	}
+
+	expected := ""
+	if tier >= 2 {
+		expected = e.baseline(context.Background())
+	}
+
+	type pair struct {
+		job job
+		res probe.Result
+	}
+	results := make([]pair, len(jobs))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			j := jobs[i]
+			var r probe.Result
+			if j.kind == "docker" {
+				r = probe.Docker(ctx, j.src.BaseURL, tier, expected)
+			} else {
+				r = probe.GitHub(ctx, j.src.BaseURL, tier, "")
+			}
+			results[i] = pair{j, r}
+		}(i)
+	}
+	wg.Wait()
+
+	// 共识复核：tier>=3 且没有官方基准时，用多数派的 digest 作为基准。
+	if tier >= 3 && expected == "" {
+		expected = consensus(results, func(p pair) string {
+			if p.job.kind != "docker" {
+				return ""
+			}
+			return p.res.Digest
+		})
+		if expected != "" {
+			for i := range results {
+				if results[i].job.kind == "docker" && results[i].res.OK && results[i].res.Digest != "" {
+					if results[i].res.Digest == expected {
+						results[i].res.DigestOK = 1
+					} else {
+						results[i].res.DigestOK = 0
+					}
+				}
+			}
+		}
+	}
+
+	// 按源聚合，一次性写回状态
+	perSource := map[int64]map[string]probe.Result{}
+	for _, p := range results {
+		c := store.Check{
+			SourceID:  p.job.src.ID,
+			Kind:      p.job.kind,
+			Tier:      tier,
+			OK:        p.res.OK,
+			LatencyMS: p.res.LatencyMS,
+			SpeedKBps: p.res.SpeedKBps,
+			Digest:    p.res.Digest,
+			DigestOK:  p.res.DigestOK,
+			TLSOK:     p.res.TLSOK,
+			CertDays:  p.res.CertDays,
+			HTTPCode:  p.res.HTTPCode,
+			Error:     p.res.Error,
+			TS:        time.Now().Unix(),
+		}
+		if err := e.st.AddCheck(c); err != nil {
+			log.Printf("runner: add check %d: %v", p.job.src.ID, err)
+			continue
+		}
+		if perSource[p.job.src.ID] == nil {
+			perSource[p.job.src.ID] = map[string]probe.Result{}
+		}
+		perSource[p.job.src.ID][p.job.kind] = p.res
+	}
+	for _, s := range srcs {
+		if r, ok := perSource[s.ID]; ok {
+			e.apply(s, r, tier)
+		}
+	}
+	log.Printf("runner: tier%d done, %d checks over %d sources", tier, len(results), len(srcs))
+}
+
+// RunSource 立刻识别单个源（新增自定义加速时用），两种类型都试一遍。
+func (e *Engine) RunSource(id int64) {
+	s, err := e.st.GetSource(id)
+	if err != nil {
+		return
+	}
+	expected := e.baseline(context.Background())
+	res := map[string]probe.Result{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, k := range allKinds {
+		wg.Add(1)
+		go func(kind string) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			var r probe.Result
+			if kind == "docker" {
+				r = probe.Docker(ctx, s.BaseURL, 2, expected)
+			} else {
+				r = probe.GitHub(ctx, s.BaseURL, 2, "")
+			}
+			mu.Lock()
+			res[kind] = r
+			mu.Unlock()
+		}(k)
+	}
+	wg.Wait()
+	for _, k := range allKinds {
+		r := res[k]
+		_ = e.st.AddCheck(store.Check{
+			SourceID: s.ID, Kind: k, Tier: 2, OK: r.OK, LatencyMS: r.LatencyMS,
+			SpeedKBps: r.SpeedKBps, Digest: r.Digest, DigestOK: r.DigestOK,
+			TLSOK: r.TLSOK, CertDays: r.CertDays, HTTPCode: r.HTTPCode,
+			Error: r.Error, TS: time.Now().Unix(),
+		})
+	}
+	e.apply(*s, res, 2)
+	log.Printf("runner: 识别完成 %s → docker=%v github=%v", s.BaseURL, res["docker"].OK, res["github"].OK)
+}
+
+// kindsFor 决定这一轮该测哪些类型。
+//   - L1 只做存活探测，只测已确认支持的类型
+//   - L2/L3 测已确认支持的 + 还没测过的（自动识别双栈站）
+func kindsFor(s store.Source, tier int) []string {
+	var out []string
+	for _, k := range allKinds {
+		cap := s.DockerCap
+		if k == "github" {
+			cap = s.GithubCap
+		}
+		if cap == store.CapYes {
+			out = append(out, k)
+		} else if cap == store.CapUnknown && tier >= 2 {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// apply 写回能力标记和聚合状态。
+func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
+	docker, github := s.DockerCap, s.GithubCap
+	for k, r := range res {
+		capv := docker
+		if k == "github" {
+			capv = github
+		}
+		switch {
+		case r.OK && tier >= 2:
+			capv = store.CapYes
+		case !r.OK && tier >= 2 && capv == store.CapUnknown:
+			// 识别阶段就不通，认定不是这类加速
+			capv = store.CapNo
+		}
+		if k == "docker" {
+			docker = capv
+		} else {
+			github = capv
+		}
+	}
+	if docker != s.DockerCap || github != s.GithubCap {
+		if err := e.st.SetCaps(s.ID, docker, github); err != nil {
+			log.Printf("runner: set caps %d: %v", s.ID, err)
+		}
+	}
+	s.DockerCap, s.GithubCap = docker, github
+
+	// 内容被替换：直接封禁，等人看
+	for _, r := range res {
+		if r.DigestOK == 0 {
+			_ = e.st.SetStatus(s.ID, "blocked")
+			return
+		}
+	}
+
+	// 任一已确认类型此刻可用 → usable
+	for _, k := range allKinds {
+		if !s.Supports(k) {
+			continue
+		}
+		if r, ok := res[k]; ok {
+			if r.OK {
+				_ = e.st.SetStatus(s.ID, "usable")
+				return
+			}
+			continue
+		}
+		// 这轮没测它，看最近一次结果
+		if c, err := e.st.LastCheck(s.ID, k); err == nil && c != nil && c.OK {
+			_ = e.st.SetStatus(s.ID, "usable")
+			return
+		}
+	}
+
+	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes {
+		_ = e.st.SetStatus(s.ID, "dead")
+		return
+	}
+	// 全部失败：连续三次 tier>=2 失败才判死，避免一次抖动就下架。
+	if tier < 2 {
+		if s.Status == "usable" {
+			_ = e.st.SetStatus(s.ID, "degraded")
+		}
+		return
+	}
+	worst := 1 << 30
+	for _, k := range allKinds {
+		if !s.Supports(k) {
+			continue
+		}
+		if n := e.st.ConsecutiveFailures(s.ID, k); n < worst {
+			worst = n
+		}
+	}
+	if worst >= 3 {
+		_ = e.st.SetStatus(s.ID, "dead")
+	} else {
+		_ = e.st.SetStatus(s.ID, "degraded")
+	}
+}
+
+func consensus[T any](items []T, digest func(T) string) string {
+	counts := map[string]int{}
+	best, bestN := "", 0
+	for _, it := range items {
+		d := digest(it)
+		if d == "" {
+			continue
+		}
+		counts[d]++
+		if counts[d] > bestN {
+			best, bestN = d, counts[d]
+		}
+	}
+	if bestN < 2 {
+		return ""
+	}
+	return best
+}
+
+// baseline 取官方 registry 的 digest 作为权威基准；6 小时缓存，失败回退空。
+func (e *Engine) baseline(ctx context.Context) string {
+	e.mu.Lock()
+	if time.Since(e.officialAt) < 6*time.Hour && e.officialDigest != "" {
+		d := e.officialDigest
+		e.mu.Unlock()
+		return d
+	}
+	e.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	r := probe.Docker(ctx, "https://registry-1.docker.io", 2, "")
+	if r.OK && r.Digest != "" {
+		e.mu.Lock()
+		e.officialDigest, e.officialAt = r.Digest, time.Now()
+		e.mu.Unlock()
+		return r.Digest
+	}
+	return ""
+}
+
+// Loop 按设置里的间隔调度；每 30 秒比一次时间，改设置不用重启。
+func (e *Engine) Loop(ctx context.Context) {
+	go func() {
+		// 启动后先跑一轮，面板立刻有数据
+		time.Sleep(2 * time.Second)
+		e.Run(2)
+		e.Run(3)
+	}()
+
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+	lastPrune := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			e.mu.Lock()
+			l1, l2, l3 := e.lastRun[1], e.lastRun[2], e.lastRun[3]
+			e.mu.Unlock()
+			now := time.Now()
+			if now.Sub(l1) >= minutes(e.st.GetSetting("l1_minutes", "3")) {
+				go e.Run(1)
+			}
+			if now.Sub(l2) >= minutes(e.st.GetSetting("l2_minutes", "15")) {
+				go e.Run(2)
+			}
+			if now.Sub(l3) >= minutes(e.st.GetSetting("l3_minutes", "360")) {
+				go e.Run(3)
+			}
+			if now.Sub(lastPrune) > 24*time.Hour {
+				lastPrune = now
+				_ = e.st.Prune(now.AddDate(0, 0, -30).Unix())
+				e.st.PruneSessions()
+			}
+		}
+	}
+}
+
+func minutes(v string) time.Duration {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		n = 1
+	}
+	return time.Duration(n) * time.Minute
+}

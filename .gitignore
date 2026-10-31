@@ -1,0 +1,6 @@
+data/
+testdata/
+*.db
+*.db-wal
+*.db-shm
+mirror-lens

@@ -1,0 +1,17 @@
+services:
+  mirror-lens:
+    image: ghcr.io/zggnh12345/mirror-lens:latest
+    # 想从源码构建就把上面一行注释掉，启用下面一行
+    # build: .
+    container_name: mirror-lens
+    ports:
+      - "8080:8080"
+    volumes:
+      # 配置放 ./data/config.yaml，容器启动时自动读；没有就用内置默认值
+      - ./data:/data
+    environment:
+      TZ: Asia/Shanghai
+    restart: unless-stopped
+    # 探测是纯出站 HTTP，不需要任何特权
+    security_opt:
+      - no-new-privileges:true
