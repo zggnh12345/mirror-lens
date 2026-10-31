@@ -206,10 +206,30 @@ func TestParallelWaitsForChunksOnClientGone(t *testing.T) {
 		t.Fatal("应接管这次请求")
 	}
 
-	hits := atomic.LoadInt32(&originSrv.hits) + atomic.LoadInt32(&mirrorSrv.hits)
+	total := func() int32 {
+		return atomic.LoadInt32(&originSrv.hits) + atomic.LoadInt32(&mirrorSrv.hits)
+	}
+
+	// cancel 之前已经发出去的请求，服务端 handler 可能被排到返回之后才跑，
+	// 那是「在途」而不是「泄漏」。先等它落地，再看还会不会继续涨。
+	prev := total()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		time.Sleep(50 * time.Millisecond)
+		cur := total()
+		if cur == prev {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("返回后仍在不停请求上游：%d → %d", prev, cur)
+		}
+		prev = cur
+	}
+
+	// 稳定之后必须一直稳定：还有协程活着的话，它会继续发下一段。
 	time.Sleep(200 * time.Millisecond)
-	if after := atomic.LoadInt32(&originSrv.hits) + atomic.LoadInt32(&mirrorSrv.hits); after != hits {
-		t.Fatalf("返回后仍有协程在请求上游：%d → %d", hits, after)
+	if after := total(); after != prev {
+		t.Fatalf("返回后仍有协程在请求上游：%d → %d", prev, after)
 	}
 }
 
