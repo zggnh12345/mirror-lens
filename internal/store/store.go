@@ -41,8 +41,10 @@ type Source struct {
 	Uptime map[string]float64 `json:"uptime,omitempty"`
 	// 每种类型 24h 延迟 P95（毫秒，只算成功样本）；0 表示样本不足
 	P95 map[string]int64 `json:"p95_ms,omitempty"`
-	// 每种类型 24h 上游 429 占比（0~1）；样本不足 20 次时缺省，不瞎报
-	Rate429 map[string]float64 `json:"rate429,omitempty"`
+	// 每种类型 24h 上游 429 占比（0~1）。分母只算真正拿到上游 HTTP 响应的请求
+	// （code 100–599）；DNS、连接失败、超时没有响应，不进分母。有效样本不足时
+	// 显式给 null——用 0 冒充「没有限流」比不给数字更容易误导。
+	Rate429 map[string]*float64 `json:"rate429,omitempty"`
 	// 每种类型的可信度及证据（近 7 天）
 	Trust map[string]Trust `json:"trust,omitempty"`
 }
@@ -358,10 +360,13 @@ func (s *Store) ListSources() ([]Source, error) {
 	}
 
 	// 限流比例：同一个窗口里，这台源回了多少次 429。
+	// 分母只数 code 100–599：那才是一次真实的上游响应。code=0 是没拿到响应
+	// （DNS/连接/超时），把它算进分母等于拿「网络不通」稀释「被限流」。
+	// 老数据里的 code=0 不做任何推断，直接不进统计。
 	type rate struct{ all, c429 int64 }
 	rates := map[key]*rate{}
 	erows, err := s.db.Query(`SELECT source_id,kind,COUNT(*),SUM(code=429) FROM source_events
-		WHERE ts>=? GROUP BY source_id,kind`, since)
+		WHERE ts>=? AND code BETWEEN 100 AND 599 GROUP BY source_id,kind`, since)
 	if err == nil {
 		for erows.Next() {
 			var k key
@@ -373,10 +378,13 @@ func (s *Store) ListSources() ([]Source, error) {
 		erows.Close()
 	}
 	for i := range out {
-		out[i].Rate429 = map[string]float64{}
+		out[i].Rate429 = map[string]*float64{}
 		for _, k := range []string{"docker", "github"} {
+			// 两种类型都给出键：没有有效样本时是 null，不是「缺字段」。
+			out[i].Rate429[k] = nil
 			if r := rates[key{out[i].ID, k}]; r != nil && r.all >= min429Samples {
-				out[i].Rate429[k] = float64(r.c429) / float64(r.all)
+				v := float64(r.c429) / float64(r.all)
+				out[i].Rate429[k] = &v
 			}
 		}
 	}

@@ -315,7 +315,10 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start),
 				scheduler.Hint{Code: int(atomic.LoadInt32(&stats[i].code))})
 		case atomic.LoadInt32(&stats[i].ok) > 0:
-			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start))
+			// 并行分片成功拿到的是 206，不是 200；不记的话这条成功事件
+			// 在 429 率的分母里就不存在了。
+			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start),
+				scheduler.Hint{Code: http.StatusPartialContent})
 		}
 	}
 	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s", plan.CacheKey, total, n, len(srcs), time.Since(start).Round(time.Millisecond))

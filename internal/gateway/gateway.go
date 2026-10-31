@@ -300,10 +300,12 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	var lastErr error
 	for _, t := range g.targets(plan, prev) {
 		start := time.Now()
-		e, notMod, err := g.fetchURL(ctx, plan, prev, t.u)
+		e, notMod, code, err := g.fetchURL(ctx, plan, prev, t.u)
 		if err == nil {
 			if t.c != nil {
-				g.sched.Report(plan.Kind, *t.c, true, time.Since(start))
+				// 成功也要记状态码：429 率的分母是「上游真实响应过多少次」，
+				// 不记 200 的话分母里就只剩失败的请求。
+				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code})
 				plan.Source = t.c.Name
 			}
 			return e, notMod, nil
@@ -327,10 +329,12 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	return nil, false, lastErr
 }
 
-func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, error) {
+// fetchURL 返回上游的状态码：0 表示根本没拿到响应（DNS/连接/超时/读中断）。
+// 调用方要靠它区分「对方回了 429」和「对方没理我们」。
+func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
 	// 必须拿原始字节：压缩后的内容算不出上游的哈希，也校验不了长度
@@ -350,26 +354,26 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 
 	resp, err := g.cli.Do(req)
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotModified {
-		return prev, true, nil
+		return prev, true, http.StatusNotModified, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		io.CopyN(io.Discard, resp.Body, 4096)
-		return nil, false, &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
+		return nil, false, resp.StatusCode, &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 	}
 	if plan.Validate != nil {
 		if err := plan.Validate(resp); err != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
 	}
 
 	tmp, err := g.cache.CreateTemp()
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	tmpName := tmp.Name()
 	// 无论走到哪条分支都要注销：否则这个文件名会被 SweepTemp 永久跳过。
@@ -383,35 +387,35 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
-		return nil, false, fmt.Errorf("读取上游中断: %w", err)
+		return nil, false, 0, fmt.Errorf("读取上游中断: %w", err)
 	}
 	if n > g.maxSize {
 		cleanup()
-		return nil, false, &tooLargeError{Max: g.maxSize}
+		return nil, false, 0, &tooLargeError{Max: g.maxSize}
 	}
 	// 上游声明了长度就必须一致，否则是截断的响应
 	if resp.ContentLength >= 0 && n != resp.ContentLength {
 		cleanup()
-		return nil, false, fmt.Errorf("长度不符：期望 %d，实际 %d", resp.ContentLength, n)
+		return nil, false, 0, fmt.Errorf("长度不符：期望 %d，实际 %d", resp.ContentLength, n)
 	}
 	if err := tmp.Sync(); err != nil {
 		cleanup()
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	if err := tmp.Close(); err != nil {
 		removeFile(tmpName)
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
 	if plan.ExpectSHA != "" && !strings.EqualFold(sum, plan.ExpectSHA) {
 		removeFile(tmpName)
 		g.verifyFail.Add(1)
-		return nil, false, fmt.Errorf("内容与客户端给的摘要不符：期望 %s 实得 %s", plan.ExpectSHA, sum)
+		return nil, false, 0, fmt.Errorf("内容与客户端给的摘要不符：期望 %s 实得 %s", plan.ExpectSHA, sum)
 	}
 	if checked, ok := checkDigest(resp.Header, sum); checked && !ok {
 		removeFile(tmpName)
 		g.verifyFail.Add(1)
-		return nil, false, fmt.Errorf("内容与上游声明的摘要不符：%s", plan.Upstream)
+		return nil, false, 0, fmt.Errorf("内容与上游声明的摘要不符：%s", plan.Upstream)
 	}
 	e := &store.CacheEntry{
 		Key:          plan.CacheKey,
@@ -431,7 +435,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	if _, err := g.cache.Commit(tmpName, sum); err != nil {
 		unlock()
 		removeFile(tmpName)
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	err = g.st.CachePut(*e)
 	unlock()
@@ -439,7 +443,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		log.Printf("写缓存索引失败 %s: %v", plan.CacheKey, err)
 	}
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), n)
-	return e, false, nil
+	return e, false, http.StatusOK, nil
 }
 
 // serveCached 发缓存里的内容。fromCache=false 表示这份内容是刚回源填进来的：

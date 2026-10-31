@@ -77,6 +77,26 @@ func TestGHReleaseThroughMirror(t *testing.T) {
 	if n := atomic.LoadInt32(&hits); n != 1 {
 		t.Fatalf("二次请求应命中缓存，镜像被打 %d 次", n)
 	}
+
+	// 成功的请求也要记下上游状态码：429 率的分母就是靠这个数出来的。
+	// 记成 0 的话，所有成功都会被当成「没拿到响应」排除在分母外。
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, s := range list {
+		if s.Name == "mirror" {
+			id = s.ID
+		}
+	}
+	codes, err := st.SourceEventCodes(id, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 1 || codes[0] != http.StatusOK {
+		t.Fatalf("成功事件应记 200，实际 %v", codes)
+	}
 }
 
 // 源码包走同一条路，但新鲜期短：分支会动。
