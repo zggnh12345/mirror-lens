@@ -181,7 +181,10 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			if t.c == nil {
 				return nil, nil, 0, err
 			}
-			g.sched.Report(plan.Kind, *t.c, false, time.Since(start))
+			// 客户端自己取消（关页面/断网）不是这台源的问题。
+			if ctx.Err() == nil {
+				g.sched.Report(plan.Kind, *t.c, false, time.Since(start))
+			}
 			log.Printf("源 %s 连不上，换下一个：%v", t.c.Name, err)
 			lastErr = err
 			continue

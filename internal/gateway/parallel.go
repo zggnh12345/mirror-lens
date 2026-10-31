@@ -490,8 +490,13 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			last = fmt.Errorf("分段响应对不上：%s 返回 %d %q", u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
 			continue
 		}
-		n, cerr := io.Copy(io.NewOffsetWriter(part, off), io.LimitReader(resp.Body, length))
+		dw := &diskWriter{w: io.NewOffsetWriter(part, off)}
+		n, cerr := io.Copy(dw, io.LimitReader(resp.Body, length))
 		resp.Body.Close()
+		if dw.err != nil {
+			// 写自己的 .part 失败：盘的问题，换源重试也一样。
+			return local(fmt.Errorf("写分片失败: %w", dw.err))
+		}
 		if cerr != nil {
 			if blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[idx].fail, 1)

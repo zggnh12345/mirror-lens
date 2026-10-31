@@ -252,6 +252,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 				g.fillStream(w, r, plan)
 				return
 			}
+			// 本地写不进去（盘满、权限）：别 502，直接边下边发，缓存这层先放下。
+			var le *localError
+			if errors.As(err, &le) {
+				log.Printf("本地写入失败，转透传 %s: %v", plan.CacheKey, err)
+				g.fillStream(w, r, plan)
+				return
+			}
 			// 其余错误（超时、5xx、连不上）先给缓存里的旧版本，标 STALE
 			log.Printf("回源失败，使用旧缓存 %s: %v", plan.CacheKey, err)
 			g.serveCached(w, r, prev, "STALE", true)
@@ -268,6 +275,12 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	if err != nil {
 		var tl *tooLargeError
 		if errors.As(err, &tl) {
+			g.fillStream(w, r, plan)
+			return
+		}
+		var le *localError
+		if errors.As(err, &le) {
+			log.Printf("本地写入失败，转透传 %s: %v", plan.CacheKey, err)
 			g.fillStream(w, r, plan)
 			return
 		}
@@ -363,6 +376,10 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 		if errors.As(err, &tl) {
 			return nil, false, err
 		}
+		// 本地故障（磁盘满、缓存提交失败）和客户端取消：换源没用，也不记源站。
+		if !isSourceFault(err) {
+			return nil, false, err
+		}
 		if t.c == nil {
 			return nil, false, err // 官方源失败就是失败，不再兜圈子
 		}
@@ -429,7 +446,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 
 	tmp, err := g.cache.CreateTemp()
 	if err != nil {
-		return nil, false, 0, err
+		return nil, false, 0, local(fmt.Errorf("创建临时文件失败: %w", err))
 	}
 	tmpName := tmp.Name()
 	// 无论走到哪条分支都要注销：否则这个文件名会被 SweepTemp 永久跳过。
@@ -446,9 +463,14 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		resp.Body.Close()
 		return nil, false, 0, &tooLargeError{Max: g.maxSize}
 	}
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, g.maxSize+1))
+	dw := &diskWriter{w: tmp}
+	n, err := io.Copy(io.MultiWriter(dw, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
+		// io.Copy 只会停在第一个出错的 writer 上，所以要分开看是盘还是网。
+		if dw.err != nil {
+			return nil, false, 0, local(fmt.Errorf("写本地缓存失败: %w", dw.err))
+		}
 		return nil, false, 0, fmt.Errorf("读取上游中断: %w", err)
 	}
 	if n > g.maxSize {
@@ -462,11 +484,11 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 	if err := tmp.Sync(); err != nil {
 		cleanup()
-		return nil, false, 0, err
+		return nil, false, 0, local(fmt.Errorf("落盘失败: %w", err))
 	}
 	if err := tmp.Close(); err != nil {
 		removeFile(tmpName)
-		return nil, false, 0, err
+		return nil, false, 0, local(fmt.Errorf("关闭临时文件失败: %w", err))
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
 	if plan.ExpectSHA != "" && !strings.EqualFold(sum, plan.ExpectSHA) {
@@ -497,7 +519,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	if _, err := g.cache.Commit(tmpName, sum); err != nil {
 		unlock()
 		removeFile(tmpName)
-		return nil, false, 0, err
+		return nil, false, 0, local(fmt.Errorf("提交缓存失败: %w", err))
 	}
 	err = g.st.CachePut(*e)
 	unlock()
@@ -637,6 +659,51 @@ func retryAfterHeader(h http.Header) time.Duration {
 		}
 	}
 	return 0
+}
+
+// localError 标记「我们自己这边的问题」：磁盘写不进去、缓存提交失败。
+// 这类失败换一台镜像也一样失败，更不该记到源站账上——磁盘满了把一排好源
+// 打成冷却/熔断，是最容易发生的误伤。
+type localError struct{ err error }
+
+func (e *localError) Error() string { return e.err.Error() }
+func (e *localError) Unwrap() error { return e.err }
+
+func local(err error) error { return &localError{err: err} }
+
+// isSourceFault 判断这次失败该不该算在源站头上。
+// 本地故障、超上限、客户端自己取消都不算；其余（连不上、超时、5xx、
+// 内容对不上、长度不符）才算。
+func isSourceFault(err error) bool {
+	if err == nil {
+		return false
+	}
+	var le *localError
+	if errors.As(err, &le) {
+		return false
+	}
+	var tl *tooLargeError
+	if errors.As(err, &tl) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	return true
+}
+
+// diskWriter 记住「写盘」这一步有没有失败，好把本地故障和上游中断分开。
+type diskWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (d *diskWriter) Write(p []byte) (int, error) {
+	n, err := d.w.Write(p)
+	if err != nil {
+		d.err = err
+	}
+	return n, err
 }
 
 type tooLargeError struct{ Max int64 }
