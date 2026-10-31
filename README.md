@@ -331,8 +331,10 @@ pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败
 - `mirrorlens_cache_requests_total{scene,result}` — 缓存查询结果（`hit` / `miss` / `pass`）
 - `mirrorlens_download_throughput_bytes_per_second{scene}` — 端到端吞吐（只统计未命中缓存的响应；命中时那是磁盘速度）
 - `mirrorlens_source_requests_total{kind,result}` — 源站成功/失败
+- `mirrorlens_source_http_responses_total{kind}` — 真正拿到 HTTP 响应的回源次数（429 率的分母；连不上、超时、DNS 失败都不计）
 - `mirrorlens_source_429_total{kind}` — 上游 429 次数
-- `mirrorlens_source_fetch_duration_seconds{kind,mode}` — 回源耗时：`single` 整次回源、`stream` 首字节、`parallel` 整次并行填充、`chunk` 单段
+- `mirrorlens_source_fetch_duration_seconds{kind,mode}` — 回源**完整**耗时：`single` 整次回源、`stream` 首字节+传输、`parallel` 整次并行填充、`chunk` 单段
+- `mirrorlens_source_ttfb_seconds{kind,mode}` — 首字节耗时：`stream` 从发出请求到收到响应头
 - `mirrorlens_source_inflight{source_id}` — 源站此刻并发占用
 - `mirrorlens_ratelimit_rejected_total{layer}` — 入口限流拒绝（`global` / `ip` / `token`）
 
@@ -347,9 +349,9 @@ sum(rate(mirrorlens_cache_requests_total{result="hit"}[5m])) by (scene)
 sum(rate(mirrorlens_source_requests_total{result="ok"}[5m])) by (kind)
   / sum(rate(mirrorlens_source_requests_total[5m])) by (kind)
 
-# 上游 429 占比
+# 上游 429 占比（分母只算真实 HTTP 响应：连不上/超时没有状态码，算进去会把 429 率稀释掉）
 sum(rate(mirrorlens_source_429_total[5m])) by (kind)
-  / sum(rate(mirrorlens_source_requests_total[5m])) by (kind)
+  / sum(rate(mirrorlens_source_http_responses_total[5m])) by (kind)
 
 # P95 请求耗时
 histogram_quantile(0.95, sum(rate(mirrorlens_http_request_duration_seconds_bucket[5m])) by (le, scene))
