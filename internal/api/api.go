@@ -75,8 +75,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		http.ServeFileFS(w, r, sub, "icon.svg")
 	})
 
-	// 受保护
-	guard := func(h http.HandlerFunc) http.HandlerFunc {
+	// 只校验登录，不校验「是否已经设置过账号」。设置页和登出要用它。
+	authed := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if !auth.Authed(r, s.st) {
 				if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -90,6 +90,39 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 	}
 
+	// 受保护：登录 + 已经设置过账号。默认密码还没换掉时，除 /api/me 之外一律
+	// 不放行——只在界面上弹个提示条，等于没强制。
+	guard := func(h http.HandlerFunc) http.HandlerFunc {
+		return authed(func(w http.ResponseWriter, r *http.Request) {
+			if s.needSetup() && r.URL.Path != "/api/me" {
+				if strings.HasPrefix(r.URL.Path, "/api/") {
+					writeJSON(w, 403, map[string]any{
+						"error": "首次使用请先设置账号和密码",
+						"code":  "setup_required",
+					})
+					return
+				}
+				http.Redirect(w, r, "/setup", http.StatusFound)
+				return
+			}
+			h(w, r)
+		})
+	}
+
+	// 首次设置页：登录之后、改完之前唯一能打开的面板页面。
+	mux.HandleFunc("/setup", func(w http.ResponseWriter, r *http.Request) {
+		if !auth.Authed(r, s.st) {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		if !s.needSetup() {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		http.ServeFileFS(w, r, sub, "setup.html")
+	})
+	mux.HandleFunc("/api/setup", authed(s.setup))
+
 	mux.HandleFunc("/", guard(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -100,7 +133,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/settings", guard(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, sub, "settings.html")
 	}))
-	mux.HandleFunc("/api/logout", guard(s.logout))
+	mux.HandleFunc("/api/logout", authed(s.logout))
 	mux.HandleFunc("/api/me", guard(s.me))
 	mux.HandleFunc("/api/health", guard(s.health))
 	mux.HandleFunc("/api/sources", guard(s.sources))
@@ -194,6 +227,61 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1"})
+}
+
+// needSetup 表示还停在「默认密码」状态。
+func (s *Server) needSetup() bool {
+	return s.st.GetSetting(auth.KeyMustChg, "0") == "1"
+}
+
+// setup 首次设置账号和密码。此时会话是用默认密码换来的，所以不再要旧密码，
+// 但要一次性把用户名和密码都定下来。
+func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	if !s.needSetup() {
+		writeJSON(w, 409, map[string]string{"error": "账号已经设置过了"})
+		return
+	}
+	var in struct {
+		User string `json:"user"`
+		Pass string `json:"pass"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return
+	}
+	in.User = strings.TrimSpace(in.User)
+	if !auth.ValidUser(in.User) {
+		writeJSON(w, 400, map[string]string{"error": "用户名 3-32 位，只能用字母、数字、_ - ."})
+		return
+	}
+	if len(in.Pass) < 8 {
+		writeJSON(w, 400, map[string]string{"error": "密码至少 8 位"})
+		return
+	}
+	if in.Pass == auth.DefaultPass {
+		writeJSON(w, 400, map[string]string{"error": "别再用默认密码 admin"})
+		return
+	}
+	if err := auth.SetUser(s.st, in.User); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := auth.SetPassword(s.st, in.Pass); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	// 旧会话一律作废（包括此刻这个），再给当前浏览器发一个新的。
+	s.st.DeleteAllSessions()
+	if err := auth.Login(w, s.st); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
+		return
+	}
+	log.Printf("初始账号已设置: user=%q", in.User)
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

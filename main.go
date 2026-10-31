@@ -83,12 +83,12 @@ func main() {
 	}
 	defer st.Close()
 
-	// 首次启动写入默认账号 admin/admin，并标记"请尽快改密"
+	// 首次启动写入默认账号 admin/admin，并标记「必须改」：改完之前面板只放行设置页。
 	if err := auth.EnsureAdmin(st); err != nil {
 		log.Fatalf("初始化账号: %v", err)
 	}
 	if st.GetSetting(auth.KeyMustChg, "0") == "1" {
-		log.Printf("当前仍是默认密码 admin，登录后请到设置里修改")
+		log.Printf("当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝")
 	}
 
 	if !cfg.NoSeed {

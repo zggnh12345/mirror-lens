@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>设置账号 · Mirror Lens</title>
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<meta name="theme-color" content="#f6f7f9">
+<script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="loginwrap">
+  <form class="card" id="f" autocomplete="on">
+    <div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor"/></svg></div>
+    <h1>设置账号</h1>
+    <div class="sub">还在用默认密码 admin，先换成你自己的</div>
+
+    <label for="u">用户名</label>
+    <input type="text" id="u" name="username" autocomplete="username" value="admin" autocapitalize="off" spellcheck="false">
+    <label for="p">新密码</label>
+    <input type="password" id="p" name="new-password" autocomplete="new-password" placeholder="至少 8 位">
+    <label for="p2">再输一次</label>
+    <input type="password" id="p2" name="confirm" autocomplete="new-password" placeholder="和上面一致">
+    <button class="btn primary full" id="btn" type="submit">保存并进入</button>
+    <div class="err" id="err"></div>
+    <div class="hint" style="text-align:center">改完之后旧密码立即失效，其它已登录的浏览器会被踢出</div>
+  </form>
+</div>
+<script>
+'use strict';
+var $ = function(s){ return document.querySelector(s); };
+
+$('#f').addEventListener('submit', async function(e){
+  e.preventDefault();
+  var err = $('#err'), btn = $('#btn');
+  err.textContent = '';
+  var pass = $('#p').value, pass2 = $('#p2').value;
+  if (pass !== pass2) { err.textContent = '两次输入的密码不一样'; $('#p2').select(); return; }
+  btn.disabled = true; btn.textContent = '保存中…';
+  try{
+    var r = await fetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({user: $('#u').value.trim(), pass: pass})});
+    var d = {};
+    try { d = await r.json(); } catch(e2){}
+    if (!r.ok) throw new Error(d.error || '保存失败');
+    try { localStorage.setItem('ml_user', $('#u').value.trim()); } catch(e2){}
+    location.href = '/';
+  }catch(ex){
+    err.textContent = ex.message; btn.disabled = false; btn.textContent = '保存并进入';
+    $('#p').select();
+  }
+});
+</script>
+</body>
+</html>

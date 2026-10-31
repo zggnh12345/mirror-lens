@@ -4,7 +4,7 @@
 
 给 **Docker Hub** 和 **GitHub** 的第三方加速源做体检，然后把流量真的导过去。
 
-一个容器、一个面板、一个 SQLite 文件，不碰你的任何配置。带登录，默认账号 `admin / admin`，登录后请立刻改密码。
+一个容器、一个面板、一个 SQLite 文件，不碰你的任何配置。带登录，首次启动用 `admin / admin` 登录后会强制设置新账号和密码，改完之前面板其它接口一律拒绝。
 
 两件事它都做：
 
@@ -62,7 +62,7 @@ curl -O https://raw.githubusercontent.com/zggnh12345/mirror-lens/main/docker-com
 docker compose up -d
 ```
 
-打开 `http://<你的IP>:8080`，用 `admin / admin` 登录。首次启动会写入 45 个内置候选，后台自动跑第一轮探测（约 3 分钟出完整结果）。
+打开 `http://<你的IP>:8080`，用 `admin / admin` 登录，随即会要求设置新的用户名和密码（至少 8 位）。首次启动会写入 45 个内置候选，后台自动跑第一轮探测（约 3 分钟出完整结果）。
 
 登录后点右上角齿轮进设置页：改用户名和密码、调探测频率、切白天/黑暗/跟随系统。密码用 bcrypt 存在 SQLite 里，改密码会踢掉其他设备上已登录的会话。
 
@@ -207,6 +207,7 @@ registry:
 
 ```
 POST   /api/login            {"user":"admin","pass":"..."}   → Set-Cookie: ml_session
+POST   /api/setup            {"user":"...","pass":"..."}     → 仅首次（默认密码状态）可用
 POST   /api/logout
 GET    /api/me               当前账号 + 是否还在用默认密码
 GET    /healthz              公开，给容器健康检查用

@@ -26,7 +26,7 @@
     <input type="password" id="p" name="password" autocomplete="current-password" placeholder="默认 admin">
     <button class="btn primary full" id="btn" type="submit">登录</button>
     <div class="err" id="err"></div>
-    <div class="hint" style="text-align:center">首次登录用 admin / admin，进去后到设置里改掉</div>
+    <div class="hint" style="text-align:center">首次登录用 admin / admin，随后必须设置新账号密码</div>
   </form>
 </div>
 <script>
@@ -66,7 +66,7 @@ $('#f').addEventListener('submit', async function(e){
     try { d = await r.json(); } catch(e2){}
     if (!r.ok) throw new Error(d.error || '登录失败');
     try { localStorage.setItem('ml_user', $('#u').value.trim()); } catch(e2){}
-    location.href = '/';
+    location.href = d.must_change ? '/setup' : '/';
   }catch(ex){
     err.textContent = ex.message; btn.disabled = false; btn.textContent = '登录';
     $('#p').select();
