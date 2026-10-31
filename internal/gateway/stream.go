@@ -337,7 +337,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 
 	hasher := sha256.New()
 	var part *os.File
-	sent := int64(0)
+	sent := int64(0)    // 已经发给客户端的字节
+	written := int64(0) // 这次真正写进 .part 的字节
 
 	if cacheable {
 		partPath, _ := g.cache.PartialPaths(plan.CacheKey)
@@ -348,7 +349,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				n, cerr := io.Copy(io.MultiWriter(w, hasher), pf)
 				pf.Close()
 				if cerr != nil {
-					g.keepPartial(plan, resp, total, n, nil)
+					// 只是补发旧字节时客户端断了：盘上那份没动过，续传点保持原样。
+					g.keepPartial(plan, resp, total, 0, nil)
 					return
 				}
 				sent = n
@@ -382,7 +384,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				// 客户端走了：把已下部分留给下一次续传
-				g.keepPartial(plan, resp, total, sent, part)
+				g.keepPartial(plan, resp, total, have+written, part)
 				return
 			}
 			if part != nil {
@@ -393,6 +395,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 					log.Printf("写缓存失败，剩下的转透传: %v", werr)
 				} else {
 					hasher.Write(buf[:n])
+					written += int64(n)
 				}
 			}
 			sent += int64(n)
@@ -424,7 +427,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			if r.Context().Err() == nil {
 				outcome = outcomeFail
 			}
-			g.keepPartial(plan, resp, total, sent, part)
+			g.keepPartial(plan, resp, total, have+written, part)
 			return
 		}
 	}
@@ -499,13 +502,34 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 
 // keepPartial 保留半截文件供下次续传；没有验证依据的（无 ETag/Last-Modified）直接扔掉，
 // 否则可能把旧版本的前半段拼到新版本上。
-func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, sent int64, part *os.File) {
+//
+// persisted 是这次期望落在盘上的总字节数（之前已有的 + 本次写入的）。续传点
+// 只能以「盘上真实存在的字节」为准：没有 .part 文件、或者长度对不上，就不该
+// 留续传点——否则下次会从一个不存在的位置往后拼，得到一个看起来完整、实际
+// 中间缺一段的文件。
+func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, persisted int64, part *os.File) {
+	partPath, metaPath := g.cache.PartialPaths(plan.CacheKey)
 	if part != nil {
 		part.Close()
+	} else {
+		// 这次没往盘上写：不新建续传点。已有的元信息只在数据文件消失时清掉，
+		// 它对应的那份半截文件还完好时保持原样。
+		if fi, err := os.Stat(partPath); err != nil || fi.Size() == 0 {
+			_ = os.Remove(metaPath)
+		}
+		return
+	}
+
+	fi, err := os.Stat(partPath)
+	if err != nil || fi.Size() == 0 {
+		g.cache.DropPartial(plan.CacheKey)
+		return
 	}
 	et := resp.Header.Get("ETag")
 	lm := resp.Header.Get("Last-Modified")
-	if total < 0 || sent <= 0 || sent >= total || (et == "" && lm == "") {
+	size := fi.Size()
+	// 实际长度必须与预期一致：写盘中途失败时文件可能短一截，这种不能续。
+	if size != persisted || total < 0 || size >= total || (et == "" && lm == "") {
 		g.cache.DropPartial(plan.CacheKey)
 		return
 	}
@@ -515,7 +539,7 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, se
 		LastModified: lm,
 		ContentType:  resp.Header.Get("Content-Type"),
 		Size:         total,
-		Have:         sent,
+		Have:         size,
 		Updated:      g.now().Unix(),
 	}); err != nil {
 		log.Printf("记录续传点失败: %v", err)
