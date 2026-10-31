@@ -111,6 +111,15 @@ metrics:
   # true 时 /metrics 要面板登录或 Access Token；默认公开，和大多数自建服务一致。
   require_token: false
 
+# CDN 边缘缓存（Cloudflare / Fastly / Varnish / nginx proxy_cache 都适用）。
+# 关闭时只发 60 秒的保守 TTL；打开后把条目 TTL 让给边缘，并加 Age、
+# Cache-Tag / Surrogate-Key（按类型打标，可整类清理）。
+cdn:
+  enabled: false
+  # 边缘 TTL 上限（秒）。0 = 沿用条目 TTL。
+  # 有上限才安全：release 资产同名覆盖很常见，缓存一年会发旧包。
+  max_age: 300
+
 parallel:
   enabled: true
   # 小于这个尺寸不值得分片：多几次握手反而更慢

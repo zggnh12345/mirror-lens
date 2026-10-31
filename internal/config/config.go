@@ -132,6 +132,16 @@ type Config struct {
 	Auth     Auth          `yaml:"auth"`
 	Limits   limits.Config `yaml:"limits"`
 	Metrics  Metrics       `yaml:"metrics"`
+	CDN      CDN           `yaml:"cdn"`
+}
+
+// CDN 控制边缘缓存语义。默认关闭：关着的时候只发 60 秒的保守 TTL，
+// 打开后把条目 TTL 让给 CDN，并加 Age / Cache-Tag 方便清理。
+type CDN struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxAge 是给边缘的 TTL 上限（秒）。0 表示沿用条目自己的 TTL。
+	// 有上限才安全：release 资产同名覆盖很常见，缓存一年会发旧包。
+	MaxAge int `yaml:"max_age"`
 }
 
 // Metrics 控制 Prometheus 抓取口。
@@ -192,6 +202,7 @@ func Default() *Config {
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),
 		Metrics: Metrics{Enabled: true},
+		CDN:     CDN{Enabled: false, MaxAge: 300},
 	}
 }
 
@@ -230,6 +241,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Raw.TTL.Duration < 0 || c.Git.TTL.Duration < 0 || c.Registry.TagTTL.Duration < 0 {
 		return fmt.Errorf("TTL 不能是负数")
+	}
+	if c.CDN.MaxAge < 0 {
+		return fmt.Errorf("cdn.max_age 不能是负数")
 	}
 	if c.Cache.WarnAt < 0 || c.Cache.WarnAt > 1 || c.Cache.RecoverAt < 0 || c.Cache.RecoverAt > 1 {
 		return fmt.Errorf("cache.warn_at / recover_at 是 0~1 的比例")

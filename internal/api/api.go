@@ -185,7 +185,21 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/accel/stats", guard(s.accelStats))
 	mux.HandleFunc("/api/accel/purge", guard(s.accelPurge))
 
-	return logRequests(httpProxyBypass(s.gw, mux))
+	return logRequests(httpProxyBypass(s.gw, noStorePanel(mux)))
+}
+
+// noStorePanel 给面板和接口加 no-store：这些响应带会话和实时状态，
+// 一旦被 CDN 或浏览器缓存，轻则看到旧数据，重则串号。代理路径不经过这里，
+// 它们的缓存语义由 gateway.cacheHeaders 按内容类型决定。
+func noStorePanel(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/api/") || p == "/" || p == "/login" ||
+			p == "/setup" || p == "/settings" || p == "/app.css" || p == "/icon.svg" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // httpProxyBypass 在进 ServeMux 之前截住 /http/。

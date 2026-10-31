@@ -342,6 +342,54 @@ scrape_configs:
       - targets: ["mirror-lens:8080"]
 ```
 
+## CDN 边缘缓存
+
+网关本身已经能把「这份内容能缓存多久」说清楚，前面挂一层 CDN（Cloudflare、
+Fastly、Varnish、nginx proxy_cache 都行）就能让重复下载不出你的机器。
+
+打开开关：
+
+```yaml
+cdn:
+  enabled: true
+  max_age: 300      # 边缘 TTL 上限，秒；0 = 沿用条目 TTL
+```
+
+响应头按内容类型分三档，不需要你手工配：
+
+- **摘要寻址**（`/v2/.../blobs/sha256:...`）：`Cache-Control: public, max-age=31536000, immutable`。
+  字节由哈希决定，缓存一年也不会错。
+- **标签寻址**（manifest、release 资产、raw 文件）：跟随条目 TTL，且不超过
+  `cdn.max_age`，并带 `stale-while-revalidate=60`、`stale-if-error=86400`。
+  manifest 额外带 `Vary: Accept`——manifest list 和单架构镜像必须是两份缓存。
+- **引用类**（git `info/refs`）：`no-cache`，每次都要回源问。
+
+缓存命中时带 `Age`（这份内容在本地放了多久），边缘据此扣减自己的 TTL。
+开了 `cdn.enabled` 还会发 `Cache-Tag` / `Surrogate-Key`，值是 `ml-<类型>`
+（`ml-docker`、`ml-gh`、`ml-raw`、`ml-http`），清理时按类型整类清即可。
+错误响应一律 `no-store`，一次源站故障不会被边缘放大成所有人的故障。
+
+### Cloudflare 最小配置
+
+1. DNS 记录指向你的机器，橙色云朵打开。
+2. Cache Rules 加一条：主机名匹配你的域名，路径匹配 `/v2/*`、`/gh/*`、`/raw/*`、
+   `/http/*`，动作 **Cache Everything**，Edge TTL 选 *Use origin cache control*。
+3. 再加一条更高优先级的 Bypass：路径 `/api/*`、`/metrics`、`/panel*`。
+   （面板和接口带会话，缓存了会串号。）
+4. 清理：`Cache-Tag: ml-docker` 支持按标签清理（企业版）；免费版用
+   *Purge by URL* 或整站清理。
+5. 限流：把 Cloudflare 的回源网段填进 `limits.trusted_proxies`，否则所有请求
+   看起来都来自同一个 IP，客户端一层限流会把整个 CDN 当成一个用户。
+
+### 注意
+
+- CDN 免费版对 `Range` 请求通常整份回源再切片，首次下载不会更快；收益在
+  第二次及之后。
+- 开了 CDN 就别把 `auth.require_token` 设成 true：边缘不会带你的 Token。
+  需要鉴权的内容不要放进 CDN 路径。
+- `max_age` 别设太大。Docker blob 不受它影响（永远 immutable），受影响的
+  是 release 资产——同名覆盖发新版时，边缘最多还会旧 `max_age` 秒。
+
 ## 安全边界
 
 - 不改 `daemon.json`，不改 git config，不写任何系统文件

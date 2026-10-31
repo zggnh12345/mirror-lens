@@ -34,6 +34,7 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := g.httpAd.Plan(r)
 	if err != nil {
+		noStore(w.Header())
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -567,6 +568,7 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	var ue *upstreamError
 	if errors.As(err, &ue) && (ue.Code == http.StatusNotFound || ue.Code == http.StatusGone) {
 		g.st.CacheDelete(plan.CacheKey)
+		noStore(w.Header())
 		http.Error(w, fmt.Sprintf("404 上游返回 %d", ue.Code), http.StatusNotFound)
 		return
 	}
@@ -577,6 +579,7 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	}
 	code := statusFor(err)
 	log.Printf("回源失败 %s: %v", plan.CacheKey, err)
+	noStore(w.Header())
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 }
 

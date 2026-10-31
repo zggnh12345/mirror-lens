@@ -61,6 +61,7 @@ type Gateway struct {
 	par           ParOptions
 	parTargets    func(*adapter.Plan) []fetchTarget // 测试注入用，nil 时走 targets()
 	requireToken  bool                              // 代理路径是否强制 Access Token（false = 匿名放行）
+	cdn           CDNOptions                        // 边缘缓存策略（阶段 8）
 	parFills      atomic.Int64                      // 真正走了并行分片的次数
 	parBytes      atomic.Int64                      // 并行分片下下来的字节
 	parFalls      atomic.Int64                      // 试过但退回单流（不支持 Range、源不够等）
@@ -72,6 +73,13 @@ type ParOptions struct {
 	MinSize   int64
 	ChunkSize int64
 	Workers   int
+}
+
+// CDNOptions 控制边缘缓存语义。Enabled=false 时只发保守的短 TTL，
+// 打开后才把条目 TTL 让给边缘，并加可清理的缓存标签。
+type CDNOptions struct {
+	Enabled bool
+	MaxAge  int // 秒；0 = 沿用条目 TTL
 }
 
 type Options struct {
@@ -87,6 +95,7 @@ type Options struct {
 	// RequireToken 控制 /raw /http /git /v2 是否需要 Access Token。
 	// 默认 false：匿名可读，适合当公共加速站；true 时非浏览器客户端必须带 token。
 	RequireToken bool
+	CDN          CDNOptions
 }
 
 func New(st *store.Store, o Options) *Gateway {
@@ -126,6 +135,7 @@ func New(st *store.Store, o Options) *Gateway {
 		now:           time.Now,
 		par:           o.Parallel,
 		requireToken:  o.RequireToken,
+		cdn:           o.CDN,
 	}
 }
 
@@ -197,6 +207,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	}
 	plan, err := ad.Plan(r)
 	if err != nil {
+		noStore(w.Header())
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -226,6 +237,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			if errors.As(err, &ue) && (ue.Code == http.StatusNotFound || ue.Code == http.StatusGone) {
 				// 上游说文件没了，就不要拿旧的糊弄人
 				g.st.CacheDelete(plan.CacheKey)
+				noStore(w.Header())
 				http.Error(w, fmt.Sprintf("%d 上游返回 %d", http.StatusNotFound, ue.Code), http.StatusNotFound)
 				return
 			}
@@ -240,6 +252,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	if err != nil {
 		code := statusFor(err)
 		log.Printf("回源失败 %s: %v", plan.CacheKey, err)
+		noStore(w.Header())
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -470,7 +483,7 @@ func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.C
 	}
 	// ETag 用内容哈希：强校验、跨源稳定，客户端可以拿它做 If-None-Match
 	w.Header().Set("ETag", `"`+e.SHA256+`"`)
-	w.Header().Set("Cache-Control", "public, max-age=60")
+	g.cacheHeaders(w.Header(), e, g.now())
 	w.Header().Set("X-ML-Cache", label)
 	cw := &countWriter{ResponseWriter: w}
 	// ServeContent 负责 Range / 206 / 416 / If-None-Match，不用自己写
@@ -501,6 +514,7 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		// Basic 让 git/docker 客户端弹认证框；密码位填 Access Token
+		noStore(w.Header())
 		w.Header().Set("WWW-Authenticate", `Basic realm="Mirror Lens", charset="UTF-8"`)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)

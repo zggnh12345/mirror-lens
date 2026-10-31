@@ -25,6 +25,7 @@ const (
 	KindHTTP   = "http"
 	KindGit    = "git"
 	KindDocker = "docker"
+	KindGH     = "gh"
 	KindAll    = "" // 未知/汇总
 )
 
@@ -38,6 +39,8 @@ func KindOfKey(key string) string {
 		return KindGit
 	case strings.HasPrefix(key, "docker:"):
 		return KindDocker
+	case strings.HasPrefix(key, "gh:"):
+		return KindGH
 	}
 	return ""
 }

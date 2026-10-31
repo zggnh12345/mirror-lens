@@ -114,6 +114,7 @@ func main() {
 		Registry:      regAd,
 		CacheMaxBytes: cfg.Cache.MaxGB << 30,
 		RequireToken:  cfg.Auth.RequireToken,
+		CDN:           gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
 			Enabled:   cfg.Parallel.Enabled,
 			MinSize:   cfg.Parallel.MinSizeMB << 20,
