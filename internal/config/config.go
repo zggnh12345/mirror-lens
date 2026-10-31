@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/limits"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -108,18 +110,19 @@ type Auth struct {
 }
 
 type Config struct {
-	Addr     string   `yaml:"addr"`
-	Data     string   `yaml:"data"`
-	NoSeed   bool     `yaml:"no_seed"`
-	Cache    Cache    `yaml:"cache"`
-	Janitor  Janitor  `yaml:"janitor"`
-	Raw      Raw      `yaml:"raw"`
-	Git      Git      `yaml:"git"`
-	Registry Registry `yaml:"registry"`
-	Sources  Sources  `yaml:"sources"`
-	Parallel Parallel `yaml:"parallel"`
-	Probe    Probe    `yaml:"probe"`
-	Auth     Auth     `yaml:"auth"`
+	Addr     string        `yaml:"addr"`
+	Data     string        `yaml:"data"`
+	NoSeed   bool          `yaml:"no_seed"`
+	Cache    Cache         `yaml:"cache"`
+	Janitor  Janitor       `yaml:"janitor"`
+	Raw      Raw           `yaml:"raw"`
+	Git      Git           `yaml:"git"`
+	Registry Registry      `yaml:"registry"`
+	Sources  Sources       `yaml:"sources"`
+	Parallel Parallel      `yaml:"parallel"`
+	Probe    Probe         `yaml:"probe"`
+	Auth     Auth          `yaml:"auth"`
+	Limits   limits.Config `yaml:"limits"`
 }
 
 // Probe 是探测行为的开关。探测会去请求用户填的地址，默认只允许公网，
@@ -165,8 +168,9 @@ func Default() *Config {
 			ChunkMB:   4,
 			Workers:   4,
 		},
-		Probe: Probe{AllowPrivate: false},
-		Auth:  Auth{RequireToken: false},
+		Probe:  Probe{AllowPrivate: false},
+		Auth:   Auth{RequireToken: false},
+		Limits: limits.Default(),
 	}
 }
 

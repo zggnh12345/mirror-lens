@@ -20,6 +20,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
+	"github.com/zggnh12345/mirror-lens/internal/limits"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
@@ -174,9 +175,19 @@ func main() {
 		}
 	}()
 
+	lim := limits.New(cfg.Limits)
+	if lim.Enabled() {
+		log.Printf("入口限流已开: 全局 %.0f/s 并发 %d | 每 IP %d/分 并发 %d | 每 Token %d/分 并发 %d | 可信代理 %v",
+			cfg.Limits.GlobalRPS, cfg.Limits.GlobalConcurrency,
+			cfg.Limits.IPPerMinute, cfg.Limits.IPConcurrency,
+			cfg.Limits.TokenPerMinute, cfg.Limits.TokenConcurrency, cfg.Limits.TrustedProxies)
+	} else {
+		log.Printf("入口限流已关闭（limits.enabled=false）")
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           api.New(st, eng, gw, jan, sched),
+		Handler:           lim.Wrap(api.New(st, eng, gw, jan, sched)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

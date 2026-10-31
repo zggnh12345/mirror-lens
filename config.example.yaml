@@ -78,6 +78,26 @@ probe:
 auth:
   require_token: false
 
+# 入口限流：两层——全局一层，客户端一层（匿名按 IP，带 Token 再按 Token）。
+# 限流只发生在入口，不写源站健康；被限流是「慢点」，不是「源坏了」。
+limits:
+  enabled: true
+  global_rps: 20            # 全站每秒请求数
+  global_burst: 100
+  global_concurrency: 200   # 全站同时进行的请求（长下载也算一个）
+  ip_per_minute: 300        # 单个匿名 IP 每分钟请求数
+  ip_burst: 60
+  ip_concurrency: 8         # 单个 IP 同时进行的请求
+  token_per_minute: 1200    # 单个 Access Token 每分钟请求数
+  token_burst: 200
+  token_concurrency: 32
+  # 可信反向代理网段（CIDR，或单个地址）。默认空 = 不信任何转发头，
+  # 按 TCP 对端地址限流。部署在 nginx/Traefik/Caddy 后面时，把反代
+  # 自己的网段填进来，例如：
+  #   trusted_proxies: ["127.0.0.1/32", "::1/128", "10.0.0.0/8"]
+  # 只信这些地址发来的 X-Forwarded-For，并取最右侧的非可信地址作为客户端。
+  trusted_proxies: []
+
 parallel:
   enabled: true
   # 小于这个尺寸不值得分片：多几次握手反而更慢

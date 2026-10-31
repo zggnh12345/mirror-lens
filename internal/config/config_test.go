@@ -36,6 +36,39 @@ func TestDefaults(t *testing.T) {
 	if got := c.CacheDir(); got != "/data/cache" {
 		t.Fatalf("缓存目录: %s", got)
 	}
+	// 限流默认开着，且默认不信任何转发头
+	if !c.Limits.Enabled || c.Limits.IPPerMinute != 300 || c.Limits.IPConcurrency != 8 {
+		t.Fatalf("限流默认值不对: %+v", c.Limits)
+	}
+	if len(c.Limits.TrustedProxies) != 0 {
+		t.Fatalf("默认不该信任任何代理: %v", c.Limits.TrustedProxies)
+	}
+}
+
+// 只写 limits.enabled: false 就关掉，其余字段仍可留空。
+func TestLimitsPartialConfig(t *testing.T) {
+	p := write(t, `
+limits:
+  enabled: false
+  ip_per_minute: 60
+  trusted_proxies: ["127.0.0.1/32"]
+`)
+	c, err := Load(p, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Limits.Enabled {
+		t.Fatal("enabled: false 应关掉")
+	}
+	if c.Limits.IPPerMinute != 60 {
+		t.Fatalf("ip_per_minute: %d", c.Limits.IPPerMinute)
+	}
+	if c.Limits.GlobalRPS != 20 {
+		t.Fatalf("没写的字段应保持默认，实际 %v", c.Limits.GlobalRPS)
+	}
+	if len(c.Limits.TrustedProxies) != 1 || c.Limits.TrustedProxies[0] != "127.0.0.1/32" {
+		t.Fatalf("trusted_proxies: %v", c.Limits.TrustedProxies)
+	}
 }
 
 // 只写几个字段，其余保持默认——配置文件不该要求写全。
