@@ -501,6 +501,8 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// 状态/开关改了：让调度器立刻重算候选，别等 ListTTL 过期。
+		s.eng.Changed()
 		if in.Enabled != nil && *in.Enabled {
 			go s.eng.RunSource(id)
 		}

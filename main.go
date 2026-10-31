@@ -146,6 +146,10 @@ func main() {
 		CleanupAfter:  time.Duration(cfg.Sources.CleanupDays) * 24 * time.Hour,
 		RecoveryEvery: time.Duration(cfg.Sources.RecoveryMinutes) * time.Minute,
 	})
+	if sched != nil {
+		// 源状态/协议健康一变，候选缓存立刻作废。
+		eng.OnChange(sched.Invalidate)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go eng.Loop(ctx)

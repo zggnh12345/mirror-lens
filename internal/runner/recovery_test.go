@@ -107,6 +107,43 @@ func TestProbeDoesNotResurrectArchived(t *testing.T) {
 	}
 }
 
+// 一个协议成功不能掩盖另一个协议失败：apply 要把协议级健康分开记。
+func TestApplyRecordsPerProtocolHealth(t *testing.T) {
+	st, id := capStore(t, "usable", store.CapYes, store.CapYes)
+	e := New(st)
+
+	for i := 0; i < store.HealthFails; i++ {
+		cur, _ := st.GetSource(id)
+		e.apply(*cur, map[string]probe.Result{
+			"docker": {OK: false, DigestOK: -1, Error: "503 service unavailable"},
+			"github": {OK: true, Verdict: probe.VerdictYes, DigestOK: 1},
+		}, 2)
+	}
+
+	h, err := st.HealthOf(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h["docker"] < store.HealthFails {
+		t.Fatalf("docker 连挂应累计，得到 %d", h["docker"])
+	}
+	if h["github"] != 0 {
+		t.Fatalf("github 成功不该被 docker 的失败牵连，得到 %d", h["github"])
+	}
+
+	// 整体状态仍是 usable（github 还活着），但 docker 已从候选里摘掉。
+	got, _ := st.GetSource(id)
+	if got.Status != "usable" {
+		t.Fatalf("整体状态应为 usable，得到 %s", got.Status)
+	}
+	if c, _ := st.SourceCandidates("docker"); len(c) != 0 {
+		t.Fatalf("docker 不该再进 docker 候选：%+v", c)
+	}
+	if c, _ := st.SourceCandidates("github"); len(c) != 1 {
+		t.Fatalf("github 应仍在候选里：%+v", c)
+	}
+}
+
 // 早先被误判成 CapNo 的死源，也要继续识别（否则 kindsFor 一条都不返回，
 // 永远停在 dead）。
 func TestDeadSourceWithNoCapsIsStillProbed(t *testing.T) {

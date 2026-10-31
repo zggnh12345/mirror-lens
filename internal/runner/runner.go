@@ -49,6 +49,19 @@ type Engine struct {
 
 	officialDigest string
 	officialAt     time.Time
+
+	onChange func()
+}
+
+// OnChange 注册「源状态/协议健康变了」的回调。调度器据此丢掉候选缓存，
+// 否则刚判死的源还能在 ListTTL 内继续被选中。
+func (e *Engine) OnChange(fn func()) { e.onChange = fn }
+
+// Changed 通知外部状态已变（面板改状态、启用/停用时调用）。
+func (e *Engine) Changed() {
+	if e.onChange != nil {
+		e.onChange()
+	}
 }
 
 func New(st *store.Store, opts ...Options) *Engine {
@@ -304,8 +317,14 @@ func kindsFor(s store.Source, tier int) []string {
 	return out
 }
 
-// apply 写回能力标记和聚合状态。
+// apply 写回能力标记和聚合状态，然后让调度器丢掉候选缓存。
 func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
+	e.applyInner(s, res, tier)
+	// 状态一改，候选缓存里那份旧名单就不该再被用了（默认 TTL 60s 太长）。
+	e.Changed()
+}
+
+func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier int) {
 	// 归档是人工（或长期不可用）做出的判断，探测结果不能把它顶掉：
 	// 一个被手工归档的源可能刚巧又能通了，但那不代表用户想让它回到调度里。
 	if s.Status == "archived" {
@@ -338,6 +357,17 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 		}
 	}
 	s.DockerCap, s.GithubCap = docker, github
+
+	// 协议级健康单独记：docker 挂了不影响 github 的候选资格，反之亦然。
+	// 明确「不支持」不算坏，不记。
+	for k, r := range res {
+		if r.Verdict == probe.VerdictNo {
+			continue
+		}
+		if err := e.st.NoteProbe(s.ID, store.Family(k), r.OK); err != nil {
+			log.Printf("runner: note probe %d/%s: %v", s.ID, k, err)
+		}
+	}
 
 	// 内容被替换：直接封禁，等人看
 	for _, r := range res {

@@ -134,6 +134,18 @@ func New(st *store.Store, cfg Config) *Scheduler {
 
 func (s *Scheduler) Enabled() bool { return s != nil && s.cfg.Enabled }
 
+// Invalidate 丢掉候选缓存。源状态、启用开关、协议健康一变就调用：
+// 否则刚判死的源还能在 ListTTL 内继续被选中，用户看到「已经死了还在跑」。
+func (s *Scheduler) Invalidate() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.lists = map[string]listEntry{}
+	s.sticky = map[string]stickyPick{}
+	s.mu.Unlock()
+}
+
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
 func (s *Scheduler) Candidates(kind string) []Candidate {
 	if !s.Enabled() {

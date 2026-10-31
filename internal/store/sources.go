@@ -30,6 +30,61 @@ const sourceSampleWindow = 10
 //
 // 能力按协议分开记：GitHub 前缀代理能代理 raw/release，但多数做不了 git
 // smart HTTP。git 用单独的 git_cap，默认关，靠实测或手动打开。
+// HealthFails：某协议族连续失败到这个次数，就暂时不把它排进该协议的候选。
+// 只影响这一个协议，源站整体状态与另一个协议不受牵连。
+const HealthFails = 3
+
+// Family 把请求类型归到三个协议族：docker / github / git。
+// raw、release 都是 GitHub 内容的另一种地址形态，健康与否跟 github 一致。
+func Family(kind string) string {
+	switch kind {
+	case "docker":
+		return "docker"
+	case "git":
+		return "git"
+	default:
+		return "github"
+	}
+}
+
+// NoteProbe 记一次某协议族的探测结果：成功清零并记时间，失败累加。
+// 与源站整体 status 分开：整体 status 回答「这台还活着吗」，这里回答
+// 「它这个协议现在还灵不灵」。
+func (s *Store) NoteProbe(id int64, family string, ok bool) error {
+	now := time.Now().Unix()
+	if ok {
+		_, err := s.db.Exec(`INSERT INTO source_health(source_id, family, fails, ok_at, last_at)
+			VALUES(?,?,0,?,?)
+			ON CONFLICT(source_id, family) DO UPDATE SET fails=0, ok_at=excluded.ok_at, last_at=excluded.last_at`,
+			id, family, now, now)
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO source_health(source_id, family, fails, last_at)
+		VALUES(?,?,1,?)
+		ON CONFLICT(source_id, family) DO UPDATE SET fails=fails+1, last_at=excluded.last_at`,
+		id, family, now)
+	return err
+}
+
+// HealthOf 返回某个源各协议族的连续失败次数，面板/排查用。
+func (s *Store) HealthOf(id int64) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT family, fails FROM source_health WHERE source_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var f string
+		var n int
+		if err := rows.Scan(&f, &n); err != nil {
+			return nil, err
+		}
+		out[f] = n
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	col := ""
 	switch kind {
@@ -42,9 +97,13 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	default:
 		return nil, nil
 	}
+	// 按「协议族」过滤：docker 挂了不能拖累 github，反之亦然。
+	// 一个源整体还活着（status=usable），但某个协议连续探测失败时，只把
+	// 这个协议从候选里摘掉，另一个协议照常走它。
 	rows, err := s.db.Query(`SELECT id, name, base_url, status FROM sources
-		WHERE enabled = 1 AND status IN ('usable','degraded') AND ` + col + ` = 1
-		ORDER BY id`)
+		WHERE enabled = 1 AND status IN ('usable','degraded') AND `+col+` = 1
+		  AND id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
+		ORDER BY id`, Family(kind), HealthFails)
 	if err != nil {
 		return nil, err
 	}
