@@ -91,6 +91,22 @@ func TestFirstProbeTimeoutStaysPending(t *testing.T) {
 	}
 }
 
+// 探测又通了也不能把人工归档顶掉。
+func TestProbeDoesNotResurrectArchived(t *testing.T) {
+	st, id := capStore(t, "archived", store.CapYes, store.CapNo)
+	e := New(st)
+	s, _ := st.GetSource(id)
+
+	e.apply(*s, map[string]probe.Result{
+		"docker": {OK: true, Verdict: probe.VerdictYes, DigestOK: 1},
+	}, 2)
+
+	got, _ := st.GetSource(id)
+	if got.Status != "archived" {
+		t.Fatalf("归档状态被探测覆盖成 %s", got.Status)
+	}
+}
+
 // 早先被误判成 CapNo 的死源，也要继续识别（否则 kindsFor 一条都不返回，
 // 永远停在 dead）。
 func TestDeadSourceWithNoCapsIsStillProbed(t *testing.T) {

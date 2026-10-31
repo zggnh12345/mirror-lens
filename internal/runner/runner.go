@@ -306,6 +306,11 @@ func kindsFor(s store.Source, tier int) []string {
 
 // apply 写回能力标记和聚合状态。
 func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
+	// 归档是人工（或长期不可用）做出的判断，探测结果不能把它顶掉：
+	// 一个被手工归档的源可能刚巧又能通了，但那不代表用户想让它回到调度里。
+	if s.Status == "archived" {
+		return
+	}
 	docker, github := s.DockerCap, s.GithubCap
 	for k, r := range res {
 		capv := docker

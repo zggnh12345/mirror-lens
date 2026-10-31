@@ -460,10 +460,8 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 			return
 		}
-		if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+		// 先落状态再落开关：归档源要恢复，必须同一个请求里显式给
+		// status=pending，否则 store 会拒绝「启用」（ErrArchived）。
 		if in.Status != nil {
 			v := *in.Status
 			switch v {
@@ -490,6 +488,16 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				go s.eng.RunSource(id)
 			default:
 				writeJSON(w, 400, map[string]string{"error": "status 只能是 archived / blocked / pending"})
+				return
+			}
+		}
+		if in.Enabled != nil || in.Name != nil || in.Note != nil {
+			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note); err != nil {
+				if errors.Is(err, store.ErrArchived) {
+					writeJSON(w, 400, map[string]string{"error": err.Error()})
+					return
+				}
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
 		}

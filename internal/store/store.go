@@ -500,8 +500,22 @@ func (s *Store) AddSource(x Source) (int64, error) {
 
 var ErrExists = errors.New("source already exists")
 
+// ErrArchived：已归档的源不能直接启用，只能走恢复流程。
+var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复流程重新验证")
+
 func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string) error {
 	if enabled != nil {
+		if *enabled {
+			// 归档是人工/自动做过的判断，不能被一个「启用」开关顺手撤销：
+			// 恢复必须走显式流程（status=pending → 重新探测验证）。
+			var status string
+			if err := s.db.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
+				return err
+			}
+			if status == "archived" {
+				return ErrArchived
+			}
+		}
 		if _, err := s.db.Exec(`UPDATE sources SET enabled=? WHERE id=?`, *enabled, id); err != nil {
 			return err
 		}
