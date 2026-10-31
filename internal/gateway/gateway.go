@@ -552,7 +552,9 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		if auth.Authed(r, g.st) {
+		// 默认密码状态下不认 cookie：admin/admin 是公开的，能拿到会话就等于
+		// 能绕过 Access Token。面板登录照旧（要留一条改密码的路）。
+		if auth.Authed(r, g.st) && !auth.MustChange(g.st) {
 			next(w, r)
 			return
 		}

@@ -783,7 +783,7 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 // metrics 输出 Prometheus 文本格式。默认公开，require_token 打开后要求
 // 面板登录或 Access Token——抓取端用 Bearer 就行。
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
-	if s.metricsToken && !auth.Authed(r, s.st) {
+	if s.metricsToken && !(auth.Authed(r, s.st) && !auth.MustChange(s.st)) {
 		tok := scrapeToken(r)
 		if tok == "" {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="Mirror Lens"`)

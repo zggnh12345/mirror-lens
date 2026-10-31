@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
@@ -73,5 +75,36 @@ func TestMetricsEndpointTokenGate(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("错误 Token 应 401，得到 %d", rec.Code)
+	}
+}
+
+// 默认密码状态下，面板会话不能当作抓取凭据——admin/admin 谁都知道。
+func TestMetricsSessionIgnoredWithDefaultPassword(t *testing.T) {
+	metrics.Enable()
+	t.Cleanup(metrics.Disable)
+	st, h := newTestServerOpts(t, WithMetrics(true, true))
+
+	if err := st.SetSetting(auth.KeyMustChg, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession("sess-default-pw", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "sess-default-pw"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("默认密码状态下 cookie 应被拒，得到 %d", rec.Code)
+	}
+
+	if err := st.SetSetting(auth.KeyMustChg, "0"); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("改密后 cookie 应放行，得到 %d：%s", rec.Code, rec.Body.String())
 	}
 }

@@ -180,6 +180,15 @@ func Logout(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	})
 }
 
+// MustChange 表示账号还在默认密码状态（没走过首次设置/改密）。
+//
+// 这种状态下会话不能当作「已认证」用于代理入口和指标抓取：默认口令是
+// 公开的 admin/admin，谁都能登进来拿一个 cookie，那样 Access Token 这道
+// 门就形同虚设。面板本身仍允许登录，否则没人能改密码。
+func MustChange(st *store.Store) bool {
+	return st.GetSetting(KeyMustChg, "0") == "1"
+}
+
 // Authed 判断请求是否带着有效会话。
 func Authed(r *http.Request, st *store.Store) bool {
 	c, err := r.Cookie(CookieName)
