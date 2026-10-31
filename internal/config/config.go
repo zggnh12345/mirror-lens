@@ -123,6 +123,14 @@ type Config struct {
 	Probe    Probe         `yaml:"probe"`
 	Auth     Auth          `yaml:"auth"`
 	Limits   limits.Config `yaml:"limits"`
+	Metrics  Metrics       `yaml:"metrics"`
+}
+
+// Metrics 控制 Prometheus 抓取口。
+type Metrics struct {
+	Enabled bool `yaml:"enabled"`
+	// RequireToken 为 true 时 /metrics 要面板登录或 Access Token。
+	RequireToken bool `yaml:"require_token"`
 }
 
 // Probe 是探测行为的开关。探测会去请求用户填的地址，默认只允许公网，
@@ -168,9 +176,10 @@ func Default() *Config {
 			ChunkMB:   4,
 			Workers:   4,
 		},
-		Probe:  Probe{AllowPrivate: false},
-		Auth:   Auth{RequireToken: false},
-		Limits: limits.Default(),
+		Probe:   Probe{AllowPrivate: false},
+		Auth:    Auth{RequireToken: false},
+		Limits:  limits.Default(),
+		Metrics: Metrics{Enabled: true},
 	}
 }
 

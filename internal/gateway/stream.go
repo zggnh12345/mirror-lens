@@ -273,7 +273,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 只有整份传完才算成功：头到了、身子断了，对客户端就是一次失败下载。
 		// 提前记成功会让这台源一直粘着（每次成功把 sticky 续到 10 分钟后），
 		// 熔断也永远不触发——「握手快、传输慢」的源能把全部流量攥在手里。
-		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb, scheduler.Hint{Code: resp.StatusCode})
+		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb, scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 	}()
 
 	total := resp.ContentLength

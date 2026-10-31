@@ -18,6 +18,11 @@ import (
 
 func newTestServer(t *testing.T) (*store.Store, http.Handler) {
 	t.Helper()
+	return newTestServerOpts(t)
+}
+
+func newTestServerOpts(t *testing.T, opts ...Option) (*store.Store, http.Handler) {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
@@ -32,7 +37,7 @@ func newTestServer(t *testing.T) (*store.Store, http.Handler) {
 		t.Fatal(err)
 	}
 	gw := gateway.New(st, gateway.Options{Cache: cs})
-	return st, New(st, runner.New(st), gw, nil, nil)
+	return st, New(st, runner.New(st), gw, nil, nil, opts...)
 }
 
 func postJSON(h http.Handler, path string, body string, cookie *http.Cookie) *httptest.ResponseRecorder {

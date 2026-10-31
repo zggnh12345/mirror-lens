@@ -305,7 +305,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			if t.c != nil {
 				// 成功也要记状态码：429 率的分母是「上游真实响应过多少次」，
 				// 不记 200 的话分母里就只剩失败的请求。
-				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code})
+				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
 				plan.Source = t.c.Name
 			}
 			return e, notMod, nil

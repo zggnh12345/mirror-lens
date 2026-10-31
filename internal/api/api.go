@@ -21,6 +21,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
@@ -40,10 +41,28 @@ type Server struct {
 	gc  *gc.GC
 	jan *janitor.Janitor
 	sch *scheduler.Scheduler
+
+	metricsOn    bool
+	metricsToken bool
 }
 
-func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Janitor, sch *scheduler.Scheduler) http.Handler {
+// Option 是 New 的可选开关，避免为了一个端点改所有调用点的签名。
+type Option func(*Server)
+
+// WithMetrics 打开 /metrics；requireToken 时要求登录或 Access Token
+// （和代理路径同一套凭据），防止把流量数字暴露到公网。
+func WithMetrics(enabled, requireToken bool) Option {
+	return func(s *Server) {
+		s.metricsOn = enabled
+		s.metricsToken = requireToken
+	}
+}
+
+func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Janitor, sch *scheduler.Scheduler, opts ...Option) http.Handler {
 	s := &Server{st: st, eng: eng, gw: gw, jan: j, sch: sch}
+	for _, o := range opts {
+		o(s)
+	}
 	if gw != nil {
 		s.gc = gw.GC()
 	}
@@ -62,6 +81,11 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		writeJSON(w, 200, map[string]any{"ok": true, "busy": s.eng.Busy(), "ts": time.Now().Unix()})
 	})
 	mux.HandleFunc("/api/login", s.login)
+	// Prometheus 抓取口。默认公开（和大多数自建服务一样），公网部署可在
+	// config.yaml 里把 metrics.require_token 打开，改用面板登录或 Access Token。
+	if s.metricsOn {
+		mux.HandleFunc("/metrics", s.metrics)
+	}
 	// 样式表必须公开：登录页也要用
 	mux.HandleFunc("/app.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -708,4 +732,39 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// metrics 输出 Prometheus 文本格式。默认公开，require_token 打开后要求
+// 面板登录或 Access Token——抓取端用 Bearer 就行。
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	if s.metricsToken && !auth.Authed(r, s.st) {
+		tok := scrapeToken(r)
+		if tok == "" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="Mirror Lens"`)
+			writeJSON(w, 401, map[string]string{"error": "需要 Access Token"})
+			return
+		}
+		if _, ok := s.st.VerifyToken(tok); !ok {
+			writeJSON(w, 401, map[string]string{"error": "Token 无效"})
+			return
+		}
+	}
+	reg := metrics.Get()
+	if reg == nil {
+		writeJSON(w, 503, map[string]string{"error": "指标未启用"})
+		return
+	}
+	reg.Handler().ServeHTTP(w, r)
+}
+
+// scrapeToken 取抓取端带来的凭据：Bearer 或 Basic 的密码位。
+func scrapeToken(r *http.Request) string {
+	a := r.Header.Get("Authorization")
+	if len(a) > 7 && strings.EqualFold(a[:7], "bearer ") {
+		return strings.TrimSpace(a[7:])
+	}
+	if _, p, ok := r.BasicAuth(); ok {
+		return p
+	}
+	return ""
 }

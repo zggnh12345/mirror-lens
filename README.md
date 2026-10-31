@@ -271,6 +271,54 @@ POST   /api/password         {"old":"...","new":"..."}   只改密码
 - **默认不信任何转发头**。`X-Forwarded-For` 谁都能写，信了等于把限流键交给客户端。部署在 nginx / Traefik / Caddy 后面时，把反代自己的网段填进 `limits.trusted_proxies`（CIDR 或单个地址，如 `127.0.0.1/32`、`10.0.0.0/8`）；只有来自这些地址的请求才读转发头，并从右往左取第一个非可信地址——左边客户端可以随便伪造。
 - 所有数字在 `limits.*` 下，`limits.enabled: false` 整层关闭。
 
+## 监控
+
+`/metrics` 输出 Prometheus 文本格式，`metrics.enabled: false` 可关。默认公开；公网部署可把 `metrics.require_token` 打开，抓取端用 `Authorization: Bearer <Access Token>`。
+
+指标（标签都是封闭集合，**没有 URL、IP、文件名**）：
+
+- `mirrorlens_http_requests_total{scene,method,code}` — 请求数
+- `mirrorlens_http_request_duration_seconds{scene}` — 请求耗时直方图
+- `mirrorlens_http_response_bytes_total{scene}` — 下载流量（真正写给客户端的字节）
+- `mirrorlens_cache_requests_total{scene,result}` — 缓存查询结果（`hit` / `miss` / `pass`）
+- `mirrorlens_download_throughput_bytes_per_second{scene}` — 端到端吞吐（只统计未命中缓存的响应；命中时那是磁盘速度）
+- `mirrorlens_source_requests_total{kind,result}` — 源站成功/失败
+- `mirrorlens_source_429_total{kind}` — 上游 429 次数
+- `mirrorlens_source_fetch_duration_seconds{kind,mode}` — 回源耗时：`single` 整次回源、`stream` 首字节、`parallel` 整次并行填充、`chunk` 单段
+- `mirrorlens_source_inflight{source_id}` — 源站此刻并发占用
+- `mirrorlens_ratelimit_rejected_total{layer}` — 入口限流拒绝（`global` / `ip` / `token`）
+
+常用查询：
+
+```promql
+# 缓存命中率
+sum(rate(mirrorlens_cache_requests_total{result="hit"}[5m])) by (scene)
+  / sum(rate(mirrorlens_cache_requests_total{result=~"hit|miss"}[5m])) by (scene)
+
+# 源站成功率
+sum(rate(mirrorlens_source_requests_total{result="ok"}[5m])) by (kind)
+  / sum(rate(mirrorlens_source_requests_total[5m])) by (kind)
+
+# 上游 429 占比
+sum(rate(mirrorlens_source_429_total[5m])) by (kind)
+  / sum(rate(mirrorlens_source_requests_total[5m])) by (kind)
+
+# P95 请求耗时
+histogram_quantile(0.95, sum(rate(mirrorlens_http_request_duration_seconds_bucket[5m])) by (le, scene))
+
+# 出站流量（字节/秒）
+sum(rate(mirrorlens_http_response_bytes_total[5m]))
+```
+
+抓取配置：
+
+```yaml
+scrape_configs:
+  - job_name: mirror-lens
+    static_configs:
+      - targets: ["mirror-lens:8080"]
+```
+
 ## 安全边界
 
 - 不改 `daemon.json`，不改 git config，不写任何系统文件

@@ -98,6 +98,12 @@ limits:
   # 只信这些地址发来的 X-Forwarded-For，并取最右侧的非可信地址作为客户端。
   trusted_proxies: []
 
+# Prometheus 抓取口（/metrics）。
+metrics:
+  enabled: true
+  # true 时 /metrics 要面板登录或 Access Token；默认公开，和大多数自建服务一致。
+  require_token: false
+
 parallel:
   enabled: true
   # 小于这个尺寸不值得分片：多几次握手反而更慢

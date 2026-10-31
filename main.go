@@ -21,6 +21,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
 	"github.com/zggnh12345/mirror-lens/internal/limits"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
@@ -175,6 +176,9 @@ func main() {
 		}
 	}()
 
+	// 指标收集常开（开销只是几个 map 自增），开关只管要不要暴露 /metrics。
+	metrics.Enable()
+
 	lim := limits.New(cfg.Limits)
 	if lim.Enabled() {
 		log.Printf("入口限流已开: 全局 %.0f/s 并发 %d | 每 IP %d/分 并发 %d | 每 Token %d/分 并发 %d | 可信代理 %v",
@@ -186,8 +190,9 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           lim.Wrap(api.New(st, eng, gw, jan, sched)),
+		Addr: cfg.Addr,
+		Handler: metrics.Middleware(lim.Wrap(api.New(st, eng, gw, jan, sched,
+			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken)))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

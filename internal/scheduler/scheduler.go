@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -221,8 +222,14 @@ func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	sem := s.semFor(id)
 	select {
 	case sem <- struct{}{}:
+		metrics.SourceInflight(id, 1)
 		var once sync.Once
-		return func() { once.Do(func() { <-sem }) }, nil
+		return func() {
+			once.Do(func() {
+				<-sem
+				metrics.SourceInflight(id, -1)
+			})
+		}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -293,6 +300,10 @@ type Hint struct {
 	// 只用于统计限流比例，不参与退避计算。
 	Code int
 
+	// Mode 说明这次上报的耗时是什么：single 整次回源、stream 首字节、chunk 单段。
+	// 三种耗时的含义完全不同，混在一个直方图里就没法看了。
+	Mode string
+
 	RetryAfter time.Duration
 }
 
@@ -337,10 +348,14 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	if ok && kind == "git" {
 		_ = s.st.SetGitCap(c.ID, true)
 	}
-	code := 0
+	code, mode := 0, ""
 	if len(hints) > 0 {
-		code = hints[0].Code
+		code, mode = hints[0].Code, hints[0].Mode
 	}
+	if mode == "" {
+		mode = "other"
+	}
+	metrics.SourceResult(kind, ok, code, mode, d)
 	s.st.RecordSourceEvent(c.ID, kind, ok, d.Milliseconds(), code)
 }
 

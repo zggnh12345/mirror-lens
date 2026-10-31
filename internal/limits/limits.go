@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
 // Config 是限流参数。数值为 0 表示用 Default 里的值；Enabled=false 时整层关闭。
@@ -334,6 +336,7 @@ func (l *Limiter) reject(w http.ResponseWriter, layer string, rate float64) {
 	l.mu.Lock()
 	l.hits[layer]++
 	l.mu.Unlock()
+	metrics.RateLimited(layer)
 
 	w.Header().Set("Retry-After", itoa(secs))
 	w.Header().Set("X-ML-Limit", layer)
