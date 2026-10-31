@@ -3,6 +3,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -42,6 +43,46 @@ func EnsureAdmin(st *store.Store) error {
 		return err
 	}
 	return st.SetSetting(KeyMustChg, "1")
+}
+
+// ErrSetupDone 表示首次设置已经被人抢先做完了。
+var ErrSetupDone = errors.New("账号已经设置过了")
+
+// Setup 首次设置账号：认领 must_change、写用户名、写密码，三件事在同一个事务里。
+// 认领是一条带条件的 UPDATE（value='1' → '0'），所以并发时只有一个调用能成功，
+// 失败的那个整体回滚，不会留下「用户名是 A、密码是 B」的半截状态。
+func Setup(st *store.Store, user, pass string) error {
+	h, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	err = st.Tx(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`UPDATE settings SET value='0' WHERE key=? AND value='1'`, KeyMustChg)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrSetupDone
+		}
+		for _, kv := range [][2]string{{KeyUser, user}, {KeyHash, string(h)}} {
+			if _, err := tx.Exec(
+				`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+				kv[0], kv[1],
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	st.DeleteAllSessions()
+	return nil
 }
 
 // SetPassword 改密码，并作废所有已有会话（当前会话由调用方重新签发）。

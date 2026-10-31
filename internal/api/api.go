@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -217,7 +218,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.Check(s.st, in.User, in.Pass) {
 		auth.Fail(r)
-		log.Printf("登录失败: %s user=%q", r.RemoteAddr, in.User)
+		log.Printf("登录失败: %s user=%s", r.RemoteAddr, maskUser(in.User))
 		writeJSON(w, 401, map[string]string{"error": "用户名或密码不对"})
 		return
 	}
@@ -227,6 +228,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1"})
+}
+
+// maskUser 只留首字符和长度：日志要能看出「有人在试哪个账号」，但用户名本身
+// 不该落在日志里（日志会被打包、转发、贴进 issue）。
+func maskUser(u string) string {
+	if u == "" {
+		return "(空)"
+	}
+	r := []rune(u)
+	return fmt.Sprintf("%c***(%d)", r[0], len(r))
 }
 
 // needSetup 表示还停在「默认密码」状态。
@@ -266,21 +277,21 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "别再用默认密码 admin"})
 		return
 	}
-	if err := auth.SetUser(s.st, in.User); err != nil {
+	// 认领 + 写账号 + 写密码在一个事务里，并发设置只有一个能赢。
+	if err := auth.Setup(s.st, in.User, in.Pass); err != nil {
+		if errors.Is(err, auth.ErrSetupDone) {
+			writeJSON(w, 409, map[string]string{"error": "账号已经设置过了"})
+			return
+		}
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := auth.SetPassword(s.st, in.Pass); err != nil {
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
-		return
-	}
-	// 旧会话一律作废（包括此刻这个），再给当前浏览器发一个新的。
-	s.st.DeleteAllSessions()
+	// Setup 已经作废了所有旧会话（包括此刻这个），给当前浏览器发一个新的。
 	if err := auth.Login(w, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
 		return
 	}
-	log.Printf("初始账号已设置: user=%q", in.User)
+	log.Printf("初始账号已设置: user=%s", maskUser(in.User))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

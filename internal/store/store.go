@@ -520,6 +520,20 @@ func (s *Store) GetSetting(key, def string) string {
 	return v
 }
 
+// Tx 在一个事务里执行 fn，fn 返回错误就整体回滚。
+// 需要「先判断再写」的地方都用它：单条 SQL 的原子性管不了跨语句的状态。
+func (s *Store) Tx(fn func(*sql.Tx) error) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetSetting(key, value string) error {
 	_, err := s.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 	return err

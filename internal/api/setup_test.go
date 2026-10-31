@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
@@ -123,6 +124,72 @@ func TestSetupRejectsWeakInput(t *testing.T) {
 	// 失败不应留下半个账号：还是默认密码状态。
 	if !auth.Check(st, "admin", "admin") {
 		t.Fatalf("失败的设置不该改掉账号")
+	}
+}
+
+// 并发点「保存」：只能有一个成功，其余 409；最终账号必须是赢家的那一组。
+func TestSetupConcurrentOnlyOneWins(t *testing.T) {
+	_, h := newTestServer(t)
+	_, ck := login(t, h, "admin", "admin")
+
+	const n = 6
+	type res struct {
+		code int
+		body string
+	}
+	out := make([]res, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			user := "racer" + string(rune('a'+i))
+			rec := postJSON(h, "/api/setup", `{"user":"`+user+`","pass":"pass-`+user+`"}`, ck)
+			out[i] = res{rec.Code, rec.Body.String()}
+		}(i)
+	}
+	wg.Wait()
+
+	ok := 0
+	winner := ""
+	for i, r := range out {
+		switch r.code {
+		case 200:
+			ok++
+			winner = "racer" + string(rune('a'+i))
+		case 409:
+		default:
+			t.Fatalf("第 %d 个请求应 200 或 409，得到 %d %s", i, r.code, r.body)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("应恰好一个成功，实际 %d 个：%v", ok, out)
+	}
+	if rec, _ := login(t, h, winner, "pass-"+winner); rec.Code != 200 {
+		t.Fatalf("赢家应能登录，得到 %d %s", rec.Code, rec.Body.String())
+	}
+	for i := 0; i < n; i++ {
+		u := "racer" + string(rune('a'+i))
+		if u == winner {
+			continue
+		}
+		if rec, _ := login(t, h, u, "pass-"+u); rec.Code != 401 {
+			t.Fatalf("输家 %q 不该能登录，得到 %d", u, rec.Code)
+		}
+	}
+}
+
+func TestMaskUser(t *testing.T) {
+	cases := map[string]string{
+		"":      "(空)",
+		"a":     "a***(1)",
+		"admin": "a***(5)",
+		"张三丰":   "张***(3)",
+	}
+	for in, want := range cases {
+		if got := maskUser(in); got != want {
+			t.Errorf("maskUser(%q)=%q，期望 %q", in, got, want)
+		}
 	}
 }
 
