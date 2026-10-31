@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -86,6 +87,20 @@ func (g *Gateway) cacheHeaders(h http.Header, e *store.CacheEntry, now time.Time
 		h.Set("Cache-Tag", tag)
 		h.Set("Surrogate-Key", tag)
 	}
+}
+
+// cacheHeadersPlan 给流式响应套同一套缓存语义。
+//
+// 流式填充在写响应头的时候内容还没落盘，没有 CacheEntry 可查；但边缘缓存
+// 恰恰最需要大文件的那份头。按 plan 的缓存键和 TTL 生成等价的条目即可——
+// 唯一的差别是没有 Age（刚生成，本来就是 0）。
+func (g *Gateway) cacheHeadersPlan(h http.Header, plan *adapter.Plan) {
+	if plan == nil {
+		return
+	}
+	now := g.now()
+	e := &store.CacheEntry{Key: plan.CacheKey, TTL: entryTTL(plan), CreatedAt: now.Unix()}
+	g.cacheHeaders(h, e, now)
 }
 
 // noStore 用于错误响应：401/403/5xx 绝不能进共享缓存，否则一次故障会被

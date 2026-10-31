@@ -322,6 +322,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	if plan.Source != "" {
 		h.Set("X-ML-Source", plan.Source)
 	}
+	// 边下边发也要把缓存语义说清楚：没有它，边缘只能按默认策略猜，
+	// 大文件反而成了最不可缓存的那类。
+	g.cacheHeadersPlan(h, plan)
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
@@ -515,28 +518,54 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, se
 
 // passThrough 原样转发 Range / 条件请求，不碰缓存。
 func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, plan.Upstream.String(), nil)
-	if err != nil {
-		http.Error(w, "502 "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
-	req.Header.Set("Accept-Encoding", "identity")
-	for _, k := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
-		if v := r.Header.Get(k); v != "" {
-			req.Header.Set(k, v)
-		}
-	}
-	for k, vs := range plan.Header {
-		for _, v := range vs {
-			req.Header.Add(k, v)
-		}
+	// 直通也要挑源：Range 请求常常是对大文件的续传，绕过镜像等于把最费
+	// 流量的那部分请求原样丢回官方源。
+	targets := g.targets(plan, nil)
+	if !plan.Stream {
+		targets = targets[len(targets)-1:] // 注册表自己已经挑过源了
 	}
 
-	resp, err := g.cli.Do(req)
-	if err != nil {
+	var (
+		resp *http.Response
+		err  error
+		src  string
+	)
+	for i, t := range targets {
+		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)
+		if rerr != nil {
+			err = rerr
+			continue
+		}
+		req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
+		req.Header.Set("Accept-Encoding", "identity")
+		for _, k := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
+			if v := r.Header.Get(k); v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		for k, vs := range plan.Header {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+		resp, err = g.cli.Do(req)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode >= 500 && i < len(targets)-1 {
+			resp.Body.Close()
+			continue
+		}
+		if t.c != nil {
+			src = t.c.Name
+			plan.Source = src
+		}
+		break
+	}
+	if resp == nil {
 		code := statusFor(err)
 		log.Printf("透传失败 %s: %v", plan.Upstream, err)
+		noStore(w.Header())
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -554,6 +583,9 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			w.Header().Set("Docker-Content-Digest", d)
 			w.Header().Set("X-ML-Digest", "request")
 		}
+	}
+	if src != "" {
+		w.Header().Set("X-ML-Source", src)
 	}
 	w.Header().Set("X-ML-Cache", "PASS")
 	w.WriteHeader(resp.StatusCode)

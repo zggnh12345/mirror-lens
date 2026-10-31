@@ -222,6 +222,10 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			g.serveCached(w, r, prev, "HIT", true)
 			return
 		}
+		if r.Header.Get("Range") != "" || r.Method == http.MethodHead {
+			g.passThrough(w, r, plan)
+			return
+		}
 		entry, notMod, err := g.fetchOnce(r.Context(), plan, prev)
 		switch {
 		case err == nil && notMod:
@@ -241,6 +245,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 				http.Error(w, fmt.Sprintf("%d 上游返回 %d", http.StatusNotFound, ue.Code), http.StatusNotFound)
 				return
 			}
+			// 超过缓存上限：不缓存，边下边发。大文件正是最需要加速的那类，
+			// 旧实现在这里直接 502，等于把 release 包全推给了源站。
+			var tl *tooLargeError
+			if errors.As(err, &tl) {
+				g.fillStream(w, r, plan)
+				return
+			}
 			// 其余错误（超时、5xx、连不上）先给缓存里的旧版本，标 STALE
 			log.Printf("回源失败，使用旧缓存 %s: %v", plan.CacheKey, err)
 			g.serveCached(w, r, prev, "STALE", true)
@@ -248,8 +259,18 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		}
 	}
 
+	if r.Header.Get("Range") != "" || r.Method == http.MethodHead {
+		g.passThrough(w, r, plan)
+		return
+	}
+
 	entry, _, err := g.fetchOnce(r.Context(), plan, nil)
 	if err != nil {
+		var tl *tooLargeError
+		if errors.As(err, &tl) {
+			g.fillStream(w, r, plan)
+			return
+		}
 		code := statusFor(err)
 		log.Printf("回源失败 %s: %v", plan.CacheKey, err)
 		noStore(w.Header())
@@ -258,6 +279,14 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	}
 	setSource(w, plan)
 	g.serveCached(w, r, entry, "MISS", false)
+}
+
+// freshFor 按 plan 的 TTL 判断条目是否还新鲜（/gh/ /raw/ 用）。
+func (g *Gateway) freshFor(e *store.CacheEntry, plan *adapter.Plan) bool {
+	if e == nil {
+		return false
+	}
+	return plan.Immutable || g.now().Sub(time.Unix(e.CreatedAt, 0)) < plan.TTL
 }
 
 // fetchOnce 保证同一个缓存键同时只有一次回源：并发请求等着，
@@ -326,6 +355,13 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 				plan.Source = t.c.Name
 			}
 			return e, notMod, nil
+		}
+		// 超过本地上限是策略判断，不是这台源的问题：记失败会把它打进
+		// 冷却/熔断，而它其实是好的。也不能再换源——同一份文件换个源
+		// 一样超限，交给流式链路直发即可。
+		var tl *tooLargeError
+		if errors.As(err, &tl) {
+			return nil, false, err
 		}
 		if t.c == nil {
 			return nil, false, err // 官方源失败就是失败，不再兜圈子
@@ -404,6 +440,12 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 
 	h := sha256.New()
+	// 声明的长度就超上限：一个字节都不用下，直接交给流式链路。
+	// 否则要先白下 maxSize 再报错，几百 MB 的 release 包等于白跑一遍。
+	if resp.ContentLength > g.maxSize {
+		resp.Body.Close()
+		return nil, false, 0, &tooLargeError{Max: g.maxSize}
+	}
 	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
