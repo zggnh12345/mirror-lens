@@ -93,11 +93,17 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode == 200 && strings.Contains(ct, "text/html") {
+		res.Verdict = VerdictNo
 		res.Error = "返回 HTML 页面，不是 registry"
 		res.Detail = "假站点"
 		return res
 	}
 	if resp.StatusCode != 200 && resp.StatusCode != 401 {
+		// /v2/ 404 = 没有 registry API；429/5xx 只说明它现在忙或坏了。
+		switch resp.StatusCode {
+		case http.StatusNotFound, http.StatusGone:
+			res.Verdict = VerdictNo
+		}
 		res.Error = fmt.Sprintf("/v2/ 返回 %d", resp.StatusCode)
 		res.Detail = string(body[:min(len(body), 80)])
 		return res
@@ -169,6 +175,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 	}
 
 	res.OK = true
+	res.Verdict = VerdictYes
 	res.Detail = fmt.Sprintf("%d 层", len(layerDigests(mf)))
 	res.LatencyMS = time.Since(t0).Milliseconds()
 

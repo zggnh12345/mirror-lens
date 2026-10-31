@@ -55,6 +55,12 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode != 200 {
+		// 样本文件是钉死的 commit，正常情况下永远在。404/410 说明这个站
+		// 根本不代理 GitHub；其余（429、5xx、403）只说明此刻不给我。
+		switch resp.StatusCode {
+		case http.StatusNotFound, http.StatusGone:
+			res.Verdict = VerdictNo
+		}
 		res.Error = fmt.Sprintf("raw 文件返回 %d", resp.StatusCode)
 		if len(body) > 0 && len(body) < 200 {
 			res.Detail = strings.TrimSpace(string(body))
@@ -62,6 +68,7 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		return res
 	}
 	if strings.Contains(ct, "text/html") && !strings.Contains(string(body), "Hello World") {
+		res.Verdict = VerdictNo
 		res.Error = "返回 HTML 页面，不是代理"
 		return res
 	}
@@ -80,6 +87,7 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		}
 	}
 	res.OK = true
+	res.Verdict = VerdictYes
 	res.Detail = "raw 通过"
 
 	if tier < 3 {

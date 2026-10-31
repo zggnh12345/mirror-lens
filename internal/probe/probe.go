@@ -21,8 +21,18 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 )
 
+// 能力判定：只有「对方明确回答不支持」才算结论。
+// 超时、DNS、连接被重置、429、5xx 一律 VerdictUnknown——那说明不了它支持
+// 什么，只说明此刻不通。把它们当结论写进 CapNo，源就再也回不来了。
+const (
+	VerdictUnknown = ""
+	VerdictYes     = "yes"
+	VerdictNo      = "no"
+)
+
 type Result struct {
 	OK        bool   `json:"ok"`
+	Verdict   string `json:"verdict,omitempty"`
 	HTTPCode  int    `json:"http_code"`
 	LatencyMS int64  `json:"latency_ms"`
 	SpeedKBps int64  `json:"speed_kbps"`

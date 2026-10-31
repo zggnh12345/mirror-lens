@@ -284,14 +284,20 @@ func (e *Engine) RunSource(id int64) {
 //   - L2/L3 测已确认支持的 + 还没测过的（自动识别双栈站）
 func kindsFor(s store.Source, tier int) []string {
 	var out []string
+	// 判死的源如果没有任何协议被确认过，仍然两种都测一遍：这样早先被一次
+	// 超时误判成 CapNo 的源还能自己爬回来，不用人工重新识别。
+	reidentify := tier >= 2 && s.Status == "dead" && s.DockerCap != store.CapYes && s.GithubCap != store.CapYes
 	for _, k := range allKinds {
 		cap := s.DockerCap
 		if k == "github" {
 			cap = s.GithubCap
 		}
-		if cap == store.CapYes {
+		switch {
+		case cap == store.CapYes:
 			out = append(out, k)
-		} else if cap == store.CapUnknown && tier >= 2 {
+		case cap == store.CapUnknown && tier >= 2:
+			out = append(out, k)
+		case reidentify:
 			out = append(out, k)
 		}
 	}
@@ -307,10 +313,12 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 			capv = github
 		}
 		switch {
-		case r.OK && tier >= 2:
+		case r.Verdict == probe.VerdictYes && tier >= 2:
 			capv = store.CapYes
-		case !r.OK && tier >= 2 && capv == store.CapUnknown:
-			// 识别阶段就不通，认定不是这类加速
+		case r.Verdict == probe.VerdictNo && tier >= 2 && capv == store.CapUnknown:
+			// 只有对方明确说「这里没有这个协议」（404/410、返回网页）才认。
+			// 超时、DNS、429、5xx 是「此刻不通」，写进 CapNo 就等于永久判死：
+			// kindsFor 之后不会再测它，网络恢复了也回不来。
 			capv = store.CapNo
 		}
 		if k == "docker" {
@@ -371,6 +379,12 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 	}
 
 	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes {
+		// 一个结论都没拿到（全是超时/DNS/429）：不知道它支持什么，标 pending
+		// 继续识别。判死会让它按小时降频，而它可能只是刚才网络抖了一下。
+		if s.DockerCap == store.CapUnknown && s.GithubCap == store.CapUnknown {
+			_ = e.st.SetStatusWhy(s.ID, "pending", "探测未拿到结论，等待复测")
+			return
+		}
 		_ = e.st.SetStatusWhy(s.ID, "dead", "没有任何协议探测通过")
 		return
 	}
