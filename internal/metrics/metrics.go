@@ -80,6 +80,7 @@ type Registry struct {
 	tp    map[string]*hist
 
 	srcReq   map[srcKey]uint64
+	srcResp  map[string]uint64 // 真的收到 HTTP 响应的次数（429 率的分母）
 	src429   map[string]uint64
 	srcDur   map[srcDurKey]*hist
 	inflight map[int64]int
@@ -96,6 +97,7 @@ func New() *Registry {
 		cache:     map[cacheKey]uint64{},
 		tp:        map[string]*hist{},
 		srcReq:    map[srcKey]uint64{},
+		srcResp:   map[string]uint64{},
 		src429:    map[string]uint64{},
 		srcDur:    map[srcDurKey]*hist{},
 		inflight:  map[int64]int{},
@@ -167,6 +169,11 @@ func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.srcReq[srcKey{kind, res}]++
+	// 只有真的收到响应才进 429 率的分母：连不上、超时、DNS 失败根本
+	// 没有状态码，把它们算进分母会把 429 率稀释成一个好看的数字。
+	if code > 0 {
+		r.srcResp[kind]++
+	}
 	if code == http.StatusTooManyRequests {
 		r.src429[kind]++
 	}
@@ -380,6 +387,13 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "source_429_total counter\n")
 		for _, s := range sortedKeys(r.src429) {
 			fmt.Fprintf(&b, "%ssource_429_total{kind=%q} %d\n", prefix, s, r.src429[s])
+		}
+	}
+	if len(r.srcResp) > 0 {
+		b.WriteString("# HELP " + prefix + "source_http_responses_total 收到真实 HTTP 响应的次数（429 率的分母）\n")
+		b.WriteString("# TYPE " + prefix + "source_http_responses_total counter\n")
+		for _, s := range sortedKeys(r.srcResp) {
+			fmt.Fprintf(&b, "%ssource_http_responses_total{kind=%q} %d\n", prefix, s, r.srcResp[s])
 		}
 	}
 	writeHist2(&b, prefix+"source_fetch_duration_seconds",

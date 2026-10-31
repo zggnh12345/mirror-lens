@@ -268,6 +268,7 @@ const (
 
 func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, resp *http.Response, pm *cache.PartialMeta, tgt *fetchTarget, ttfb time.Duration) {
 	defer resp.Body.Close()
+	t0 := time.Now()
 
 	outcome := outcomeNeutral
 	defer func() {
@@ -277,7 +278,10 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 只有整份传完才算成功：头到了、身子断了，对客户端就是一次失败下载。
 		// 提前记成功会让这台源一直粘着（每次成功把 sticky 续到 10 分钟后），
 		// 熔断也永远不触发——「握手快、传输慢」的源能把全部流量攥在手里。
-		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb, scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
+		// 记给调度器的是整次回源的耗时（首字节 + 传输），不是 TTFB：
+		// 拿 TTFB 当耗时会把「握手快、传输慢」的源算成最快的。
+		// TTFB 本身仍由 metrics.SourceResult 以 mode=stream 单独统计。
+		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb+time.Since(t0), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 	}()
 
 	total := resp.ContentLength

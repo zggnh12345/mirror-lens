@@ -111,6 +111,24 @@ func TestSourceMetrics(t *testing.T) {
 	}
 }
 
+// 429 率的分母只能是「真的收到响应」的次数：连不上/超时不该稀释它。
+func Test429DenominatorCountsOnlyRealResponses(t *testing.T) {
+	setup(t)
+	SourceResult("docker", false, 429, "single", 0)
+	SourceResult("docker", false, 0, "single", 0) // 连接失败，没有状态码
+	SourceResult("docker", false, 0, "single", 0)
+	out := string(Get().render())
+	if !strings.Contains(out, `source_429_total{kind="docker"} 1`) {
+		t.Fatalf("429 计数不对：\n%s", out)
+	}
+	if !strings.Contains(out, `source_http_responses_total{kind="docker"} 1`) {
+		t.Fatalf("分母应只算真实响应（1），不是 3：\n%s", out)
+	}
+	if !strings.Contains(out, `source_requests_total{kind="docker",result="fail"} 3`) {
+		t.Fatalf("总尝试次数仍应是 3：\n%s", out)
+	}
+}
+
 // 吞吐只在未命中缓存、够大、够慢的响应上量：命中缓存时那是磁盘速度。
 func TestThroughputOnlyOnRealFetches(t *testing.T) {
 	setup(t)

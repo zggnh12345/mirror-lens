@@ -100,6 +100,22 @@ func newClient(timeout time.Duration) *http.Client {
 	return c
 }
 
+// verifyChain 用系统根验证叶子证书，对端提供的其余证书只作为中间证书。
+func verifyChain(cs tls.ConnectionState, host string) error {
+	if len(cs.PeerCertificates) == 0 {
+		return errors.New("no certificate")
+	}
+	inter := x509.NewCertPool()
+	for _, c := range cs.PeerCertificates[1:] {
+		inter.AddCert(c)
+	}
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{
+		DNSName:       host,
+		Intermediates: inter,
+	})
+	return err
+}
+
 // tlsInfo dials the host and reads its leaf certificate without aborting on
 // verification errors, so an expired or self-signed cert is reported rather
 // than silently treated as "unreachable".
@@ -128,15 +144,11 @@ func tlsInfo(ctx context.Context, host string) (ok bool, days int, err error) {
 	days = int(time.Until(leaf.NotAfter).Hours() / 24)
 
 	// 独立验证：域名 + 链。自签/过期/域名不匹配都算 TLS 不可信。
-	pool := x509.NewCertPool()
-	for _, c := range cs.PeerCertificates[1:] {
-		pool.AddCert(c)
-	}
-	_, verr := leaf.Verify(x509.VerifyOptions{DNSName: host, Roots: pool, Intermediates: pool})
-	if verr != nil && len(cs.PeerCertificates) > 1 {
-		// 用系统根再试一次，覆盖正常签发链
-		_, verr = leaf.Verify(x509.VerifyOptions{DNSName: host})
-	}
+	//
+	// 关键：根必须是系统根，服务器发来的证书只能当中间证书。以前把对端
+	// 证书一股脑塞进 Roots，等于让服务器自己给自己作证——任何一个自签证书
+	// 都能通过，TLS 检查形同虚设。
+	verr := verifyChain(cs, host)
 	return verr == nil, days, nil
 }
 
