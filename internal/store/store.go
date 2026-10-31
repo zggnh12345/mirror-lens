@@ -43,6 +43,8 @@ type Source struct {
 	P95 map[string]int64 `json:"p95_ms,omitempty"`
 	// 每种类型 24h 上游 429 占比（0~1）；样本不足 20 次时缺省，不瞎报
 	Rate429 map[string]float64 `json:"rate429,omitempty"`
+	// 每种类型的可信度及证据（近 7 天）
+	Trust map[string]Trust `json:"trust,omitempty"`
 }
 
 // Kinds 返回这个源被确认支持的加速类型。
@@ -376,6 +378,22 @@ func (s *Store) ListSources() ([]Source, error) {
 			if r := rates[key{out[i].ID, k}]; r != nil && r.all >= min429Samples {
 				out[i].Rate429[k] = float64(r.c429) / float64(r.all)
 			}
+		}
+	}
+
+	// 可信度按类型算，和上面的延迟、限流同一个窗口口径。
+	for _, k := range []string{"docker", "github"} {
+		tm, err := s.trustMap(k, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		for i := range out {
+			if out[i].Trust == nil {
+				out[i].Trust = map[string]Trust{}
+			}
+			t := tm[out[i].ID]
+			t.Level = trustLevel(t)
+			out[i].Trust[k] = t
 		}
 	}
 	return out, nil

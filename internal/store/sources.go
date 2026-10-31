@@ -19,6 +19,8 @@ type SourceStat struct {
 	LatencyMS int64  `json:"latency_ms"` // 样本中位数
 	SpeedKBps int64  `json:"speed_kbps"` // 样本中位数
 	LastTS    int64  `json:"last_ts"`
+	// Trust 是这台源在该类型上的可信度级别（见 trust.go）
+	Trust int `json:"trust"`
 }
 
 const sourceSampleWindow = 10
@@ -60,12 +62,17 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 		return nil, err
 	}
 
+	tm, err := s.trustMap(kind, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		n, ok, lat, spd, last, err := s.sourceSamples(out[i].ID, kind)
 		if err != nil {
 			return nil, err
 		}
 		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = n, ok, lat, spd, last
+		out[i].Trust = tm[out[i].ID].Level
 	}
 	return out, nil
 }

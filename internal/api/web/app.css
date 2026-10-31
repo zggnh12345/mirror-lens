@@ -121,6 +121,13 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:var(--muted)}
 .meta i{font-style:normal;display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
 .meta .sep{color:var(--line2)}
+/* 可信度：颜色按级别走，和行内状态点一致 */
+.meta i.tr{padding:0 5px;border-radius:6px;line-height:16px;font-weight:600}
+.meta i.t-1{color:var(--poison);background:var(--poison-soft)}
+.meta i.t0{color:var(--faint)}
+.meta i.t1{color:var(--warn);background:var(--warn-soft)}
+.meta i.t2{color:var(--ok);background:var(--ok-soft)}
+.meta i.t3{color:#fff;background:var(--ok)}
 .meta .err{color:var(--bad);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* 能力打勾 */

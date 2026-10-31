@@ -65,6 +65,9 @@ type Candidate struct {
 	Score   float64 `json:"score"`
 	// Probe 表示这是半开状态下的试探请求，本次结果决定它回到可用还是继续熔断。
 	Probe bool `json:"probe,omitempty"`
+	// Trust 是内容校验的可信度（-1 不符 / 0 未验证 / 1 仅可用 / 2 内容一致 / 3 长期一致）。
+	// 只用于同分时的排序和展示，不参与评分。
+	Trust int `json:"trust"`
 }
 
 type stickyPick struct {
@@ -149,7 +152,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st)})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.order(kind, items)
@@ -191,6 +194,11 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 			return !bi
 		}
 		if out[i].Score == out[j].Score {
+			// 同分先看内容可信度：速度一样时，宁可走那台被反复校验过的。
+			// 分数本身不动——评分只看可用率/延迟/速度，可信度是另一条轴。
+			if out[i].Trust != out[j].Trust {
+				return out[i].Trust > out[j].Trust
+			}
 			if li, lj := s.InFlight(out[i].ID), s.InFlight(out[j].ID); li != lj {
 				return li < lj
 			}

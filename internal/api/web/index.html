@@ -174,6 +174,23 @@ function rowClass(x){
   return '';
 }
 
+var TRUST = {'-1':'内容不符','0':'未验证','1':'仅可用','2':'内容一致','3':'长期一致'};
+function trustChip(x){
+  var tr = x.trust || {}, list = [];
+  if (x.docker_cap === 1 && tr.docker) list.push(['docker', tr.docker]);
+  if (x.github_cap === 1 && tr.github) list.push(['github', tr.github]);
+  if (!list.length) return '';
+  var worst = list[0];
+  list.forEach(function(e){ if (e[1].level < worst[1].level) worst = e; });
+  var title = list.map(function(e){
+    return (e[0] === 'docker' ? 'Docker' : 'GitHub') + ' ' + TRUST[e[1].level]
+      + '（近 7 天 ' + e[1].digest7 + ' 次校验通过'
+      + (e[1].bad7 ? '，' + e[1].bad7 + ' 次不符' : '') + '）';
+  }).join('\n');
+  return '<i class="tr t' + worst[1].level + '" title="按实测校验结果分级\n' + title + '">'
+    + TRUST[worst[1].level] + '</i>';
+}
+
 function rowHtml(x){
   var l = x.last || {}, d = l.docker, g = l.github;
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
@@ -195,7 +212,7 @@ function rowHtml(x){
     + '<span class="dot"></span>'
     + '<div class="main">'
     +   '<div class="name">'+esc(x.name)+'<span class="tag">'+esc(originTag)+'</span></div>'
-    +   '<div class="meta">'+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)
+    +   '<div class="meta">'+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)+trustChip(x)
     +     (bits.length?'<span class="sep">·</span>'+bits.join('<span class="sep">·</span>'):'')+'</div>'
     + '</div>'
     + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="'+x.id+'"'+(x.enabled?' checked':'')+'><span></span></label>'
@@ -264,7 +281,18 @@ function drawHist(id){
     box.innerHTML = '<div class="kv"><span>最近一次</span><span>'+(last.ok?'正常':'失败')+' · '+(last.kind==='github'?'GitHub':'Docker')+' · L'+last.tier+'</span></div>'
       + '<div class="kv"><span>延迟 / 速度</span><span>'+latText(last.latency_ms)+' · '+speedText(last.speed_kbps)+'</span></div>'
       + '<div class="kv"><span>内容校验</span><span>'+(last.digest_ok===1?'manifest 一致':(last.digest_ok===0?'manifest 不一致，已拦截':'未知'))+' · '+(last.blob_ok===1?'字节一致':(last.blob_ok===0?'字节不符':'未整份校验'))+'</span></div>'
-      + '<div class="kv"><span>首字节</span><span>'+(last.ttfb_ms ? last.ttfb_ms+' ms' : '未测')+'</span></div>' 
+      + '<div class="kv"><span>首字节</span><span>'+(last.ttfb_ms ? last.ttfb_ms+' ms' : '未测')+'</span></div>'
+      + (function(){
+          var src = (DATA || []).filter(function(v){ return v.id === id; })[0] || {};
+          var tr = src.trust || {};
+          if (!tr.docker && !tr.github) return '';
+          var txt = ['docker','github'].filter(function(k){ return tr[k]; }).map(function(k){
+            var t = tr[k];
+            return (k === 'docker' ? 'Docker' : 'GitHub') + ' ' + TRUST[t.level]
+              + '（成功 ' + t.ok7 + ' · 校验 ' + t.digest7 + ' · 不符 ' + t.bad7 + '，近 7 天）';
+          }).join('；');
+          return '<div class="kv"><span>可信度</span><span>'+txt+'</span></div>';
+        })()
       + (last.error?'<div class="kv"><span>错误</span><span style="color:var(--bad);text-align:right;max-width:62%">'+esc(last.error)+'</span></div>':'')
       + '<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn danger" data-del="'+id+'">删除这个源</button></div>';
   }).catch(function(e){ box.innerHTML = '<div class="hint bad">'+esc(e.message)+'</div>'; });
