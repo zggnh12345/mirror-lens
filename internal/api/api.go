@@ -512,6 +512,10 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// 库里删干净还不够：调度器的候选缓存、熔断、并发闸门、动态吞吐和
+		// 逐源指标都还记着这个 id。不一起清掉，界面会继续把它排进候选。
+		s.sch.Forget(id)
+		s.eng.Changed()
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method"})

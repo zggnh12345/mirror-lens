@@ -146,6 +146,34 @@ func (s *Scheduler) Invalidate() {
 	s.mu.Unlock()
 }
 
+// Forget 清掉某个源的全部运行态：候选缓存、熔断、并发闸门、动态吞吐、逐源指标。
+//
+// 源删掉之后这些状态不会再有正确的使用者，留着就是内存里的墓碑；更麻烦的是
+// id 可能被新加的源复用，旧闸门和熔断记录会直接套到新源身上——新源一上来
+// 就被限流、或者直接显示在冷却中。删除是低频操作，这里不做增量，整体清空。
+func (s *Scheduler) Forget(id int64) {
+	if s == nil || id == 0 {
+		return
+	}
+	suffix := "|" + strconv.FormatInt(id, 10)
+	s.mu.Lock()
+	for k := range s.brk {
+		if strings.HasSuffix(k, suffix) {
+			delete(s.brk, k)
+		}
+	}
+	delete(s.dyn, id)
+	s.lists = map[string]listEntry{}
+	s.sticky = map[string]stickyPick{}
+	s.mu.Unlock()
+
+	s.loadMu.Lock()
+	delete(s.gates, id)
+	s.loadMu.Unlock()
+
+	metrics.ForgetSource(id)
+}
+
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
 func (s *Scheduler) Candidates(kind string) []Candidate {
 	if !s.Enabled() {

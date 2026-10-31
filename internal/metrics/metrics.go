@@ -204,6 +204,19 @@ func SourceInflight(id int64, delta int) {
 	r.inflight[id] = v
 }
 
+// ForgetSource 清掉某个源的全部逐源指标。源被删掉后这些序列不该再出现在
+// /metrics 里：它们既没有对应的源，也会让 id 复用后的新源背上旧数字。
+func ForgetSource(id int64) {
+	r := current.Load()
+	if r == nil || id == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.inflight, id)
+	delete(r.srclimit, id)
+}
+
 // SourceLimit 记录某台源当前的并发上限（动态带宽调度会改它）。
 func SourceLimit(id int64, n int) {
 	r := current.Load()
