@@ -53,6 +53,7 @@
     <button data-f="github">GitHub</button>
     <button data-f="manual">自定义</button>
     <button data-f="off">已停用</button>
+    <button data-f="archived">已归档</button>
   </div>
 
   <div class="actions">
@@ -171,7 +172,18 @@ function rowClass(x){
   if (x.status === 'usable') return 'ok';
   if (x.status === 'degraded') return 'warn';
   if (x.status === 'dead' || x.status === 'blocked') return 'bad';
+  if (x.status === 'archived') return 'off';
   return '';
+}
+
+var STATUS = {pending:'待检测', dead:'不可用', blocked:'已封禁', archived:'已归档', degraded:'不稳定'};
+function statusChip(x){
+  var label = STATUS[x.status];
+  if (!label) return '';
+  var cls = x.status === 'blocked' ? 'bad' : (x.status === 'dead' ? 'bad' : (x.status === 'degraded' ? 'warn' : 'arc'));
+  var title = x.status_reason ? '原因：' + x.status_reason : '';
+  if (x.status_at) title += (title ? '\n' : '') + '自 ' + new Date(x.status_at * 1000).toLocaleString() + ' 起';
+  return '<span class="st ' + cls + '" title="' + esc(title) + '">' + label + '</span>';
 }
 
 var TRUST = {'-1':'内容不符','0':'未验证','1':'仅可用','2':'内容一致','3':'长期一致'};
@@ -213,13 +225,20 @@ function rowHtml(x){
     + '<span class="dot"></span>'
     + '<div class="main">'
     +   '<div class="name">'+esc(x.name)+'<span class="tag">'+esc(originTag)+'</span></div>'
-    +   '<div class="meta">'+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)+trustChip(x)
+    +   '<div class="meta">'+statusChip(x)+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)+trustChip(x)
     +     (bits.length?'<span class="sep">·</span>'+bits.join('<span class="sep">·</span>'):'')+'</div>'
     + '</div>'
     + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="'+x.id+'"'+(x.enabled?' checked':'')+'><span></span></label>'
     + '</div>'
     + (OPEN === x.id
         ? '<div class="hist" id="hist-'+x.id+'"><svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
+          + '<div class="life">'
+          +   (x.status === 'archived'
+                ? '<button class="btn sm" data-life="pending" data-id="'+x.id+'">恢复并复检</button>'
+                : '<button class="btn sm" data-life="archived" data-id="'+x.id+'">归档</button>')
+          +   (x.status === 'blocked' ? '<button class="btn sm" data-life="pending" data-id="'+x.id+'">解除封禁并复检</button>' : '')
+          +   (x.status_reason ? '<span class="why" title="'+esc(x.status_reason)+'">'+esc(x.status_reason)+'</span>' : '')
+          + '</div>'
           + '<div class="legend"><span><i style="background:var(--ok)"></i>成功</span>'
           + '<span><i style="background:var(--bad)"></i>失败</span>'
           + '<span><i style="background:var(--poison)"></i>校验失败</span>'
@@ -236,6 +255,7 @@ function visible(){
     if (FILTER === 'github') return x.github_cap === 1;
     if (FILTER === 'manual') return x.origin === 'manual';
     if (FILTER === 'off') return !x.enabled;
+    if (FILTER === 'archived') return x.status === 'archived';
     return true;
   });
 }
@@ -312,6 +332,18 @@ $('#list').addEventListener('click', async function(ev){
       toast(cb.checked ? '已启用，正在重新识别' : '已停用，不再探测');
       setTimeout(function(){load(true);}, 2500);
     }catch(e){ toast(e.message); cb.checked = !cb.checked; }
+    return;
+  }
+  var life = ev.target.closest('[data-life]');
+  if (life){
+    ev.stopPropagation();
+    var lid = life.getAttribute('data-id'), act = life.getAttribute('data-life');
+    if (act === 'archived' && !confirm('归档后不再探测、不参与调度，记录保留，可随时恢复。确定？')) return;
+    try{
+      await api('/api/sources/'+lid, {method:'PATCH', body: JSON.stringify({status: act})});
+      toast(act === 'archived' ? '已归档' : '已恢复，正在复检');
+      load(true);
+    }catch(e){ toast(e.message); }
     return;
   }
   var del = ev.target.closest('[data-del]');

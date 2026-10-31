@@ -271,6 +271,29 @@ POST   /api/password         {"old":"...","new":"..."}   只改密码
 - **默认不信任何转发头**。`X-Forwarded-For` 谁都能写，信了等于把限流键交给客户端。部署在 nginx / Traefik / Caddy 后面时，把反代自己的网段填进 `limits.trusted_proxies`（CIDR 或单个地址，如 `127.0.0.1/32`、`10.0.0.0/8`）；只有来自这些地址的请求才读转发头，并从右往左取第一个非可信地址——左边客户端可以随便伪造。
 - 所有数字在 `limits.*` 下，`limits.enabled: false` 整层关闭。
 
+## 源站生命周期
+
+每个源有一个状态，探测结果自动推动它变化：
+
+```
+pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败──▶ dead
+   │                    │                                  │
+   └────首次失败────────┴──────────┐                       │
+                                   ▼                       ▼
+                             blocked（摘要不符） ──14 天──▶ archived ──180 天──▶ 删除
+```
+
+- **pending**：刚添加或刚手动恢复，还没验证过，不参与调度。
+- **usable / degraded**：可用 / 部分探测失败。只有这两个状态会接流量。
+- **dead**：连续 3 次探测失败。仍会以 `sources.recovery_minutes`（默认 60 分钟）的间隔低频复探——不探测就永远恢复不了。
+- **blocked**：内容摘要与官方不一致（缓存污染、被替换、被劫持）。这是安全状态，不是网络故障：要**连续两次** tier≥2 校验都干净才自动放回，避免「偶尔返回正确内容」的源在可用/封禁之间反复横跳。
+- **archived**：dead/blocked 维持 `sources.archive_days`（默认 14 天）后自动归档，也可手动归档。归档源不再探测、不参与调度，但记录和检测历史都保留。
+- **清理**：归档满 `sources.cleanup_days`（默认 180 天）后删除源及其检测记录；设为 `0` 或负数则永不自动删除。删除只针对 archived，其它状态再久也留着。
+
+人工只能做三件事：**归档**、**封禁**、**恢复（退回 pending 复检）**。不能手动置 `usable`——那等于绕过探测和校验。面板里展开任意源即可操作，`PATCH /api/sources/{id}` 传 `{"status":"archived"|"blocked"|"pending"}` 也行。
+
+状态变化时间（`status_at`）只在状态真的变化时刷新：否则一个常年 dead 的源每轮探测都会把「坏了多久」清零，永远到不了归档条件。老库升级时 `status_at` 从升级那一刻起算，不会把历史死源一次性归档。
+
 ## 监控
 
 `/metrics` 输出 Prometheus 文本格式，`metrics.enabled: false` 可关。默认公开；公网部署可把 `metrics.require_token` 打开，抓取端用 `Authorization: Bearer <Access Token>`。

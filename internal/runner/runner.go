@@ -18,8 +18,29 @@ import (
 
 var allKinds = []string{"docker", "github"}
 
+// Options 是源站生命周期的三个时间参数，零值走默认。
+type Options struct {
+	// ArchiveAfter：dead/blocked 维持这么久就归档（不再探测、不参与调度）。
+	ArchiveAfter time.Duration
+	// CleanupAfter：归档维持这么久就彻底删除（0 = 永不删）。
+	CleanupAfter time.Duration
+	// RecoveryEvery：dead/blocked 源最多多久探测一次（恢复探测）。
+	RecoveryEvery time.Duration
+}
+
+func (o Options) withDefaults() Options {
+	if o.ArchiveAfter <= 0 {
+		o.ArchiveAfter = 14 * 24 * time.Hour
+	}
+	if o.RecoveryEvery <= 0 {
+		o.RecoveryEvery = time.Hour
+	}
+	return o
+}
+
 type Engine struct {
-	st *store.Store
+	st  *store.Store
+	opt Options
 
 	mu       sync.Mutex
 	inflight bool
@@ -30,8 +51,12 @@ type Engine struct {
 	officialAt     time.Time
 }
 
-func New(st *store.Store) *Engine {
-	return &Engine{st: st, lastRun: map[int]time.Time{}}
+func New(st *store.Store, opts ...Options) *Engine {
+	var o Options
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	return &Engine{st: st, opt: o.withDefaults(), lastRun: map[int]time.Time{}}
 }
 
 // Busy 表示当前是否有探测在跑，面板用来显示"检测中"。
@@ -70,6 +95,20 @@ func (e *Engine) Run(tier int) {
 	if err != nil {
 		log.Printf("runner: list sources: %v", err)
 		return
+	}
+	// 死源/封禁源降频：最多每小时试一次。不探测就永远不会恢复，
+	// 但按 3 分钟一轮去敲一个已经挂掉的站，只是白烧带宽和对方额度。
+	if tier < 3 {
+		now := time.Now().Unix()
+		gap := int64(e.opt.RecoveryEvery.Seconds())
+		keep := srcs[:0]
+		for _, s := range srcs {
+			if !e.probeDue(s, now, gap) {
+				continue
+			}
+			keep = append(keep, s)
+		}
+		srcs = keep
 	}
 	// tier3 要下载真实文件，只对还活着的源做，省带宽也省对方限流额度。
 	if tier >= 3 {
@@ -181,10 +220,20 @@ func (e *Engine) Run(tier int) {
 	}
 	for _, s := range srcs {
 		if r, ok := perSource[s.ID]; ok {
+			_ = e.st.TouchProbe(s.ID)
 			e.apply(s, r, tier)
 		}
 	}
 	log.Printf("runner: tier%d done, %d checks over %d sources", tier, len(results), len(srcs))
+}
+
+// probeDue 判断这一轮要不要探测这个源。死源和封禁源降频到 RecoveryEvery，
+// 其余的照常——它们的状态还值得每 3 分钟看一次。
+func (e *Engine) probeDue(s store.Source, now, gap int64) bool {
+	if s.Status != "dead" && s.Status != "blocked" {
+		return true
+	}
+	return s.ProbeAt == 0 || now-s.ProbeAt >= gap
 }
 
 // RunSource 立刻识别单个源（新增自定义加速时用），两种类型都试一遍。
@@ -225,6 +274,7 @@ func (e *Engine) RunSource(id int64) {
 			Error: r.Error, TS: time.Now().Unix(),
 		})
 	}
+	_ = e.st.TouchProbe(s.ID)
 	e.apply(*s, res, 2)
 	log.Printf("runner: 识别完成 %s → docker=%v github=%v", s.BaseURL, res["docker"].OK, res["github"].OK)
 }
@@ -279,7 +329,24 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 	// 内容被替换：直接封禁，等人看
 	for _, r := range res {
 		if r.DigestOK == 0 {
-			_ = e.st.SetStatus(s.ID, "blocked")
+			_ = e.st.SetStatusWhy(s.ID, "blocked", "内容与官方摘要不一致")
+			return
+		}
+	}
+	// 被封禁过的源不会因为一次干净就放回去：连续两次校验一致才算恢复。
+	// 否则「偶尔返回正确内容」的缓存污染源会在可用/封禁之间来回跳。
+	if s.Status == "blocked" {
+		clean := 0
+		for _, k := range allKinds {
+			if !s.Supports(k) {
+				continue
+			}
+			if n := e.st.ConsecutiveClean(s.ID, k); n > clean {
+				clean = n
+			}
+		}
+		if clean < 2 {
+			_ = e.st.SetStatusWhy(s.ID, "blocked", "校验恢复中：需连续 2 次一致")
 			return
 		}
 	}
@@ -291,26 +358,26 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 		}
 		if r, ok := res[k]; ok {
 			if r.OK {
-				_ = e.st.SetStatus(s.ID, "usable")
+				_ = e.st.SetStatusWhy(s.ID, "usable", "")
 				return
 			}
 			continue
 		}
 		// 这轮没测它，看最近一次结果
 		if c, err := e.st.LastCheck(s.ID, k); err == nil && c != nil && c.OK {
-			_ = e.st.SetStatus(s.ID, "usable")
+			_ = e.st.SetStatusWhy(s.ID, "usable", "")
 			return
 		}
 	}
 
 	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes {
-		_ = e.st.SetStatus(s.ID, "dead")
+		_ = e.st.SetStatusWhy(s.ID, "dead", "没有任何协议探测通过")
 		return
 	}
 	// 全部失败：连续三次 tier>=2 失败才判死，避免一次抖动就下架。
 	if tier < 2 {
 		if s.Status == "usable" {
-			_ = e.st.SetStatus(s.ID, "degraded")
+			_ = e.st.SetStatusWhy(s.ID, "degraded", "存活探测失败")
 		}
 		return
 	}
@@ -324,9 +391,9 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 		}
 	}
 	if worst >= 3 {
-		_ = e.st.SetStatus(s.ID, "dead")
+		_ = e.st.SetStatusWhy(s.ID, "dead", "连续 3 次探测失败")
 	} else {
-		_ = e.st.SetStatus(s.ID, "degraded")
+		_ = e.st.SetStatusWhy(s.ID, "degraded", "探测失败，未达判死阈值")
 	}
 }
 
@@ -376,6 +443,7 @@ func (e *Engine) Loop(ctx context.Context) {
 	go func() {
 		// 启动后先跑一轮，面板立刻有数据
 		time.Sleep(2 * time.Second)
+		e.maintain(time.Now())
 		e.Run(2)
 		e.Run(3)
 	}()
@@ -383,6 +451,7 @@ func (e *Engine) Loop(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	lastPrune := time.Now()
+	lastMaint := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -401,11 +470,32 @@ func (e *Engine) Loop(ctx context.Context) {
 			if now.Sub(l3) >= minutes(e.st.GetSetting("l3_minutes", "360")) {
 				go e.Run(3)
 			}
+			if now.Sub(lastMaint) >= time.Hour {
+				lastMaint = now
+				e.maintain(now)
+			}
 			if now.Sub(lastPrune) > 24*time.Hour {
 				lastPrune = now
 				_ = e.st.Prune(now.AddDate(0, 0, -30).Unix())
 				e.st.PruneSessions()
 			}
+		}
+	}
+}
+
+// maintain 做生命周期收尾：长期不可用的归档，归档太久的删除。
+// 每小时一次，纯 SQL，代价可以忽略。
+func (e *Engine) maintain(now time.Time) {
+	if n, err := e.st.ArchiveStale(now.Add(-e.opt.ArchiveAfter).Unix()); err != nil {
+		log.Printf("runner: 归档失败: %v", err)
+	} else if n > 0 {
+		log.Printf("runner: 归档 %d 个长期不可用的源", n)
+	}
+	if e.opt.CleanupAfter > 0 {
+		if n, err := e.st.CleanupArchived(now.Add(-e.opt.CleanupAfter).Unix()); err != nil {
+			log.Printf("runner: 清理归档源失败: %v", err)
+		} else if n > 0 {
+			log.Printf("runner: 清理 %d 个归档超期的源", n)
 		}
 	}
 }

@@ -438,6 +438,9 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			Enabled *bool   `json:"enabled"`
 			Name    *string `json:"name"`
 			Note    *string `json:"note"`
+			// Status 只接受人工可做的三件事：归档、封禁、恢复待检。
+			// 不让手动置 usable——那等于绕过探测和校验。
+			Status *string `json:"status"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
@@ -446,6 +449,35 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 		if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
+		}
+		if in.Status != nil {
+			v := *in.Status
+			switch v {
+			case "archived":
+				if err := s.st.SetStatusWhy(id, "archived", "手动归档"); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+			case "blocked":
+				if err := s.st.SetStatusWhy(id, "blocked", "手动封禁"); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+			case "pending":
+				// 恢复：先退回待检，让探测重新验证，不直接当可用。
+				if err := s.st.SetStatusWhy(id, "pending", "手动恢复，等待复检"); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+				if err := s.st.TouchProbe0(id); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+				go s.eng.RunSource(id)
+			default:
+				writeJSON(w, 400, map[string]string{"error": "status 只能是 archived / blocked / pending"})
+				return
+			}
 		}
 		if in.Enabled != nil && *in.Enabled {
 			go s.eng.RunSource(id)

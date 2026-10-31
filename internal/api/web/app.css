@@ -233,6 +233,14 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 
 /* 加速器 Token 列表 */
 .btn.sm{height:28px;padding:0 9px;font-size:12px;border-radius:8px}
+/* 生命周期状态：跟能力标签并列，靠颜色区分，不抢视觉 */
+.st{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;margin-right:4px;
+  font-size:10px;font-weight:600;border:1px solid var(--line);background:var(--card2);color:var(--faint)}
+.st.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 32%,transparent);background:var(--bad-soft)}
+.st.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 32%,transparent);background:var(--warn-soft)}
+.st.arc{opacity:.75}
+.hist .life{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.hist .life .why{font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tklist{margin-top:12px;display:flex;flex-direction:column;gap:8px}
 .tkrow{display:flex;align-items:center;gap:10px;justify-content:space-between;
   border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card2)}

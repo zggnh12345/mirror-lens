@@ -24,8 +24,14 @@ type Source struct {
 	Name    string `json:"name"`
 	Origin  string `json:"origin"` // seed | discovered | manual
 	Enabled bool   `json:"enabled"`
-	Status  string `json:"status"` // pending | usable | degraded | dead | blocked
+	Status  string `json:"status"` // pending | usable | degraded | dead | blocked | archived
 	Note    string `json:"note"`
+	// StatusAt 是进入当前状态的时间，StatusReason 是为什么进去的。
+	// 归档/清理都靠 StatusAt 判断「坏了多久」，所以只在状态真的变化时更新。
+	StatusAt     int64  `json:"status_at"`
+	StatusReason string `json:"status_reason"`
+	// ProbeAt 是最近一次探测尝试的时间；死源/封禁源靠它做低频恢复探测。
+	ProbeAt int64 `json:"probe_at"`
 
 	DockerCap int `json:"docker_cap"`
 	GithubCap int `json:"github_cap"`
@@ -94,7 +100,9 @@ type Check struct {
 type Store struct{ db *sql.DB }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	// foreign_keys 要显式打开，否则 checks 的 ON DELETE CASCADE 形同虚设，
+	// 删源之后检测记录会留成孤儿。
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +135,9 @@ CREATE TABLE IF NOT EXISTS sources (
   docker_cap INTEGER NOT NULL DEFAULT -1,
   github_cap INTEGER NOT NULL DEFAULT -1,
   git_cap INTEGER NOT NULL DEFAULT 0,
+  status_at INTEGER NOT NULL DEFAULT 0,
+  status_reason TEXT NOT NULL DEFAULT '',
+  probe_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   UNIQUE(base_url)
 );
@@ -177,8 +188,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 		return err
 	}
 	if err := s.ensureColumns("sources", map[string]string{
-		"git_cap": "INTEGER NOT NULL DEFAULT 0",
+		"git_cap":       "INTEGER NOT NULL DEFAULT 0",
+		"status_at":     "INTEGER NOT NULL DEFAULT 0",
+		"status_reason": "TEXT NOT NULL DEFAULT ''",
+		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
+		return err
+	}
+	// 老库没有 status_at：从升级这一刻开始计时，而不是拿 created_at 倒推。
+	// 倒推会把所有历史死源在第一次巡检时一起归档，升级即清空列表。
+	if _, err := s.db.Exec(`UPDATE sources SET status_at=? WHERE status_at=0`, time.Now().Unix()); err != nil {
 		return err
 	}
 	return s.migrateAccel()
@@ -295,12 +314,12 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,created_at`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,status_reason,probe_at,created_at`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.CreatedAt)
+		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt)
 	return x, err
 }
 
@@ -457,9 +476,12 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.DockerCap == 0 && x.GithubCap == 0 {
 		x.DockerCap, x.GithubCap = CapUnknown, CapUnknown
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.CreatedAt)
+	if x.StatusAt == 0 {
+		x.StatusAt = x.CreatedAt
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.StatusAt, x.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -503,11 +525,109 @@ func (s *Store) SetCaps(id int64, docker, github int) error {
 }
 
 func (s *Store) SetStatus(id int64, status string) error {
-	_, err := s.db.Exec(`UPDATE sources SET status=? WHERE id=?`, status, id)
+	return s.SetStatusWhy(id, status, "")
+}
+
+// SetStatusWhy 改状态并记下时间和原因。状态没变就不动 status_at——
+// 否则一个常年 dead 的源每次探测都会把「坏了多久」清零，永远归档不了。
+func (s *Store) SetStatusWhy(id int64, status, reason string) error {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`UPDATE sources SET
+		status_at = CASE WHEN status<>? THEN ? ELSE status_at END,
+		status_reason = CASE WHEN status<>? THEN ? ELSE status_reason END,
+		status = ?
+		WHERE id=?`, status, now, status, reason, status, id)
 	return err
 }
 
+// TouchProbe0 清掉探测时间，让恢复的源不受低频门限阻挡，立刻可探。
+func (s *Store) TouchProbe0(id int64) error {
+	_, err := s.db.Exec(`UPDATE sources SET probe_at=0 WHERE id=?`, id)
+	return err
+}
+
+// TouchProbe 记一次探测尝试（不论成败）。
+func (s *Store) TouchProbe(id int64) error {
+	_, err := s.db.Exec(`UPDATE sources SET probe_at=? WHERE id=?`, time.Now().Unix(), id)
+	return err
+}
+
+// ConsecutiveClean 数最近连续多少次 tier>=2 探测既通过又没被篡改。
+// 封禁源靠它决定能不能放回去：一次干净不够，要连续两次。
+func (s *Store) ConsecutiveClean(sourceID int64, kind string) int {
+	rows, err := s.db.Query(`SELECT ok, digest_ok FROM checks
+		WHERE source_id=? AND kind=? AND tier>=2 ORDER BY ts DESC LIMIT 5`, sourceID, kind)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var ok bool
+		var digestOK int
+		if err := rows.Scan(&ok, &digestOK); err != nil {
+			return n
+		}
+		if ok && digestOK == 1 {
+			n++
+			continue
+		}
+		break
+	}
+	return n
+}
+
+// ArchiveStale 把「坏了/被封超过 before 秒」的源归档：不再探测、不再参与调度，
+// 记录保留，面板可一键恢复。返回归档条数。
+func (s *Store) ArchiveStale(before int64) (int64, error) {
+	res, err := s.db.Exec(`UPDATE sources SET status='archived', status_at=?, status_reason=?
+		WHERE enabled=1 AND status IN ('dead','blocked') AND status_at>0 AND status_at<=?`,
+		time.Now().Unix(), "长时间不可用，自动归档", before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// CleanupArchived 彻底删除归档超过 before 秒的源，连带检测记录和调度事件。
+// 只删 archived——别的状态再久也留着，删数据是单向操作。
+func (s *Store) CleanupArchived(before int64) (int64, error) {
+	rows, err := s.db.Query(`SELECT id FROM sources WHERE status='archived' AND status_at>0 AND status_at<=?`, before)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, id := range ids {
+		if err := s.DeleteSource(id); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
 func (s *Store) DeleteSource(id int64) error {
+	// source_events 没建外键，显式清；checks 有 CASCADE，但老库可能没开
+	// foreign_keys，也顺手清掉，不留孤儿。
+	if _, err := s.db.Exec(`DELETE FROM source_events WHERE source_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM checks WHERE source_id=?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM sources WHERE id=?`, id)
 	return err
 }
@@ -590,7 +710,7 @@ func (s *Store) Series(sourceID int64, limit int) ([]Check, error) {
 
 // EnabledSources 返回所有启用的源（runner 自己决定测哪几种类型）。
 func (s *Store) EnabledSources() ([]Source, error) {
-	rows, err := s.db.Query(`SELECT ` + srcCols + ` FROM sources WHERE enabled=1`)
+	rows, err := s.db.Query(`SELECT ` + srcCols + ` FROM sources WHERE enabled=1 AND status<>'archived'`)
 	if err != nil {
 		return nil, err
 	}

@@ -88,6 +88,14 @@ type Sources struct {
 	// MaxPerSource 是单台源同时进行的回源请求上限（预检与分片）。0 取默认 4，
 	// 负数表示不限。
 	MaxPerSource int `yaml:"max_per_source"`
+
+	// 源站生命周期。三个都是天数/分钟，0 表示用默认值。
+	//   ArchiveDays：dead/blocked 维持这么久自动归档（默认 14）
+	//   CleanupDays：归档维持这么久彻底删除（默认 180；负数 = 永不删除）
+	//   RecoveryMinutes：死源/封禁源最多多久探测一次（默认 60）
+	ArchiveDays     int `yaml:"archive_days"`
+	CleanupDays     int `yaml:"cleanup_days"`
+	RecoveryMinutes int `yaml:"recovery_minutes"`
 }
 
 // Parallel 是多源分片并行下载。
@@ -169,6 +177,10 @@ func Default() *Config {
 			StickyTTL:     Duration{10 * time.Minute},
 			FailCooldown:  Duration{5 * time.Minute},
 			MaxPerSource:  4,
+
+			ArchiveDays:     14,
+			CleanupDays:     180,
+			RecoveryMinutes: 60,
 		},
 		Parallel: Parallel{
 			Enabled:   true,

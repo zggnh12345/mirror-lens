@@ -63,6 +63,13 @@ sources:
   fail_cooldown: 5m
   # 单台源同时进行的回源请求上限（预检、分片）。0 取默认 4，负数不限。
   max_per_source: 4
+  # 源站生命周期：dead/blocked 维持 archive_days 天自动归档（不再探测、不参与
+  # 调度，记录保留）；归档再满 cleanup_days 天彻底删除（0 或负数 = 永不删）。
+  archive_days: 14
+  cleanup_days: 180
+  # 死源/封禁源的恢复探测间隔（分钟）。不探测永远恢复不了，按正常频率敲
+  # 一个已经挂掉的站只是白烧带宽。
+  recovery_minutes: 60
 
 # 探测。探测会请求用户填的源地址，默认只放行公网：域名解析到内网、重定向到
 # 内网、Docker 认证地址指向内网，都会被安全拨号层拦下。

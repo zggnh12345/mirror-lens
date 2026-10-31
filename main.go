@@ -139,7 +139,11 @@ func main() {
 		gw.SetScheduler(sched)
 		log.Printf("多源调度已开：每个协议最多试 %d 个源", cfg.Sources.MaxCandidates)
 	}
-	eng := runner.New(st)
+	eng := runner.New(st, runner.Options{
+		ArchiveAfter:  time.Duration(cfg.Sources.ArchiveDays) * 24 * time.Hour,
+		CleanupAfter:  time.Duration(cfg.Sources.CleanupDays) * 24 * time.Hour,
+		RecoveryEvery: time.Duration(cfg.Sources.RecoveryMinutes) * time.Minute,
+	})
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go eng.Loop(ctx)
