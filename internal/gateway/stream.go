@@ -189,7 +189,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
 			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
-			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter})
+			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
 				log.Printf("源 %s 返回 %d，要求 %s 后再来，换下一个", t.c.Name, resp.StatusCode, ue.RetryAfter)
 			} else {

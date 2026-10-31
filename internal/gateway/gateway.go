@@ -307,6 +307,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			var ue *upstreamError
 			if errors.As(err, &ue) {
 				hint.RetryAfter = ue.RetryAfter
+				hint.Code = ue.Code
 			}
 			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
 		}

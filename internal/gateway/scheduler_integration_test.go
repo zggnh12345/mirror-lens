@@ -92,6 +92,51 @@ func TestSchedulerFailover(t *testing.T) {
 	if okN != 0 || failN != 1 {
 		t.Fatalf("bad 应记录 1 次失败，实际 ok=%d fail=%d", okN, failN)
 	}
+	// 状态码要跟着事件走：没有它，500 和 429 在库里长得一样。
+	if codes, err := st.SourceEventCodes(badID, 10); err != nil || len(codes) != 1 || codes[0] != 500 {
+		t.Fatalf("失败事件应记下 500，实际 %v %v", codes, err)
+	}
+}
+
+// 429 是最需要区分的一种失败：它说明源还活着，只是让我们慢点。
+func TestFailoverRecords429(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cs, err := cache.New(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := srv(t, 0, "origin-body")
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer limited.Close()
+	good := srv(t, 0, "mirror-body")
+
+	limitedID := addSchedSource(t, st, "limited", limited.URL, 50, 2000)
+	addSchedSource(t, st, "good", good.URL, 400, 400)
+
+	g := New(st, Options{
+		Cache:   cs,
+		RawBase: origin.URL,
+		RawTTL:  time.Minute,
+		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+	})
+	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
+
+	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("应换源成功，得到 %d", rec.Code)
+	}
+	codes, err := st.SourceEventCodes(limitedID, 10)
+	if err != nil || len(codes) != 1 || codes[0] != 429 {
+		t.Fatalf("应记下 429，实际 %v %v", codes, err)
+	}
 }
 
 // TTL 到期的重新验证必须回官方源：镜像站把旧内容当「没变」时不能固化。
