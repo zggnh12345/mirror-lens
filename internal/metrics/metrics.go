@@ -83,6 +83,7 @@ type Registry struct {
 	srcResp  map[string]uint64 // 真的收到 HTTP 响应的次数（429 率的分母）
 	src429   map[string]uint64
 	srcDur   map[srcDurKey]*hist
+	srcTTFB  map[srcDurKey]*hist
 	inflight map[int64]int
 	srclimit map[int64]int
 	limited  map[string]uint64
@@ -100,6 +101,7 @@ func New() *Registry {
 		srcResp:   map[string]uint64{},
 		src429:    map[string]uint64{},
 		srcDur:    map[srcDurKey]*hist{},
+		srcTTFB:   map[srcDurKey]*hist{},
 		inflight:  map[int64]int{},
 		srclimit:  map[int64]int{},
 		limited:   map[string]uint64{},
@@ -186,6 +188,25 @@ func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) 
 		}
 		h.observe(d.Seconds(), durBuckets)
 	}
+}
+
+// SourceTTFB 记首字节耗时。和 SourceResult 的完整耗时分开两个指标：
+// 同一个 stream 请求，TTFB 可能是 80ms、整份传完 40s，混在一个直方图里
+// 既看不出源站响应快慢，也算不出真实传输速度。
+func SourceTTFB(kind, mode string, d time.Duration) {
+	r := current.Load()
+	if r == nil || d <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := srcDurKey{kind, mode}
+	h := r.srcTTFB[k]
+	if h == nil {
+		h = newHist(durBuckets)
+		r.srcTTFB[k] = h
+	}
+	h.observe(d.Seconds(), durBuckets)
 }
 
 // SourceInflight 调整某台源当前的并发占用（+1 进入，-1 退出）。
@@ -410,7 +431,13 @@ func (r *Registry) render() []byte {
 		}
 	}
 	writeHist2(&b, prefix+"source_fetch_duration_seconds",
-		"回源耗时（秒）：mode=single 整次回源，stream 首字节，chunk 单段", r.srcDur, durBuckets)
+		"回源完整耗时（秒）：mode=single 整次回源，stream 整次流式传输，chunk 单段", r.srcDur, durBuckets)
+	// 首字节单独一列：调度看的是整次回源耗时，运维看的是源站响应快不快，
+	// 两个数字混在一起谁都读不出来。
+	if len(r.srcTTFB) > 0 {
+		writeHist2(&b, prefix+"source_ttfb_seconds",
+			"回源首字节耗时（秒）：mode=stream 从发出请求到收到响应头", r.srcTTFB, durBuckets)
+	}
 	// 并发上限（动态带宽调度调整后的结果）
 	if len(r.srclimit) > 0 {
 		lids := make([]int64, 0, len(r.srclimit))

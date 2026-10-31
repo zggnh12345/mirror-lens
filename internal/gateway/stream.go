@@ -17,6 +17,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -280,7 +281,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 熔断也永远不触发——「握手快、传输慢」的源能把全部流量攥在手里。
 		// 记给调度器的是整次回源的耗时（首字节 + 传输），不是 TTFB：
 		// 拿 TTFB 当耗时会把「握手快、传输慢」的源算成最快的。
-		// TTFB 本身仍由 metrics.SourceResult 以 mode=stream 单独统计。
+		// TTFB 单独记一条 source_ttfb_seconds：调度评分用完整耗时，
+		// 监控上仍要能单独看到源站响应快不快。
+		metrics.SourceTTFB(plan.Kind, "stream", ttfb)
 		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb+time.Since(t0), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 	}()
 
