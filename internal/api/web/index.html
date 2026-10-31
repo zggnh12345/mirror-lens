@@ -184,6 +184,8 @@ function rowHtml(x){
   if (best && best.latency_ms) bits.push('<i>'+latText(best.latency_ms)+'</i>');
   var p95 = Math.max((x.p95_ms||{}).docker || 0, (x.p95_ms||{}).github || 0);
   if (p95) bits.push('<i title="近 24 小时成功样本的第 95 百分位">P95 '+latText(p95)+'</i>');
+  var r429 = Math.max((x.rate429||{}).docker || 0, (x.rate429||{}).github || 0);
+  if (r429 >= 0.01) bits.push('<i title="近 24 小时上游 429 占比">429 '+Math.round(r429*100)+'%</i>');
   if (best && best.speed_kbps) bits.push('<i>'+speedText(best.speed_kbps)+'</i>');
   if (ups.length) bits.push('<i>可用率 '+Math.round(Math.max.apply(null,ups)*100)+'%</i>');
   if (!best) bits.push('<i>待检测</i>');

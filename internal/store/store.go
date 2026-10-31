@@ -41,6 +41,8 @@ type Source struct {
 	Uptime map[string]float64 `json:"uptime,omitempty"`
 	// 每种类型 24h 延迟 P95（毫秒，只算成功样本）；0 表示样本不足
 	P95 map[string]int64 `json:"p95_ms,omitempty"`
+	// 每种类型 24h 上游 429 占比（0~1）；样本不足 20 次时缺省，不瞎报
+	Rate429 map[string]float64 `json:"rate429,omitempty"`
 }
 
 // Kinds 返回这个源被确认支持的加速类型。
@@ -352,8 +354,36 @@ func (s *Store) ListSources() ([]Source, error) {
 			out[i].P95[k] = p95(samples[key{out[i].ID, k}])
 		}
 	}
+
+	// 限流比例：同一个窗口里，这台源回了多少次 429。
+	type rate struct{ all, c429 int64 }
+	rates := map[key]*rate{}
+	erows, err := s.db.Query(`SELECT source_id,kind,COUNT(*),SUM(code=429) FROM source_events
+		WHERE ts>=? GROUP BY source_id,kind`, since)
+	if err == nil {
+		for erows.Next() {
+			var k key
+			var r rate
+			if err := erows.Scan(&k.id, &k.kind, &r.all, &r.c429); err == nil {
+				rates[k] = &r
+			}
+		}
+		erows.Close()
+	}
+	for i := range out {
+		out[i].Rate429 = map[string]float64{}
+		for _, k := range []string{"docker", "github"} {
+			if r := rates[key{out[i].ID, k}]; r != nil && r.all >= min429Samples {
+				out[i].Rate429[k] = float64(r.c429) / float64(r.all)
+			}
+		}
+	}
 	return out, nil
 }
+
+// min429Samples 是报限流比例的最小样本数。十次里两次 429 说明不了什么，
+// 但写成 20% 会让人立刻把一台好源停掉。
+const min429Samples = 20
 
 // minP95Samples 是出 P95 的最小样本数。三个样本的「95 分位」就是最大值，
 // 标成 P95 会让人误以为有统计意义。

@@ -128,7 +128,8 @@ func (s *Store) migrateAccel() error {
 			kind TEXT NOT NULL DEFAULT '',
 			ts INTEGER NOT NULL,
 			ok INTEGER NOT NULL,
-			ms INTEGER NOT NULL DEFAULT 0)`,
+			ms INTEGER NOT NULL DEFAULT 0,
+			code INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS idx_sev_src_ts ON source_events(source_id, ts DESC)`,
 	}
 	for _, q := range stmts {
@@ -140,6 +141,12 @@ func (s *Store) migrateAccel() error {
 	if err := s.ensureColumns("cache_entries", map[string]string{
 		"ttl":    "INTEGER NOT NULL DEFAULT 300",
 		"verify": "TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
+		return err
+	}
+	// 老库补列：事件表原来只记成败，没有状态码，算不出限流比例。
+	if err := s.ensureColumns("source_events", map[string]string{
+		"code": "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}

@@ -177,7 +177,7 @@ func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]bool, 
 
 // RecordSourceEvent 记录一次「代理请求打到某个源」的结果。
 // 这张表只用于熔断和运维观察，不参与速度评分。
-func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64) {
+func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64, code int) {
 	if sourceID == 0 {
 		return
 	}
@@ -185,8 +185,29 @@ func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64
 	if ok {
 		b = 1
 	}
-	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms) VALUES(?,?,?,?,?)`,
-		sourceID, kind, time.Now().Unix(), b, ms)
+	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms, code) VALUES(?,?,?,?,?,?)`,
+		sourceID, kind, time.Now().Unix(), b, ms, code)
+}
+
+// SourceEventCodes 返回某源最近事件的状态码，新的在前。排障和测试用。
+func (s *Store) SourceEventCodes(sourceID int64, limit int) ([]int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`SELECT code FROM source_events WHERE source_id=? ORDER BY id DESC LIMIT ?`, sourceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var c int
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // PruneSourceEvents 只保留最近 7 天，避免事件表无限长。

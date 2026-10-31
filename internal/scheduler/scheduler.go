@@ -279,9 +279,12 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 	return &u, true
 }
 
-// Hint 是失败回报里的附加信息。目前只有 429 的 Retry-After：源自己说了
-// 「多久之后再来」，比本地固定退避更准，但仍然是对方的一面之词，要夹上限。
+// Hint 是失败回报里的附加信息。
 type Hint struct {
+	// Code 是这次上报对应的上游 HTTP 状态码；0 表示没有（连接失败、超时）。
+	// 只用于统计限流比例，不参与退避计算。
+	Code int
+
 	RetryAfter time.Duration
 }
 
@@ -326,7 +329,11 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	if ok && kind == "git" {
 		_ = s.st.SetGitCap(c.ID, true)
 	}
-	s.st.RecordSourceEvent(c.ID, kind, ok, d.Milliseconds())
+	code := 0
+	if len(hints) > 0 {
+		code = hints[0].Code
+	}
+	s.st.RecordSourceEvent(c.ID, kind, ok, d.Milliseconds(), code)
 }
 
 // Snapshot 给面板看：每个协议当前的顺序与分数。

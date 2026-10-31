@@ -312,7 +312,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for i := range srcs {
 		switch {
 		case atomic.LoadInt32(&stats[i].fail) > 0:
-			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start))
+			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start),
+				scheduler.Hint{Code: int(atomic.LoadInt32(&stats[i].code))})
 		case atomic.LoadInt32(&stats[i].ok) > 0:
 			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start))
 		}
@@ -322,7 +323,10 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 }
 
 // parStat 记录一台源在一次并行下载里实际供成、供败的段数。
-type parStat struct{ ok, fail int32 }
+type parStat struct {
+	ok, fail int32
+	code     int32 // 最后一次非 206 的状态码，用来区分「限流」和「坏了」
+}
 
 // preflightStatusIsSourceFailure 判断预检的 HTTP 状态是否该计入源故障。
 //
@@ -395,7 +399,7 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 						log.Printf("并行填充：%s 限流，Retry-After=%s", t.u.Host, ra)
 					}
 				}
-				g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra})
+				g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode})
 			}
 			log.Printf("并行填充：%s 不参与分片（HTTP %d，Content-Range=%q）",
 				t.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
@@ -405,7 +409,7 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 			// 回了 206 却给不出合法的 Content-Range：这不是「没有 Range 能力」，
 			// 是协议响应本身有问题，按源故障记。
 			if ctx.Err() == nil {
-				g.reportSource(plan.Kind, t, false, time.Since(st))
+				g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{Code: resp.StatusCode})
 			}
 			log.Printf("并行填充：%s 返回异常 Range 响应（Content-Range=%q）",
 				t.u.Host, resp.Header.Get("Content-Range"))
@@ -472,6 +476,9 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			resp.Body.Close()
 			if blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[idx].fail, 1)
+			}
+			if blame {
+				atomic.StoreInt32(&stats[idx].code, int32(resp.StatusCode))
 			}
 			last = fmt.Errorf("分段响应对不上：%s 返回 %d %q", u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
 			continue
