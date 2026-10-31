@@ -83,6 +83,7 @@ type Registry struct {
 	src429   map[string]uint64
 	srcDur   map[srcDurKey]*hist
 	inflight map[int64]int
+	srclimit map[int64]int
 	limited  map[string]uint64
 }
 
@@ -98,6 +99,7 @@ func New() *Registry {
 		src429:    map[string]uint64{},
 		srcDur:    map[srcDurKey]*hist{},
 		inflight:  map[int64]int{},
+		srclimit:  map[int64]int{},
 		limited:   map[string]uint64{},
 	}
 }
@@ -193,6 +195,17 @@ func SourceInflight(id int64, delta int) {
 		return
 	}
 	r.inflight[id] = v
+}
+
+// SourceLimit 记录某台源当前的并发上限（动态带宽调度会改它）。
+func SourceLimit(id int64, n int) {
+	r := current.Load()
+	if r == nil || id == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.srclimit[id] = n
 }
 
 // RateLimited 记一次入口限流拒绝。
@@ -371,6 +384,19 @@ func (r *Registry) render() []byte {
 	}
 	writeHist2(&b, prefix+"source_fetch_duration_seconds",
 		"回源耗时（秒）：mode=single 整次回源，stream 首字节，chunk 单段", r.srcDur, durBuckets)
+	// 并发上限（动态带宽调度调整后的结果）
+	if len(r.srclimit) > 0 {
+		lids := make([]int64, 0, len(r.srclimit))
+		for id := range r.srclimit {
+			lids = append(lids, id)
+		}
+		sort.Slice(lids, func(i, j int) bool { return lids[i] < lids[j] })
+		b.WriteString("# HELP " + prefix + "source_concurrency_limit 源站当前并发上限（动态调整）\n")
+		b.WriteString("# TYPE " + prefix + "source_concurrency_limit gauge\n")
+		for _, id := range lids {
+			fmt.Fprintf(&b, "%ssource_concurrency_limit{source_id=%q} %d\n", prefix, strconv.FormatInt(id, 10), r.srclimit[id])
+		}
+	}
 	// 并发
 	ids := make([]int64, 0, len(r.inflight))
 	for id := range r.inflight {

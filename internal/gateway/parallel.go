@@ -461,6 +461,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 	if src.t.u.String() != plan.Upstream.String() {
 		urls = append(urls, plan.Upstream)
 	}
+	t0 := time.Now()
 	var last error
 	for _, u := range urls {
 		// 只有分到的那台源才归因；回落到官方源不算官方源的功劳，也不算它的错。
@@ -469,6 +470,9 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if err != nil {
 			if blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[idx].fail, 1)
+				if src.t.c != nil {
+					g.sched.Observe(src.t.c.ID, 0, 0, false, 0)
+				}
 			}
 			last = err
 			continue
@@ -504,6 +508,10 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		}
 		if blame {
 			atomic.AddInt32(&stats[idx].ok, 1)
+			if src.t.c != nil {
+				// 分片是带宽控制器最准的样本：字节数和耗时都真实。
+				g.sched.Observe(src.t.c.ID, n, time.Since(t0), true, resp.StatusCode)
+			}
 		}
 		return nil
 	}

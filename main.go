@@ -136,6 +136,7 @@ func main() {
 			StickyTTL:     cfg.Sources.StickyTTL.Duration,
 			FailCooldown:  cfg.Sources.FailCooldown.Duration,
 			MaxPerSource:  cfg.Sources.MaxPerSource,
+			Dynamic:       cfg.Sources.Dynamic,
 		})
 		gw.SetScheduler(sched)
 		log.Printf("多源调度已开：每个协议最多试 %d 个源", cfg.Sources.MaxCandidates)

@@ -88,6 +88,9 @@ type Sources struct {
 	// MaxPerSource 是单台源同时进行的回源请求上限（预检与分片）。0 取默认 4，
 	// 负数表示不限。
 	MaxPerSource int `yaml:"max_per_source"`
+	// Dynamic 打开后，每台源的并发在 1..MaxPerSource 之间按实测吞吐自动调整
+	// （AIMD：排队且吞吐不退步就加一路，吞吐掉 40% 或失败就减一路/减半）。
+	Dynamic bool `yaml:"dynamic"`
 
 	// 源站生命周期。三个都是天数/分钟，0 表示用默认值。
 	//   ArchiveDays：dead/blocked 维持这么久自动归档（默认 14）
@@ -187,6 +190,7 @@ func Default() *Config {
 			StickyTTL:     Duration{10 * time.Minute},
 			FailCooldown:  Duration{5 * time.Minute},
 			MaxPerSource:  4,
+			Dynamic:       true,
 
 			ArchiveDays:     14,
 			CleanupDays:     180,

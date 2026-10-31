@@ -29,6 +29,9 @@ type Config struct {
 	StickyTTL     time.Duration
 	FailCooldown  time.Duration
 	ListTTL       time.Duration
+	// Dynamic 打开后，每台源的并发上限在 1..MaxPerSource 之间按实测吞吐自动
+	// 调整（AIMD）。关掉就是固定的 MaxPerSource。
+	Dynamic bool
 	// MaxPerSource 是单台源同时进行的回源请求上限，0 取默认 4，负数表示不限。
 	// 只约束「会占住连接」的请求（预检、分片），不约束长连接流式转发——
 	// 那是用户自己的下载，卡住等于拒绝服务。
@@ -111,7 +114,8 @@ type Scheduler struct {
 	brk    map[string]*breaker // "kind|id"
 
 	loadMu sync.Mutex
-	sems   map[int64]chan struct{} // 源 id → 并发名额
+	gates  map[int64]*gate // 源 id → 并发闸门（容量可动态调整）
+	dyn    map[int64]*dynState
 }
 
 func New(st *store.Store, cfg Config) *Scheduler {
@@ -123,6 +127,8 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		lists:  map[string]listEntry{},
 		sticky: map[string]stickyPick{},
 		brk:    map[string]*breaker{},
+		gates:  map[int64]*gate{},
+		dyn:    map[int64]*dynState{},
 	}
 }
 
@@ -219,20 +225,35 @@ func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
 		return func() {}, nil
 	}
-	sem := s.semFor(id)
-	select {
-	case sem <- struct{}{}:
-		metrics.SourceInflight(id, 1)
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				<-sem
-				metrics.SourceInflight(id, -1)
-			})
-		}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	release, err := s.gateFor(id).acquire(ctx)
+	if err != nil {
+		return nil, err
 	}
+	metrics.SourceInflight(id, 1)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			release()
+			metrics.SourceInflight(id, -1)
+		})
+	}, nil
+}
+
+// gateFor 取某台源的闸门，第一次用时按动态/固定策略初始化。
+func (s *Scheduler) gateFor(id int64) *gate {
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
+	if s.gates == nil {
+		s.gates = map[int64]*gate{}
+	}
+	if g, ok := s.gates[id]; ok {
+		return g
+	}
+	// 从配置的上限起步，和不开动态时完全一致：没有样本之前不做任何猜测，
+	// 有证据（吞吐掉、429）才往下退，退了之后能证明恢复得动再涨回去。
+	g := newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
+	s.gates[id] = g
+	return g
 }
 
 // InFlight 是某台源此刻占用的名额数，用来做选源时的负载均衡。
@@ -240,36 +261,20 @@ func (s *Scheduler) InFlight(id int64) int {
 	if s == nil || s.cfg.MaxPerSource <= 0 {
 		return 0
 	}
-	s.loadMu.Lock()
-	defer s.loadMu.Unlock()
-	if sem := s.sems[id]; sem != nil {
-		return len(sem)
-	}
-	return 0
+	g := s.gateFor(id)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inflight
 }
 
 func (s *Scheduler) atCap(id int64) bool {
 	if s == nil || s.cfg.MaxPerSource <= 0 {
 		return false
 	}
-	s.loadMu.Lock()
-	defer s.loadMu.Unlock()
-	sem := s.sems[id]
-	return sem != nil && len(sem) >= cap(sem)
-}
-
-func (s *Scheduler) semFor(id int64) chan struct{} {
-	s.loadMu.Lock()
-	defer s.loadMu.Unlock()
-	if s.sems == nil {
-		s.sems = make(map[int64]chan struct{})
-	}
-	sem, ok := s.sems[id]
-	if !ok {
-		sem = make(chan struct{}, s.cfg.MaxPerSource)
-		s.sems[id] = sem
-	}
-	return sem
+	g := s.gateFor(id)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inflight >= g.limit
 }
 
 // Rewrite 把官方地址改写成某个源的地址。

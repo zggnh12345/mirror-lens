@@ -319,6 +319,10 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 				// 成功也要记状态码：429 率的分母是「上游真实响应过多少次」，
 				// 不记 200 的话分母里就只剩失败的请求。
 				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
+				if e != nil {
+					// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
+					g.sched.Observe(t.c.ID, e.Size, time.Since(start), true, code)
+				}
 				plan.Source = t.c.Name
 			}
 			return e, notMod, nil
@@ -335,6 +339,9 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 				hint.Code = ue.Code
 			}
 			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
+			// 带宽控制同样要知道「这台源刚失败」：429 时继续按原并发打过去，
+			// 只会把冷却时间越拉越长。
+			g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
 		}
 		log.Printf("源 %s 不可用，换下一个：%v", t.c.Name, err)
 		lastErr = err
