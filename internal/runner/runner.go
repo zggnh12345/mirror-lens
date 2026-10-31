@@ -325,11 +325,18 @@ func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 }
 
 func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier int) {
-	// 归档是人工（或长期不可用）做出的判断，探测结果不能把它顶掉：
-	// 一个被手工归档的源可能刚巧又能通了，但那不代表用户想让它回到调度里。
-	if s.Status == "archived" {
+	// 探测从发起走到写回有几十秒，这期间源可能刚被归档、甚至被删掉。
+	// 一律以数据库里的当前状态为准，别拿探测开始时的旧快照写回。
+	cur, err := e.st.GetSource(s.ID)
+	if err != nil {
 		return
 	}
+	// 归档是人工（或长期不可用）做出的判断，探测结果不能把它顶掉：
+	// 一个被手工归档的源可能刚巧又能通了，但那不代表用户想让它回到调度里。
+	if cur.Status == "archived" {
+		return
+	}
+	s = *cur
 	docker, github := s.DockerCap, s.GithubCap
 	for k, r := range res {
 		capv := docker
@@ -352,8 +359,12 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 	}
 	if docker != s.DockerCap || github != s.GithubCap {
-		if err := e.st.SetCaps(s.ID, docker, github); err != nil {
+		// 条件更新：写之前那一瞬被归档，也不覆盖。
+		ok, err := e.st.SetCapsLive(s.ID, docker, github)
+		if err != nil {
 			log.Printf("runner: set caps %d: %v", s.ID, err)
+		} else if !ok {
+			return
 		}
 	}
 	s.DockerCap, s.GithubCap = docker, github
@@ -372,7 +383,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 	// 内容被替换：直接封禁，等人看
 	for _, r := range res {
 		if r.DigestOK == 0 {
-			_ = e.st.SetStatusWhy(s.ID, "blocked", "内容与官方摘要不一致")
+			_, _ = e.st.SetStatusLive(s.ID, "blocked", "内容与官方摘要不一致")
 			return
 		}
 	}
@@ -389,7 +400,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 			}
 		}
 		if clean < 2 {
-			_ = e.st.SetStatusWhy(s.ID, "blocked", "校验恢复中：需连续 2 次一致")
+			_, _ = e.st.SetStatusLive(s.ID, "blocked", "校验恢复中：需连续 2 次一致")
 			return
 		}
 	}
@@ -401,14 +412,14 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 		if r, ok := res[k]; ok {
 			if r.OK {
-				_ = e.st.SetStatusWhy(s.ID, "usable", "")
+				_, _ = e.st.SetStatusLive(s.ID, "usable", "")
 				return
 			}
 			continue
 		}
 		// 这轮没测它，看最近一次结果
 		if c, err := e.st.LastCheck(s.ID, k); err == nil && c != nil && c.OK {
-			_ = e.st.SetStatusWhy(s.ID, "usable", "")
+			_, _ = e.st.SetStatusLive(s.ID, "usable", "")
 			return
 		}
 	}
@@ -417,16 +428,16 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		// 一个结论都没拿到（全是超时/DNS/429）：不知道它支持什么，标 pending
 		// 继续识别。判死会让它按小时降频，而它可能只是刚才网络抖了一下。
 		if s.DockerCap == store.CapUnknown && s.GithubCap == store.CapUnknown {
-			_ = e.st.SetStatusWhy(s.ID, "pending", "探测未拿到结论，等待复测")
+			_, _ = e.st.SetStatusLive(s.ID, "pending", "探测未拿到结论，等待复测")
 			return
 		}
-		_ = e.st.SetStatusWhy(s.ID, "dead", "没有任何协议探测通过")
+		_, _ = e.st.SetStatusLive(s.ID, "dead", "没有任何协议探测通过")
 		return
 	}
 	// 全部失败：连续三次 tier>=2 失败才判死，避免一次抖动就下架。
 	if tier < 2 {
 		if s.Status == "usable" {
-			_ = e.st.SetStatusWhy(s.ID, "degraded", "存活探测失败")
+			_, _ = e.st.SetStatusLive(s.ID, "degraded", "存活探测失败")
 		}
 		return
 	}
@@ -440,9 +451,9 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 	}
 	if worst >= 3 {
-		_ = e.st.SetStatusWhy(s.ID, "dead", "连续 3 次探测失败")
+		_, _ = e.st.SetStatusLive(s.ID, "dead", "连续 3 次探测失败")
 	} else {
-		_ = e.st.SetStatusWhy(s.ID, "degraded", "探测失败，未达判死阈值")
+		_, _ = e.st.SetStatusLive(s.ID, "degraded", "探测失败，未达判死阈值")
 	}
 }
 

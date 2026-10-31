@@ -550,6 +550,37 @@ func (s *Store) SetStatus(id int64, status string) error {
 	return s.SetStatusWhy(id, status, "")
 }
 
+// SetCapsLive / SetStatusLive 是探测写回专用的条件更新：只对「没被归档」的行
+// 生效，返回是否真的写了。
+//
+// 探测从发起走到写回有几十秒，这期间用户可能刚把这个源归档。以前写回是
+// 无条件 UPDATE，拿着探测开始时的旧状态做判断，转手就把 archived 改回
+// usable——归档等于没做。这里把「状态仍是活的」这一条并进 UPDATE，由数据库
+// 保证不会覆盖人工决定。
+func (s *Store) SetCapsLive(id int64, docker, github int) (bool, error) {
+	res, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?
+		WHERE id=? AND status<>'archived'`, docker, github, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+func (s *Store) SetStatusLive(id int64, status, reason string) (bool, error) {
+	now := time.Now().Unix()
+	res, err := s.db.Exec(`UPDATE sources SET
+		status_at = CASE WHEN status<>? THEN ? ELSE status_at END,
+		status_reason = CASE WHEN status<>? THEN ? ELSE status_reason END,
+		status = ?
+		WHERE id=? AND status<>'archived'`, status, now, status, reason, status, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // SetStatusWhy 改状态并记下时间和原因。状态没变就不动 status_at——
 // 否则一个常年 dead 的源每次探测都会把「坏了多久」清零，永远归档不了。
 func (s *Store) SetStatusWhy(id int64, status, reason string) error {
