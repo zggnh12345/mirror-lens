@@ -128,7 +128,9 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .meta i.t1{color:var(--warn);background:var(--warn-soft)}
 .meta i.t2{color:var(--ok);background:var(--ok-soft)}
 .meta i.t3{color:#fff;background:var(--ok)}
-.meta .err{color:var(--bad);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta .errchip{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 7px;border-radius:6px;border:1px solid color-mix(in srgb,var(--bad) 32%,transparent);background:var(--bad-soft);color:var(--bad);font-weight:600;font-size:11px;cursor:pointer;margin-right:4px}
+.meta .errchip .edetail{display:none;margin-left:6px;font-weight:400;color:var(--bad);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta .errchip.open .edetail{display:inline}
 
 /* 能力打勾 */
 .cap{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 7px;border-radius:6px;
@@ -254,6 +256,8 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .tabs{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 0 2px;
   scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
+[data-panel]{display:none}
+[data-panel].active{display:block}
 .tabs button{flex:none;height:34px;padding:0 13px;border-radius:10px;border:1px solid var(--line);
   background:var(--card);color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer}
 .tabs button.on{background:var(--brand);border-color:var(--brand);color:#fff}

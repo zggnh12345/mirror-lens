@@ -200,6 +200,17 @@ function rowClass(x){
 }
 
 var STATUS = {pending:'待检测', dead:'不可用', blocked:'已封禁', archived:'已归档', degraded:'不稳定'};
+function errHuman(e){
+  e = e || '';
+  if (/404/.test(e)) return '仓库地址无效，无法获取镜像清单';
+  if (/429/.test(e)) return '请求过于频繁，已被镜像源限流';
+  if (/403|401/.test(e)) return '访问被拒绝，可能需要鉴权';
+  if (/timeout|超时|timed out/i.test(e)) return '连接超时，镜像源响应过慢';
+  if (/connection|拒绝|refused|ECONN|ENOTFOUND|DNS|dns/i.test(e)) return '无法连接镜像源，请检查地址或网络';
+  if (/证书|cert|TLS|SSL/i.test(e)) return 'TLS 证书校验失败';
+  if (/manifest|清单/i.test(e)) return '镜像清单获取失败';
+  return '连接异常，点按查看技术详情';
+}
 function statusChip(x){
   var label = STATUS[x.status];
   if (!label) return '';
@@ -242,7 +253,7 @@ function rowHtml(x){
   if (best && best.speed_kbps) bits.push('<i>'+speedText(best.speed_kbps)+'</i>');
   if (ups.length) bits.push('<i>可用率 '+Math.round(Math.max.apply(null,ups)*100)+'%</i>');
   if (!best) bits.push('<i>待检测</i>');
-  else if (!best.ok && best.error) bits.push('<span class="err" title="'+esc(best.error)+'">'+esc(best.error).slice(0,40)+'</span>');
+  else if (!best.ok && best.error) bits.push('<span class="errchip" onclick="event.stopPropagation();this.classList.toggle(\'open\')" title="点按查看技术详情">⚠ '+esc(errHuman(best.error))+'<span class="edetail">'+esc(best.error)+'</span></span>');
   var originTag = {seed:'内置', discovered:'发现', manual:'自定义'}[x.origin] || x.origin;
   return '<div class="row '+rowClass(x)+(x.enabled?'':' off')+'" data-id="'+x.id+'">'
     + '<span class="dot"></span>'

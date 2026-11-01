@@ -35,7 +35,7 @@
 <div class="wrap" style="max-width:640px">
 
   <!-- 账号 -->
-  <div data-panel="account">
+  <div data-panel="account" class="active">
   <div class="sec" style="margin-top:14px">
     <h2>账号</h2>
     <p class="desc">改用户名和密码都要先验证当前密码。改完密码，其他设备上的登录会立即失效。</p>
@@ -218,7 +218,7 @@ document.querySelectorAll('#tabs button').forEach(function(b){
   b.addEventListener('click', function(){
     var t = b.dataset.tab;
     document.querySelectorAll('#tabs button').forEach(function(x){ x.classList.toggle('on', x === b); });
-    document.querySelectorAll('[data-panel]').forEach(function(p){ p.hidden = (p.dataset.panel !== t); });
+    document.querySelectorAll('[data-panel]').forEach(function(p){ p.classList.toggle('active', p.dataset.panel === t); });
     window.scrollTo(0, 0);
     if (t === 'config') loadConfig();
   });
