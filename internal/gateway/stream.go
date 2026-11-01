@@ -582,11 +582,15 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 
 	var (
-		resp *http.Response
-		err  error
-		src  string
+		resp    *http.Response
+		err     error
+		src     string
+		chosen  *fetchTarget
+		chosenT time.Time
 	)
 	for i, t := range targets {
+		tt := t
+		start := time.Now()
 		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)
 		if rerr != nil {
 			err = rerr
@@ -606,16 +610,22 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 		}
 		resp, err = g.cli.Do(req)
 		if err != nil {
+			g.reportPass(plan.Kind, tt, start, 0, 0, false)
 			continue
 		}
 		if resp.StatusCode >= 500 && i < len(targets)-1 {
+			// 换源之前先把这次响应记下来：它是一次真实的 HTTP 响应，
+			// 分母要有它；5xx 也要让这台源进冷却，否则下一轮还会先选它。
+			code, ra := resp.StatusCode, retryAfterHeader(resp.Header)
 			resp.Body.Close()
+			g.reportPass(plan.Kind, tt, start, code, ra, false)
 			continue
 		}
 		if t.c != nil {
 			src = t.c.Name
 			plan.Source = src
 		}
+		chosen, chosenT = &tt, start
 		break
 	}
 	if resp == nil {
@@ -645,11 +655,31 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	w.Header().Set("X-ML-Cache", "PASS")
 	w.WriteHeader(resp.StatusCode)
+	// 直通也要归因：Range/HEAD 走的就是这条路，不记的话 429 既不进
+	// 熔断也不进 429 率，等于最费流量的那部分请求在统计里不存在。
 	if r.Method == http.MethodHead {
+		if chosen != nil {
+			g.reportPass(plan.Kind, *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), passOK(resp.StatusCode))
+		}
 		return
 	}
-	n, _ := io.Copy(w, resp.Body)
+	n, cerr := io.Copy(w, resp.Body)
 	g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), n)
+	if chosen != nil {
+		g.reportPass(plan.Kind, *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), cerr == nil && passOK(resp.StatusCode))
+	}
+}
+
+// passOK 判断一次直通响应算不算这台源正常干活：429 和 5xx 是源站在拒绝
+// 我们，要进冷却；其余（含 404、304）是正常回答，只是内容不在。
+func passOK(code int) bool {
+	return code < 500 && code != http.StatusTooManyRequests
+}
+
+// reportPass 把一次直通回源的结果记进调度器和指标。官方源（t.c == nil）
+// 不是候选，没有可归因的状态，reportSource 自己会跳过。
+func (g *Gateway) reportPass(kind string, t fetchTarget, start time.Time, code int, ra time.Duration, ok bool) {
+	g.reportSource(kind, t, ok, time.Since(start), scheduler.Hint{Code: code, Mode: "pass", RetryAfter: ra})
 }
 
 func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, prev *store.CacheEntry, err error) {
