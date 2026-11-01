@@ -1,17 +1,60 @@
+# Mirror Lens —— 自建镜像加速与源站体检
+#
+# 准备一个 config 目录，把 config.yaml 放进去（没有的话程序会全部用默认值）：
+#
+#   mkdir -p config
+#   cp config.example.yaml config/config.yaml
+#
+# 然后：
+#
+#   docker compose up -d
+#
+# 起来之后打开 http://<本机IP>:8080，第一次访问会让你直接设账号密码。
+
 services:
   mirror-lens:
     image: ghcr.io/zggnh12345/mirror-lens:latest
-    # 想从源码构建就把上面一行注释掉，启用下面一行
-    # build: .
     container_name: mirror-lens
-    ports:
-      - "8080:8080"
-    volumes:
-      # 配置放 ./data/config.yaml，容器启动时自动读；没有就用内置默认值
-      - ./data:/data
-    environment:
-      TZ: Asia/Shanghai
     restart: unless-stopped
-    # 探测是纯出站 HTTP，不需要任何特权
-    security_opt:
-      - no-new-privileges:true
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      # 默认只在本机监听。要给局域网用改成 "0.0.0.0:8080:8080"；
+      # 暴露到公网等于开了一个下载代理，先读 README 的「安全边界」。
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # 配置文件目录。容器内固定读 /config/config.yaml。
+      # 必须挂成可写（:rw）：面板「设置 → 配置参数」要往里写。
+      # 镜像里的用户是 uid 10001，宿主目录得对它可写：
+      #   sudo chown -R 10001:10001 ./config
+      - "./config:/config:rw"
+      # 数据库和缓存。同样的 uid 问题：
+      #   sudo chown -R 10001:10001 ./data
+      - "./data:/data"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# 走反向代理（比如已有的 Traefik / nginx）时，把下面这段取消注释，
+# 并把 Host 规则换成你自己的域名。前提是已经有一个叫 traefik 的外部网络：
+#
+#     docker network create traefik
+#
+# services:
+#   mirror-lens:
+#     networks:
+#       - traefik
+#     labels:
+#       - traefik.enable=true
+#       - traefik.docker.network=traefik
+#       - traefik.http.routers.mirror-lens.entrypoints=websecure
+#       - traefik.http.routers.mirror-lens.middlewares=base@file
+#       - traefik.http.routers.mirror-lens.rule=Host(`mirror.example.com`)
+#       - traefik.http.services.mirror-lens.loadbalancer.server.port=8080
+#
+# networks:
+#   traefik:
+#     external: true

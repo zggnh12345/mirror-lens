@@ -1,35 +1,51 @@
-# Mirror Lens 配置
-# 命令行只留 -config / -addr / -data / -no-seed 四个开关，其余都在这里改。
-# 优先级：命令行 > 环境变量 > 本文件 > 内置默认。
-# 不放这个文件也能跑，所有字段都有默认值。
+# Mirror Lens 配置示例
+#
+# 放在哪：容器里是 /config/config.yaml（compose 把宿主的 config/ 目录挂到这）。
+# 本地直接跑就放当前目录的 config.yaml。
+#
+# 优先级：命令行 > 环境变量 > 本文件 > 内置默认值。
+# 命令行只有四个开关：-config / -addr / -data / -no-seed。
+# 环境变量：ADDR / DATA_DIR / CACHE_DIR。
+#
+# 不放这个文件也能跑，每个字段都有默认值。
+# 面板「设置 → 配置参数」分页能改这里的字段并写回本文件；
+# 除了日志级别是即时生效，其余改完需要重启容器。
 
-# 监听地址。docker 加速也用这个端口（/v2/），所以别只绑 127.0.0.1
+# ── 基础 ────────────────────────────────────────────────
+
+# 监听地址。Docker 加速（/v2/）走同一个端口，别只绑 127.0.0.1。
 addr: ":8080"
 
-# 数据目录：数据库 + 缓存
+# 数据目录：SQLite 数据库 + 缓存文件。
+# compose 里挂的是 ./data，容器内路径就是这个。
 data: "/data"
 
-# 首次启动时不写入内置候选池（调试用）
+# 首次启动时不写入 45 个内置候选源（调试用）。
 no_seed: false
+
+# ── 缓存 ────────────────────────────────────────────────
 
 cache:
   # 空 = <data>/cache
   dir: ""
   # 单个文件超过这个大小就只透传、不落盘（普通 HTTP / GitHub Raw 用）
   max_file_mb: 256
-  # 缓存总量上限，超了按"最久没被访问"淘汰；0 = 不限
+  # 缓存总量上限，超了按「最久没被访问」淘汰；0 = 不限
   max_gb: 100
   # 用量到这个比例报一次警，回落到 recover_at 以下才允许再报
   warn_at: 0.9
   recover_at: 0.85
 
-# 后台巡检：容量、过期条目、半截文件、索引对账
+# ── 后台巡检 ────────────────────────────────────────────
+
 janitor:
   interval: 10m
   # 断了没续传的半截文件留多久（临时文件固定留 1 小时，不单独配）
   partial_ttl: 24h
   # 条目过期后还要再等多久没人访问才删，避免低频资源反复回源
   expired_grace: 72h
+
+# ── 内容 TTL ────────────────────────────────────────────
 
 raw:
   # 分支/标签的重新验证间隔，commit 永久缓存
@@ -39,22 +55,27 @@ git:
   # info/refs 缓存多久；0 = 每次都回源
   ttl: 30s
 
+# ── Registry 加速 ───────────────────────────────────────
+
 registry:
   enabled: true
   # 一个实例对一个上游。只写主机名，不带 https:// 和路径。
-  # 要用 ghcr 就再起一个实例，upstream 改成 ghcr.io
+  # 要用 ghcr 就再起一个实例，upstream 改成 ghcr.io。
   upstream: "registry-1.docker.io"
   # layer 动辄上 GB，和普通文件分开算
   max_file_mb: 4096
   # tag 可能被覆盖，过一会儿要重新验证；digest 永久
   tag_ttl: 5m
 
-# 多源调度：回源时在可用镜像站之间按探测评分挑一个，失败自动换下一个。
-# 只影响「回源」。缓存命中不碰网络；TTL 到期重新验证一律回官方源，
+# ── 多源调度 ────────────────────────────────────────────
+#
+# 回源时在可用镜像站之间按探测评分挑一个，失败自动换下一个。
+# 只影响「回源」：缓存命中不碰网络；TTL 到期重新验证一律回官方源，
 # 避免镜像站把旧内容当成「没变」喂回来。
+
 sources:
   enabled: true
-  # 一次回源最多试几个源（含最后兜底的官方源之外的镜像）
+  # 一次回源最多试几个源
   max_candidates: 3
   # 刚成功的源在这段时间内优先复用，省一次试错
   sticky_ttl: 10m
@@ -75,22 +96,43 @@ sources:
   # 一个已经挂掉的站只是白烧带宽。
   recovery_minutes: 60
 
-# 探测。探测会请求用户填的源地址，默认只放行公网：域名解析到内网、重定向到
-# 内网、Docker 认证地址指向内网，都会被安全拨号层拦下。
+# ── 分片并行 ────────────────────────────────────────────
+#
+# 多源分片并行下载。只对「带可信整份摘要」的请求生效（目前是 Docker 按 digest
+# 拉 blob）：分片来自不同源，拼错一片只有最终哈希能发现，没有摘要就等于赌。
+
+parallel:
+  enabled: true
+  # 小于这个尺寸不值得分片：多几次握手反而更慢
+  min_size_mb: 8
+  # 单片大小
+  chunk_mb: 4
+  # 同时下载几片（2~16）
+  workers: 4
+
+# ── 探测 ────────────────────────────────────────────────
+#
+# 探测会请求用户填的源地址，默认只放行公网：域名解析到内网、重定向到内网、
+# Docker 认证地址指向内网，都会被安全拨号层拦下。
+
 probe:
   # 源就架在自己局域网（10.x / 192.168.x）时才打开。打开等于关掉这层防护。
   allow_private: false
 
-# 多源分片并行下载。只对「带可信整份摘要」的请求生效（目前是 Docker 按 digest
-# 拉 blob）：分片来自不同源，拼错一片只有最终哈希能发现，没有摘要就等于赌。
-# 代理路径（/raw /http /git /v2）的访问控制。
+# ── 访问控制 ────────────────────────────────────────────
+#
+# 代理路径（/raw /gh /http /git /v2）的访问控制，和面板登录是两层，互不影响。
 # 默认 false = 匿名放行，谁都能用，适合当公共加速站；
 # true = 非浏览器客户端必须带 Access Token（面板登录始终独立）。
+
 auth:
   require_token: false
 
-# 入口限流：两层——全局一层，客户端一层（匿名按 IP，带 Token 再按 Token）。
+# ── 入口限流 ────────────────────────────────────────────
+#
+# 两层：全局一层，客户端一层（匿名按 IP，带 Token 再按 Token）。
 # 限流只发生在入口，不写源站健康；被限流是「慢点」，不是「源坏了」。
+
 limits:
   enabled: true
   global_rps: 20            # 全站每秒请求数
@@ -109,32 +151,32 @@ limits:
   # 只信这些地址发来的 X-Forwarded-For，并取最右侧的非可信地址作为客户端。
   trusted_proxies: []
 
-# 日志。字段固定：time/level/msg/request_id/kind/cache_key/error_code。
+# ── 日志 ────────────────────────────────────────────────
+#
+# 字段固定：time/level/msg/request_id/kind/cache_key/error_code。
 # 回源地址只记路径，查询串一律砍掉（里面常是签名或 Token）。
+
 logging:
   level: info   # debug | info | warn | error
   format: text  # text | json（接 Loki/ELK 用 json）
 
-# Prometheus 抓取口（/metrics）。
+# ── 指标 ────────────────────────────────────────────────
+#
+# Prometheus 抓取口（/metrics）。标签是封闭集合，没有 URL / IP / 文件名。
+
 metrics:
   enabled: true
   # true 时 /metrics 要面板登录或 Access Token；默认公开，和大多数自建服务一致。
   require_token: false
 
-# CDN 边缘缓存（Cloudflare / Fastly / Varnish / nginx proxy_cache 都适用）。
+# ── CDN 边缘 ────────────────────────────────────────────
+#
+# 边缘缓存（Cloudflare / Fastly / Varnish / nginx proxy_cache 都适用）。
 # 关闭时只发 60 秒的保守 TTL；打开后把条目 TTL 让给边缘，并加 Age、
 # Cache-Tag / Surrogate-Key（按类型打标，可整类清理）。
+
 cdn:
   enabled: false
   # 边缘 TTL 上限（秒）。0 = 沿用条目 TTL。
   # 有上限才安全：release 资产同名覆盖很常见，缓存一年会发旧包。
   max_age: 300
-
-parallel:
-  enabled: true
-  # 小于这个尺寸不值得分片：多几次握手反而更慢
-  min_size_mb: 8
-  # 单片大小
-  chunk_mb: 4
-  # 同时下载几片（2~16）
-  workers: 4
