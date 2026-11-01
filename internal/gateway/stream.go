@@ -613,9 +613,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			g.reportPass(plan.Kind, tt, start, 0, 0, false)
 			continue
 		}
-		if resp.StatusCode >= 500 && i < len(targets)-1 {
+		if retryableStatus(resp.StatusCode) && i < len(targets)-1 {
 			// 换源之前先把这次响应记下来：它是一次真实的 HTTP 响应，
-			// 分母要有它；5xx 也要让这台源进冷却，否则下一轮还会先选它。
+			// 分母要有它；5xx/429 也要让这台源进冷却，否则下一轮还会先选它。
+			// 只在响应还没写给客户端时换源，每个候选源只试一次。
 			code, ra := resp.StatusCode, retryAfterHeader(resp.Header)
 			resp.Body.Close()
 			g.reportPass(plan.Kind, tt, start, code, ra, false)
@@ -638,7 +639,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	defer resp.Body.Close()
 
 	copyHeader(w.Header(), resp.Header, "Content-Type", "Content-Length", "Content-Range",
-		"Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Cache-Control",
+		"Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Cache-Control", "Retry-After",
 		"Docker-Content-Digest", "Docker-Distribution-Api-Version")
 	// 上游经常 307 到 CDN，落地的响应里没有 Docker-Content-Digest。
 	// 补的是「请求路径里的摘要」，不是网关算出来的结果：直通既不落盘也不校验，
@@ -670,10 +671,16 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 }
 
+// retryableStatus 是「换一台源还可能成功」的状态：5xx 是它自己出问题，
+// 429 是它让我们慢点。其余 4xx（404、401 之类）换源也一样，直接返回。
+func retryableStatus(code int) bool {
+	return code >= 500 || code == http.StatusTooManyRequests
+}
+
 // passOK 判断一次直通响应算不算这台源正常干活：429 和 5xx 是源站在拒绝
 // 我们，要进冷却；其余（含 404、304）是正常回答，只是内容不在。
 func passOK(code int) bool {
-	return code < 500 && code != http.StatusTooManyRequests
+	return !retryableStatus(code)
 }
 
 // reportPass 把一次直通回源的结果记进调度器和指标。官方源（t.c == nil）
