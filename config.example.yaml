@@ -109,6 +109,12 @@ limits:
   # 只信这些地址发来的 X-Forwarded-For，并取最右侧的非可信地址作为客户端。
   trusted_proxies: []
 
+# 日志。字段固定：time/level/msg/request_id/kind/cache_key/error_code。
+# 回源地址只记路径，查询串一律砍掉（里面常是签名或 Token）。
+logging:
+  level: info   # debug | info | warn | error
+  format: text  # text | json（接 Loki/ELK 用 json）
+
 # Prometheus 抓取口（/metrics）。
 metrics:
   enabled: true

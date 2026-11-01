@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/limits"
-
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"gopkg.in/yaml.v3"
 )
 
@@ -121,21 +121,22 @@ type Auth struct {
 }
 
 type Config struct {
-	Addr     string        `yaml:"addr"`
-	Data     string        `yaml:"data"`
-	NoSeed   bool          `yaml:"no_seed"`
-	Cache    Cache         `yaml:"cache"`
-	Janitor  Janitor       `yaml:"janitor"`
-	Raw      Raw           `yaml:"raw"`
-	Git      Git           `yaml:"git"`
-	Registry Registry      `yaml:"registry"`
-	Sources  Sources       `yaml:"sources"`
-	Parallel Parallel      `yaml:"parallel"`
-	Probe    Probe         `yaml:"probe"`
-	Auth     Auth          `yaml:"auth"`
-	Limits   limits.Config `yaml:"limits"`
-	Metrics  Metrics       `yaml:"metrics"`
-	CDN      CDN           `yaml:"cdn"`
+	Addr     string         `yaml:"addr"`
+	Data     string         `yaml:"data"`
+	NoSeed   bool           `yaml:"no_seed"`
+	Cache    Cache          `yaml:"cache"`
+	Janitor  Janitor        `yaml:"janitor"`
+	Raw      Raw            `yaml:"raw"`
+	Git      Git            `yaml:"git"`
+	Registry Registry       `yaml:"registry"`
+	Sources  Sources        `yaml:"sources"`
+	Parallel Parallel       `yaml:"parallel"`
+	Probe    Probe          `yaml:"probe"`
+	Auth     Auth           `yaml:"auth"`
+	Limits   limits.Config  `yaml:"limits"`
+	Metrics  Metrics        `yaml:"metrics"`
+	CDN      CDN            `yaml:"cdn"`
+	Logging  logging.Config `yaml:"logging"`
 }
 
 // CDN 控制边缘缓存语义。默认关闭：关着的时候只发 60 秒的保守 TTL，
@@ -239,6 +240,16 @@ func (c *Config) Validate() error {
 	}
 	if c.Data == "" {
 		return fmt.Errorf("data 不能为空")
+	}
+	switch strings.ToLower(c.Logging.Format) {
+	case "", "text", "json":
+	default:
+		return fmt.Errorf("logging.format 只支持 text/json，收到 %q", c.Logging.Format)
+	}
+	switch strings.ToLower(c.Logging.Level) {
+	case "", "debug", "info", "warn", "warning", "error":
+	default:
+		return fmt.Errorf("logging.level 只支持 debug/info/warn/error，收到 %q", c.Logging.Level)
 	}
 	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 {
 		return fmt.Errorf("容量上限不能是负数")

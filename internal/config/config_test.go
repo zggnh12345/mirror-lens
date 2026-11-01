@@ -127,6 +127,8 @@ func TestInvalidValues(t *testing.T) {
 		"负数容量":   "cache:\n  max_gb: -1\n",
 		"负数 TTL": "git:\n  ttl: -5s\n",
 		"空上游":    "registry:\n  enabled: true\n  upstream: \"\"\n",
+		"日志级别":   "logging:\n  level: verbose\n",
+		"日志格式":   "logging:\n  format: xml\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(write(t, body), true); err == nil {

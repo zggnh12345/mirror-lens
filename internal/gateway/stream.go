@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -186,7 +188,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			if ctx.Err() == nil {
 				g.sched.Report(plan.Kind, *t.c, false, time.Since(start))
 			}
-			log.Printf("源 %s 连不上，换下一个：%v", t.c.Name, err)
+			loggw(slog.LevelWarn, "源连不上，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
 			lastErr = err
 			continue
 		}
@@ -197,7 +199,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			resp.Body.Close()
 			metrics.SourceMiss(plan.Kind, resp.StatusCode)
 			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
-			log.Printf("源 %s 未命中 %d，换下一个", t.c.Name, resp.StatusCode)
+			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", t.c.Name, "status", resp.StatusCode)
 			lastErr = &upstreamError{Code: resp.StatusCode}
 			continue
 		}
@@ -208,9 +210,9 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它。
 			g.sched.Report(plan.Kind, *t.c, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
-				log.Printf("源 %s 返回 %d，要求 %s 后再来，换下一个", t.c.Name, resp.StatusCode, ue.RetryAfter)
+				loggw(slog.LevelInfo, "源限流，换下一个", ctx, plan, logging.UpstreamRateLimited, nil, "source", t.c.Name, "status", resp.StatusCode, "retry_after_s", int(ue.RetryAfter.Seconds()))
 			} else {
-				log.Printf("源 %s 返回 %d，换下一个", t.c.Name, resp.StatusCode)
+				loggw(slog.LevelInfo, "源返回错误，换下一个", ctx, plan, logging.UpstreamHTTPError, nil, "source", t.c.Name, "status", resp.StatusCode)
 			}
 			lastErr = ue
 			continue
@@ -304,7 +306,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	if resp.StatusCode == http.StatusPartialContent {
 		start, t, err := parseContentRange(resp.Header.Get("Content-Range"))
 		if err != nil {
-			log.Printf("上游 Content-Range 解析失败 %s: %v", plan.Upstream, err)
+			loggw(slog.LevelWarn, "上游 Content-Range 解析失败", r.Context(), plan, logging.UpstreamHTTPError, err)
 			http.Error(w, "502 上游分段响应不合法", http.StatusBadGateway)
 			return
 		}

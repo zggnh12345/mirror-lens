@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
 	"github.com/zggnh12345/mirror-lens/internal/limits"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
@@ -60,6 +62,10 @@ func main() {
 	cfg.Cache.Dir = envOr("CACHE_DIR", cfg.Cache.Dir)
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("配置不合法: %v", err)
+	}
+	// 日志格式要在其它初始化之前定下来，否则最早那几条还是默认样式。
+	if err := logging.Setup(cfg.Logging); err != nil {
+		log.Fatalf("初始化日志: %v", err)
 	}
 
 	// 探测和网关共用一套安全拨号策略：源地址是用户填的，不能让它变成内网探针。
@@ -200,7 +206,8 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr: cfg.Addr,
+		Addr:     cfg.Addr,
+		ErrorLog: log.New(logging.Writer(slog.Default(), slog.LevelWarn), "", 0),
 		Handler: metrics.Middleware(lim.Wrap(api.New(st, eng, gw, jan, sched,
 			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken)))),
 		ReadHeaderTimeout: 10 * time.Second,

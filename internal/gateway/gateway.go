@@ -10,7 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/cache"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
@@ -214,7 +216,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	}
 	prev, err := g.st.CacheGet(plan.CacheKey)
 	if err != nil {
-		log.Printf("缓存索引读取失败 %s: %v", plan.CacheKey, err)
+		loggw(slog.LevelWarn, "缓存索引读取失败", r.Context(), plan, logging.CacheReadFailed, err)
 	}
 
 	if prev != nil {
@@ -256,12 +258,12 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			// 本地写不进去（盘满、权限）：别 502，直接边下边发，缓存这层先放下。
 			var le *localError
 			if errors.As(err, &le) {
-				log.Printf("本地写入失败，转透传 %s: %v", plan.CacheKey, err)
+				loggw(slog.LevelWarn, "本地写入失败，转透传", r.Context(), plan, logging.CacheCommitFailed, err)
 				g.fillStream(w, r, plan)
 				return
 			}
 			// 其余错误（超时、5xx、连不上）先给缓存里的旧版本，标 STALE
-			log.Printf("回源失败，使用旧缓存 %s: %v", plan.CacheKey, err)
+			loggw(slog.LevelWarn, "回源失败，使用旧缓存", r.Context(), plan, codeFor(err), err)
 			g.serveCached(w, r, prev, "STALE", true)
 			return
 		}
@@ -281,12 +283,12 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		}
 		var le *localError
 		if errors.As(err, &le) {
-			log.Printf("本地写入失败，转透传 %s: %v", plan.CacheKey, err)
+			loggw(slog.LevelWarn, "本地写入失败，转透传", r.Context(), plan, logging.CacheCommitFailed, err)
 			g.fillStream(w, r, plan)
 			return
 		}
 		code := statusFor(err)
-		log.Printf("回源失败 %s: %v", plan.CacheKey, err)
+		loggw(slog.LevelWarn, "回源失败", r.Context(), plan, codeFor(err), err)
 		noStore(w.Header())
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
@@ -398,7 +400,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			if t.c != nil {
 				name = t.c.Name
 			}
-			log.Printf("源 %s 未命中 %d，换下一个", name, ue.Code)
+			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", name, "status", ue.Code)
 			lastErr = err
 			continue
 		}
@@ -413,7 +415,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			if t.c != nil {
 				name = t.c.Name
 			}
-			log.Printf("源 %s 要求鉴权（%d），换下一个", name, ue.Code)
+			loggw(slog.LevelInfo, "源要求鉴权，换下一个", ctx, plan, logging.AuthTokenInvalid, nil, "source", name, "status", ue.Code)
 			lastErr = err
 			continue
 		}
@@ -437,7 +439,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			// 只会把冷却时间越拉越长。
 			g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
 		}
-		log.Printf("源 %s 不可用，换下一个：%v", t.c.Name, err)
+		loggw(slog.LevelWarn, "源不可用，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
 		lastErr = err
 	}
 	return nil, false, lastErr
@@ -565,7 +567,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	err = g.st.CachePut(*e)
 	unlock()
 	if err != nil {
-		log.Printf("写缓存索引失败 %s: %v", plan.CacheKey, err)
+		loggw(slog.LevelError, "写缓存索引失败", ctx, plan, logging.CacheCommitFailed, err)
 	}
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), n)
 	return e, false, http.StatusOK, nil
@@ -583,7 +585,7 @@ func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.C
 	f, err := g.cache.Open(e.SHA256)
 	if err != nil {
 		// 索引有、文件没了：删掉索引，让下次重新回源
-		log.Printf("缓存文件丢失 %s (%s): %v", e.Key, e.SHA256, err)
+		slog.Warn("缓存文件丢失", "cache_key", logging.SanitizeKey(e.Key), "sha256", e.SHA256, "error", err, "error_code", logging.CacheReadFailed)
 		_ = g.st.CacheDelete(e.Key)
 		http.Error(w, "502 缓存文件丢失，请重试", http.StatusBadGateway)
 		return
@@ -671,6 +673,54 @@ func proxyToken(r *http.Request) string {
 		return u
 	}
 	return ""
+}
+
+// loggw 统一回源/缓存类日志的字段。
+//
+// 固定带 request_id、kind、脱敏后的 cache_key；错误必须带 error_code，
+// 便于按代码聚合。不要在这里塞 URL、Token、Cookie —— 调用点也只传
+// 已经过 logging.SanitizeURL 的地址。
+func loggw(level slog.Level, msg string, ctx context.Context, plan *adapter.Plan, code logging.Code, err error, extra ...any) {
+	attrs := []any{
+		"request_id", logging.RequestID(ctx),
+		"kind", plan.Kind,
+		"cache_key", logging.SanitizeKey(plan.CacheKey),
+	}
+	if plan.Source != "" {
+		attrs = append(attrs, "source", plan.Source)
+	}
+	if code != "" {
+		attrs = append(attrs, "error_code", code)
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+	}
+	attrs = append(attrs, extra...)
+	slog.Log(ctx, level, msg, attrs...)
+}
+
+// codeFor 把错误归到稳定代码。分类只做粗粒度：日志要的是能聚合，
+// 不是精确到每一种 errno。
+func codeFor(err error) logging.Code {
+	var ue *upstreamError
+	if errors.As(err, &ue) {
+		if ue.Code == http.StatusTooManyRequests {
+			return logging.UpstreamRateLimited
+		}
+		return logging.UpstreamHTTPError
+	}
+	var le *localError
+	if errors.As(err, &le) {
+		return logging.CacheCommitFailed
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return logging.UpstreamTimeout
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return logging.UpstreamTimeout
+	}
+	return logging.UpstreamConnectFailed
 }
 
 type upstreamError struct {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -21,6 +22,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
@@ -185,7 +187,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/accel/stats", guard(s.accelStats))
 	mux.HandleFunc("/api/accel/purge", guard(s.accelPurge))
 
-	return logRequests(httpProxyBypass(s.gw, noStorePanel(mux)))
+	return logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
 }
 
 // noStorePanel 给面板和接口加 no-store：这些响应带会话和实时状态，
@@ -221,13 +223,36 @@ func wantsHTTPProxy(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.EscapedPath(), "/http/")
 }
 
+// logRequests 只记面板接口；代理路径量大，交给网关自己的日志。
+// 注意不要在这里包一层通用 ResponseWriter：/raw/ /gh/ 是流式响应，
+// 包了就得把 Flush/Hijack 都转发，多一层风险不值得。
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health" {
-			log.Printf("%s %s %s", r.RemoteAddr, r.Method, auth.CleanPath(r.URL.Path))
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
 		}
-		next.ServeHTTP(w, r)
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		slog.Info("面板请求",
+			"request_id", logging.RequestID(r.Context()),
+			"method", r.Method,
+			"path", auth.CleanPath(r.URL.Path),
+			"status", sw.code,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.code = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
