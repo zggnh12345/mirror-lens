@@ -23,9 +23,19 @@
   </div>
 </header>
 
+<nav class="tabs" id="tabs" style="padding:6px 16px 2px">
+  <button data-tab="account" class="on">账号</button>
+  <button data-tab="appearance">外观</button>
+  <button data-tab="probe">探测</button>
+  <button data-tab="accel">加速器</button>
+  <button data-tab="config">配置参数</button>
+  <button data-tab="about">关于</button>
+</nav>
+
 <div class="wrap" style="max-width:640px">
 
   <!-- 账号 -->
+  <div data-panel="account">
   <div class="sec" style="margin-top:14px">
     <h2>账号</h2>
     <p class="desc">改用户名和密码都要先验证当前密码。改完密码，其他设备上的登录会立即失效。</p>
@@ -52,8 +62,10 @@
       <span class="hint" id="acMsg"></span>
     </div>
   </div>
+  </div>
 
   <!-- 外观 -->
+  <div data-panel="appearance" hidden>
   <div class="sec">
     <h2>外观</h2>
     <p class="desc">跟随系统时，手机或电脑切到深色，面板会跟着变。</p>
@@ -64,8 +76,10 @@
     </div>
     <div class="hint" id="thMsg" style="margin-top:10px">当前：跟随系统</div>
   </div>
+  </div>
 
   <!-- 探测 -->
+  <div data-panel="probe" hidden>
   <div class="sec">
     <h2>探测节奏</h2>
     <p class="desc">分三层跑：先探活，再验可用，最后测速和内容校验。数字越小越勤，也越费流量。</p>
@@ -94,8 +108,10 @@
       <span class="hint" id="setMsg"></span>
     </div>
   </div>
+  </div>
 
   <!-- 加速器 -->
+  <div data-panel="accel" hidden>
   <div class="sec">
     <h2>加速器</h2>
     <p class="desc">在原始地址前加本站前缀就能用，客户端用 Access Token 认证（用户名随便填，密码位填 Token）。</p>
@@ -128,8 +144,15 @@
     </div>
     <div class="tklist" id="tkList"></div>
   </div>
+  </div>
+
+  <!-- 配置参数 -->
+  <div data-panel="config" hidden>
+    <div id="cfgBox"><div class="hint">加载中…</div></div>
+  </div>
 
   <!-- 关于 -->
+  <div data-panel="about" hidden>
   <div class="sec">
     <h2>关于</h2>
     <div class="kv"><span>版本</span><span id="aboutVer">—</span></div>
@@ -140,6 +163,7 @@
       <span class="hint">退出后需要重新输入账号密码</span>
     </div>
   </div>
+  </div>
 
 </div>
 
@@ -148,7 +172,7 @@
 <script>
 'use strict';
 var $ = function(s){ return document.querySelector(s); };
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}
 function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on');},2200);}
 function say(el, msg, kind){ el.className = 'hint' + (kind ? ' ' + kind : ''); el.textContent = msg; }
 
@@ -159,7 +183,11 @@ async function api(path, opt){
   if (r.status === 401){ location.href = '/login'; throw new Error('未登录'); }
   var d = {};
   try { d = await r.json(); } catch(e){}
-  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  if (!r.ok){
+    var err = new Error(d.error || ('HTTP ' + r.status));
+    err.field = d.field || '';
+    throw err;
+  }
   return d;
 }
 
@@ -184,6 +212,17 @@ document.querySelectorAll('#themeSeg button').forEach(function(b){
 });
 window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ applyTheme(curTheme()); });
 applyTheme(curTheme());
+
+/* ---- 分页 ---- */
+document.querySelectorAll('#tabs button').forEach(function(b){
+  b.addEventListener('click', function(){
+    var t = b.dataset.tab;
+    document.querySelectorAll('#tabs button').forEach(function(x){ x.classList.toggle('on', x === b); });
+    document.querySelectorAll('[data-panel]').forEach(function(p){ p.hidden = (p.dataset.panel !== t); });
+    window.scrollTo(0, 0);
+    if (t === 'config') loadConfig();
+  });
+});
 
 /* ---- 加载 ---- */
 var ME = {};
@@ -350,6 +389,115 @@ $('#btnSettings').addEventListener('click', async function(){
   btn.disabled = false;
 });
 
+/* ---- 配置参数 ---- */
+var CFG = { data: null, orig: {}, cur: {} };
+function cfgControl(f){
+  var k = f.key;
+  if (f.kind === 'bool' || f.kind === 'enum'){
+    var opts = f.kind === 'bool' ? ['true','false'] : f.options;
+    var labels = f.kind === 'bool' ? ['开','关'] : opts;
+    var seg = '<div class="seg cfg-seg" data-role="' + f.kind + '" data-key="' + k + '">';
+    opts.forEach(function(o, i){
+      var on = (String(f.value) === String(o)) ? ' on' : '';
+      seg += '<button type="button" data-v="' + o + '"' + on + '>' + labels[i] + '</button>';
+    });
+    seg += '</div>';
+    return seg;
+  }
+  if (f.kind === 'list'){
+    return '<textarea class="cfg-ta" data-key="' + k + '">' + esc(f.value) + '</textarea>';
+  }
+  var type = (f.kind === 'int' || f.kind === 'float') ? 'number' : 'text';
+  var step = f.kind === 'float' ? ' step="0.01"' : '';
+  var attrs = '';
+  if (f.hasMin) attrs += ' min="' + f.min + '"';
+  if (f.hasMax) attrs += ' max="' + f.max + '"';
+  return '<input class="cfg-in" type="' + type + '"' + step + attrs + ' data-key="' + k + '" value="' + esc(f.value) + '">';
+}
+function findFieldMeta(k){
+  if (!CFG.data) return null;
+  for (var i = 0; i < CFG.data.sections.length; i++){
+    var fs = CFG.data.sections[i].fields;
+    for (var j = 0; j < fs.length; j++) if (fs[j].key === k) return fs[j];
+  }
+  return null;
+}
+function buildConfig(d){
+  CFG.data = d; CFG.orig = {}; CFG.cur = {};
+  var html = '<div class="cfg-note">' + esc(d.restart_note) + '</div>';
+  html += '<div class="cfg-path">配置文件：' + esc(d.config_path || '（运行时未指定 -config，改动只存内存）') + '</div>';
+  d.sections.forEach(function(sec){
+    html += '<div class="sec"><h2>' + esc(sec.title) + '</h2>';
+    sec.fields.forEach(function(f){
+      CFG.orig[f.key] = f.value; CFG.cur[f.key] = f.value;
+      var rtag = f.restart
+        ? '<span class="rtag">重启生效</span>'
+        : '<span class="rtag live">即时生效</span>';
+      html += '<div class="cfgrow" data-key="' + f.key + '">' +
+        '<div class="cf"><div class="clabel">' + esc(f.label) + '</div>' +
+        (f.hint ? '<div class="chint">' + esc(f.hint) + '</div>' : '') + rtag + '</div>' +
+        '<div class="cc">' + cfgControl(f) + '</div></div>';
+    });
+    html += '</div>';
+  });
+  html += '<div class="cfg-save"><button class="btn primary" id="btnCfg">保存配置</button>' +
+    '<span class="hint" id="cfgMsg"></span></div>';
+  $('#cfgBox').innerHTML = html;
+  bindCfg();
+}
+function bindCfg(){
+  $('#cfgBox').querySelectorAll('.cfg-seg button').forEach(function(b){
+    b.addEventListener('click', function(){
+      var seg = b.parentNode, k = seg.dataset.key;
+      seg.querySelectorAll('button').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      CFG.cur[k] = b.dataset.v;
+      seg.closest('.cfgrow').classList.remove('bad');
+    });
+  });
+  $('#cfgBox').querySelectorAll('.cfg-in, .cfg-ta').forEach(function(el){
+    el.addEventListener('input', function(){
+      CFG.cur[el.dataset.key] = el.value;
+      el.closest('.cfgrow').classList.remove('bad');
+    });
+  });
+  var btn = $('#btnCfg');
+  if (btn) btn.addEventListener('click', saveCfg);
+}
+async function loadConfig(){
+  var box = $('#cfgBox');
+  box.innerHTML = '<div class="hint">加载中…</div>';
+  try{
+    var d = await api('/api/config');
+    buildConfig(d);
+  }catch(e){
+    box.innerHTML = '<div class="hint bad">' + esc(e.message) + '</div>';
+  }
+}
+async function saveCfg(){
+  var msg = $('#cfgMsg'), btn = $('#btnCfg');
+  var vals = {};
+  Object.keys(CFG.cur).forEach(function(k){ if (CFG.cur[k] !== CFG.orig[k]) vals[k] = CFG.cur[k]; });
+  if (!Object.keys(vals).length){ say(msg, '没有改动', ''); return; }
+  btn.disabled = true; say(msg, '保存中…');
+  document.querySelectorAll('#cfgBox .cfgrow.bad').forEach(function(r){ r.classList.remove('bad'); });
+  try{
+    await api('/api/config', {method:'PUT', body: JSON.stringify({values: vals})});
+    Object.assign(CFG.orig, CFG.cur);
+    var restartKeys = Object.keys(vals).filter(function(k){ var f = findFieldMeta(k); return f && f.restart; });
+    say(msg, restartKeys.length ? ('已保存，' + restartKeys.length + ' 项需重启生效') : '已保存', 'ok');
+    toast('配置已保存');
+  }catch(e){
+    if (e.field){
+      var row = document.querySelector('#cfgBox .cfgrow[data-key="' + e.field + '"]');
+      if (row) row.classList.add('bad');
+    }
+    say(msg, e.message, 'bad');
+  }
+  btn.disabled = false;
+}
+
+/* ---- 退出 ---- */
 $('#btnLogout').addEventListener('click', async function(){
   try{ await api('/api/logout', {method:'POST'}); }catch(e){}
   location.href = '/login';

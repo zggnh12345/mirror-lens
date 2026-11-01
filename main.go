@@ -209,7 +209,8 @@ func main() {
 		Addr:     cfg.Addr,
 		ErrorLog: log.New(logging.Writer(slog.Default(), slog.LevelWarn), "", 0),
 		Handler: metrics.Middleware(lim.Wrap(api.New(st, eng, gw, jan, sched,
-			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken)))),
+			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken),
+			api.WithConfig(cfg, path)))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

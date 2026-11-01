@@ -42,6 +42,29 @@
     <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
   </div>
 
+  <section id="ovSec" class="sec" style="margin-top:14px;display:none">
+    <h2>运行概览</h2>
+    <div class="ovcards">
+      <div class="ovc ok"><b id="ovHit">–</b><span>命中率</span><svg class="spark" id="ovHitSpark" viewBox="0 0 120 34" preserveAspectRatio="none"></svg></div>
+      <div class="ovc"><b id="ovCache">–</b><span>缓存占用</span><span class="ovsub" id="ovCacheSub"></span></div>
+      <div class="ovc dk"><b id="ovConc">–</b><span>当前并发</span><span class="ovsub" id="ovConcSub"></span></div>
+      <div class="ovc gh"><b id="ovReq">–</b><span>周期请求</span><span class="ovsub">最近一个周期</span></div>
+    </div>
+
+    <div class="ovblock">
+      <div class="ovh">场景热度<small>各协议最近一个周期请求量</small></div>
+      <div id="ovHeat"></div>
+      <div class="ovnote" id="ovHeatNote"></div>
+    </div>
+
+    <div class="ovblock">
+      <div class="ovh">源站并发<small>在途回源占用的并发与动态上限</small></div>
+      <div class="ovbar"><div class="ob">在途 <b id="ovInflight">–</b></div><div class="ob">动态上限 <b id="ovLimit">–</b></div></div>
+      <div id="ovConcList"></div>
+      <div class="ovnote" id="ovConcNote"></div>
+    </div>
+  </section>
+
   <div class="toolbar">
     <input class="search" id="q" placeholder="搜索名称或域名" autocomplete="off">
   </div>
@@ -456,14 +479,72 @@ document.querySelectorAll('[data-copy]').forEach(function(b){
   });
 });
 
+/* ---- 运行概览（P1 可视化） ---- */
+var hitSpark = []; // 会话内命中率采样，用于趋势 sparkline
+function fmtMB(n){ if(!n) return '0 B'; var u=['B','KB','MB','GB','TB'],i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
+function renderSpark(){
+  var svg = $('#ovHitSpark'); if(!svg) return;
+  if(hitSpark.length<2){ svg.innerHTML=''; return; }
+  var w=120,h=34,n=hitSpark.length;
+  var pts = hitSpark.map(function(v,i){ var y=(h-3)-(v*(h-6)); return (i*(w/(n-1))).toFixed(1)+','+y.toFixed(1); });
+  svg.innerHTML = '<polyline points="'+pts.join(' ')+'" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round"/>';
+}
+async function loadMetrics(){
+  try{
+    var m = await api('/api/metrics');
+    if(!m.enabled){ $('#ovSec').style.display='none'; return; }
+    $('#ovSec').style.display='';
+    if(m.ratio && m.ratio.has_ratio){
+      var ov = m.ratio.overall||0;
+      $('#ovHit').textContent = (ov*100).toFixed(1)+'%';
+      hitSpark.push(ov); if(hitSpark.length>60) hitSpark.shift();
+      renderSpark();
+    } else { $('#ovHit').textContent='—'; }
+    if(m.cache && m.cache.has_cache){
+      $('#ovCache').textContent = fmtMB(m.cache.bytes);
+      $('#ovCacheSub').textContent = '空闲 '+fmtMB(m.cache.free)+' · '+m.cache.blobs+' 个';
+    } else { $('#ovCache').textContent='—'; $('#ovCacheSub').textContent='监控未采集'; }
+    if(m.concurrency){
+      var inf=m.concurrency.inflight||0, lim=m.concurrency.limit||0;
+      $('#ovConc').textContent = inf;
+      $('#ovConcSub').textContent = lim? ('上限 '+lim) : '无动态上限';
+      $('#ovInflight').textContent = inf;
+      $('#ovLimit').textContent = lim||'—';
+      var top = (m.concurrency.top||[]);
+      if(top.length){
+        var byId = {}; (DATA||[]).forEach(function(x){ byId[x.id]=x; });
+        $('#ovConcList').innerHTML = top.map(function(t){
+          var s = byId[t.id]||{}; var name = s.name||s.domain||('#'+t.id);
+          return '<div class="concrow"><span class="cn">'+esc(name)+'</span><span class="cv"><b>'+t.inflight+'</b> / '+(t.limit||'—')+'</span></div>';
+        }).join('');
+        $('#ovConcNote').textContent = '仅显示在途最高的几个源';
+      } else { $('#ovConcList').innerHTML = '<div class="hint">暂无在途回源</div>'; $('#ovConcNote').textContent=''; }
+    }
+    if(m.heat){
+      var keys = Object.keys(m.heat).filter(function(k){return m.heat[k]>0;});
+      if(keys.length){
+        keys.sort(function(a,b){return m.heat[b]-m.heat[a];});
+        var mx = m.heat[keys[0]];
+        $('#ovReq').textContent = keys.reduce(function(s,k){return s+m.heat[k];},0);
+        $('#ovHeat').innerHTML = keys.map(function(k){
+          var pct = mx? (m.heat[k]/mx*100).toFixed(0):0;
+          return '<div class="heatrow"><span class="hl">'+esc(k)+'</span><span class="hbar"><i style="width:'+pct+'%"></i></span><span class="hn">'+m.heat[k]+'</span></div>';
+        }).join('');
+        $('#ovHeatNote').textContent='单位：最近一个周期请求数';
+      } else { $('#ovReq').textContent='0'; $('#ovHeat').innerHTML='<div class="hint">这个周期还没有代理流量</div>'; $('#ovHeatNote').textContent=''; }
+    }
+  }catch(e){ /* 静默，避免刷屏 */ }
+}
+
 /* ---- 启动 ---- */
 api('/api/me').then(function(d){
   $('#sub').textContent = d.user + ' · v' + d.version;
   $('#pwbar').style.display = d.must_change ? '' : 'none';
 }).catch(function(){});
 load();
-setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) load(true); }, 15000);
-document.addEventListener('visibilitychange', function(){ if (!document.hidden) load(true); });
+loadMetrics();
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')){ load(true); loadMetrics(); } }, 15000);
+document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); } });
 </script>
 </body>
 </html>

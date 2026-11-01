@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
+	"github.com/zggnh12345/mirror-lens/internal/config"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
@@ -46,6 +47,9 @@ type Server struct {
 
 	metricsOn    bool
 	metricsToken bool
+
+	cfg      *config.Config // 可编辑的配置副本（设置页「配置参数」用）
+	cfgPath  string         // 配置文件路径；为空则改动只存内存、不落盘
 }
 
 // Option 是 New 的可选开关，避免为了一个端点改所有调用点的签名。
@@ -187,6 +191,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/tokens/", guard(s.tokenItem))
 	mux.HandleFunc("/api/accel/stats", guard(s.accelStats))
 	mux.HandleFunc("/api/accel/purge", guard(s.accelPurge))
+	mux.HandleFunc("/api/config", guard(s.configHandler))
+	mux.HandleFunc("/api/metrics", guard(s.metricsView))
 
 	return logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
 }
