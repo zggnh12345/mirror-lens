@@ -395,6 +395,8 @@ func SnapshotHitRatio() {
 		dt := now - lastT
 		if dt > 0 {
 			r.hitRatio[scene] = float64(nh-lastH) / float64(dt)
+		} else {
+			r.hitRatio[scene] = 0 // 本周期无流量：命中率无意义，归零避免 stale
 		}
 		r.lastTotal[scene] = now
 		r.lastHits[scene] = nh
@@ -413,10 +415,7 @@ func SnapshotSceneHotness() {
 	defer r.mu.Unlock()
 	for scene, c := range r.sceneTotal {
 		now := c.Load()
-		dt := now - r.lastScene[scene]
-		if dt > 0 || r.lastScene[scene] == 0 {
-			r.sceneDelta[scene] = dt
-		}
+		r.sceneDelta[scene] = now - r.lastScene[scene] // 零流量时 now 不增长，差值自然为 0
 		r.lastScene[scene] = now
 	}
 	r.haveHot = true

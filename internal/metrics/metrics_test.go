@@ -250,6 +250,55 @@ func TestCacheHitRatio(t *testing.T) {
 	}
 }
 
+func TestSceneHeatResetsWhenIdle(t *testing.T) {
+	setup(t)
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-ML-Cache", "HIT")
+		w.WriteHeader(200)
+	}))
+	rec := httptest.NewRecorder()
+	// 第一轮：有流量
+	for i := 0; i < 3; i++ {
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/v2/x/blobs/sha256:a", nil))
+	}
+	SnapshotSceneHotness()
+	if d := Get().sceneDelta["docker"]; d != 3 {
+		t.Fatalf("有流量时 delta 应为 3，实得 %d", d)
+	}
+	// 第二轮：零流量，gauge 必须归零（P0 修复点）
+	SnapshotSceneHotness()
+	if d := Get().sceneDelta["docker"]; d != 0 {
+		t.Fatalf("零流量时 delta 应归零，实得 %d", d)
+	}
+	// 第三轮：恢复流量，应正常累计
+	for i := 0; i < 2; i++ {
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/v2/x/blobs/sha256:b", nil))
+	}
+	SnapshotSceneHotness()
+	if d := Get().sceneDelta["docker"]; d != 2 {
+		t.Fatalf("恢复流量后 delta 应为 2，实得 %d", d)
+	}
+}
+
+func TestHitRatioResetsWhenIdle(t *testing.T) {
+	setup(t)
+	hit := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-ML-Cache", "HIT")
+		w.WriteHeader(200)
+	}))
+	rec := httptest.NewRecorder()
+	hit.ServeHTTP(rec, httptest.NewRequest("GET", "/v2/x/blobs/sha256:a", nil))
+	SnapshotHitRatio()
+	if v := Get().hitRatio["docker"]; v != 1 {
+		t.Fatalf("100%% 命中应得 1，实得 %v", v)
+	}
+	// 零流量周期：比率应归零而非保持 1
+	SnapshotHitRatio()
+	if v := Get().hitRatio["docker"]; v != 0 {
+		t.Fatalf("零流量时比率应归零，实得 %v", v)
+	}
+}
+
 func TestHandlerContentType(t *testing.T) {
 	setup(t)
 	RateLimited("ip") // 有一条样本，输出才不为空
