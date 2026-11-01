@@ -213,8 +213,8 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .seg{display:flex;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:4px}
 .seg button{flex:1;height:34px;border:0;border-radius:8px;background:transparent;color:var(--muted);
   font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
-.seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(16,24,40,.12)}
-[data-theme="dark"] .seg button.on{background:#232b36;box-shadow:none}
+.seg button.on{background:var(--brand);color:#fff;box-shadow:0 1px 3px rgba(37,99,235,.22)}
+[data-theme="dark"] .seg button.on{color:#0b1220;box-shadow:none}
 .seg svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .saverow{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
 .saverow .hint{margin:0}
