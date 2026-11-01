@@ -627,9 +627,37 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		gSnippet = "（暂无可用源）"
 	}
 
+	// containerd hosts.toml（docker.io 加速）：现代 containerd 用 certs.d/<host>/hosts.toml
+	var cLines []string
+	cLines = append(cLines, "server = \"https://registry-1.docker.io\"")
+	for _, x := range docker {
+		cLines = append(cLines, "")
+		cLines = append(cLines, "[host."+strconv.Quote(x.BaseURL)+"]")
+		cLines = append(cLines, "  capabilities = [\"pull\"]")
+	}
+	cSnippet := strings.Join(cLines, "\n")
+	if len(docker) == 0 {
+		cSnippet = "（暂无可用源）"
+	}
+
+	// K3s registries.yaml（docker.io 加速）
+	var kLines []string
+	kLines = append(kLines, "mirrors:")
+	kLines = append(kLines, "  docker.io:")
+	kLines = append(kLines, "    endpoint:")
+	for _, x := range docker {
+		kLines = append(kLines, "      - "+strconv.Quote(x.BaseURL))
+	}
+	kSnippet := strings.Join(kLines, "\n")
+	if len(docker) == 0 {
+		kSnippet = "（暂无可用源）"
+	}
+
 	writeJSON(w, 200, map[string]any{
-		"docker": map[string]any{"count": len(docker), "snippet": dSnippet},
-		"github": map[string]any{"count": len(github), "snippet": gSnippet},
+		"docker":     map[string]any{"count": len(docker), "snippet": dSnippet},
+		"github":     map[string]any{"count": len(github), "snippet": gSnippet},
+		"containerd": map[string]any{"count": len(docker), "snippet": cSnippet},
+		"k3s":        map[string]any{"count": len(docker), "snippet": kSnippet},
 	})
 }
 
