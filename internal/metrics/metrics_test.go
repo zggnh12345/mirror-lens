@@ -196,6 +196,36 @@ func TestSceneMapping(t *testing.T) {
 	}
 }
 
+func TestSnapshotGauges(t *testing.T) {
+	setup(t)
+	SetCache(12345, 7, 9999)
+	SetSources(map[SourceStat]uint64{
+		{Kind: "docker", Status: "usable"}: 3,
+		{Kind: "github", Status: "dead"}:   1,
+	})
+	out := string(Get().render())
+
+	for _, want := range []string{
+		"# TYPE mirrorlens_cache_bytes gauge",
+		"mirrorlens_cache_bytes 12345",
+		"# TYPE mirrorlens_cache_blobs gauge",
+		"mirrorlens_cache_blobs 7",
+		"mirrorlens_cache_free_bytes 9999",
+		`mirrorlens_sources{kind="docker",status="usable"} 3`,
+		`mirrorlens_sources{kind="github",status="dead"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("快照指标缺失 %q:\n%s", want, out)
+		}
+	}
+	// 标签只能出现 kind/status，绝不能出现 url/ip/filename/id。
+	for _, banned := range []string{"url", "ip", "filename", "file=", "source_id", "token", "id="} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("标签里出现高基数/敏感维度 %q:\n%s", banned, out)
+		}
+	}
+}
+
 func TestHandlerContentType(t *testing.T) {
 	setup(t)
 	RateLimited("ip") // 有一条样本，输出才不为空

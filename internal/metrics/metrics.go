@@ -88,6 +88,15 @@ type Registry struct {
 	inflight map[int64]int
 	srclimit map[int64]int
 	limited  map[string]uint64
+
+	// 快照类 gauge：由 janitor 周期性刷新，/metrics 只读取、不重算。
+	// 否则每次 Prometheus 抓取都递归扫整盘，缓存目录一上百万文件就卡死。
+	haveCache   bool
+	cacheBytes  uint64
+	cacheBlobs  uint64
+	cacheFree   uint64
+	haveSources bool
+	sources     map[SourceStat]uint64
 }
 
 // New 建一个空注册表。
@@ -107,6 +116,7 @@ func New() *Registry {
 		inflight:  map[int64]int{},
 		srclimit:  map[int64]int{},
 		limited:   map[string]uint64{},
+		sources:   map[SourceStat]uint64{},
 	}
 }
 
@@ -284,6 +294,41 @@ func RateLimited(layer string) {
 	r.limited[layer]++
 }
 
+// SourceStat 是「某协议下某状态」的源站数标签。status 是封闭集合
+// （pending|usable|degraded|dead|blocked|archived），kind 是支持的几个协议，
+// 都不会爆炸成高基数。
+type SourceStat struct {
+	Kind   string
+	Status string
+}
+
+// SetCache 刷新缓存盘快照：占用字节、条目数、剩余字节。
+// 由 janitor 每轮巡检时调用；/metrics 直接读，不重扫目录。
+func SetCache(bytes, blobs, free uint64) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.haveCache = true
+	r.cacheBytes = bytes
+	r.cacheBlobs = blobs
+	r.cacheFree = free
+	r.mu.Unlock()
+}
+
+// SetSources 刷新源站数快照。
+func SetSources(m map[SourceStat]uint64) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.haveSources = true
+	r.sources = m
+	r.mu.Unlock()
+}
+
 // ---------- HTTP ----------
 
 // Scene 把路径压成有限个场景。绝不把 URL 本身当标签。
@@ -429,6 +474,27 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%scache_requests_total{scene=%q,result=%q} %d\n", prefix, k.scene, k.result, r.cache[k])
 		}
 	}
+	// 缓存盘快照（gauge，由 janitor 按时刷新）
+	if r.haveCache {
+		b.WriteString("# HELP " + prefix + "cache_bytes 缓存盘当前占用字节（磁盘实测，非索引之和）\n")
+		b.WriteString("# TYPE " + prefix + "cache_bytes gauge\n")
+		fmt.Fprintf(&b, "%scache_bytes %d\n", prefix, r.cacheBytes)
+		b.WriteString("# HELP " + prefix + "cache_blobs 缓存条目数\n")
+		b.WriteString("# TYPE " + prefix + "cache_blobs gauge\n")
+		fmt.Fprintf(&b, "%scache_blobs %d\n", prefix, r.cacheBlobs)
+		b.WriteString("# HELP " + prefix + "cache_free_bytes 缓存盘剩余字节\n")
+		b.WriteString("# TYPE " + prefix + "cache_free_bytes gauge\n")
+		fmt.Fprintf(&b, "%scache_free_bytes %d\n", prefix, r.cacheFree)
+	}
+	// 源站数快照（gauge）
+	if r.haveSources {
+		b.WriteString("# HELP " + prefix + "sources 各协议/状态的源站数量\n")
+		b.WriteString("# TYPE " + prefix + "sources gauge\n")
+		for _, k := range sortedSrcStat(r.sources) {
+			fmt.Fprintf(&b, "%ssources{kind=%q,status=%q} %d\n", prefix, k.Kind, k.Status, r.sources[k])
+		}
+	}
+
 	// 吞吐
 	writeHist(&b, prefix+"download_throughput_bytes_per_second",
 		"回源响应的端到端吞吐量（字节/秒），仅统计未命中缓存的响应", "scene", r.tp, tpBuckets)
@@ -629,6 +695,20 @@ func sortedMissKeys(m map[srcMissKey]uint64) []srcMissKey {
 			return out[i].kind < out[j].kind
 		}
 		return out[i].code < out[j].code
+	})
+	return out
+}
+
+func sortedSrcStat(m map[SourceStat]uint64) []SourceStat {
+	out := make([]SourceStat, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Status < out[j].Status
 	})
 	return out
 }

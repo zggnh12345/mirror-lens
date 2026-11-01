@@ -6,6 +6,8 @@ import (
 	"context"
 	"log"
 	"sync"
+
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/cache"
@@ -175,6 +177,29 @@ func (j *Janitor) Once() Stats {
 	j.last = s
 	j.lastRun = now
 	j.mu.Unlock()
+
+	// 9. 把缓存/源站快照推给 metrics：/metrics 直接读这里，
+	// 不每次抓取都递归扫整盘（百万文件时抓取会卡死）。
+	if r := metrics.Get(); r != nil {
+		blobs := uint64(0)
+		if bl, err := j.cs.ListBlobs(); err == nil {
+			blobs = uint64(len(bl))
+		}
+		free := int64(0)
+		if f, err := j.cs.FSFree(); err == nil {
+			free = f
+		}
+		metrics.SetCache(uint64(s.Usage), blobs, uint64(free))
+		if srcs, err := j.st.ListSources(); err == nil {
+			m := make(map[metrics.SourceStat]uint64, len(srcs)*2)
+			for _, s2 := range srcs {
+				for _, k := range s2.Kinds() {
+					m[metrics.SourceStat{Kind: k, Status: s2.Status}]++
+				}
+			}
+			metrics.SetSources(m)
+		}
+	}
 
 	if s.Expired+s.Missing+s.Orphans+s.Partials+s.TmpFiles > 0 || s.Freed > 0 {
 		log.Printf("janitor: 过期 %d、缺文件 %d、孤儿 %d、半截 %d、临时 %d，释放 %d MB",
