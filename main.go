@@ -40,7 +40,13 @@ func main() {
 
 	path, required := *cfgPath, true
 	if path == "" {
-		path, required = "config.yaml", false
+		// 容器里配置文件固定放 /config/config.yaml（compose 把宿主 config/ 目录挂到这里）；
+		// 没找到再回退到当前目录的 config.yaml，方便本地直接跑。
+		if _, err := os.Stat("/config/config.yaml"); err == nil {
+			path = "/config/config.yaml"
+		} else {
+			path, required = "config.yaml", false
+		}
 	}
 	cfg, err := config.Load(path, required)
 	if err != nil {

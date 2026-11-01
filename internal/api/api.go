@@ -81,6 +81,11 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
+		// 还没设置过账号：直接给设置页，跳过默认密码登录这一步。
+		if s.needSetup() {
+			http.ServeFileFS(w, r, sub, "setup.html")
+			return
+		}
 		http.ServeFileFS(w, r, sub, "login.html")
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -122,11 +127,17 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 	}
 
-	// 受保护：登录 + 已经设置过账号。默认密码还没换掉时，除 /api/me 之外一律
-	// 不放行——只在界面上弹个提示条，等于没强制。
+	// 受保护：首次设置态优先于登录校验。needSetup 期间，任何人（含匿名）
+	// 一律引到设置页；只有真正设过账号之后，才要求登录。旧的写法把登录
+	// 校验包在最外层，匿名请求还没轮到 needSetup 判断就被挡到 /login 了。
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
-		return authed(func(w http.ResponseWriter, r *http.Request) {
-			if s.needSetup() && r.URL.Path != "/api/me" {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if s.needSetup() {
+				// /api/me 例外：放行给前端判断「还在首次设置态」，无需登录。
+				if r.URL.Path == "/api/me" {
+					h(w, r)
+					return
+				}
 				if strings.HasPrefix(r.URL.Path, "/api/") {
 					writeJSON(w, 403, map[string]any{
 						"error": "首次使用请先设置账号和密码",
@@ -137,23 +148,30 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 				http.Redirect(w, r, "/setup", http.StatusFound)
 				return
 			}
+			// 已设过账号：必须登录。
+			if !auth.Authed(r, s.st) {
+				if strings.HasPrefix(r.URL.Path, "/api/") {
+					writeJSON(w, 401, map[string]string{"error": "未登录"})
+					return
+				}
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
 			h(w, r)
-		})
+		}
 	}
 
-	// 首次设置页：登录之后、改完之前唯一能打开的面板页面。
+	// 首次设置页：needSetup 期间任何人都能直接打开，不必先拿默认密码登录；
+	// 设完之后 needSetup 变 false，这个页就跳回面板。
 	mux.HandleFunc("/setup", func(w http.ResponseWriter, r *http.Request) {
-		if !auth.Authed(r, s.st) {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
 		if !s.needSetup() {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
 		http.ServeFileFS(w, r, sub, "setup.html")
 	})
-	mux.HandleFunc("/api/setup", authed(s.setup))
+	// 首次设置账号：needSetup 期间对匿名开放，设过一次返回 409，不需要先登录。
+	mux.HandleFunc("/api/setup", s.setup)
 
 	mux.HandleFunc("/", guard(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

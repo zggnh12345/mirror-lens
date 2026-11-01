@@ -245,3 +245,75 @@ func TestSetupThenPanelOpens(t *testing.T) {
 		t.Fatalf("重复设置应 409，得到 %d", rec.Code)
 	}
 }
+
+// 首次进入不需要先用默认密码登录：needSetup 期间 /setup 与 /login 都直接给设置页，
+// 匿名直接 POST /api/setup 即可设账号，设完后面板可用、默认密码失效，重复设置返回 409。
+func TestFirstRunSetupNoPriorLogin(t *testing.T) {
+	_, h := newTestServer(t)
+
+	// 首次进入根路径应直接引到设置页，而不是被登录校验挡到 /login。
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rRoot := httptest.NewRecorder()
+	h.ServeHTTP(rRoot, rootReq)
+	if rRoot.Code != http.StatusFound || rRoot.Header().Get("Location") != "/setup" {
+		t.Fatalf("首次 GET / 应跳到 /setup，得到 %d %q", rRoot.Code, rRoot.Header().Get("Location"))
+	}
+
+	// needSetup 期间，匿名直接打开 /setup 拿到设置页 HTML。
+	req := httptest.NewRequest(http.MethodGet, "/setup", nil)
+	rSetup := httptest.NewRecorder()
+	h.ServeHTTP(rSetup, req)
+	if rSetup.Code != 200 || !strings.Contains(rSetup.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("/setup 应对匿名返回设置页，得到 %d %q", rSetup.Code, rSetup.Header().Get("Content-Type"))
+	}
+
+	// needSetup 期间，/login 也直接给设置页（而不是登录页）。
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	rLogin := httptest.NewRecorder()
+	h.ServeHTTP(rLogin, req)
+	if rLogin.Code != 200 || !strings.Contains(rLogin.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("/login 在首次期间应给设置页，得到 %d %q", rLogin.Code, rLogin.Header().Get("Content-Type"))
+	}
+
+	// 没登录也能设账号（needSetup 期间 /api/setup 对匿名开放）。
+	rec := postJSON(h, "/api/setup", `{"user":"boss","pass":"super-secret"}`, nil)
+	if rec.Code != 200 {
+		t.Fatalf("首次设置应成功（匿名），得到 %d %s", rec.Code, rec.Body.String())
+	}
+	var ck *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			ck = c
+		}
+	}
+	if ck == nil {
+		t.Fatalf("设置成功应发新会话")
+	}
+
+	// 设完后面板可用。
+	req = httptest.NewRequest(http.MethodGet, "/api/sources", nil)
+	req.AddCookie(ck)
+	r2 := httptest.NewRecorder()
+	h.ServeHTTP(r2, req)
+	if r2.Code != 200 {
+		t.Fatalf("设置完面板应可用，得到 %d %s", r2.Code, r2.Body.String())
+	}
+
+	// 默认密码应已失效。
+	if rec, _ := login(t, h, "admin", "admin"); rec.Code != 401 {
+		t.Fatalf("默认密码应失效，得到 %d", rec.Code)
+	}
+
+	// needSetup 之后 /setup 跳回面板（不再给设置页）。
+	req = httptest.NewRequest(http.MethodGet, "/setup", nil)
+	r3 := httptest.NewRecorder()
+	h.ServeHTTP(r3, req)
+	if r3.Code != http.StatusFound {
+		t.Fatalf("设过之后 /setup 应跳回面板，得到 %d", r3.Code)
+	}
+
+	// 已经设过就不能再走这个口子（匿名也不行）。
+	if rec := postJSON(h, "/api/setup", `{"user":"other","pass":"another-pass"}`, nil); rec.Code != 409 {
+		t.Fatalf("重复设置应 409，得到 %d", rec.Code)
+	}
+}
