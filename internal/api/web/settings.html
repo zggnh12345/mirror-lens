@@ -408,8 +408,9 @@ function cfgControl(f){
     var labels = f.kind === 'bool' ? ['开','关'] : opts;
     var seg = '<div class="seg cfg-seg" data-role="' + f.kind + '" data-key="' + k + '">';
     opts.forEach(function(o, i){
+      // 选中态必须落在 class 上：直接拼 ' on' 会变成裸属性 on，选中永远不生效。
       var on = (String(f.value) === String(o)) ? ' on' : '';
-      seg += '<button type="button" data-v="' + o + '"' + on + '>' + labels[i] + '</button>';
+      seg += '<button type="button" class="segbtn' + on + '" data-v="' + o + '">' + labels[i] + '</button>';
     });
     seg += '</div>';
     return seg;

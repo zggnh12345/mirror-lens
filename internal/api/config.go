@@ -127,11 +127,17 @@ var cfgSchema = []cfgField{
 	{Section: "多源调度", Key: "sources.dynamic", Label: "动态带宽调度", Kind: "bool", Restart: true,
 		Hint: "按实测吞吐自动调并发（AIMD）", Get: func(c *config.Config) string { return b2s(c.Sources.Dynamic) }, Set: func(c *config.Config, v string) error { c.Sources.Dynamic = parseBool(v); return nil }},
 	{Section: "多源调度", Key: "sources.archive_days", Label: "死源归档天数", Kind: "int", Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.ArchiveDays, v, 0, 1<<20, false, false) }},
+		Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.ArchiveDays, v, 0, 1<<20, false, false)
+		}},
 	{Section: "多源调度", Key: "sources.cleanup_days", Label: "归档后删除天数", Kind: "int", Restart: true,
-		Hint: "0/负 = 永不删", Get: func(c *config.Config) string { return i32(c.Sources.CleanupDays) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.CleanupDays, v, 0, 1<<20, false, false) }},
+		Hint: "0/负 = 永不删", Get: func(c *config.Config) string { return i32(c.Sources.CleanupDays) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.CleanupDays, v, 0, 1<<20, false, false)
+		}},
 	{Section: "多源调度", Key: "sources.recovery_minutes", Label: "死源恢复探测", Kind: "int", Unit: "分钟", Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Sources.RecoveryMinutes) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.RecoveryMinutes, v, 0, 1<<20, false, false) }},
+		Get: func(c *config.Config) string { return i32(c.Sources.RecoveryMinutes) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.RecoveryMinutes, v, 0, 1<<20, false, false)
+		}},
 
 	// 分片并行
 	{Section: "分片并行", Key: "parallel.enabled", Label: "开启分片并行", Kind: "bool", Restart: true,
@@ -157,21 +163,33 @@ var cfgSchema = []cfgField{
 	{Section: "入口限流", Key: "limits.global_rps", Label: "全局每秒请求", Kind: "float", Min: 0, HasMin: true, Restart: true,
 		Get: func(c *config.Config) string { return f2s(c.Limits.GlobalRPS) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Limits.GlobalRPS, v, 0, 1e9, true, false) }},
 	{Section: "入口限流", Key: "limits.global_burst", Label: "全局突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.GlobalBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.GlobalBurst, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.GlobalBurst) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.GlobalBurst, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.global_concurrency", Label: "全局并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.GlobalConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.GlobalConcurrency, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.GlobalConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.GlobalConcurrency, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.ip_per_minute", Label: "单 IP 每分钟", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.IPPerMinute) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.IPPerMinute, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.IPPerMinute) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.IPPerMinute, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.ip_burst", Label: "单 IP 突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
 		Get: func(c *config.Config) string { return i32(c.Limits.IPBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.IPBurst, v, 0, 1<<30, true, false) }},
 	{Section: "入口限流", Key: "limits.ip_concurrency", Label: "单 IP 并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.IPConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.IPConcurrency, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.IPConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.IPConcurrency, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.token_per_minute", Label: "单 Token 每分钟", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.TokenPerMinute) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.TokenPerMinute, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.TokenPerMinute) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.TokenPerMinute, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.token_burst", Label: "单 Token 突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
 		Get: func(c *config.Config) string { return i32(c.Limits.TokenBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.TokenBurst, v, 0, 1<<30, true, false) }},
 	{Section: "入口限流", Key: "limits.token_concurrency", Label: "单 Token 并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.TokenConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.TokenConcurrency, v, 0, 1<<30, true, false) }},
+		Get: func(c *config.Config) string { return i32(c.Limits.TokenConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Limits.TokenConcurrency, v, 0, 1<<30, true, false)
+		}},
 	{Section: "入口限流", Key: "limits.trusted_proxies", Label: "可信代理网段", Kind: "list", Restart: true,
 		Hint: "CIDR，每行一个；部署在反代后填反代网段", Get: func(c *config.Config) string { return strings.Join(c.Limits.TrustedProxies, "\n") }, Set: func(c *config.Config, v string) error {
 			var out []string
@@ -187,7 +205,7 @@ var cfgSchema = []cfgField{
 
 	// 日志
 	{Section: "日志", Key: "logging.level", Label: "日志级别", Kind: "enum", Options: []string{"debug", "info", "warn", "error"}, Restart: false,
-		Hint: "改完即时生效", Get: func(c *config.Config) string { return c.Logging.Level }, Set: func(c *config.Config, v string) error {
+		Hint: "改完即时生效", Get: func(c *config.Config) string { return effLevel(c.Logging.Level) }, Set: func(c *config.Config, v string) error {
 			v = strings.ToLower(strings.TrimSpace(v))
 			switch v {
 			case "debug", "info", "warn", "error":
@@ -197,7 +215,7 @@ var cfgSchema = []cfgField{
 			return fmt.Errorf("日志级别只支持 debug/info/warn/error")
 		}},
 	{Section: "日志", Key: "logging.format", Label: "日志格式", Kind: "enum", Options: []string{"text", "json"}, Restart: true,
-		Hint: "json 接 Loki/ELK", Get: func(c *config.Config) string { return c.Logging.Format }, Set: func(c *config.Config, v string) error {
+		Hint: "json 接 Loki/ELK", Get: func(c *config.Config) string { return effFormat(c.Logging.Format) }, Set: func(c *config.Config, v string) error {
 			v = strings.ToLower(strings.TrimSpace(v))
 			if v != "text" && v != "json" {
 				return fmt.Errorf("日志格式只支持 text/json")
@@ -220,6 +238,31 @@ var cfgSchema = []cfgField{
 }
 
 func b2s(b bool) string { return strconv.FormatBool(b) }
+
+// effLevel 把配置里的日志级别折算成面板里一定存在的选项。
+// 空值等价于 info（logging 包就是这么解析的），warning 是 warn 的别名；
+// 若不归一化，面板会一个选项都不选中，看上去像"没设置"。
+func effLevel(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "debug":
+		return "debug"
+	case "warn", "warning":
+		return "warn"
+	case "error":
+		return "error"
+	default:
+		return "info"
+	}
+}
+
+// effFormat 同理：空值等价于 text。
+func effFormat(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "json") {
+		return "json"
+	}
+	return "text"
+}
+
 func parseBool(s string) bool {
 	s = strings.TrimSpace(strings.ToLower(s))
 	return s == "true" || s == "1" || s == "yes" || s == "on"
@@ -309,8 +352,8 @@ func configView(c *config.Config, path string) map[string]any {
 		secs = append(secs, map[string]any{"title": name, "fields": groups[name]})
 	}
 	return map[string]any{
-		"sections":    secs,
-		"config_path": path,
+		"sections":     secs,
+		"config_path":  path,
 		"restart_note": "除「日志级别」即时生效外，其余参数在启动时已拷贝进各子系统，修改后需重启服务才生效；修改会写入 config.yaml（路径见上）。若配置文件位于镜像内而非持久卷，重启容器会丢失，请确认 -config 指向挂载卷。",
 	}
 }
