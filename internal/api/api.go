@@ -48,8 +48,8 @@ type Server struct {
 	metricsOn    bool
 	metricsToken bool
 
-	cfg      *config.Config // 可编辑的配置副本（设置页「配置参数」用）
-	cfgPath  string         // 配置文件路径；为空则改动只存内存、不落盘
+	cfg     *config.Config // 可编辑的配置副本（设置页「配置参数」用）
+	cfgPath string         // 配置文件路径；为空则改动只存内存、不落盘
 }
 
 // Option 是 New 的可选开关，避免为了一个端点改所有调用点的签名。
@@ -504,9 +504,10 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPatch:
 		var in struct {
-			Enabled *bool   `json:"enabled"`
-			Name    *string `json:"name"`
-			Note    *string `json:"note"`
+			Enabled   *bool   `json:"enabled"`
+			Name      *string `json:"name"`
+			Note      *string `json:"note"`
+			Preferred *bool   `json:"preferred"`
 			// Status 只接受人工可做的三件事：归档、封禁、恢复待检。
 			// 不让手动置 usable——那等于绕过探测和校验。
 			Status *string `json:"status"`
@@ -546,8 +547,8 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if in.Enabled != nil || in.Name != nil || in.Note != nil {
-			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note); err != nil {
+		if in.Enabled != nil || in.Name != nil || in.Note != nil || in.Preferred != nil {
+			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred); err != nil {
 				if errors.Is(err, store.ErrArchived) {
 					writeJSON(w, 400, map[string]string{"error": err.Error()})
 					return

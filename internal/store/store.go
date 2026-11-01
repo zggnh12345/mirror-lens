@@ -40,6 +40,9 @@ type Source struct {
 	// 默认 0（不确定），实测通过后由调度器置 1。
 	GitCap int `json:"git_cap"`
 
+	// Preferred 是用户手动指定的「优先源」：调度时排在同等可用性的源最前面。
+	Preferred bool `json:"preferred"`
+
 	CreatedAt int64 `json:"created_at"`
 
 	// 每种类型最近一次检测结果
@@ -217,6 +220,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	}
 	if err := s.ensureColumns("sources", map[string]string{
 		"git_cap":       "INTEGER NOT NULL DEFAULT 0",
+		"preferred":     "INTEGER NOT NULL DEFAULT 0",
 		"status_at":     "INTEGER NOT NULL DEFAULT 0",
 		"status_reason": "TEXT NOT NULL DEFAULT ''",
 		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
@@ -342,12 +346,12 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,status_reason,probe_at,created_at`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt)
+		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt)
 	return x, err
 }
 
@@ -531,7 +535,7 @@ var ErrExists = errors.New("source already exists")
 // ErrArchived：已归档的源不能直接启用，只能走恢复流程。
 var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复流程重新验证")
 
-func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string) error {
+func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool) error {
 	if enabled != nil {
 		if *enabled {
 			// 归档是人工/自动做过的判断，不能被一个「启用」开关顺手撤销：
@@ -555,6 +559,11 @@ func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string) error 
 	}
 	if note != nil {
 		if _, err := s.db.Exec(`UPDATE sources SET note=? WHERE id=?`, *note, id); err != nil {
+			return err
+		}
+	}
+	if preferred != nil {
+		if _, err := s.db.Exec(`UPDATE sources SET preferred=? WHERE id=?`, *preferred, id); err != nil {
 			return err
 		}
 	}

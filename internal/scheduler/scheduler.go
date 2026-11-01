@@ -72,6 +72,8 @@ type Candidate struct {
 	// Trust 是内容校验的可信度（-1 不符 / 0 未验证 / 1 仅可用 / 2 内容一致 / 3 长期一致）。
 	// 只用于同分时的排序和展示，不参与评分。
 	Trust int `json:"trust"`
+	// Preferred 是用户手动指定的优先源：同等可用性下排在最前。
+	Preferred bool `json:"preferred"`
 }
 
 type stickyPick struct {
@@ -227,7 +229,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.order(kind, items)
@@ -267,6 +269,11 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 	sort.SliceStable(out, func(i, j int) bool {
 		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
 			return !bi
+		}
+		// 用户手动「优先」的源排在同组最前：这是明确意图，比评分更直接。
+		// 放在 atCap 之后，避免把已占满名额的源硬塞到空闲源前面。
+		if out[i].Preferred != out[j].Preferred {
+			return out[i].Preferred
 		}
 		if out[i].Score == out[j].Score {
 			// 同分先看内容可信度：速度一样时，宁可走那台被反复校验过的。

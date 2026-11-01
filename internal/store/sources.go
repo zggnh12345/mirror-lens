@@ -10,15 +10,17 @@ import (
 // 速度与延迟只来自探测样本（checks.tier >= 2）；代理请求的快慢不写进
 // checks，否则「本机到源站」和「用户到本机」两段会混成一个数字。
 type SourceStat struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	BaseURL   string `json:"base_url"`
-	Status    string `json:"status"`
-	Samples   int    `json:"samples"`
-	OK        int    `json:"ok"`
-	LatencyMS int64  `json:"latency_ms"` // 样本中位数
-	SpeedKBps int64  `json:"speed_kbps"` // 样本中位数
-	LastTS    int64  `json:"last_ts"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Status  string `json:"status"`
+	// Preferred 表示用户手动把这个源设为优先，调度时排在前面。
+	Preferred bool  `json:"preferred"`
+	Samples   int   `json:"samples"`
+	OK        int   `json:"ok"`
+	LatencyMS int64 `json:"latency_ms"` // 样本中位数
+	SpeedKBps int64 `json:"speed_kbps"` // 样本中位数
+	LastTS    int64 `json:"last_ts"`
 	// Trust 是这台源在该类型上的可信度级别（见 trust.go）
 	Trust int `json:"trust"`
 }
@@ -100,7 +102,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	// 按「协议族」过滤：docker 挂了不能拖累 github，反之亦然。
 	// 一个源整体还活着（status=usable），但某个协议连续探测失败时，只把
 	// 这个协议从候选里摘掉，另一个协议照常走它。
-	rows, err := s.db.Query(`SELECT id, name, base_url, status FROM sources
+	rows, err := s.db.Query(`SELECT id, name, base_url, status, preferred FROM sources
 		WHERE enabled = 1 AND status IN ('usable','degraded') AND `+col+` = 1
 		  AND id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
 		ORDER BY id`, Family(kind), HealthFails)
@@ -110,7 +112,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	var out []SourceStat
 	for rows.Next() {
 		var st SourceStat
-		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status); err != nil {
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred); err != nil {
 			rows.Close()
 			return nil, err
 		}

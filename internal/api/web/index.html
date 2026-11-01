@@ -264,6 +264,7 @@ function rowHtml(x){
     +   '<div class="meta">'+statusChip(x)+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)+trustChip(x)
     +     (bits.length?'<span class="sep">·</span>'+bits.join('<span class="sep">·</span>'):'')+'</div>'
     + '</div>'
+    + '<button class="pref'+(x.preferred?' on':'')+'" data-pref="'+x.id+'" title="'+(x.preferred?'取消优先':'设为优先')+'">'+(x.preferred?'★':'☆')+'</button>'
     + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="'+x.id+'"'+(x.enabled?' checked':'')+'><span></span></label>'
     + '</div>'
     + (OPEN === x.id
@@ -389,6 +390,20 @@ $('#list').addEventListener('click', async function(ev){
     try{
       await api('/api/sources/'+del.getAttribute('data-del'), {method:'DELETE'});
       OPEN = null; toast('已删除'); load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  var pf = ev.target.closest('[data-pref]');
+  if (pf){
+    ev.stopPropagation();
+    var pid = pf.getAttribute('data-pref');
+    var item = DATA.find(function(v){return String(v.id) === pid;});
+    var next = !(item && item.preferred);
+    try{
+      await api('/api/sources/'+pid, {method:'PATCH', body: JSON.stringify({preferred: next})});
+      if (item) item.preferred = next;
+      render();
+      toast(next ? '已设为优先，调度时排在最前' : '已取消优先');
     }catch(e){ toast(e.message); }
     return;
   }

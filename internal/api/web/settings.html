@@ -115,9 +115,9 @@
   <div class="sec">
     <h2>加速器</h2>
     <p class="desc">在原始地址前加本站前缀就能用，客户端用 Access Token 认证（用户名随便填，密码位填 Token）。</p>
-    <div class="kv"><span>GitHub Raw</span><code>/raw/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;path&gt;</code></div>
-    <div class="kv"><span>Git 克隆</span><code>/git/github.com/&lt;owner&gt;/&lt;repo&gt;.git</code></div>
-    <div class="kv"><span>Docker 镜像</span><code>docker pull &lt;本站地址&gt;/library/alpine:3.20</code></div>
+    <div class="kv"><span>GitHub Raw</span><code id="uRaw">/raw/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;path&gt;</code></div>
+    <div class="kv"><span>Git 克隆</span><code id="uGit">/git/github.com/&lt;owner&gt;/&lt;repo&gt;.git</code></div>
+    <div class="kv"><span>Docker 镜像</span><code id="uDocker">docker pull &lt;本站地址&gt;/library/alpine:3.20</code></div>
     <div class="kv"><span>缓存占用</span><span id="acCache">—</span></div>
     <div class="kv"><span>内容校验</span><span id="acVerify">—</span></div>
     <div class="kv"><span>今日命中</span><span id="acHit">—</span></div>
@@ -125,6 +125,7 @@
     <div class="kv"><span>磁盘剩余</span><span id="acFree">—</span></div>
     <div class="kv"><span>调度顺序</span><span id="acSched">—</span></div>
     <div class="kv"><span>并行分片</span><span id="acPar">—</span></div>
+    <div class="hint" style="margin-top:8px">★ 为手动优先源；在首页源列表点 ☆ 设置，调度时会排在同等可用源最前。</div>
     <div class="saverow" style="margin-top:12px;flex-wrap:wrap;gap:8px">
       <button class="btn" data-purge="raw">清空 Raw</button>
       <button class="btn" data-purge="docker">清空 Docker</button>
@@ -229,6 +230,13 @@ document.querySelectorAll('#tabs button').forEach(function(b){
 /* ---- 加载 ---- */
 var ME = {};
 (async function init(){
+  // 示例地址用当前访问域名，避免让人对着「本站地址」猜
+  (function(){
+    var H = location.host;
+    $('#uRaw').textContent = 'https://' + H + '/raw/<owner>/<repo>/<ref>/<path>';
+    $('#uGit').textContent = 'git clone https://' + H + '/git/github.com/<owner>/<repo>.git';
+    $('#uDocker').textContent = 'docker pull ' + H + '/library/alpine:3.20';
+  })();
   try{
     ME = await api('/api/me');
     $('#acUser').value = ME.user;
@@ -301,7 +309,7 @@ function renderAccel(a){
   var sch = a.scheduler || [], rows = [];
   sch.forEach(function(r){
     if (!r.items || !r.items.length) return;
-    rows.push(r.kind + '：' + r.items.map(function(x){ return x.name; }).join(' → '));
+    rows.push(r.kind + '：' + r.items.map(function(x){ return (x.preferred ? '★' : '') + x.name; }).join(' → '));
   });
   $('#acSched').textContent = rows.length ? rows.join('；') : '仅官方源';
 }
