@@ -82,6 +82,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "busy": s.eng.Busy(), "ts": time.Now().Unix()})
 	})
+	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/api/login", s.login)
 	// Prometheus 抓取口。默认公开（和大多数自建服务一样），公网部署可在
 	// config.yaml 里把 metrics.require_token 打开，改用面板登录或 Access Token。

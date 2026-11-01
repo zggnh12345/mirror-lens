@@ -297,6 +297,22 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	g.serveCached(w, r, entry, "MISS", false)
 }
 
+// FSFree 返回缓存盘的剩余字节，供 /readyz 判断是否还写得下。
+func (g *Gateway) FSFree() (int64, error) {
+	if g.cache == nil {
+		return 0, nil
+	}
+	return g.cache.FSFree()
+}
+
+// CacheRoot 返回缓存目录，供 /readyz 做目录级检查。
+func (g *Gateway) CacheRoot() string {
+	if g.cache == nil {
+		return ""
+	}
+	return g.cache.Root()
+}
+
 // freshFor 按 plan 的 TTL 判断条目是否还新鲜（/gh/ /raw/ 用）。
 func (g *Gateway) freshFor(e *store.CacheEntry, plan *adapter.Plan) bool {
 	if e == nil {

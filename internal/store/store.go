@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -98,6 +99,25 @@ type Check struct {
 }
 
 type Store struct{ db *sql.DB }
+
+// Ready 做一次「真能写」的轻量检查：抢写锁、空更新一页、立刻回滚。
+//
+// 不用 PingContext：只读挂载、磁盘满、WAL 损坏这几种情况下 Ping 照样通，
+// 但下一次写缓存就会失败。/readyz 要发现的是这种问题。
+func (s *Store) Ready(ctx context.Context) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	// 无论下面成不成功都要放锁，用 Background 保证回滚本身不会被 ctx 取消掉。
+	defer conn.ExecContext(context.Background(), "ROLLBACK")
+	_, err = conn.ExecContext(ctx, "UPDATE settings SET value = value WHERE key = 'schema_version'")
+	return err
+}
 
 func Open(path string) (*Store, error) {
 	// foreign_keys 要显式打开，否则 checks 的 ON DELETE CASCADE 形同虚设，
