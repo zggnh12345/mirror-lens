@@ -116,6 +116,13 @@ type Scheduler struct {
 	loadMu sync.Mutex
 	gates  map[int64]*gate // 源 id → 并发闸门（容量可动态调整）
 	dyn    map[int64]*dynState
+
+	// gone 是已删除源 id 的墓碑。删除时正在跑的请求结束之后还会回调
+	// Report/Observe/Acquire，没有这层保护，它们会把刚清掉的状态原样
+	// 重建出来——内存里多一份状态，指标多一条序列，事件表多几行。
+	// 用 sync.Map 而不是 s.mu：Acquire 在 loadMu 里也要问一次，跟
+	// Forget（s.mu → loadMu）共用一把锁会形成反向锁序。
+	gone sync.Map // int64 → struct{}
 }
 
 func New(st *store.Store, cfg Config) *Scheduler {
@@ -157,6 +164,8 @@ func (s *Scheduler) Forget(id int64) {
 	}
 	suffix := "|" + strconv.FormatInt(id, 10)
 	s.mu.Lock()
+	// 先立墓碑再清状态：晚到的回调只有看到墓碑才不会再写回来。
+	s.gone.Store(id, struct{}{})
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.brk, k)
@@ -173,6 +182,25 @@ func (s *Scheduler) Forget(id int64) {
 
 	metrics.ForgetSource(id)
 }
+
+// Revive 撤销删除墓碑。sources.id 是 AUTOINCREMENT，正常不会复用；这里是
+// 防御性的——万一 id 被复用，没有这一步，新源会被当成「已删除」，
+// 报告和闸门全部被静默丢弃。
+func (s *Scheduler) Revive(id int64) {
+	if s == nil || id == 0 {
+		return
+	}
+	s.gone.Delete(id)
+}
+
+// isGone 报告该 id 是否已被删除。墓碑是独立的一层，任何锁状态下都能问。
+func (s *Scheduler) isGone(id int64) bool {
+	_, ok := s.gone.Load(id)
+	return ok
+}
+
+// deleted 与 isGone 同义，保留旧名字给不持有 s.mu 的调用方读起来更直白。
+func (s *Scheduler) deleted(id int64) bool { return s.isGone(id) }
 
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
 func (s *Scheduler) Candidates(kind string) []Candidate {
@@ -265,6 +293,11 @@ func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
 		return func() {}, nil
 	}
+	if s.deleted(id) {
+		// 源在下载途中被删了：正在跑的请求不该因此失败（那是用户自己的
+		// 下载），但也没必要再为它建闸门——放行即可。
+		return func() {}, nil
+	}
 	release, err := s.gateFor(id).acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -293,6 +326,13 @@ func (s *Scheduler) gateFor(id int64) *gate {
 	// 有证据（吞吐掉、429）才往下退，退了之后能证明恢复得动再涨回去。
 	g := newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
 	s.gates[id] = g
+	// 建闸门和 Forget 可能撞在一起：如果墓碑在我们插入之后才立，Forget 的
+	// 清理会把这个闸门删掉；如果在之前立，这里能看到并撤回登记。两种顺序
+	// 都不会把闸门留在表里，这次请求照样拿到一个临时闸门继续跑。
+	if s.isGone(id) {
+		delete(s.gates, id)
+		return newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
+	}
 	return g
 }
 
@@ -363,6 +403,12 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	}
 	k := pkey(kind, c.ID)
 	s.mu.Lock()
+	if s.isGone(c.ID) {
+		// 源已经删了：这次回源的结果没有任何意义，写回去就是复活一条
+		// 刚清理干净的状态（熔断、粘性、事件表、指标）。
+		s.mu.Unlock()
+		return
+	}
 	if ok {
 		delete(s.brk, k)
 		s.sticky[kind] = stickyPick{cand: c, at: s.now()}

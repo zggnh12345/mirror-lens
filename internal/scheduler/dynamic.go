@@ -120,6 +120,10 @@ func (s *Scheduler) Observe(id int64, bytes int64, d time.Duration, ok bool, cod
 	if s == nil || !s.cfg.Dynamic || id == 0 {
 		return
 	}
+	if s.deleted(id) {
+		// 源已经删了，这次分片的结果不该再调并发上限、也不该重建 dyn。
+		return
+	}
 	g := s.gateFor(id)
 	if !ok {
 		// 429/503 是明确的「你在打我」，其它失败也先减半：撤压力不会错。

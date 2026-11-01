@@ -409,6 +409,11 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	// 防御性撤销墓碑：sources.id 是 AUTOINCREMENT，正常不会复用，但一旦
+	// 复用了而墓碑还在，新源的报告和闸门会被当成「已删除」静默丢弃。
+	if s.sch != nil {
+		s.sch.Revive(id)
+	}
 	// 立刻跑一次识别（两种类型都试），前端轮询这个源的状态即可
 	go s.eng.RunSource(id)
 	writeJSON(w, 200, map[string]any{"ok": true, "id": id})

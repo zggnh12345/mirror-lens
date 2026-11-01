@@ -251,8 +251,12 @@ func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64
 	if ok {
 		b = 1
 	}
-	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms, code) VALUES(?,?,?,?,?,?)`,
-		sourceID, kind, time.Now().Unix(), b, ms, code)
+	// 事件表没有外键，源删掉之后一条迟到的上报会把它重新插回来。
+	// 用 INSERT ... SELECT ... WHERE EXISTS 让「源还在」这件事由数据库
+	// 判断：调用方检查完到真正写入之间的空隙也堵住了。
+	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms, code)
+		SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
+		sourceID, kind, time.Now().Unix(), b, ms, code, sourceID)
 }
 
 // SourceEventCodes 返回某源最近事件的状态码，新的在前。排障和测试用。
