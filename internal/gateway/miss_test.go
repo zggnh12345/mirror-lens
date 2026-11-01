@@ -104,6 +104,57 @@ func TestMissFollowedByFaultIsNot404(t *testing.T) {
 	}
 }
 
+// 镜像要鉴权/防盗链：换下一台，但不算它坏了，也不算 Miss（资源在不在没答上来）。
+func TestAuthDeniedFailsOverWithoutCooling(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cs, err := cache.New(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := srv(t, 0, "origin-body")
+	deny := srv(t, http.StatusForbidden, "")
+	id := addSchedSource(t, st, "deny", deny.URL, 10, 9000)
+
+	g := New(st, Options{
+		Cache:   cs,
+		RawBase: origin.URL,
+		RawTTL:  time.Minute,
+		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+	})
+	sch := scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute})
+	g.SetScheduler(sch)
+	reg := metrics.Enable()
+	defer metrics.Disable()
+
+	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("镜像 403 后应换源成功，实际 %d", rec.Code)
+	}
+	if okN, failN, _, err := st.SourceEvents(id, 10); err != nil || okN != 1 || failN != 0 {
+		t.Fatalf("403 不该记成故障，实际 ok=%d fail=%d %v", okN, failN, err)
+	}
+	if !hasSource(sch.Candidates("raw"), id) {
+		t.Fatal("403 不该让源进冷却")
+	}
+	if out := scrape(t, reg); strings.Contains(out, "source_miss_total") {
+		t.Fatalf("鉴权失败不是 Miss，不该计入未命中:\n%s", out)
+	}
+}
+
+// 所有源都要鉴权：沿用原来的最终响应选择（最后一个错误），不变成 404。
+func TestAllSourcesAuthDeniedReturns403(t *testing.T) {
+	g, _, _, tok, _ := newMissFixture(t, http.StatusForbidden)
+	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("全部 403 应返回 403，实际 %d", rec.Code)
+	}
+}
+
 // 直通（Range/HEAD）同样不能因为第一台镜像 404 就收工。
 func TestPassThroughMissFailsOver(t *testing.T) {
 	dir := t.TempDir()

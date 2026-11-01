@@ -349,6 +349,12 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 	return append(head, out...)
 }
 
+// fetch 按多源获取语义跑：目标是「拿到这份文件」，所以任何一台源答不上来
+// 都可以试下一台。代价是状态码不再是给客户端看的——客户端看到的是整条链
+// 走完后的结论（拿到 200，或者 404 说明所有源都没有，或者某个错误）。
+//
+// 三种失败要分开记：404/410 是「确定没有」（Miss，不罚源），401/403 是
+// 「没资格问」（换源，但也不罚源），其余才是这台源自己出问题（进冷却）。
 func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry) (*store.CacheEntry, bool, error) {
 	if plan.Upstream == nil || plan.Upstream.Host == "" {
 		return nil, false, adapter.ErrNoTarget
@@ -393,6 +399,21 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 				name = t.c.Name
 			}
 			log.Printf("源 %s 未命中 %d，换下一个", name, ue.Code)
+			lastErr = err
+			continue
+		}
+		// 401/403 换源，但不算这台源坏了：镜像要鉴权、开了防盗链很常见，
+		// 换一台往往还有救。它也不进 Miss 统计——资源在不在压根没答上来。
+		// 这条和 404/410 的区别是：Miss 是「确定没有」，这里是「没资格问」。
+		if errors.As(err, &ue) && isAuthDenied(ue.Code) {
+			if t.c != nil {
+				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			}
+			name := t.u.Host
+			if t.c != nil {
+				name = t.c.Name
+			}
+			log.Printf("源 %s 要求鉴权（%d），换下一个", name, ue.Code)
 			lastErr = err
 			continue
 		}
@@ -736,6 +757,12 @@ func (e *tooLargeError) Error() string {
 // 410 是资源被明确下线，对客户端同样是「没有」。
 func isMiss(code int) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
+}
+
+// isAuthDenied 是「没资格问」，不是「没有」。两者都不算源站故障，但只有
+// 前者能说明资源确实不存在——所以鉴权失败不进 Miss 统计。
+func isAuthDenied(code int) bool {
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
 }
 
 func statusFor(err error) int {

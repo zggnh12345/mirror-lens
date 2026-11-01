@@ -205,7 +205,8 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
 			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
-			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
+			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它。
+			g.sched.Report(plan.Kind, *t.c, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
 				log.Printf("源 %s 返回 %d，要求 %s 后再来，换下一个", t.c.Name, resp.StatusCode, ue.RetryAfter)
 			} else {
@@ -584,6 +585,11 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, pe
 }
 
 // passThrough 原样转发 Range / 条件请求，不碰缓存。
+//
+// 它遵循客户端 HTTP 响应语义：客户端要的是「这段字节」或「变没变」，
+// 上游怎么答就怎么转——401/403 立刻回给客户端，不换源（换源等于替客户端
+// 猜它有没有权限）。404/410 是例外：那是「这台镜像没有」，换个源可能就有，
+// 所以换源但不冷却；429/5xx 同理换源。
 func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
 	// 直通也要挑源：Range 请求常常是对大文件的续传，绕过镜像等于把最费
 	// 流量的那部分请求原样丢回官方源。
