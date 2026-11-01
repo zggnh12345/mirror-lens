@@ -31,6 +31,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/cache"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -376,6 +377,25 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 		if errors.As(err, &tl) {
 			return nil, false, err
 		}
+		// 404/410 是「这台源没有这个资源」，不是「这台源坏了」。镜像少一个
+		// Release 文件很常见：按故障处理会把整台源打进冷却、拉低健康分，
+		// 一次缺文件就牵连后续所有请求。记成 Miss，继续试下一个源。
+		var ue *upstreamError
+		if errors.As(err, &ue) && isMiss(ue.Code) {
+			if t.c != nil {
+				// 响应是真实的：进 429 率的分母，但按成功计——它答得很正常，
+				// 只是没有这个文件。
+				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			}
+			metrics.SourceMiss(plan.Kind, ue.Code)
+			name := t.u.Host
+			if t.c != nil {
+				name = t.c.Name
+			}
+			log.Printf("源 %s 未命中 %d，换下一个", name, ue.Code)
+			lastErr = err
+			continue
+		}
 		// 本地故障（磁盘满、缓存提交失败）和客户端取消：换源没用，也不记源站。
 		if !isSourceFault(err) {
 			return nil, false, err
@@ -710,6 +730,12 @@ type tooLargeError struct{ Max int64 }
 
 func (e *tooLargeError) Error() string {
 	return fmt.Sprintf("文件超过单文件上限 %d MB", e.Max>>20)
+}
+
+// isMiss 判断这个状态码是「没有这个资源」而不是「源站出问题」。
+// 410 是资源被明确下线，对客户端同样是「没有」。
+func isMiss(code int) bool {
+	return code == http.StatusNotFound || code == http.StatusGone
 }
 
 func statusFor(err error) int {

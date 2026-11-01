@@ -82,6 +82,7 @@ type Registry struct {
 	srcReq   map[srcKey]uint64
 	srcResp  map[string]uint64 // 真的收到 HTTP 响应的次数（429 率的分母）
 	src429   map[string]uint64
+	srcMiss  map[srcMissKey]uint64
 	srcDur   map[srcDurKey]*hist
 	srcTTFB  map[srcDurKey]*hist
 	inflight map[int64]int
@@ -100,6 +101,7 @@ func New() *Registry {
 		srcReq:    map[srcKey]uint64{},
 		srcResp:   map[string]uint64{},
 		src429:    map[string]uint64{},
+		srcMiss:   map[srcMissKey]uint64{},
 		srcDur:    map[srcDurKey]*hist{},
 		srcTTFB:   map[srcDurKey]*hist{},
 		inflight:  map[int64]int{},
@@ -188,6 +190,28 @@ func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) 
 		}
 		h.observe(d.Seconds(), durBuckets)
 	}
+}
+
+// srcMissKey 是「某协议下某状态码的未命中」。code 只可能是 404/410，
+// 由 SourceMiss 把关——标签是封闭集合，不允许随手塞新值。
+type srcMissKey struct {
+	kind string
+	code int
+}
+
+// SourceMiss 记一次「源上没有这个资源」。这和源站故障是两件事：镜像少一个
+// Release 文件不代表这台镜像坏了，所以它既不进退避也不拉低健康分，单独计数。
+func SourceMiss(kind string, code int) {
+	if code != http.StatusNotFound && code != http.StatusGone {
+		return
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.srcMiss[srcMissKey{kind, code}]++
+	r.mu.Unlock()
 }
 
 // SourceTTFB 记首字节耗时。和 SourceResult 的完整耗时分开两个指标：
@@ -423,6 +447,13 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%ssource_429_total{kind=%q} %d\n", prefix, s, r.src429[s])
 		}
 	}
+	if len(r.srcMiss) > 0 {
+		b.WriteString("# HELP " + prefix + "source_miss_total 源上没有这个资源的次数（404/410，不计为源站故障）\n")
+		b.WriteString("# TYPE " + prefix + "source_miss_total counter\n")
+		for _, k := range sortedMissKeys(r.srcMiss) {
+			fmt.Fprintf(&b, "%ssource_miss_total{kind=%q,code=%q} %d\n", prefix, k.kind, strconv.Itoa(k.code), r.srcMiss[k])
+		}
+	}
 	if len(r.srcResp) > 0 {
 		b.WriteString("# HELP " + prefix + "source_http_responses_total 收到真实 HTTP 响应的次数（429 率的分母）\n")
 		b.WriteString("# TYPE " + prefix + "source_http_responses_total counter\n")
@@ -582,6 +613,22 @@ func sortedSrc(m map[srcKey]uint64) []srcKey {
 			return out[i].kind < out[j].kind
 		}
 		return out[i].result < out[j].result
+	})
+	return out
+}
+
+// sortedMissKeys 让输出顺序稳定：同一份数据两次抓取要能 diff 出变化，
+// 而不是随机顺序。kind 升序，同 kind 内 code 升序。
+func sortedMissKeys(m map[srcMissKey]uint64) []srcMissKey {
+	out := make([]srcMissKey, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].kind != out[j].kind {
+			return out[i].kind < out[j].kind
+		}
+		return out[i].code < out[j].code
 	})
 	return out
 }

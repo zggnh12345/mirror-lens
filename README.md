@@ -292,6 +292,19 @@ pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败
 
 人工只能做三件事：**归档**、**封禁**、**恢复（退回 pending 复检）**。不能手动置 `usable`——那等于绕过探测和校验。面板里展开任意源即可操作，`PATCH /api/sources/{id}` 传 `{"status":"archived"|"blocked"|"pending"}` 也行。
 
+### 一次请求里的换源规则
+
+上游状态码决定换不换下一台源、以及要不要罚这台源：
+
+- **404 / 410**：资源未命中。换下一台，但**不冷却、不扣健康分**——镜像少同步一个 Release 文件不代表它坏了。单独记在 `source_miss_total`。
+- **429**：冷却当前源，换下一台；全部源都 429 时把最后一个 429 连同 `Retry-After` 原样返回。
+- **5xx**：换下一台，并按失败记账、进冷却。
+- **其他 4xx**（401/403/416 等）：直通路径直接返回；缓存和大文件路径会再试下一台源（镜像要鉴权、防盗链时换源往往还有救），都不行才把错误给客户端。
+- **连不上 / 超时**：换下一台，按失败记账。
+- **全部未命中**：返回 404。只要中间出现过超时、429 或 5xx，结果就是不确定的，按原来的错误返回，不会伪装成「资源不存在」。
+
+缓存链路、大文件流式、`Range`/`HEAD` 直通三条路对 404/410、429、5xx 的处理一致。
+
 状态变化时间（`status_at`）只在状态真的变化时刷新：否则一个常年 dead 的源每轮探测都会把「坏了多久」清零，永远到不了归档条件。老库升级时 `status_at` 从升级那一刻起算，不会把历史死源一次性归档。
 
 ## 动态带宽调度
@@ -333,6 +346,7 @@ pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败
 - `mirrorlens_source_requests_total{kind,result}` — 源站成功/失败
 - `mirrorlens_source_http_responses_total{kind}` — 真正拿到 HTTP 响应的回源次数（429 率的分母；连不上、超时、DNS 失败都不计）。`Range`/`HEAD` 的直通请求也计入
 - `mirrorlens_source_429_total{kind}` — 上游 429 次数
+- `mirrorlens_source_miss_total{kind,code}` — 源上没有这个资源的次数（`code` 只有 404/410）。未命中不算源站故障：不进退避、不拉低健康分，但照样计入 429 率的分母
 - `mirrorlens_source_fetch_duration_seconds{kind,mode}` — 回源**完整**耗时：`single` 整次回源、`stream` 首字节+传输、`parallel` 整次并行填充、`chunk` 单段
 - `mirrorlens_source_ttfb_seconds{kind,mode}` — 首字节耗时：`stream` 从发出请求到收到响应头
 - `mirrorlens_source_inflight{source_id}` — 源站此刻并发占用
@@ -348,6 +362,10 @@ sum(rate(mirrorlens_cache_requests_total{result="hit"}[5m])) by (scene)
 # 源站成功率
 sum(rate(mirrorlens_source_requests_total{result="ok"}[5m])) by (kind)
   / sum(rate(mirrorlens_source_requests_total[5m])) by (kind)
+
+# 未命中占比（镜像池里有多少请求其实没有这个文件）
+sum(rate(mirrorlens_source_miss_total[5m])) by (kind)
+  / sum(rate(mirrorlens_source_http_responses_total[5m])) by (kind)
 
 # 上游 429 占比（分母只算真实 HTTP 响应：连不上/超时没有状态码，算进去会把 429 率稀释掉；
 # 直通的 Range/HEAD 请求同样计入分子分母，429 也会让该源进冷却）

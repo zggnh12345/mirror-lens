@@ -190,6 +190,17 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			lastErr = err
 			continue
 		}
+		// 镜像上没有这个文件：换下一个源，但不冷却它。大文件多半是 Release
+		// 产物，镜像同步慢半拍很常见，按故障处理会白白废掉一台好源。
+		if t.c != nil && isMiss(resp.StatusCode) {
+			io.CopyN(io.Discard, resp.Body, 4096)
+			resp.Body.Close()
+			metrics.SourceMiss(plan.Kind, resp.StatusCode)
+			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
+			log.Printf("源 %s 未命中 %d，换下一个", t.c.Name, resp.StatusCode)
+			lastErr = &upstreamError{Code: resp.StatusCode}
+			continue
+		}
 		if t.c != nil && retryableFromMirror(resp.StatusCode) {
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
@@ -613,13 +624,17 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			g.reportPass(plan.Kind, tt, start, 0, 0, false)
 			continue
 		}
-		if retryableStatus(resp.StatusCode) && i < len(targets)-1 {
+		if failoverStatus(resp.StatusCode) && i < len(targets)-1 {
 			// 换源之前先把这次响应记下来：它是一次真实的 HTTP 响应，
 			// 分母要有它；5xx/429 也要让这台源进冷却，否则下一轮还会先选它。
+			// 404/410 是未命中，换源但不冷却——镜像少个文件不代表它坏了。
 			// 只在响应还没写给客户端时换源，每个候选源只试一次。
 			code, ra := resp.StatusCode, retryAfterHeader(resp.Header)
 			resp.Body.Close()
-			g.reportPass(plan.Kind, tt, start, code, ra, false)
+			if isMiss(code) {
+				metrics.SourceMiss(plan.Kind, code)
+			}
+			g.reportPass(plan.Kind, tt, start, code, ra, passOK(code))
 			continue
 		}
 		if t.c != nil {
@@ -672,9 +687,15 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 }
 
 // retryableStatus 是「换一台源还可能成功」的状态：5xx 是它自己出问题，
-// 429 是它让我们慢点。其余 4xx（404、401 之类）换源也一样，直接返回。
+// 429 是它让我们慢点。其余 4xx（401、403、416 之类）换源也一样，直接返回。
 func retryableStatus(code int) bool {
 	return code >= 500 || code == http.StatusTooManyRequests
+}
+
+// failoverStatus 在 retryableStatus 之外再加上未命中：镜像上没有这个文件，
+// 下一个源可能有。两种情况的区别只在记账——未命中不冷却源站。
+func failoverStatus(code int) bool {
+	return retryableStatus(code) || isMiss(code)
 }
 
 // passOK 判断一次直通响应算不算这台源正常干活：429 和 5xx 是源站在拒绝
