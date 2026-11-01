@@ -7,8 +7,8 @@ import (
 )
 
 // 老库（阶段 4 及以前）的流量表没有 kind 列，主键也不一样。
-// 升级时必须保留数据、补空 kind，并把历史的 proxy 改名为 bypass
-// ——老代码只在"不落盘直接透传"的三条路径上记 proxy。
+// 升级要保留数据、补空 kind，并把历史 proxy 改名为 bypass
+// ——老代码只在「不落盘直接透传」的三条路径上记 proxy。
 func TestMigrateTrafficKind(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", path)

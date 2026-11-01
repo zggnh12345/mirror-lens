@@ -4,7 +4,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// Seed 首次启动时写入候选池。全部标记 pending，由探测决定去留。
+// Seed 首次启动时写入候选池，全部 pending，由探测决定去留。
 // 清单会过期：这些只是起点，不是推荐。
 var dockerSeeds = []struct{ host, note string }{
 	{"docker.m.daocloud.io", "DaoCloud，标准 /v2/"},

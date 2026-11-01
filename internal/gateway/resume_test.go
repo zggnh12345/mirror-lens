@@ -28,9 +28,8 @@ func partialMetas(t *testing.T, dir string) []string {
 	return m
 }
 
-// 续传点必须对应一份真实存在的半截文件。数据文件被清掉、只剩元信息时，
-// 下一次请求必须从头下，不能按元信息里的 Have 往后拼——那样拼出来的文件
-// 长度对得上、中间少一段，而且会以「下载完成」的样子入缓存。
+// 续传点必须对应真实存在的半截文件：只剩元信息时必须从头下，
+// 按 Have 往后拼会得到中间少一段、却以「下载完成」入缓存的文件。
 func TestResumeRequiresExistingPartFile(t *testing.T) {
 	f := newHTTPFixture(t, 0)
 	target := f.srv.URL + "/f.bin"
@@ -173,10 +172,10 @@ func TestKeepPartialNilKeepsExistingMeta(t *testing.T) {
 	}
 }
 
-// 缓存策略在中途变了（文件超过新的单文件上限）：上游仍然只回 206 的后半段，
-// 但补发旧前缀和「这次还落不落盘」是两件事，客户端必须拿到整份。
-// 回归的是「if cacheable { 补发前缀 }」——不缓存就跳过补发，等于把后半段
-// 当整份发出去，而且 Content-Length 还对得上。
+// 策略中途变了（超上限不再缓存）：上游仍只回 206 后半段，
+// 但补发前缀与落不落盘无关，客户端必须拿到整份。
+// 防的是「if cacheable { 补发前缀 }」：跳过补发会把后半段当整份发，
+// 而且 Content-Length 还对得上。
 func TestResumeReplaysPrefixWhenCacheNoLongerAllowed(t *testing.T) {
 	f := newHTTPFixture(t, 0)
 	target := f.srv.URL + "/f.bin"

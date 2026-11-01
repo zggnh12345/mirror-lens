@@ -7,11 +7,10 @@ import (
 	"time"
 )
 
-// upgradeTrafficKind 给老库的流量表补 kind 列。
-//
-// 主键从 (day,traffic) 变成 (day,traffic,kind)，SQLite 改不了主键，只能整表重建。
-// 顺手把历史的 proxy 改成 bypass：老代码只有三处记 proxy，全在"不落盘、直接透传"
-// 的路径上（Range 直通、超上限透传、git packfile），语义就是 bypass，不是猜测。
+// upgradeTrafficKind 给老库流量表补 kind 列。
+// 主键从 (day,traffic) 变成 (day,traffic,kind)，SQLite 改不了主键，
+// 只能整表重建。
+// 历史的 proxy 改成 bypass：老代码记 proxy 的三处全在「不落盘直接透传」路径上。
 func (s *Store) upgradeTrafficKind() error {
 	have, err := s.columns("traffic_stats")
 	if err != nil {
@@ -48,7 +47,7 @@ func (s *Store) upgradeTrafficKind() error {
 
 // ---- 批量删除与对账 ----
 
-// CacheDeleteMany 在一个事务里删掉一批索引，返回被删的条目（含 sha 与大小），
+// CacheDeleteMany 在一个事务里删一批索引，返回被删条目（含 sha 与大小），
 // 供上层做引用计数与物理删除。部分键不存在不算错。
 func (s *Store) CacheDeleteMany(keys []string) ([]CacheEntry, error) {
 	if len(keys) == 0 {
@@ -110,8 +109,8 @@ func escapeLike(s string) string {
 	return r.Replace(s)
 }
 
-// CacheExpired 取"已经过期、且至少 grace 秒没人碰过"的条目。
-// 只过期没人访问不代表可以删——低频资源删了就得整份重下。
+// CacheExpired 取「已过期、且至少 grace 秒没人碰过」的条目。
+// 过期没人访问不代表可以删：低频资源删了就得整份重下。
 func (s *Store) CacheExpired(now int64, grace int64, limit int) ([]CacheEntry, error) {
 	if limit <= 0 {
 		limit = 200
@@ -158,9 +157,8 @@ func (s *Store) CacheRefs() (map[string]int64, error) {
 }
 
 // CacheRef 返回某个 blob 被多少条索引引用。
-//
-// 删文件前必须用它做最后一次确认：CacheRefs 是整表快照，快照之后才写进索引的
-// 条目不在里面，只看快照会把「刚提交、还没入库」的 blob 当成孤儿删掉。
+// 删文件前用它做最后确认：CacheRefs 是整表快照，之后才写进的条目不在里面，
+// 只看快照会把「刚提交、还没入库」的 blob 当孤儿删掉。
 func (s *Store) CacheRef(sha string) (int64, error) {
 	var n int64
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM cache_entries WHERE sha256 = ?`, sha).Scan(&n)

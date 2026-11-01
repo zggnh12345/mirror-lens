@@ -1,8 +1,7 @@
 // Package keymutex 提供按 key 的互斥锁，带引用计数回收。
 //
-// 直接用 sync.Map 存 key→*sync.Mutex 的话，锁对象只增不减：请求量一大、
-// key 一多，内存就跟着涨。这里在 Unlock 时把引用计数减到零的条目删掉；
-// 计数包含「正在等锁的协程」，所以不会出现 A 还拿着旧锁、B 已经拿到新锁的情况。
+// 直接存 key→*sync.Mutex 只增不减，key 一多内存就涨；这里减到零即删。
+// 计数包含等待中的协程，不会出现两把锁同时保护一个 key。
 package keymutex
 
 import "sync"
@@ -12,7 +11,7 @@ type entry struct {
 	refs int
 }
 
-// Map 是一组按 key 区分的互斥锁，零值不可用，用 New。
+// Map 是按键分组的互斥锁，零值不可用，用 New。
 type Map struct {
 	mu sync.Mutex
 	m  map[string]*entry
@@ -45,7 +44,7 @@ func (k *Map) Lock(key string) func() {
 	}
 }
 
-// Len 返回当前存活的 key 数，仅用于测试与观测。
+// Len 返回存活 key 数，仅用于测试与观测。
 func (k *Map) Len() int {
 	k.mu.Lock()
 	defer k.mu.Unlock()

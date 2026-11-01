@@ -18,9 +18,8 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 头部到了、身子断了：对客户端就是一次失败下载，不能给这台源记成功。
-// 记成功会刷新 sticky（10 分钟）并清掉熔断，一台「握手快、传输慢」的源
-// 就能一直霸占流量。
+// 头到、身断就是失败下载，不能记成功：会刷 sticky 清熔断，
+// 让「握手快、传输慢」的源一直霸占流量。
 func TestTruncatedUpstreamCountedAsFailure(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "t.db"))

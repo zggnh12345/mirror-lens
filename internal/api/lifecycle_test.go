@@ -52,7 +52,7 @@ func lifecycleSourceAPI(t *testing.T, st *store.Store) int64 {
 	return id
 }
 
-// 人工只能归档/封禁/退回待检；不能直接置 usable——那等于绕过探测和校验。
+// 人工只能归档/封禁/退回待检，不能直接置 usable。
 func TestPatchSourceStatus(t *testing.T) {
 	st, h := newTestServer(t)
 	ck := setupPanel(t, h)
@@ -84,7 +84,7 @@ func TestPatchSourceStatus(t *testing.T) {
 	}
 }
 
-// 列表要把状态时间和原因带出去，面板才能解释「为什么是红的」。
+// 列表要带状态时间和原因，面板才能解释为什么是红的。
 func TestSourcesListExposesLifecycle(t *testing.T) {
 	st, h := newTestServer(t)
 	ck := setupPanel(t, h)

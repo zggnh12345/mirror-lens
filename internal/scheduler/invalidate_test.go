@@ -7,8 +7,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 状态一变，候选缓存必须立刻作废——否则新加的源要等 ListTTL 才被看见，
-// 刚判死的源还会被继续选中。
+// 状态一变就要作废缓存：否则新源要等 ListTTL，死源还会被选中。
 func TestInvalidateDropsCandidateCache(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

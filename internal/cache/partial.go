@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 )
 
-// PartialMeta 记录一个没下完的文件，够不够继续下由它说了算。
-// 续传前必须核对：地址没变、上游版本没变（ETag/Last-Modified）、总长没变。
+// PartialMeta 记录没下完的文件。续传前要核对地址、
+// 上游版本（ETag/Last-Modified）和总长都没变。
 type PartialMeta struct {
 	URL          string `json:"url"`
 	ETag         string `json:"etag"`
@@ -31,7 +31,7 @@ func (s *Store) PartialPaths(key string) (string, string) {
 		filepath.Join(s.partialDir(), base+".json")
 }
 
-// ReadPartial 读取元信息，并核对数据文件确实有那么多字节。
+// ReadPartial 读元信息，并核对数据文件字节数吻合。
 func (s *Store) ReadPartial(key string) (*PartialMeta, bool) {
 	part, meta := s.PartialPaths(key)
 	fi, err := os.Stat(part)
@@ -46,7 +46,7 @@ func (s *Store) ReadPartial(key string) (*PartialMeta, bool) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, false
 	}
-	// 元信息说下了 N 字节，实际文件必须正好 N 字节，否则说明上次写坏了
+	// 元信息与实际文件字节数必须一致，否则上次写坏了
 	if m.Have != fi.Size() || m.Size < 0 || m.Have > m.Size {
 		return nil, false
 	}
@@ -75,11 +75,9 @@ func (s *Store) DropPartial(key string) {
 	_ = os.Remove(meta)
 }
 
-// OpenPartial 打开（必要时创建）数据文件，返回的文件指针已定位到末尾。
-//
-// 打开的同时加排他锁，Close 时自动释放：Janitor 靠这把锁判断"这份半截文件
-// 是不是还在被写"。拿不到锁说明另一个进程正在下同一个文件，这里直接报错，
-// 上层降级为透传——两个进程往同一个 .part 里追加会写出脏数据。
+// OpenPartial 打开（必要时创建）数据文件，指针定位到末尾，同时加排他锁，
+// Close 时自动释放；Janitor 靠这把锁判断是否还在被写。
+// 拿不到锁说明另一进程在下同一文件，直接报错，上层降级为透传。
 func (s *Store) OpenPartial(key string) (*os.File, error) {
 	part, _ := s.PartialPaths(key)
 	if err := os.MkdirAll(s.partialDir(), 0o755); err != nil {
@@ -89,7 +87,7 @@ func (s *Store) OpenPartial(key string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 抢不到锁说明另一个进程正在写；不支持 flock 的文件系统返回 (false, nil)，继续用
+	// 不支持 flock 的文件系统返回 (false, nil)，照常继续
 	if _, lerr := lockFile(f); lerr != nil {
 		f.Close()
 		return nil, fmt.Errorf("半截文件被另一个进程占用: %w", lerr)

@@ -12,7 +12,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// tokens 管理加速器的 Access Token：创建时明文只返回一次，库里只存哈希。
+// tokens 管理 Access Token：明文只返回一次，库里只存哈希。
 func (s *Server) tokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -70,9 +70,8 @@ func (s *Server) tokenItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// kindStat 是单个协议今天的流量。hit/fill 两个数都是字节：
-// hit 是"从缓存发给客户端"的量，fill 是"从上游拉下来"的量。
-// 一次 Range 命中可能只发 10 MB，而填充那次上游给了 100 MB——两个数不能混。
+// kindStat 是单协议今日流量（字节）：hit 是发给客户端的量，
+// fill 是从上游拉的量。Range 命中 10 MB 可能对应填充 100 MB，不能混。
 type kindStat struct {
 	Hit    int64   `json:"hit"`
 	Fill   int64   `json:"fill"`
@@ -106,7 +105,7 @@ func (s *Server) accelStats(w http.ResponseWriter, r *http.Request) {
 		}
 		k := row.Kind
 		if k == "" {
-			k = "unknown" // 历史记录没有 kind，单独列，不并进任何协议
+			k = "unknown" // 历史记录没有 kind，单独列
 		}
 		ks := kinds[k]
 		if ks == nil {
@@ -137,7 +136,7 @@ func (s *Server) accelStats(w http.ResponseWriter, r *http.Request) {
 			cache["disk"] = disk
 		}
 		if free, err := cs.FSFree(); err == nil {
-			cache["free"] = free // 文件系统还剩多少，和配额是两回事
+			cache["free"] = free // 文件系统剩余，与配额无关
 		}
 		if vc, err := s.st.CacheVerifyCounts(); err == nil {
 			cache["verify"] = vc
@@ -164,8 +163,8 @@ func (s *Server) accelStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// hitRate 只用命中与填充做分母。BYPASS 既不算命中也不算回源，
-// 混进去会把大文件透传误算成"缓存没用"。
+// hitRate 分母只含 hit+fill，BYPASS 既非命中也不算回源，
+// 混进去会把大文件透传误算成「缓存没用」。
 func hitRate(hit, fill int64) float64 {
 	if hit+fill == 0 {
 		return 0
@@ -173,8 +172,8 @@ func hitRate(hit, fill int64) float64 {
 	return float64(hit) / float64(hit+fill)
 }
 
-// accelPurge 清缓存。只动 cache_entries 和 blobs，Token、登录、
-// 探测历史、源站配置、流量账一概不碰。
+// accelPurge 清缓存，只动 cache_entries 与 blobs，
+// Token、登录、探测历史、源站配置、流量账都不碰。
 func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -190,8 +189,8 @@ func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 		scope = "all"
 	}
 	switch scope {
-	// gh 的缓存键前缀就是 gh:，所以 scope 直接用 gh 而不是 release——
-	// 键前缀决定清理范围，和调度用的 kind 是两套命名。
+	// scope 用 gh 而不是 release：键前缀是 gh:，
+	// 清理按键前缀走，与调度的 kind 是两套命名。
 	case "all", "raw", "gh", "http", "git", "docker":
 	default:
 		writeJSON(w, 400, map[string]string{"error": "scope 只能是 all / raw / gh / http / git / docker"})

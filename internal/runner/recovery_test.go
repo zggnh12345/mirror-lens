@@ -20,8 +20,7 @@ func capStore(t *testing.T, status string, docker, github int) (*store.Store, in
 	return st, id
 }
 
-// 首次探测超时（不是「这里没有 docker」），不能写成 CapNo，否则这个源
-// 以后永远不会再被识别，网络恢复了也回不来。
+// 超时不是「没有 docker」，写成 CapNo 后这个源再也不会被识别。
 func TestTimeoutDoesNotMarkCapNo(t *testing.T) {
 	st, id := capStore(t, "degraded", store.CapUnknown, store.CapUnknown)
 	e := New(st)
@@ -144,8 +143,7 @@ func TestApplyRecordsPerProtocolHealth(t *testing.T) {
 	}
 }
 
-// 早先被误判成 CapNo 的死源，也要继续识别（否则 kindsFor 一条都不返回，
-// 永远停在 dead）。
+// 误判成 CapNo 的死源要继续识别，否则永远停在 dead。
 func TestDeadSourceWithNoCapsIsStillProbed(t *testing.T) {
 	s := store.Source{Status: "dead", DockerCap: store.CapNo, GithubCap: store.CapNo}
 	if got := kindsFor(s, 2); len(got) != 2 {

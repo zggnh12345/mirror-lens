@@ -1,7 +1,7 @@
 package logging
 
-// Code 是稳定的错误代码。日志里只写这些常量，不要在调用点拼字符串：
-// 一旦有人写成 "upstream_timeout"，按代码聚合的告警就断了。
+// Code 是稳定的错误代码，日志里只写这些常量，不要在调用点拼字符串：
+// 拼错一个值，按代码聚合的告警就断了。
 type Code string
 
 const (
@@ -18,5 +18,5 @@ const (
 	AuthTokenRevoked      Code = "AUTH_TOKEN_REVOKED"
 )
 
-// String 让 Code 能直接进 slog 的 key-value，不用每次显式转换。
+// String 让 Code 能直接进 slog 的 key-value，不必显式转换。
 func (c Code) String() string { return string(c) }

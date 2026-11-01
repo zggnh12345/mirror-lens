@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// 流量分类。源站评分只吃 probe 样本；代理流量单独记账，
-// 否则拉大镜像时所有源看起来都变慢了。
+// 流量分类。源站评分只吃 probe 样本，代理流量单独记账，
+// 否则拉大镜像时所有源看起来都变慢。
 const (
 	TrafficProbe  = "probe"
 	TrafficBypass = "bypass"
@@ -66,10 +66,9 @@ type CacheEntry struct {
 	LastHit      int64  `json:"last_hit"`
 	Hits         int64  `json:"hits"`
 	TTL          int64  `json:"ttl"` // 秒；0 表示每次都要回源验证
-	// Verify 是这份内容「凭什么可信」：
-	//   verified   有客户端给出的摘要（docker digest）做参照，落盘前逐字节比对过
-	//   unverified 只是完整收到了，没有可信摘要可对
-	// 没有 failed：校验不过的内容一律不落盘，所以不存在这条记录。
+	// Verify 内容可信的依据：verified 有摘要（docker digest）参照并逐字节比对过；
+	// unverified 只是完整收到、没有摘要可对。
+	// 没有 failed：校验不过的内容一律不落盘。
 	Verify string `json:"verify"`
 }
 
@@ -326,7 +325,7 @@ func (s *Store) TrafficByDay(days int) ([]TrafficRow, error) {
 }
 
 // CacheVerifyCounts 按验证状态统计条目数。空值（老记录）算 unverified：
-// 阶段 6 之前落盘的内容本来就没有验证依据，不能因为列是空的就当成已验证。
+// 阶段 6 之前落盘的内容没有验证依据，列空不等于已验证。
 func (s *Store) CacheVerifyCounts() (map[string]int64, error) {
 	rows, err := s.db.Query(`SELECT CASE WHEN COALESCE(verify,'')='verified' THEN 'verified' ELSE 'unverified' END, COUNT(*)
 		FROM cache_entries GROUP BY 1`)
@@ -367,8 +366,8 @@ func (s *Store) CacheOldest(limit int) ([]CacheEntry, error) {
 	return out, rows.Err()
 }
 
-// CacheCountSHA 数还有几个键引用同一份内容。内容寻址下多个键可能共用
-// 一个 blob 文件，删文件前必须确认没别人用。
+// CacheCountSHA 数还有几个键引用同一份内容。多个键可能共用一个 blob，
+// 删文件前必须确认没别人用。
 func (s *Store) CacheCountSHA(sha string) (int64, error) {
 	var n int64
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM cache_entries WHERE sha256=?`, sha).Scan(&n)

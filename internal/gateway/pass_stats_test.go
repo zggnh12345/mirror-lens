@@ -17,9 +17,9 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// Range/HEAD 走的是 passThrough，以前这条路收到响应就直接转发，既不记
-// source_http_responses_total 也不记 429——最费流量的那部分请求在统计里
-// 不存在，429 也不会让这台源进冷却。现在 429 还要当场换源。
+// Range/HEAD 走 passThrough：以前不记状态码也不记 429，
+// 最费流量的请求在统计里不存在，429 也不进冷却。
+// 现在 429 还要当场换源。
 func TestPassThroughRecords429AndFailsOver(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "t.db"))

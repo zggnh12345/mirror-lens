@@ -2,15 +2,15 @@ package metrics
 
 import "sort"
 
-// MetricsView 是给面板用的聚合快照，JSON 友好。只暴露封闭集合 + 聚合值，
-// 不暴露 URL/IP/文件名/request_id，和 /metrics 文本格式遵守同一条约束。
+// MetricsView 是给面板用的聚合快照。只暴露封闭集合和聚合值，
+// 不暴露 URL/IP/文件名/request_id，与 /metrics 同一条约束。
 type MetricsView struct {
 	Enabled     bool              `json:"enabled"`
-	Cache       CacheView        `json:"cache"`
-	Sources     []SourceCount    `json:"sources"`
-	Ratio       RatioView        `json:"ratio"`
+	Cache       CacheView         `json:"cache"`
+	Sources     []SourceCount     `json:"sources"`
+	Ratio       RatioView         `json:"ratio"`
 	Heat        map[string]uint64 `json:"heat"`
-	Concurrency ConcurrencyView  `json:"concurrency"`
+	Concurrency ConcurrencyView   `json:"concurrency"`
 }
 
 // CacheView 缓存盘快照（gauge，janitor 刷新）。
@@ -30,16 +30,16 @@ type SourceCount struct {
 
 // RatioView 命中率：各场景最近周期命中率 + 按请求量加权的整体命中率。
 type RatioView struct {
-	HasRatio bool              `json:"has_ratio"`
-	Overall  float64           `json:"overall"`
+	HasRatio bool               `json:"has_ratio"`
+	Overall  float64            `json:"overall"`
 	Scenes   map[string]float64 `json:"scenes"`
 }
 
-// ConcurrencyView 源站并发：当前在途回源占用 + 动态并发上限，以及占用最高的若干源。
+// ConcurrencyView 源站并发：在途占用、动态上限，以及占用最高的几台源。
 type ConcurrencyView struct {
-	Inflight uint64         `json:"inflight"`
-	Limit    uint64         `json:"limit"`
-	Top      []SourceConc   `json:"top"`
+	Inflight uint64       `json:"inflight"`
+	Limit    uint64       `json:"limit"`
+	Top      []SourceConc `json:"top"`
 }
 
 // SourceConc 单台源的并发占用与上限。

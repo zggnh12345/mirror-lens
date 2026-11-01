@@ -7,8 +7,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 面板的 ☆ 优先开关走 PATCH /api/sources/:id，preferred 必须落到库里，
-// 且不能顺手改动其它字段。
+// ☆ 优先开关走 PATCH /api/sources/:id，preferred 要落库且不动其它字段。
 func TestPatchPreferredSource(t *testing.T) {
 	st, h := newTestServer(t)
 	ck := setupPanel(t, h)

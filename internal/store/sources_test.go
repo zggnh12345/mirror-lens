@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// 评分必须按协议隔离：一台源 docker 很快、github 全挂，混在一起取中位数
-// 会让两边都失真，排序把不该选的源排到前面。
+// 评分按协议隔离：一台源 docker 很快、github 全挂，混算中位数两边都失真。
 func TestSourceSamplesIsolateKind(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -46,8 +45,8 @@ func TestSourceSamplesIsolateKind(t *testing.T) {
 		t.Fatalf("github 只看 github 样本（2000ms×3），实际 %+v", gh)
 	}
 
-	// 本协议没样本时不退回别的协议：否则 docker 的数据会替 git 排名。
-	// 源仍然留在候选里（Samples=0 表示未知），只是没有分数。
+	// 本协议没样本时不退回别的协议，否则 docker 数据会替 git 排名。
+	// 源仍留在候选里（Samples=0 表示未知），只是没有分数。
 	git, err := st.SourceCandidates("git")
 	if err != nil {
 		t.Fatal(err)

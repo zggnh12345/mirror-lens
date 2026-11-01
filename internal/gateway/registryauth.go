@@ -12,10 +12,9 @@ import (
 	"time"
 )
 
-// registry 上游（Docker Hub / ghcr / quay）都要求先拿 Bearer token：
-// 第一次请求回 401 + WWW-Authenticate: Bearer realm=...,service=...,scope=...，
-// 拿 realm 换 token 再重发。这套流程是 registry v2 规范的一部分，
-// 所以换上游不用改代码。
+// registry 上游（Docker Hub/ghcr/quay）先回 401 + Bearer 挑战：
+// WWW-Authenticate: Bearer realm=...,service=...,scope=...，
+// 拿 realm 换 token 再重发。v2 规范流程，换上游不用改代码。
 type tokenCache struct {
 	mu sync.Mutex
 	m  map[string]tokenEntry
@@ -28,11 +27,11 @@ type tokenEntry struct {
 
 func newTokenCache() *tokenCache { return &tokenCache{m: map[string]tokenEntry{}} }
 
-// tokenCacheMax 是缓存条目上限。key 里带 scope（每个仓库一个），长期运行
-// 会一直长下去；到上限时先把过期的清掉。
+// tokenCacheMax 是条目上限：key 带 scope 每仓库一条，会一直长，
+// 到上限先清过期的。
 const tokenCacheMax = 256
 
-// pruneLocked 在条目过多时清掉已过期的 token。调用方持锁。
+// pruneLocked 清掉已过期 token；调用方持锁。
 func (c *tokenCache) pruneLocked() {
 	if len(c.m) < tokenCacheMax {
 		return
@@ -117,8 +116,8 @@ func (e *tokenError) Error() string {
 	return "上游 token 申请失败: HTTP " + strconv.Itoa(e.code)
 }
 
-// bearerTransport 只对指定上游生效：401 + Bearer 挑战时换 token 重发一次。
-// 别的 401（比如 GitHub 的 Basic）原样返回，不掺和。
+// bearerTransport 只对指定上游生效：401 + Bearer 挑战时换 token 重发。
+// 其他 401（如 GitHub 的 Basic）原样返回。
 type bearerTransport struct {
 	base     http.RoundTripper
 	host     string
@@ -138,9 +137,8 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !ok {
 		return resp, nil
 	}
-	// 官方源：realm 通常在 auth.docker.io，可以跨主机。
-	// 镜像源：只接受「realm 就在这台镜像自己身上」的挑战——把镜像站给的
-	// realm 发到别处，等于把凭据递给第三方。
+	// 官方源的 realm 可跨主机（auth.docker.io）；镜像源只接受同主机
+	// realm，把镜像站给的 realm 发到别处等于把凭据递给第三方。
 	if !strings.EqualFold(req.URL.Host, t.host) && !sameHost(realm, req.URL.Host) {
 		return resp, nil
 	}
@@ -214,7 +212,8 @@ func splitParams(s string) []string {
 	return out
 }
 
-// scopeFromPath 从 /v2/<name>/manifests|blobs/... 推出 repository:<name>:pull。
+// scopeFromPath 从 /v2/<name>/manifests|blobs/...
+// 推出 repository:<name>:pull。
 func scopeFromPath(p string) string {
 	p = strings.TrimPrefix(p, "/v2/")
 	for _, sep := range []string{"/manifests/", "/blobs/"} {

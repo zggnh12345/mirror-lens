@@ -18,8 +18,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 超过缓存上限的 release 资产：旧实现直接报错（客户端 502），
-// 现在必须整份发出去，只是不落盘。
+// 超过缓存上限的 release 资产：必须整份发出去，只是不落盘。
 func TestLargeGHAssetStreamsInsteadOfFailing(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "t.db"))
@@ -67,8 +66,8 @@ func TestLargeGHAssetStreamsInsteadOfFailing(t *testing.T) {
 	if rec2.Code != http.StatusOK || rec2.Body.Len() != len(body) {
 		t.Fatalf("第二次也应正常，得到 %d / %d 字节", rec2.Code, rec2.Body.Len())
 	}
-	// 不落盘：索引里不该有这条。每次请求会先发一次取头的 GET 判断大小，
-	// 再走流式重发，所以上游计数是请求数的两倍——但真正传输的只有一遍。
+	// 不落盘：索引里不该有这条。
+	// 每次请求先取头再流式重发，上游计数是请求数两倍但只传一遍。
 	if e, _ := g.st.CacheGet("gh:o/r/releases/download/v1/big.bin"); e != nil {
 		t.Fatalf("超上限的文件不该入缓存，却拿到 %+v", e)
 	}

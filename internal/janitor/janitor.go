@@ -1,5 +1,5 @@
-// Package janitor 定时收拾缓存：容量、过期条目、半截文件、临时文件、
-// 索引与磁盘对账。所有删除都走 gc，不在这里直接删文件。
+// Package janitor 定时收拾缓存：容量、过期、半截、临时文件与索引对账。
+// 所有删除都走 gc，不在这里直接删文件。
 package janitor
 
 import (
@@ -27,7 +27,7 @@ type Options struct {
 	CacheMaxBytes int64
 	WarnAt        float64
 	RecoverAt     float64
-	// Evict 由 gateway 提供：容量淘汰和写后触发的淘汰必须是同一套逻辑。
+	// Evict 由 gateway 提供，保证与写后触发的淘汰是同一套逻辑。
 	Evict func(limit int64) (int64, error)
 }
 
@@ -61,7 +61,7 @@ type Janitor struct {
 
 func New(st *store.Store, cs *cache.Store, g *gc.GC, opt Options) *Janitor {
 	j := &Janitor{gc: g, st: st, cs: cs, opt: opt, now: time.Now}
-	// 告警状态落库：重启后不该因为"内存里没记住"再刷一条
+	// 告警状态落库，重启后不该再刷一条
 	if v, err := st.MetaGet(metaWarnKey); err == nil {
 		j.warned = v == "1"
 	}
@@ -74,7 +74,7 @@ func (j *Janitor) Last() Stats {
 	return j.last
 }
 
-// Run 按间隔巡检，ctx 取消就退出。启动先跑一轮，别等十分钟。
+// Run 按间隔巡检，ctx 取消即退出；启动先跑一轮，不等十分钟。
 func (j *Janitor) Run(ctx context.Context) {
 	j.Once()
 	t := time.NewTicker(j.opt.Interval)
@@ -89,7 +89,7 @@ func (j *Janitor) Run(ctx context.Context) {
 	}
 }
 
-// Once 跑一轮，返回这轮的数字。失败的项目记日志后继续，不让一处出错停掉整轮。
+// Once 跑一轮并返回数字；单项失败只记日志，不停整轮。
 func (j *Janitor) Once() Stats {
 	now := j.now()
 	s := Stats{At: now.Unix(), Limit: j.opt.CacheMaxBytes}
@@ -101,7 +101,7 @@ func (j *Janitor) Once() Stats {
 		s.TmpFiles = n
 	}
 
-	// 2. 半截文件：超过 partial_ttl 没人续传，且没被任何进程持有
+	// 2. 半截文件：超过 partial_ttl 且没被进程持有
 	if j.opt.PartialTTL > 0 {
 		n, freed, err := j.cs.SweepPartial(now.Add(-j.opt.PartialTTL).Unix())
 		if err != nil {
@@ -111,8 +111,7 @@ func (j *Janitor) Once() Stats {
 		s.Freed += freed
 	}
 
-	// 3. 过期条目：过期且超过宽限期没人访问。只过期不算数——
-	//    低频资源删了就得整份重下。
+	// 3. 过期且超过宽限期没人访问才算：低频资源删了得整份重下。
 	if j.opt.ExpiredGrace > 0 {
 		olds, err := j.st.CacheExpired(now.Unix(), int64(j.opt.ExpiredGrace.Seconds()), 500)
 		if err != nil {
@@ -128,7 +127,7 @@ func (j *Janitor) Once() Stats {
 		}
 	}
 
-	// 4. 对账：索引在、文件不在 → 删索引（否则用户命中后 502）
+	// 4. 索引在、文件不在 → 删索引，否则命中后 502
 	all, err := j.st.CacheAll(0)
 	if err != nil {
 		log.Printf("janitor: 读索引失败: %v", err)
@@ -154,7 +153,7 @@ func (j *Janitor) Once() Stats {
 		log.Printf("janitor: 补删 %d 个文件，释放 %d MB", n, freed>>20)
 	}
 
-	// 7. 容量：写后淘汰之外，定时也压一次，防止"没人写就永远不淘汰"
+	// 7. 定时也压一次容量，防止没人写就永远不淘汰
 	if j.opt.CacheMaxBytes > 0 && j.opt.Evict != nil {
 		if used, err := j.cs.TotalSize(); err == nil && used > j.opt.CacheMaxBytes {
 			if freed, err := j.opt.Evict(j.opt.CacheMaxBytes); err != nil {
@@ -166,7 +165,7 @@ func (j *Janitor) Once() Stats {
 		}
 	}
 
-	// 8. 水位：按磁盘实际占用算，不是索引里的 size 之和
+	// 8. 水位按磁盘实际占用算，不是索引 size 之和
 	if used, err := j.cs.DiskUsage(); err == nil {
 		s.Usage = used
 		j.checkWatermark(used, &s)
@@ -178,8 +177,7 @@ func (j *Janitor) Once() Stats {
 	j.lastRun = now
 	j.mu.Unlock()
 
-	// 9. 把缓存/源站快照推给 metrics：/metrics 直接读这里，
-	// 不每次抓取都递归扫整盘（百万文件时抓取会卡死）。
+	// 9. 快照推给 metrics，抓取时不重扫整盘（百万文件会卡死）。
 	if r := metrics.Get(); r != nil {
 		blobs := uint64(0)
 		if bl, err := j.cs.ListBlobs(); err == nil {
@@ -210,8 +208,8 @@ func (j *Janitor) Once() Stats {
 	return s
 }
 
-// checkWatermark 只在跨过阈值时动一次：90% 报一次，回落到 85% 以下才重新武装。
-// 状态存在 meta 表里，重启后不会重复刷同一条日志。
+// checkWatermark 只在跨阈值时动一次：90% 报，回落到 85% 以下才重新武装。
+// 状态存在 meta 表，重启后不会重复刷同一条日志。
 func (j *Janitor) checkWatermark(used int64, s *Stats) {
 	limit := j.opt.CacheMaxBytes
 	if limit <= 0 {

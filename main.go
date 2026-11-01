@@ -31,7 +31,7 @@ import (
 )
 
 func main() {
-	// 只留四个开关，其余参数都在配置文件里（见 config.example.yaml）
+	// 只留四个开关，其余参数在配置文件里（见 config.example.yaml）
 	cfgPath := flag.String("config", "", "配置文件路径（默认找当前目录的 config.yaml）")
 	addr := flag.String("addr", "", "监听地址，覆盖配置文件")
 	dataDir := flag.String("data", "", "数据目录，覆盖配置文件")
@@ -40,8 +40,8 @@ func main() {
 
 	path, required := *cfgPath, true
 	if path == "" {
-		// 容器里配置文件固定放 /config/config.yaml（compose 把宿主 config/ 目录挂到这里）；
-		// 没找到再回退到当前目录的 config.yaml，方便本地直接跑。
+		// 容器里配置固定放 /config/config.yaml（compose 挂载点）；
+		// 找不到再回退当前目录的 config.yaml，方便本地跑。
 		if _, err := os.Stat("/config/config.yaml"); err == nil {
 			path = "/config/config.yaml"
 		} else {
@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("读配置: %v", err)
 	}
-	// 命令行显式给了才覆盖，没给就尊重配置文件
+	// 只在命令行显式给出时覆盖配置文件
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "addr":
@@ -69,12 +69,12 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("配置不合法: %v", err)
 	}
-	// 日志格式要在其它初始化之前定下来，否则最早那几条还是默认样式。
+	// 日志要最先初始化，否则最早的几条还是默认样式。
 	if err := logging.Setup(cfg.Logging); err != nil {
 		log.Fatalf("初始化日志: %v", err)
 	}
 
-	// 探测和网关共用一套安全拨号策略：源地址是用户填的，不能让它变成内网探针。
+	// 探测与网关共用安全拨号：源地址是用户填的，不能变成内网探针。
 	probe.Configure(cfg.Probe.AllowPrivate)
 	if cfg.Probe.AllowPrivate {
 		log.Printf("探测已允许内网地址（probe.allow_private=true），仅限自建源场景")
@@ -97,7 +97,7 @@ func main() {
 	}
 	defer st.Close()
 
-	// 首次启动写入默认账号 admin/admin，并标记「必须改」：改完之前面板只放行设置页。
+	// 首次启动写入 admin/admin 并标记必须改密：改完前只放行设置页。
 	if err := auth.EnsureAdmin(st); err != nil {
 		log.Fatalf("初始化账号: %v", err)
 	}
@@ -139,7 +139,7 @@ func main() {
 	} else {
 		log.Printf("代理路径匿名放行（auth.require_token=false），面板仍需登录")
 	}
-	// 多源调度：只有「回源」才选源，缓存命中与重新验证都不受影响。
+	// 多源调度：只有回源才选源，缓存命中不受影响。
 	var sched *scheduler.Scheduler
 	if cfg.Sources.Enabled {
 		sched = scheduler.New(st, scheduler.Config{
@@ -159,7 +159,7 @@ func main() {
 		RecoveryEvery: time.Duration(cfg.Sources.RecoveryMinutes) * time.Minute,
 	})
 	if sched != nil {
-		// 源状态/协议健康一变，候选缓存立刻作废。
+		// 源状态变化时立刻作废候选缓存。
 		eng.OnChange(sched.Invalidate)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -167,7 +167,7 @@ func main() {
 	go eng.Loop(ctx)
 
 	// 缓存巡检：容量、过期、半截文件、索引对账。
-	// 淘汰入口传 gw.EvictTo，和写后触发的那次是同一份代码。
+	// 淘汰入口用 gw.EvictTo，与写后触发走同一份代码。
 	jan := janitor.New(st, cstore, gw.GC(), janitor.Options{
 		Interval:      cfg.Janitor.Interval.Duration,
 		PartialTTL:    cfg.Janitor.PartialTTL.Duration,
@@ -198,7 +198,7 @@ func main() {
 		}
 	}()
 
-	// 指标收集常开（开销只是几个 map 自增），开关只管要不要暴露 /metrics。
+	// 指标收集常开（几个 map 自增），开关只管是否暴露 /metrics。
 	metrics.Enable()
 
 	lim := limits.New(cfg.Limits)

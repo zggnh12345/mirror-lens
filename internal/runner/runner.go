@@ -1,8 +1,8 @@
 // Package runner schedules probes, applies digest consensus and maintains
 // source status.
 //
-// v2：一个源可能同时支持 Docker Hub 和 GitHub，能力（cap）和存活状态分开记。
-// cap 回答"这个站是干什么的"，status 回答"它现在活不活"。
+// 一个源可能同时支持 Docker Hub 和 GitHub：cap 说明支持什么，
+// status 说明现在活不活，两者分开记。
 package runner
 
 import (
@@ -53,8 +53,8 @@ type Engine struct {
 	onChange func()
 }
 
-// OnChange 注册「源状态/协议健康变了」的回调。调度器据此丢掉候选缓存，
-// 否则刚判死的源还能在 ListTTL 内继续被选中。
+// OnChange 注册状态变更回调，调度器据此丢掉候选缓存，
+// 否则刚判死的源还能在 ListTTL 内被选中。
 func (e *Engine) OnChange(fn func()) { e.onChange = fn }
 
 // Changed 通知外部状态已变（面板改状态、启用/停用时调用）。
@@ -82,8 +82,7 @@ func (e *Engine) Busy() bool {
 func (e *Engine) Run(tier int) {
 	e.mu.Lock()
 	if e.inflight {
-		// 已经在跑：记下来，等这轮结束后补跑，不能直接丢掉
-		// （否则刚发现/刚添加的源会一直停在 pending）。
+		// 已在跑：记下最高 tier 等这轮结束补跑，丢了新源会一直 pending。
 		if tier > e.queued {
 			e.queued = tier
 		}
@@ -109,8 +108,8 @@ func (e *Engine) Run(tier int) {
 		log.Printf("runner: list sources: %v", err)
 		return
 	}
-	// 死源/封禁源降频：最多每小时试一次。不探测就永远不会恢复，
-	// 但按 3 分钟一轮去敲一个已经挂掉的站，只是白烧带宽和对方额度。
+	// 死源/封禁源降频到每小时一次：不探就永远不恢复，
+	// 但按 3 分钟一轮去敲挂掉的站只是白烧带宽。
 	if tier < 3 {
 		now := time.Now().Unix()
 		gap := int64(e.opt.RecoveryEvery.Seconds())
@@ -123,7 +122,7 @@ func (e *Engine) Run(tier int) {
 		}
 		srcs = keep
 	}
-	// tier3 要下载真实文件，只对还活着的源做，省带宽也省对方限流额度。
+	// tier3 要下载真实文件，只对活着的源做，省带宽和对方额度。
 	if tier >= 3 {
 		live := srcs[:0]
 		for _, s := range srcs {
@@ -134,7 +133,6 @@ func (e *Engine) Run(tier int) {
 		srcs = live
 	}
 
-	// 展开成 (源, 类型) 任务
 	type job struct {
 		src  store.Source
 		kind string
@@ -181,7 +179,7 @@ func (e *Engine) Run(tier int) {
 	}
 	wg.Wait()
 
-	// 共识复核：tier>=3 且没有官方基准时，用多数派的 digest 作为基准。
+	// 没有官方基准时，用多数派的 digest 当基准。
 	if tier >= 3 && expected == "" {
 		expected = consensus(results, func(p pair) string {
 			if p.job.kind != "docker" {
@@ -202,7 +200,7 @@ func (e *Engine) Run(tier int) {
 		}
 	}
 
-	// 按源聚合，一次性写回状态
+	// 按源聚合后一次性写回。
 	perSource := map[int64]map[string]probe.Result{}
 	for _, p := range results {
 		c := store.Check{
@@ -240,8 +238,8 @@ func (e *Engine) Run(tier int) {
 	log.Printf("runner: tier%d done, %d checks over %d sources", tier, len(results), len(srcs))
 }
 
-// probeDue 判断这一轮要不要探测这个源。死源和封禁源降频到 RecoveryEvery，
-// 其余的照常——它们的状态还值得每 3 分钟看一次。
+// probeDue 判断这轮要不要探这个源：死源/封禁源降频到 RecoveryEvery，
+// 其余照常，它们值得每 3 分钟看一次。
 func (e *Engine) probeDue(s store.Source, now, gap int64) bool {
 	if s.Status != "dead" && s.Status != "blocked" {
 		return true
@@ -292,13 +290,11 @@ func (e *Engine) RunSource(id int64) {
 	log.Printf("runner: 识别完成 %s → docker=%v github=%v", s.BaseURL, res["docker"].OK, res["github"].OK)
 }
 
-// kindsFor 决定这一轮该测哪些类型。
-//   - L1 只做存活探测，只测已确认支持的类型
-//   - L2/L3 测已确认支持的 + 还没测过的（自动识别双栈站）
+// kindsFor 决定这一轮该测哪些类型：L1 只测已确认支持的，
+// L2/L3 再加上没测过的（自动识别双栈站）。
 func kindsFor(s store.Source, tier int) []string {
 	var out []string
-	// 判死的源如果没有任何协议被确认过，仍然两种都测一遍：这样早先被一次
-	// 超时误判成 CapNo 的源还能自己爬回来，不用人工重新识别。
+	// 死源且无任何协议确认过时两种都测：误判成 CapNo 的还能自己爬回来。
 	reidentify := tier >= 2 && s.Status == "dead" && s.DockerCap != store.CapYes && s.GithubCap != store.CapYes
 	for _, k := range allKinds {
 		cap := s.DockerCap
@@ -320,19 +316,18 @@ func kindsFor(s store.Source, tier int) []string {
 // apply 写回能力标记和聚合状态，然后让调度器丢掉候选缓存。
 func (e *Engine) apply(s store.Source, res map[string]probe.Result, tier int) {
 	e.applyInner(s, res, tier)
-	// 状态一改，候选缓存里那份旧名单就不该再被用了（默认 TTL 60s 太长）。
+	// 状态一改，旧候选名单就不该再用（TTL 60s 太长）。
 	e.Changed()
 }
 
 func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier int) {
-	// 探测从发起走到写回有几十秒，这期间源可能刚被归档、甚至被删掉。
-	// 一律以数据库里的当前状态为准，别拿探测开始时的旧快照写回。
+	// 探测到写回隔几十秒，源可能已被归档或删除：
+	// 以库里的当前状态为准，不用探测开始时的快照。
 	cur, err := e.st.GetSource(s.ID)
 	if err != nil {
 		return
 	}
-	// 归档是人工（或长期不可用）做出的判断，探测结果不能把它顶掉：
-	// 一个被手工归档的源可能刚巧又能通了，但那不代表用户想让它回到调度里。
+	// 归档是人工决定，探测结果不能顶掉：能通了也不代表想让它回调度。
 	if cur.Status == "archived" {
 		return
 	}
@@ -347,9 +342,8 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		case r.Verdict == probe.VerdictYes && tier >= 2:
 			capv = store.CapYes
 		case r.Verdict == probe.VerdictNo && tier >= 2 && capv == store.CapUnknown:
-			// 只有对方明确说「这里没有这个协议」（404/410、返回网页）才认。
-			// 超时、DNS、429、5xx 是「此刻不通」，写进 CapNo 就等于永久判死：
-			// kindsFor 之后不会再测它，网络恢复了也回不来。
+			// 只有明确说「没有这个协议」（404/410）才认 CapNo。
+			// 超时/DNS/429/5xx 是此刻不通，写成 CapNo 等于永久判死。
 			capv = store.CapNo
 		}
 		if k == "docker" {
@@ -369,7 +363,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 	}
 	s.DockerCap, s.GithubCap = docker, github
 
-	// 协议级健康单独记：docker 挂了不影响 github 的候选资格，反之亦然。
+	// 协议级健康分开记：docker 挂了不影响 github 的候选资格；
 	// 明确「不支持」不算坏，不记。
 	for k, r := range res {
 		if r.Verdict == probe.VerdictNo {
@@ -387,8 +381,8 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 			return
 		}
 	}
-	// 被封禁过的源不会因为一次干净就放回去：连续两次校验一致才算恢复。
-	// 否则「偶尔返回正确内容」的缓存污染源会在可用/封禁之间来回跳。
+	// 封禁源要连续 2 次校验一致才恢复，否则间歇返回正确内容的
+	// 污染源会在可用/封禁之间来回跳。
 	if s.Status == "blocked" {
 		clean := 0
 		for _, k := range allKinds {
@@ -417,7 +411,6 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 			}
 			continue
 		}
-		// 这轮没测它，看最近一次结果
 		if c, err := e.st.LastCheck(s.ID, k); err == nil && c != nil && c.OK {
 			_, _ = e.st.SetStatusLive(s.ID, "usable", "")
 			return
@@ -425,8 +418,8 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 	}
 
 	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes {
-		// 一个结论都没拿到（全是超时/DNS/429）：不知道它支持什么，标 pending
-		// 继续识别。判死会让它按小时降频，而它可能只是刚才网络抖了一下。
+		// 全没结论（超时/DNS/429）就标 pending 继续识别：判死会降频到
+		// 每小时一次，而它可能只是刚才网络抖了一下。
 		if s.DockerCap == store.CapUnknown && s.GithubCap == store.CapUnknown {
 			_, _ = e.st.SetStatusLive(s.ID, "pending", "探测未拿到结论，等待复测")
 			return
@@ -434,7 +427,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		_, _ = e.st.SetStatusLive(s.ID, "dead", "没有任何协议探测通过")
 		return
 	}
-	// 全部失败：连续三次 tier>=2 失败才判死，避免一次抖动就下架。
+	// 连续 3 次 tier>=2 失败才判死，避免一次抖动就下架。
 	if tier < 2 {
 		if s.Status == "usable" {
 			_, _ = e.st.SetStatusLive(s.ID, "degraded", "存活探测失败")
@@ -544,7 +537,7 @@ func (e *Engine) Loop(ctx context.Context) {
 }
 
 // maintain 做生命周期收尾：长期不可用的归档，归档太久的删除。
-// 每小时一次，纯 SQL，代价可以忽略。
+// 每小时一次，纯 SQL，代价可忽略。
 func (e *Engine) maintain(now time.Time) {
 	if n, err := e.st.ArchiveStale(now.Add(-e.opt.ArchiveAfter).Unix()); err != nil {
 		log.Printf("runner: 归档失败: %v", err)

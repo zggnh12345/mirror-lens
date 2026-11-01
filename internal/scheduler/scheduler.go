@@ -1,12 +1,7 @@
 // Package scheduler 决定一次回源该走哪个镜像源。
 //
-// 三条硬规则：
-//
-//  1. 评分只用探测样本（checks.tier>=2）。代理请求的快慢是「用户到本机」，
-//     和「本机到源站」不是一回事，混在一起会让评分失真。
-//  2. 只有回源才选源。缓存命中不碰网络；TTL 到期做重新验证时一律回官方源，
-//     避免镜像站把旧内容一直当成「没变」喂回来。
-//  3. 熔断按 (协议, 源) 记。前缀代理做不了 git，不代表它 raw 也不行。
+// 评分只用探测样本（tier>=2），代理快慢是用户到本机，混进来会失真；
+// 只有回源才选源，TTL 重新验证一律回官方源；熔断按 (协议, 源) 记。
 package scheduler
 
 import (
@@ -29,15 +24,12 @@ type Config struct {
 	StickyTTL     time.Duration
 	FailCooldown  time.Duration
 	ListTTL       time.Duration
-	// Dynamic 打开后，每台源的并发上限在 1..MaxPerSource 之间按实测吞吐自动
-	// 调整（AIMD）。关掉就是固定的 MaxPerSource。
+	// Dynamic 打开后按实测吞吐在 1..MaxPerSource 间自动调整并发（AIMD）。
 	Dynamic bool
-	// MaxPerSource 是单台源同时进行的回源请求上限，0 取默认 4，负数表示不限。
-	// 只约束「会占住连接」的请求（预检、分片），不约束长连接流式转发——
-	// 那是用户自己的下载，卡住等于拒绝服务。
+	// MaxPerSource 是单台源的回源并发上限，0 取 4，负数不限。
+	// 只约束预检/分片，不约束流式转发——卡住用户下载等于拒绝服务。
 	MaxPerSource int
-	// MaxCooldown 是单次冷却的上限。本地退避和 Retry-After 都要夹在它以内：
-	// 一个写着 Retry-After: 86400 的响应不该把源关一天。
+	// MaxCooldown 是单次冷却上限：Retry-After: 86400 不该把源关一天。
 	MaxCooldown time.Duration
 }
 
@@ -67,12 +59,11 @@ type Candidate struct {
 	Name    string  `json:"name"`
 	BaseURL string  `json:"base_url"`
 	Score   float64 `json:"score"`
-	// Probe 表示这是半开状态下的试探请求，本次结果决定它回到可用还是继续熔断。
+	// Probe 表示半开试探请求，本次结果决定它回到可用还是继续熔断。
 	Probe bool `json:"probe,omitempty"`
-	// Trust 是内容校验的可信度（-1 不符 / 0 未验证 / 1 仅可用 / 2 内容一致 / 3 长期一致）。
-	// 只用于同分时的排序和展示，不参与评分。
+	// Trust 是内容可信度（-1 不符 … 3 长期一致），只用于同分排序，不参与评分。
 	Trust int `json:"trust"`
-	// Preferred 是用户手动指定的优先源：同等可用性下排在最前。
+	// Preferred 是用户手动指定的优先源，同等可用性下排最前。
 	Preferred bool `json:"preferred"`
 }
 
@@ -81,11 +72,8 @@ type stickyPick struct {
 	at   time.Time
 }
 
-// breaker 是单个 (协议, 源) 的熔断状态。
-//
-//	fails=0            闭合，正常参与排序
-//	now < until        打开，直接跳过
-//	now >= until       半开，放一个探测请求过去；成功即闭合，失败则冷却翻倍
+// breaker 是单个 (协议, 源) 的熔断状态：fails=0 闭合，now<until 打开，
+// now>=until 半开——放一个探测，成功闭合，失败冷却翻倍。
 type breaker struct {
 	fails   int
 	until   time.Time
@@ -94,9 +82,9 @@ type breaker struct {
 }
 
 const (
-	// 半开探测在飞超过这么久还没回报，视为卡死，允许再放一个。
+	// 半开探测在飞超过此时长视为卡死，允许再放一个。
 	probeStale = 30 * time.Second
-	// 冷却最长翻到 8 倍（默认 5m → 40m），避免一个永久坏源每分钟被戳一次。
+	// 冷却最长翻 8 倍（默认 5m → 40m），免得坏源每分钟被戳一次。
 	maxBackoffShift = 3
 )
 
@@ -119,11 +107,8 @@ type Scheduler struct {
 	gates  map[int64]*gate // 源 id → 并发闸门（容量可动态调整）
 	dyn    map[int64]*dynState
 
-	// gone 是已删除源 id 的墓碑。删除时正在跑的请求结束之后还会回调
-	// Report/Observe/Acquire，没有这层保护，它们会把刚清掉的状态原样
-	// 重建出来——内存里多一份状态，指标多一条序列，事件表多几行。
-	// 用 sync.Map 而不是 s.mu：Acquire 在 loadMu 里也要问一次，跟
-	// Forget（s.mu → loadMu）共用一把锁会形成反向锁序。
+	// gone 是已删除源的墓碑，挡住迟到回调把状态重建出来。
+	// 用 sync.Map 避开与 Forget（s.mu → loadMu）的反向锁序。
 	gone sync.Map // int64 → struct{}
 }
 
@@ -143,8 +128,8 @@ func New(st *store.Store, cfg Config) *Scheduler {
 
 func (s *Scheduler) Enabled() bool { return s != nil && s.cfg.Enabled }
 
-// Invalidate 丢掉候选缓存。源状态、启用开关、协议健康一变就调用：
-// 否则刚判死的源还能在 ListTTL 内继续被选中，用户看到「已经死了还在跑」。
+// Invalidate 丢掉候选缓存。状态、开关、协议健康一变就调用，
+// 否则刚判死的源还能在 ListTTL 内被选中。
 func (s *Scheduler) Invalidate() {
 	if s == nil {
 		return
@@ -155,18 +140,15 @@ func (s *Scheduler) Invalidate() {
 	s.mu.Unlock()
 }
 
-// Forget 清掉某个源的全部运行态：候选缓存、熔断、并发闸门、动态吞吐、逐源指标。
-//
-// 源删掉之后这些状态不会再有正确的使用者，留着就是内存里的墓碑；更麻烦的是
-// id 可能被新加的源复用，旧闸门和熔断记录会直接套到新源身上——新源一上来
-// 就被限流、或者直接显示在冷却中。删除是低频操作，这里不做增量，整体清空。
+// Forget 清掉某个源的全部运行态：候选缓存、熔断、闸门、吞吐、逐源指标。
+// id 可能被新源复用，留着旧闸门和熔断会让新源一上来就被限流。
 func (s *Scheduler) Forget(id int64) {
 	if s == nil || id == 0 {
 		return
 	}
 	suffix := "|" + strconv.FormatInt(id, 10)
 	s.mu.Lock()
-	// 先立墓碑再清状态：晚到的回调只有看到墓碑才不会再写回来。
+	// 先立墓碑再清状态：晚到的回调看到墓碑才不会再写回来。
 	s.gone.Store(id, struct{}{})
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
@@ -185,9 +167,8 @@ func (s *Scheduler) Forget(id int64) {
 	metrics.ForgetSource(id)
 }
 
-// Revive 撤销删除墓碑。sources.id 是 AUTOINCREMENT，正常不会复用；这里是
-// 防御性的——万一 id 被复用，没有这一步，新源会被当成「已删除」，
-// 报告和闸门全部被静默丢弃。
+// Revive 撤销删除墓碑。id 正常不会复用，这里是防御性的：
+// 没有它，复用的新源会被当成已删除，报告和闸门全被静默丢弃。
 func (s *Scheduler) Revive(id int64) {
 	if s == nil || id == 0 {
 		return
@@ -195,13 +176,13 @@ func (s *Scheduler) Revive(id int64) {
 	s.gone.Delete(id)
 }
 
-// isGone 报告该 id 是否已被删除。墓碑是独立的一层，任何锁状态下都能问。
+// isGone 报告该 id 是否已被删除，任何锁状态下都能问。
 func (s *Scheduler) isGone(id int64) bool {
 	_, ok := s.gone.Load(id)
 	return ok
 }
 
-// deleted 与 isGone 同义，保留旧名字给不持有 s.mu 的调用方读起来更直白。
+// deleted 是 isGone 的别名，给不持有 s.mu 的调用方用。
 func (s *Scheduler) deleted(id int64) bool { return s.isGone(id) }
 
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
@@ -218,7 +199,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	if err != nil {
 		return nil
 	}
-	// 重启后从事件表把「最近一次就是失败」的源捡回来，接着熔断而不是重新试错。
+	// 重启后从事件表恢复最近失败的源，接着熔断而不是重新试错。
 	if cooling, err := s.st.SourceFailedRecently(kind, s.now().Add(-s.cfg.FailCooldown).Unix()); err == nil {
 		for _, st := range stats {
 			k := pkey(kind, st.ID)
@@ -237,10 +218,8 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 
 // order 叠加熔断与粘性偏好。
 //
-// 打开的源直接排除，而不是降权：降权后它仍可能排在前面，白白再等一次超时。
-// 半开的源排在队尾——有健康源时不必拿真实请求去赌，等健康源都失败时它自然被轮到。
-// 若冷却已经过期整整一个周期还没被探过，就给它一次队首机会，避免永久坏源被
-// 永久排除在外、恢复后也没人知道。
+// 打开的直接排除（降权仍会排前面，白等一次超时）；半开的排队尾，有健康源
+// 时不拿真实请求去赌；冷却逾期一个周期未探，则插队首只试一次。
 func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 	now := s.now()
 	out := make([]Candidate, 0, len(in))
@@ -256,28 +235,25 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 			c.Probe = true
 			c.Score = -1
 			if now.Sub(b.until) >= s.cfg.FailCooldown {
-				c.Score = 2 // 逾期未探：插到队首，只试这一次
+				c.Score = 2 // 逾期未探，插队首只试一次
 			}
 		}
 		if sp, ok := s.sticky[kind]; ok && sp.cand.ID == c.ID && now.Sub(sp.at) < s.cfg.StickyTTL {
-			c.Score += 0.5 // 刚成功过的源优先复用，省一次试错
+			c.Score += 0.5 // 刚成功的源优先复用，省一次试错
 		}
 		out = append(out, c)
 	}
-	// 分数不变，只在分数相同时让负载低的源先上；已经占满名额的源整体后移，
-	// 免得「最快的那台」被所有任务一起压垮。
+	// 占满名额的源整体后移，免得最快的那台被所有任务一起压垮。
 	sort.SliceStable(out, func(i, j int) bool {
 		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
 			return !bi
 		}
-		// 用户手动「优先」的源排在同组最前：这是明确意图，比评分更直接。
-		// 放在 atCap 之后，避免把已占满名额的源硬塞到空闲源前面。
+		// 手动优先的源排同组最前，但放在 atCap 之后，别把满员源硬塞前面。
 		if out[i].Preferred != out[j].Preferred {
 			return out[i].Preferred
 		}
 		if out[i].Score == out[j].Score {
-			// 同分先看内容可信度：速度一样时，宁可走那台被反复校验过的。
-			// 分数本身不动——评分只看可用率/延迟/速度，可信度是另一条轴。
+			// 同分看可信度：分数只看可用率/延迟/速度，可信度是另一条轴。
 			if out[i].Trust != out[j].Trust {
 				return out[i].Trust > out[j].Trust
 			}
@@ -294,15 +270,14 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 	return out
 }
 
-// Acquire 为一次回源请求占一个并发名额，返回的释放函数必须调用（可重复调用）。
-// 名额满时在这里等，等的是「轮到自己」，不是源站故障——不计健康、不熔断。
+// Acquire 占一个回源并发名额，返回的释放函数必须调用（可重复）。
+// 满员时等待是排队而非故障，不计健康、不熔断。
 func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
 		return func() {}, nil
 	}
 	if s.deleted(id) {
-		// 源在下载途中被删了：正在跑的请求不该因此失败（那是用户自己的
-		// 下载），但也没必要再为它建闸门——放行即可。
+		// 源在下载途中被删：不建闸门直接放行，在途请求不该失败。
 		return func() {}, nil
 	}
 	release, err := s.gateFor(id).acquire(ctx)
@@ -319,7 +294,7 @@ func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	}, nil
 }
 
-// gateFor 取某台源的闸门，第一次用时按动态/固定策略初始化。
+// gateFor 取某台源的闸门，首次使用时初始化。
 func (s *Scheduler) gateFor(id int64) *gate {
 	s.loadMu.Lock()
 	defer s.loadMu.Unlock()
@@ -329,13 +304,11 @@ func (s *Scheduler) gateFor(id int64) *gate {
 	if g, ok := s.gates[id]; ok {
 		return g
 	}
-	// 从配置的上限起步，和不开动态时完全一致：没有样本之前不做任何猜测，
-	// 有证据（吞吐掉、429）才往下退，退了之后能证明恢复得动再涨回去。
+	// 从配置上限起步，没样本不做猜测：有证据才退，证明恢复再涨。
 	g := newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
 	s.gates[id] = g
-	// 建闸门和 Forget 可能撞在一起：如果墓碑在我们插入之后才立，Forget 的
-	// 清理会把这个闸门删掉；如果在之前立，这里能看到并撤回登记。两种顺序
-	// 都不会把闸门留在表里，这次请求照样拿到一个临时闸门继续跑。
+	// 与 Forget 撞车时两种顺序都不会把闸门留在表里，
+	// 本次请求仍拿到临时闸门继续跑。
 	if s.isGone(id) {
 		delete(s.gates, id)
 		return newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
@@ -343,7 +316,7 @@ func (s *Scheduler) gateFor(id int64) *gate {
 	return g
 }
 
-// InFlight 是某台源此刻占用的名额数，用来做选源时的负载均衡。
+// InFlight 是某台源此刻占用的名额数，用于选源时负载均衡。
 func (s *Scheduler) InFlight(id int64) int {
 	if s == nil || s.cfg.MaxPerSource <= 0 {
 		return 0
@@ -388,22 +361,17 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 
 // Hint 是失败回报里的附加信息。
 type Hint struct {
-	// Code 是这次上报对应的上游 HTTP 状态码；0 表示没有（连接失败、超时）。
-	// 只用于统计限流比例，不参与退避计算。
+	// Code 是上游 HTTP 状态码，0 表示连接失败/超时；只用于限流统计。
 	Code int
 
-	// Mode 说明这次上报的耗时是什么：single 整次回源、stream 首字节、chunk 单段。
-	// 三种耗时的含义完全不同，混在一个直方图里就没法看了。
+	// Mode 是耗时口径：single 整次、stream 首字节、chunk 单段，不能混。
 	Mode string
 
 	RetryAfter time.Duration
 }
 
 // Report 记录一次实际回源结果：成功闭合熔断并加粘性，失败进冷却（逐次翻倍）。
-//
-// 带 Retry-After 的失败取 max(本地退避, Retry-After)，再夹到 MaxCooldown：
-// 源明确说等 2 分钟时，5 分钟的默认冷却是在浪费一次本来能用的回源；反过来
-// 说等一天时，也不能真的等一天。
+// 带 Retry-After 时取 max(本地退避, Retry-After) 再夹到 MaxCooldown。
 func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, hints ...Hint) {
 	if s == nil || c.ID == 0 {
 		return
@@ -411,8 +379,7 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	k := pkey(kind, c.ID)
 	s.mu.Lock()
 	if s.isGone(c.ID) {
-		// 源已经删了：这次回源的结果没有任何意义，写回去就是复活一条
-		// 刚清理干净的状态（熔断、粘性、事件表、指标）。
+		// 源已删除：写回去就是复活刚清理的熔断、粘性、事件和指标。
 		s.mu.Unlock()
 		return
 	}
@@ -442,7 +409,7 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	}
 	s.mu.Unlock()
 
-	// git 能通说明这个源真的实现了 smart HTTP，记下来，下次不用再试错。
+	// git 能通说明实现了 smart HTTP，记下来下次不用再试错。
 	if ok && kind == "git" {
 		_ = s.st.SetGitCap(c.ID, true)
 	}
@@ -479,10 +446,8 @@ func pkey(kind string, id int64) string {
 	return kind + "|" + strconv.FormatInt(id, 10)
 }
 
-// score 把三个指标压到同一个 0..1 区间再加权。
-//
-// 成功率做贝叶斯平滑：1 次成功不该等于 100%，先按 50% 起算，样本多了才说话。
-// 没有速度样本时给中性 0.5，而不是 0——缺样本不代表慢，给 0 会让新源永远排不上。
+// score 把三个指标压到 0..1 再加权。
+// 成功率做贝叶斯平滑（先验 50%）；缺速度样本给中性 0.5，给 0 会让新源排不上。
 func score(st store.SourceStat) float64 {
 	const prior, priorWeight = 0.5, 2.0
 	okRate := (float64(st.OK) + prior*priorWeight) / (float64(st.Samples) + priorWeight)

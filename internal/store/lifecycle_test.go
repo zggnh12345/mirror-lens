@@ -179,8 +179,8 @@ func TestConsecutiveClean(t *testing.T) {
 	st := openLifecycle(t)
 	id := addLifecycleSource(t, st, "c", "blocked", true)
 
-	// 最近两次干净、再往前一次是脏的 → 2。ts 显式递增，别让同一秒内的
-	// 插入顺序决定结论。
+	// 最近两次干净、再往前一次是脏的 → 2。
+	// ts 显式递增，别让同一秒内的插入顺序决定结论。
 	for i, c := range []struct {
 		ok       bool
 		digestOK int

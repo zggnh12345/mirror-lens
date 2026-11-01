@@ -2,8 +2,7 @@ package gateway
 
 import "log"
 
-// enforceQuota 在写缓存之后异步跑一次容量检查。
-// 不放在请求路径上：淘汰是后台活儿，别让用户等。
+// enforceQuota 异步跑容量检查：淘汰是后台活儿，不放请求路径上。
 func (g *Gateway) enforceQuota() {
 	if g.cacheMaxBytes <= 0 || g.st == nil || g.cache == nil {
 		return
@@ -15,11 +14,8 @@ func (g *Gateway) enforceQuota() {
 	}()
 }
 
-// EvictTo 按"最久没被访问"淘汰到 limit 以内，返回释放的字节数。
-//
-// 判断依据用 blobs 的实际大小，不用索引里的 size 之和：索引可能过期，
-// 文件也可能被外部删过。tmp/ 和 partial/ 不算在内——那不是淘汰能清的，
-// 归 Janitor 按时间清。
+// EvictTo 按最久未访问淘汰到 limit 以内。用量以 blobs 实际大小为准，
+// 索引的 size 可能过期；tmp/、partial/ 归 Janitor，不在淘汰范围。
 func (g *Gateway) EvictTo(limit int64) (int64, error) {
 	g.quotaMu.Lock()
 	defer g.quotaMu.Unlock()
@@ -40,9 +36,9 @@ func (g *Gateway) EvictTo(limit int64) (int64, error) {
 		if len(olds) == 0 {
 			break
 		}
-		// 一次只淘汰一条，删完重新量。整批删会一口气删到远低于上限——
-		// 三个 100 字节的条目、上限 250，批删会把 300 全清掉。
-		// 删索引 + 按引用计数删文件，和手动清理、对账走同一条路
+		// 一次只删一条再重新量：批删会一口气删到远低于上限
+		// （3 个 100 字节条目、上限 250，批删清掉 300）。
+		// 走 gc.DeleteKeys：删索引+引用计数删文件，与手动清理同一条路。
 		res, err := g.gc.DeleteKeys([]string{olds[0].Key})
 		if err != nil {
 			return freed, err

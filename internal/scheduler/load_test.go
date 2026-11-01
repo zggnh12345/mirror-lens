@@ -80,7 +80,7 @@ func TestAcquireUnlimited(t *testing.T) {
 	}
 }
 
-// 占满名额的源要排到后面，但分数本身不变；分数相同的源按负载低者优先。
+// 占满名额的源排到后面但分数不变；同分按负载低者优先。
 func TestOrderPushesFullSourceBack(t *testing.T) {
 	st := newStore(t)
 	a := addSource(t, st, "https://a.example", true, 100, 900)

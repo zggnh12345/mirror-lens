@@ -77,10 +77,10 @@ func TestReadyzOK(t *testing.T) {
 	}
 }
 
-// 公网源站不可用不该影响就绪：/readyz 根本不问源站。
+// 源站不可用不影响就绪：/readyz 不问源站。
 func TestReadyzIgnoresUpstream(t *testing.T) {
 	f := newReadyFixture(t)
-	// 放一台连不上的源（127.0.0.1:1），确认它不参与就绪判断。
+	// 放一台连不上的源，确认它不参与就绪判断。
 	if _, err := f.st.AddSource(store.Source{
 		Name: "dead", BaseURL: "http://127.0.0.1:1", Origin: "manual", Enabled: true, Status: "usable",
 	}); err != nil {
@@ -125,7 +125,7 @@ func TestReadyzCacheGone(t *testing.T) {
 	}
 }
 
-// 探针不能每次写临时文件：K8s 一秒一次，目录会被小文件刷满。
+// 探针不能每次写临时文件，K8s 一秒一次会刷满目录。
 func TestReadyzDoesNotWriteFiles(t *testing.T) {
 	f := newReadyFixture(t)
 	count := func() int {

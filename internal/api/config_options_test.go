@@ -6,12 +6,8 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/config"
 )
 
-// TestConfigOptionsAlwaysHaveSelection 保证设置面板里每个 bool/enum 字段
-// 的取值都能对上某个选项。
-//
-// 背景：面板把 bool/enum 渲染成一排分段按钮，靠「当前值 == 某个选项」来点亮选中态。
-// 一旦取值对不上所有选项（空串、别名等），界面上就一个都不亮，用户看到的是
-// "既没有开也没有关"，而系统里它其实有明确生效值。
+// TestConfigOptionsAlwaysHaveSelection 保证 bool/enum 取值都对上选项。
+// 对不上时面板一个按钮都不亮，看起来像「没设置」。
 func TestConfigOptionsAlwaysHaveSelection(t *testing.T) {
 	c := config.Default()
 	for _, f := range cfgSchema {
@@ -36,8 +32,8 @@ func TestConfigOptionsAlwaysHaveSelection(t *testing.T) {
 	}
 }
 
-// TestConfigEnumNormalizesAliases 覆盖日志级别/格式这类有别名的枚举：
-// 配置里写空值或 warning，运行时按 info/warn 解释，面板必须显示同一个值。
+// TestConfigEnumNormalizesAliases 覆盖别名枚举：空值或 warning
+// 运行时按 info/warn 解释，面板要显示同一个值。
 func TestConfigEnumNormalizesAliases(t *testing.T) {
 	cases := []struct {
 		raw  string

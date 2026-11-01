@@ -127,8 +127,7 @@ func TestDockerBlobVerified(t *testing.T) {
 	if res.BlobOK != 1 {
 		t.Fatalf("整层校验应通过，得到 %d", res.BlobOK)
 	}
-	// 测速只算 blob 那一段：/v2/ 故意慢了 600ms，若仍把它算进去，
-	// 2MB/0.6s ≈ 3.4MB/s，过不了 6MB/s 这条线。
+	// 测速只算 blob 那一段：/v2/ 故意慢了 600ms，算进去就过不了 6MB/s 这条线。
 	if res.SpeedKBps < 6*1024 {
 		t.Fatalf("测速把前置请求算进去了？得到 %d KB/s", res.SpeedKBps)
 	}

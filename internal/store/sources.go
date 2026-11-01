@@ -6,15 +6,14 @@ import (
 )
 
 // SourceStat 是调度用的源画像。
-//
-// 速度与延迟只来自探测样本（checks.tier >= 2）；代理请求的快慢不写进
-// checks，否则「本机到源站」和「用户到本机」两段会混成一个数字。
+// 速度与延迟只取探测样本（checks.tier >= 2）；代理请求不写进 checks，
+// 否则「本机到源站」和「用户到本机」两段会混成一个数字。
 type SourceStat struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	Status  string `json:"status"`
-	// Preferred 表示用户手动把这个源设为优先，调度时排在前面。
+	// Preferred 用户手动设为优先，调度时排在前面。
 	Preferred bool  `json:"preferred"`
 	Samples   int   `json:"samples"`
 	OK        int   `json:"ok"`
@@ -27,17 +26,12 @@ type SourceStat struct {
 
 const sourceSampleWindow = 10
 
-// SourceCandidates 返回某类协议当前可参与调度的源。
-// 只取 enabled 且状态为 usable/degraded 的；dead 与 pending 不参与。
-//
-// 能力按协议分开记：GitHub 前缀代理能代理 raw/release，但多数做不了 git
-// smart HTTP。git 用单独的 git_cap，默认关，靠实测或手动打开。
-// HealthFails：某协议族连续失败到这个次数，就暂时不把它排进该协议的候选。
-// 只影响这一个协议，源站整体状态与另一个协议不受牵连。
+// HealthFails 某协议族连续失败到这个次数，就把它从该协议的候选里摘掉。
+// 只影响这一个协议，源站整体状态和其他协议不受牵连。
 const HealthFails = 3
 
 // Family 把请求类型归到三个协议族：docker / github / git。
-// raw、release 都是 GitHub 内容的另一种地址形态，健康与否跟 github 一致。
+// raw、release 是 GitHub 内容的另一种地址形态，健康度跟 github 一致。
 func Family(kind string) string {
 	switch kind {
 	case "docker":
@@ -49,9 +43,8 @@ func Family(kind string) string {
 	}
 }
 
-// NoteProbe 记一次某协议族的探测结果：成功清零并记时间，失败累加。
-// 与源站整体 status 分开：整体 status 回答「这台还活着吗」，这里回答
-// 「它这个协议现在还灵不灵」。
+// NoteProbe 记一次协议族探测结果：成功清零并记时间，失败累加。
+// 与源站整体 status 分开：那边答「这台还活着吗」，这里答「这个协议还灵吗」。
 func (s *Store) NoteProbe(id int64, family string, ok bool) error {
 	now := time.Now().Unix()
 	if ok {
@@ -87,6 +80,10 @@ func (s *Store) HealthOf(id int64) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// SourceCandidates 返回某类协议当前可参与调度的源。
+// 只取 enabled 且 usable/degraded 的，dead 与 pending 不参与。
+// 能力按协议分开记：GitHub 前缀代理能代 raw/release，但多数做不了 git
+// smart HTTP，git 用单独的 git_cap。
 func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	col := ""
 	switch kind {
@@ -99,9 +96,8 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	default:
 		return nil, nil
 	}
-	// 按「协议族」过滤：docker 挂了不能拖累 github，反之亦然。
-	// 一个源整体还活着（status=usable），但某个协议连续探测失败时，只把
-	// 这个协议从候选里摘掉，另一个协议照常走它。
+	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
+	// 源整体可用但某协议连续失败时，只摘掉这个协议。
 	rows, err := s.db.Query(`SELECT id, name, base_url, status, preferred FROM sources
 		WHERE enabled = 1 AND status IN ('usable','degraded') AND `+col+` = 1
 		  AND id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
@@ -139,11 +135,9 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 }
 
 // sourceSamples 取最近 N 条样本，返回中位延迟与中位速度。
-// 中位数比平均值稳：一次 25 秒的超时不会把整条源的分数拉到底。
-//
-// 按 kind 隔离：一台源做 docker 很快、做 raw 全挂，混在一起取中位数两边都会失真。
-// 本协议还没有样本时只退回「没有 kind 的历史行」（升级前的老库），不退回别的协议：
-// 否则一台源只有 docker 样本，查 raw 排名时又会被 docker 的数据带偏，隔离等于没做。
+// 中位数比平均值稳：一次 25 秒超时不至于把整条源的分数拉到底。
+// 按 kind 隔离；本协议无样本时只退回无 kind 的老行，不退回别的协议，
+// 否则只有 docker 样本的源查 raw 排名时会被 docker 数据带偏。
 func (s *Store) sourceSamples(id int64, kind string) (n, ok int, lat, spd, last int64, err error) {
 	n, ok, lat, spd, last, err = s.samples(id, kind, false)
 	if err == nil && n == 0 && kind != "" {
@@ -206,9 +200,8 @@ func median(v []int64) int64 {
 	return v[len(v)/2]
 }
 
-// SetGitCap 记录「这个源确实能做 git 协议」。
-//
-// 只在实测成功时调用：前缀代理能取 raw 文件，不代表它实现了 git smart HTTP。
+// SetGitCap 记录该源确实支持 git 协议。
+// 只在实测成功时调用：能取 raw 文件不代表实现了 git smart HTTP。
 func (s *Store) SetGitCap(id int64, on bool) error {
 	v := 0
 	if on {
@@ -218,10 +211,9 @@ func (s *Store) SetGitCap(id int64, on bool) error {
 	return err
 }
 
-// SourceFailedRecently 返回「最近一次代理结果就是失败、且发生在 since 之后」的源。
-//
-// 熔断状态落在库里而不是只放内存：进程重启后不该再拿同一个坏源去等超时。
-// 只看每个源的最近一条事件，所以它一旦成功就自动解除。
+// SourceFailedRecently 返回「最近一次代理失败、且在 since 之后」的源。
+// 熔断状态落库而非只放内存：进程重启后不该再拿同一个坏源等超时。
+// 只看每个源的最近一条事件，成功即自动解除。
 func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]bool, error) {
 	rows, err := s.db.Query(`
 		SELECT e.source_id FROM source_events e
@@ -244,7 +236,7 @@ func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]bool, 
 }
 
 // RecordSourceEvent 记录一次「代理请求打到某个源」的结果。
-// 这张表只用于熔断和运维观察，不参与速度评分。
+// 只用于熔断与运维观察，不参与速度评分。
 func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64, code int) {
 	if sourceID == 0 {
 		return
@@ -253,9 +245,9 @@ func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64
 	if ok {
 		b = 1
 	}
-	// 事件表没有外键，源删掉之后一条迟到的上报会把它重新插回来。
-	// 用 INSERT ... SELECT ... WHERE EXISTS 让「源还在」这件事由数据库
-	// 判断：调用方检查完到真正写入之间的空隙也堵住了。
+	// 事件表没有外键，源删掉后迟到的上报会把它重新插回来。
+	// 用 INSERT ... SELECT ... WHERE EXISTS 把「源还在」交给数据库判断，
+	// 堵住调用方检查到真正写入之间的空隙。
 	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms, code)
 		SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
 		sourceID, kind, time.Now().Unix(), b, ms, code, sourceID)

@@ -13,8 +13,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 删除源之后，调度器不能再把它排进候选，熔断/闸门/动态吞吐这些运行态
-// 也要一起清掉——留着不但占内存，id 被新源复用时还会把旧限流套上去。
+// 删除后不再排进候选，熔断/闸门/吞吐也要清掉，否则会套到复用的 id 上。
 func TestForgetDropsRuntimeState(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

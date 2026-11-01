@@ -1,9 +1,7 @@
 // Package gc 是唯一允许删缓存的地方。
 //
-// 容量淘汰、过期清理、手动清空、索引对账都走这里，原因很简单：删一个 blob
-// 要先确认没有别的键还在引用它。如果每个模块自己写一套删除逻辑，迟早会出现
-// 一个模块认为能删、另一个模块还在读的情况——文件被删了，索引还在，
-// 用户看到的是"缓存命中却 502"。
+// 淘汰、过期、清空、对账都走这里：删 blob 前必须确认没有别的键引用它，
+// 各模块自写删除逻辑会出「文件删了索引还在」，用户看到缓存命中却 502。
 package gc
 
 import (
@@ -24,15 +22,13 @@ type Result struct {
 	Entries int   `json:"entries"` // 删掉的索引条目
 	Blobs   int   `json:"blobs"`   // 真正删掉的物理文件
 	Bytes   int64 `json:"bytes"`   // 释放的磁盘空间
-	Pending int   `json:"pending"` // 删失败、排队等重试的文件
+	Pending int   `json:"pending"` // 删失败待重试的文件
 }
 
 func New(st *store.Store, cs *cache.Store) *GC { return &GC{st: st, cs: cs} }
 
-// DeleteKeys 删一批索引，再删不再被引用的物理文件。
-//
-// 顺序不能反：先删文件再删索引，中间崩了就是"索引在、文件没了"；
-// 先删索引再删文件，最坏是"文件在、没人引用"，下一轮对账会收走。
+// DeleteKeys 先删索引，再删不再被引用的文件。
+// 顺序不能反：崩在中间时最坏只剩「文件在、没人引用」，对账会收走。
 func (g *GC) DeleteKeys(keys []string) (Result, error) {
 	var res Result
 	entries, err := g.st.CacheDeleteMany(keys)
@@ -56,10 +52,10 @@ func (g *GC) DeleteKeys(keys []string) (Result, error) {
 	return res, nil
 }
 
-// dropBlob 引用计数归零才删文件。删不掉（权限、占用）就排队，Janitor 下轮再试，
-// 免得出现"数据库删了、文件永远躺在盘上"。
+// dropBlob 引用归零才删文件；删不掉就排队下轮再试，
+// 免得数据库删了而文件永远躺在盘上。
 func (g *GC) dropBlob(sha string) (n int, freed int64, err error) {
-	// 计数与删除必须原子：否则刚被新索引引用的文件会被删掉。
+	// 计数与删除必须原子，否则会删掉刚被新引用的文件。
 	unlock := g.cs.LockBlob(sha)
 	defer unlock()
 
@@ -71,7 +67,7 @@ func (g *GC) dropBlob(sha string) (n int, freed int64, err error) {
 		return 0, 0, nil // 还有别的键在用
 	}
 	if !g.cs.Has(sha) {
-		return 0, 0, nil // 文件本来就不在，没东西可释放
+		return 0, 0, nil // 文件本来就不在
 	}
 	if fi, e := os.Stat(g.cs.BlobPath(sha)); e == nil {
 		freed = fi.Size()
@@ -84,8 +80,8 @@ func (g *GC) dropBlob(sha string) (n int, freed int64, err error) {
 	return 1, freed, nil
 }
 
-// RetryPending 重试上轮删不掉的文件。重试前再看一次引用计数：
-// 同一个内容可能刚被重新下载并建了新索引。
+// RetryPending 重试上轮删不掉的文件；删前再看引用计数，
+// 同一内容可能刚被重新下载并建了新索引。
 func (g *GC) RetryPending() (n int, freed int64) {
 	shas, err := g.st.PendingBlobs(0)
 	if err != nil {
@@ -122,13 +118,9 @@ func (g *GC) retryOne(sha string) (int, int64) {
 	return 1, freed
 }
 
-// Orphans 删掉"磁盘上有、没有任何索引引用"的文件。
-// 崩溃在 Commit 与 CachePut 之间就会留下这种文件。
-// orphanGrace 是孤儿文件的观察期。
-//
-// 提交路径是「先 rename 落盘、再写索引」，两步之间有窗口；而 refs 快照比扫盘更早，
-// 所以整个扫描期间新提交的 blob 都可能被判成孤儿。刚出现的文件先放过，
-// 下一轮（默认 10 分钟后）它已经有索引了，真孤儿也只是晚一轮回收。
+// Orphans 删掉磁盘上有、没有任何索引引用的文件。
+// 提交是「先 rename 落盘、再写索引」，崩在中间就留下这种文件；
+// 扫描期间新提交的 blob 也可能被判成孤儿，靠观察期放过。
 const orphanGrace = 5 * time.Minute
 
 func (g *GC) Orphans() (Result, error) {
@@ -153,9 +145,8 @@ func (g *GC) Orphans() (Result, error) {
 		if now.Sub(fi.ModTime()) < orphanGrace {
 			continue
 		}
-		// 观察期挡不住「复用已有 blob」：新请求 Commit 时发现文件已在，
-		// 直接删临时文件，随后才写索引。这中间引用数确实是 0，而 mtime 很旧。
-		// 所以查询和删除必须在同一把 blob 锁里完成，提交方在锁内 rename+写索引。
+		// 观察期挡不住「复用已有 blob」：文件很旧而引用数暂时为 0，
+		// 所以查引用和删除要在同一把 blob 锁内完成。
 		unlock := g.cs.LockBlob(sha)
 		n, err := g.st.CacheRef(sha)
 		if err != nil || n > 0 {
@@ -175,8 +166,8 @@ func (g *GC) Orphans() (Result, error) {
 	return res, nil
 }
 
-// MissingFiles 返回"索引在、文件不在"的键，由调用方决定删索引。
-// 这里不直接删：调用方通常要顺带记日志和统计。
+// MissingFiles 返回「索引在、文件不在」的键；删索引由调用方做，
+// 因为要顺带记日志和统计。
 func (g *GC) MissingFiles(entries []store.CacheEntry) []string {
 	var out []string
 	for _, e := range entries {

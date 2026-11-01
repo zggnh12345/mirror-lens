@@ -47,20 +47,21 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 缓存里有就直接从盘上切：ServeContent 会自己处理 Range 和 HEAD。
+	// 命中就从盘上切，ServeContent 自己处理 Range 和 HEAD。
 	if e, _ := g.st.CacheGet(plan.CacheKey); e != nil && g.fresh(e) {
 		g.serveCached(w, r, e, "HIT", true)
 		return
 	}
 
-	// 缓存里没有、客户端又只要一段（下载器续传）或者只是 HEAD：直通，不落盘。
-	// 这种请求本来就不需要完整文件，先缓存整份再切片只会白占盘。
+	// 客户端只要一段（续传）或只 HEAD：直通不落盘，
+	// 先缓存整份再切片只会白占盘。
 	if r.Header.Get("Range") != "" || r.Method == http.MethodHead {
 		g.passThrough(w, r, plan)
 		return
 	}
 
-	// 同一个键串行填充：后来的请求等前一个填完，直接读盘，不会两份字节抢一个文件。
+	// 同一个键串行填充：后来的请求等前一个填完再直接读盘，
+	// 不会两份字节抢一个文件。
 	unlock := g.lockKey(plan.CacheKey)
 	defer unlock()
 	if e, _ := g.st.CacheGet(plan.CacheKey); e != nil && g.fresh(e) {
@@ -88,8 +89,7 @@ func (g *Gateway) fresh(e *store.CacheEntry) bool {
 	return g.now().Unix()-e.CreatedAt < e.TTL
 }
 
-// lockKey 锁住同一个缓存键的填充流程。用带引用计数的表，
-// 否则每个不同的 URL 都会留下一把锁，跑久了只增不减。
+// lockKey 用引用计数的锁表：否则每个 URL 留一把锁，只增不减。
 func (g *Gateway) lockKey(k string) func() {
 	return g.locks.Lock(k)
 }
@@ -107,8 +107,8 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 		}
 	}
 
-	// 阶段 7：有可信摘要、多台源都支持 Range 时，分片并行下载。
-	// 它自己判断前提是否成立；不成立就什么都不写，继续下面的单流逻辑。
+	// 有可信摘要且多台源支持 Range 时走分片并行；
+	// 前提不成立就不写任何字节，继续单流。
 	if pm == nil && prev == nil && g.tryParallel(w, r, plan) {
 		return
 	}
@@ -162,11 +162,8 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 	http.Error(w, "502 上游反复返回对不上的分段响应", http.StatusBadGateway)
 }
 
-// upstreamRequestFrom 在真正开始传输之前选源。
-//
-// 只在这个时刻能换源：一旦响应头写给客户端，再换就等于给客户端拼一段
-// 来源不同的字节流。已经有半截文件（pm）或正在重新验证（prev）时也只回官方源，
-// 因为续传的 If-Range 与 ETag 都绑定了原来那台服务器。
+// upstreamRequestFrom 在写响应头之前选源，之后换源会拼出混合字节流。
+// 有 pm 或 prev 时只回官方源：If-Range/ETag 绑定了原来那台服务器。
 func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, pm *cache.PartialMeta, prev *store.CacheEntry) (*http.Response, *fetchTarget, time.Duration, error) {
 	targets := g.targets(plan, prev)
 	if pm != nil {
@@ -192,8 +189,8 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			lastErr = err
 			continue
 		}
-		// 镜像上没有这个文件：换下一个源，但不冷却它。大文件多半是 Release
-		// 产物，镜像同步慢半拍很常见，按故障处理会白白废掉一台好源。
+		// 镜像缺文件就换源但不冷却它：Release 同步慢半拍很常见，
+		// 按故障处理会废掉一台好源。
 		if t.c != nil && isMiss(resp.StatusCode) {
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
@@ -230,8 +227,8 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 	return nil, nil, 0, lastErr
 }
 
-// 镜像站的这几种状态码代表「这台源现在不好用」，值得换一台；
-// 404/410 是资源本身不存在，换源也没用，直接按上游结果处理。
+// 这些状态码代表镜像「现在不好用」，值得换一台。
+// 404/410 是资源不存在，换源没用，按上游结果处理。
 func retryableFromMirror(code int) bool {
 	switch code {
 	case http.StatusForbidden, http.StatusUnauthorized, http.StatusTooManyRequests,
@@ -271,8 +268,7 @@ func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.
 	return g.cli.Do(req)
 }
 
-// 取数的三态结局。中性表示「不是源的错」：客户端自己断开、本地磁盘写不进去，
-// 这些都不该影响这台源的评分。
+// 取数三态结局。中性 = 不是源的错（客户端断开、写盘失败），不记评分。
 type fetchOutcome int
 
 const (
@@ -290,13 +286,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		if tgt == nil || outcome == outcomeNeutral {
 			return
 		}
-		// 只有整份传完才算成功：头到了、身子断了，对客户端就是一次失败下载。
-		// 提前记成功会让这台源一直粘着（每次成功把 sticky 续到 10 分钟后），
-		// 熔断也永远不触发——「握手快、传输慢」的源能把全部流量攥在手里。
-		// 记给调度器的是整次回源的耗时（首字节 + 传输），不是 TTFB：
-		// 拿 TTFB 当耗时会把「握手快、传输慢」的源算成最快的。
-		// TTFB 单独记一条 source_ttfb_seconds：调度评分用完整耗时，
-		// 监控上仍要能单独看到源站响应快不快。
+		// 只有整份传完才记成功，否则「握手快、传输慢」的源会一直粘着流量。
+		// 调度记整次耗时（非 TTFB），TTFB 另记 source_ttfb_seconds 供监控。
 		metrics.SourceTTFB(plan.Kind, "stream", ttfb)
 		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb+time.Since(t0), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 	}()
@@ -323,10 +314,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		cacheable = false // 超过单文件上限就只透传，不占盘
 	}
 
-	// 补发旧前缀和「这次还落不落盘」是两件事。缓存策略可能在上次中断之后
-	// 变了（文件超过新的单文件上限、上游改成 no-store）：这时上游回的仍是
-	// 206 后半段，但客户端要的是整份。因为不缓存就跳过补发，等于把后半段
-	// 当成整份发出去，Content-Length 还对得上——坏得最隐蔽的那种。
+	// 补发旧前缀与「这次落不落盘」无关：策略可能中途变了（新上限、上游
+	// 改 no-store），不缓存也要补齐前缀，否则 206 后半段会被当整份发出去。
 	partPath, _ := g.cache.PartialPaths(plan.CacheKey)
 	var prefix *os.File
 	if have > 0 {
@@ -341,8 +330,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			}
 		}
 		if perr != nil {
-			// 盘上的前半段没了，手里只有 206 的后半段：发出去就是残缺文件。
-			// 丢掉续传点，让客户端重试一次完整 GET。
+			// 只有 206 后半段时发出去就是残缺文件：丢掉续传点，
+			// 让客户端重试完整 GET。
 			g.cache.DropPartial(plan.CacheKey)
 			log.Printf("续传数据缺失，要求客户端重试: %v (%s)", perr, plan.Upstream)
 			noStore(w.Header())
@@ -375,8 +364,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	if plan.Source != "" {
 		h.Set("X-ML-Source", plan.Source)
 	}
-	// 边下边发也要把缓存语义说清楚：没有它，边缘只能按默认策略猜，
-	// 大文件反而成了最不可缓存的那类。
+	// 边下边发也要写清缓存语义，否则边缘只能按默认策略猜，
+	// 大文件反而最不可缓存。
 	g.cacheHeadersPlan(h, plan)
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
@@ -386,8 +375,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	sent := int64(0)    // 已经发给客户端的字节
 	written := int64(0) // 这次真正写进 .part 的字节
 
-	// 上次已经下好的字节先补给客户端，同时接着算哈希。这一步和 cacheable
-	// 无关：这次不落盘，客户端手里那半份也还是要补齐的。
+	// 先把旧前缀补给客户端并接着算哈希：这步与 cacheable 无关，
+	// 不落盘也要补齐客户端那半份。
 	if prefix != nil {
 		n, cerr := io.Copy(io.MultiWriter(w, hasher), prefix)
 		if cerr != nil {
@@ -493,8 +482,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 
 	sha := hex.EncodeToString(hasher.Sum(nil))
 	if plan.ExpectSHA != "" && !strings.EqualFold(sha, plan.ExpectSHA) {
-		// 上游给错了字节（或中途被换过）。客户端已经收到一部分，但它自己也会校验；
-		// 这里唯一要保证的是：绝不把错的内容写进缓存。
+		// 坏字节可能已经发给客户端（没法收回，它会自校验）；
+		// 这里唯一要保证的是绝不把错内容写进缓存。
 		g.cache.DropPartial(plan.CacheKey)
 		g.verifyFail.Add(1)
 		log.Printf("内容校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, plan.Upstream)
@@ -508,8 +497,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		outcome = outcomeFail
 		return
 	}
-	// 与 fetch()/并行填充同一把 blob 锁：落盘到写索引之间，janitor 不能插进来
-	// 把这个「文件已在、索引还没写」的 blob 当孤儿删掉。
+	// 与 fetch()/并行填充共用 blob 锁：否则落盘到写索引之间
+	// 会被 janitor 当孤儿删掉。
 	unlock := g.cache.LockBlob(sha)
 	if _, err := g.cache.Commit(partPath, sha); err != nil {
 		unlock()
@@ -539,20 +528,16 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	outcome = outcomeOK
 }
 
-// keepPartial 保留半截文件供下次续传；没有验证依据的（无 ETag/Last-Modified）直接扔掉，
-// 否则可能把旧版本的前半段拼到新版本上。
-//
-// persisted 是这次期望落在盘上的总字节数（之前已有的 + 本次写入的）。续传点
-// 只能以「盘上真实存在的字节」为准：没有 .part 文件、或者长度对不上，就不该
-// 留续传点——否则下次会从一个不存在的位置往后拼，得到一个看起来完整、实际
-// 中间缺一段的文件。
+// keepPartial 保留半截文件供续传；无 ETag/Last-Modified 就丢，
+// 免得旧版本前半段拼到新版本上。
+// 续传点只认盘上真实字节（persisted）：长度对不上就丢，
+// 否则下次会从不存在的位置拼起，得到中间缺一段的文件。
 func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, persisted int64, part *os.File) {
 	partPath, metaPath := g.cache.PartialPaths(plan.CacheKey)
 	if part != nil {
 		part.Close()
 	} else {
-		// 这次没往盘上写：不新建续传点。已有的元信息只在数据文件消失时清掉，
-		// 它对应的那份半截文件还完好时保持原样。
+		// 这次没写盘就不新建续传点；元信息只在数据文件消失时清掉。
 		if fi, err := os.Stat(partPath); err != nil || fi.Size() == 0 {
 			_ = os.Remove(metaPath)
 		}
@@ -586,15 +571,11 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, pe
 	}
 }
 
-// passThrough 原样转发 Range / 条件请求，不碰缓存。
-//
-// 它遵循客户端 HTTP 响应语义：客户端要的是「这段字节」或「变没变」，
-// 上游怎么答就怎么转——401/403 立刻回给客户端，不换源（换源等于替客户端
-// 猜它有没有权限）。404/410 是例外：那是「这台镜像没有」，换个源可能就有，
-// 所以换源但不冷却；429/5xx 同理换源。
+// passThrough 原样转发 Range/条件请求。401/403 直接回给客户端、不换源
+// （换源等于替客户端猜权限）；404/410 换源但不冷却，429/5xx 同理。
 func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
-	// 直通也要挑源：Range 请求常常是对大文件的续传，绕过镜像等于把最费
-	// 流量的那部分请求原样丢回官方源。
+	// 直通也要挑源：Range 常是大文件续传，绕过镜像等于把
+	// 最费流量的请求丢回官方源。
 	targets := g.targets(plan, nil)
 	if !plan.Stream {
 		targets = targets[len(targets)-1:] // 注册表自己已经挑过源了
@@ -633,10 +614,8 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			continue
 		}
 		if failoverStatus(resp.StatusCode) && i < len(targets)-1 {
-			// 换源之前先把这次响应记下来：它是一次真实的 HTTP 响应，
-			// 分母要有它；5xx/429 也要让这台源进冷却，否则下一轮还会先选它。
-			// 404/410 是未命中，换源但不冷却——镜像少个文件不代表它坏了。
-			// 只在响应还没写给客户端时换源，每个候选源只试一次。
+			// 换源前先记这次响应（分母要有它）：5xx/429 进冷却，
+			// 404/410 只记未命中不冷却；响应未写出时才换源。
 			code, ra := resp.StatusCode, retryAfterHeader(resp.Header)
 			resp.Body.Close()
 			if isMiss(code) {
@@ -664,9 +643,8 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	copyHeader(w.Header(), resp.Header, "Content-Type", "Content-Length", "Content-Range",
 		"Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Cache-Control", "Retry-After",
 		"Docker-Content-Digest", "Docker-Distribution-Api-Version")
-	// 上游经常 307 到 CDN，落地的响应里没有 Docker-Content-Digest。
-	// 补的是「请求路径里的摘要」，不是网关算出来的结果：直通既不落盘也不校验，
-	// 只保证 containerd 拿到它要的那个值。X-ML-Digest 标明来源，
+	// 307 到 CDN 后落地响应常缺 Docker-Content-Digest，按请求路径补。
+	// 这不是校验结果：X-ML-Digest: request 标明来源，
 	// 免得把「补齐」读成「已验证」。
 	if w.Header().Get("Docker-Content-Digest") == "" {
 		if d := blobDigestFromPath(r.URL.Path); d != "" {
@@ -679,8 +657,8 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	w.Header().Set("X-ML-Cache", "PASS")
 	w.WriteHeader(resp.StatusCode)
-	// 直通也要归因：Range/HEAD 走的就是这条路，不记的话 429 既不进
-	// 熔断也不进 429 率，等于最费流量的那部分请求在统计里不存在。
+	// 直通也要归因：Range/HEAD 都走这条路，不记的话 429
+	// 既不进熔断也不进 429 率。
 	if r.Method == http.MethodHead {
 		if chosen != nil {
 			g.reportPass(plan.Kind, *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), passOK(resp.StatusCode))
@@ -694,8 +672,8 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 }
 
-// retryableStatus 是「换一台源还可能成功」的状态：5xx 是它自己出问题，
-// 429 是它让我们慢点。其余 4xx（401、403、416 之类）换源也一样，直接返回。
+// retryableStatus：换一台源还可能成功。
+// 5xx 是它自己出问题，429 是让我们慢点；其余 4xx 换源也一样。
 func retryableStatus(code int) bool {
 	return code >= 500 || code == http.StatusTooManyRequests
 }
@@ -706,14 +684,13 @@ func failoverStatus(code int) bool {
 	return retryableStatus(code) || isMiss(code)
 }
 
-// passOK 判断一次直通响应算不算这台源正常干活：429 和 5xx 是源站在拒绝
-// 我们，要进冷却；其余（含 404、304）是正常回答，只是内容不在。
+// passOK：429/5xx 是源在拒绝我们，要进冷却；
+// 其余（含 404、304）是正常回答，只是内容不在。
 func passOK(code int) bool {
 	return !retryableStatus(code)
 }
 
-// reportPass 把一次直通回源的结果记进调度器和指标。官方源（t.c == nil）
-// 不是候选，没有可归因的状态，reportSource 自己会跳过。
+// reportPass 记一次直通回源结果；官方源（t.c == nil）无可归因，自动跳过。
 func (g *Gateway) reportPass(kind string, t fetchTarget, start time.Time, code int, ra time.Duration, ok bool) {
 	g.reportSource(kind, t, ok, time.Since(start), scheduler.Hint{Code: code, Mode: "pass", RetryAfter: ra})
 }
@@ -737,7 +714,8 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 }
 
-// blobDigestFromPath 从 /v2/<name>/blobs/<digest> 里取出摘要；不是 blob 路径返回空。
+// blobDigestFromPath 从 /v2/<name>/blobs/<digest> 取摘要；
+// 不是 blob 路径返回空。
 func blobDigestFromPath(p string) string {
 	i := strings.LastIndex(p, "/blobs/")
 	if i < 0 {

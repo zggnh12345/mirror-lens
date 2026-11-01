@@ -1,12 +1,10 @@
-// Package limits 是入口处的两层限流：全局一层，客户端一层（匿名按 IP、
-// 带 Token 时再加一道按 Token）。
+// Package limits 是入口限流：全局一层，客户端一层（匿名按 IP，带 Token 再加一道）。
 //
-// 它只挡在 HTTP 入口，不碰调度器——被限流是「我们让他慢点」，不是「源站坏了」，
-// 所以限流和并发繁忙永远不会写进源站健康。
+// 只挡 HTTP 入口，不碰调度器：被限流是「让他慢点」，不是「源站坏了」，
+// 所以限流和并发繁忙永远不写进源站健康。
 //
-// 大文件下载要按「一个请求」算：速率限制数的是客户端发起的请求次数，不是
-// 服务端拆出去的分片；并发名额则从进入处理函数一直占到响应写完，这样同时
-// 开五个 2 GB 下载的人和开五个小请求的人在并发上是等价的。
+// 大文件按「一个请求」算：速率数的是客户端请求，不是服务端拆的分片；
+// 并发名额从进入处理函数占到响应写完，大下载与小请求等价。
 package limits
 
 import (
@@ -22,33 +20,32 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
-// Config 是限流参数。数值为 0 表示用 Default 里的值；Enabled=false 时整层关闭。
+// Config 是限流参数：0 值取 Default，Enabled=false 时整层关闭。
 type Config struct {
 	Enabled bool `yaml:"enabled"`
 
-	// 全局：所有客户端加起来。防的是「总量把出口带宽和磁盘打满」。
+	// 全局：所有客户端合计，防总量打满出口带宽和磁盘。
 	GlobalRPS         float64 `yaml:"global_rps"`
 	GlobalBurst       int     `yaml:"global_burst"`
 	GlobalConcurrency int     `yaml:"global_concurrency"`
 
-	// 匿名：按真实客户端 IP。一次 docker pull 几十个层，压不到。
+	// 匿名：按真实客户端 IP；一次 docker pull 几十个层，压不到。
 	IPPerMinute   int `yaml:"ip_per_minute"`
 	IPBurst       int `yaml:"ip_burst"`
 	IPConcurrency int `yaml:"ip_concurrency"`
 
-	// 带 Token 的客户端：比匿名宽松，但仍有上限。
+	// Token 客户端：比匿名宽松，但仍有上限。
 	TokenPerMinute   int `yaml:"token_per_minute"`
 	TokenBurst       int `yaml:"token_burst"`
 	TokenConcurrency int `yaml:"token_concurrency"`
 
-	// TrustedProxies 是可信反向代理的网段（CIDR）。默认空：一个转发头都不信，
-	// 直接用 TCP 对端地址——X-Forwarded-For 谁都能写，信了就等于把限流键交给客户端。
-	// 部署在反代后面时填反代自己的网段，例如 127.0.0.1/32、::1/128、10.0.0.0/8。
+	// TrustedProxies 是可信反代网段（CIDR），默认空即不信任何转发头：
+	// X-Forwarded-For 谁都能写，信了等于把限流键交给客户端。
+	// 如 127.0.0.1/32、::1/128、10.0.0.0/8。
 	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
-// Default 是「大多数自建加速站」的起点：够一个人正常 docker pull / 下 release，
-// 又能挡住脚本刷量。
+// Default 够一个人正常 pull / 下 release，又能挡住脚本刷量。
 func Default() Config {
 	return Config{
 		Enabled:           true,
@@ -64,7 +61,7 @@ func Default() Config {
 	}
 }
 
-// Limiter 持有所有计数器。零值不可用，用 New。
+// Limiter 持有所有计数器，零值不可用，用 New。
 type Limiter struct {
 	cfg   Config
 	nets  []*net.IPNet
@@ -72,7 +69,7 @@ type Limiter struct {
 	buck  map[string]*bucket
 	conc  map[string]int
 	glob  int
-	hits  map[string]int64 // 最近一次统计周期内各层拒绝次数（给面板/指标用）
+	hits  map[string]int64 // 各层拒绝次数（面板/指标用）
 	sweep time.Time
 }
 
@@ -87,7 +84,7 @@ type bucket struct {
 func New(cfg Config) *Limiter {
 	d := Default()
 	if !cfg.Enabled {
-		// Enabled 显式 false 时保持关闭；其余字段填默认值便于日志展示。
+		// 显式 false 保持关闭；其余字段仍填默认值便于日志展示。
 		cfg.Enabled = false
 	} else {
 		cfg.Enabled = true
@@ -134,7 +131,7 @@ func New(cfg Config) *Limiter {
 			l.nets = append(l.nets, n)
 			continue
 		}
-		// 允许直接写单个地址，省得为了一个 IP 去算 /32。
+		// 允许写单个地址，省得算 /32。
 		if ip := net.ParseIP(c); ip != nil {
 			bits := 128
 			if ip.To4() != nil {
@@ -150,7 +147,7 @@ func New(cfg Config) *Limiter {
 // Enabled 供启动日志与测试判断。
 func (l *Limiter) Enabled() bool { return l != nil && l.cfg.Enabled }
 
-// Hits 返回各层累计拒绝次数（global/ip/token）。指标导出会用到。
+// Hits 返回各层累计拒绝次数（global/ip/token）。
 func (l *Limiter) Hits() map[string]int64 {
 	if l == nil {
 		return nil
@@ -164,8 +161,8 @@ func (l *Limiter) Hits() map[string]int64 {
 	return out
 }
 
-// Wrap 包住整个 mux。健康检查不受限：容器自己的探活被 429 会让容器显示不健康，
-// 那是自己给自己制造故障。
+// Wrap 包住整个 mux。/healthz 不受限：探活被 429 会让容器显示不健康，
+// 那是自己给自己造故障。
 func (l *Limiter) Wrap(next http.Handler) http.Handler {
 	if l == nil || !l.cfg.Enabled {
 		return next
@@ -182,7 +179,7 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 			l.reject(w, "global", l.cfg.GlobalRPS)
 			return
 		}
-		// 2. 全局并发：正在传的大文件也算一个，不然「并发」只统计了开始的那一下。
+		// 2. 全局并发：传输中的大文件也一直占名额。
 		if !l.enter("g:", l.cfg.GlobalConcurrency) {
 			l.reject(w, "global", 0)
 			return
@@ -195,15 +192,15 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 			l.reject(w, "ip", float64(l.cfg.IPPerMinute)/60)
 			return
 		}
-		// 4. 客户端并发：长下载占用名额，直到写完。
+		// 4. 客户端并发：名额占到响应写完。
 		if !l.enter("ip:"+ip, l.cfg.IPConcurrency) {
 			l.reject(w, "ip", 0)
 			return
 		}
 		defer l.leave("ip:" + ip)
 
-		// 5. 带凭据的再加一道 Token 限流。用哈希做键，不把凭据留在内存里。
-		//    伪造的 Token 也能换键，但上面那道 IP 限制仍然拦着。
+		// 5. 有凭据再加 Token 层。用哈希做键，不把凭据留在内存；
+		//    伪造 Token 能换键，但 IP 层仍拦着。
 		if tok := credential(r); tok != "" {
 			sum := sha256.Sum256([]byte(tok))
 			k := "tk:" + hex.EncodeToString(sum[:8])
@@ -222,11 +219,9 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 	})
 }
 
-// ClientIP 返回用于限流的客户端地址。
-//
-// 默认取 TCP 对端。只有当对端本身在 TrustedProxies 里时，才读转发头，并且从右
-// 往左找第一个不属于可信网段的地址——左边的部分客户端可以随便写，取最左等于
-// 让攻击者每次换个假 IP 绕过限流。
+// ClientIP 返回限流用的客户端地址：默认取 TCP 对端，
+// 对端可信时才读转发头，并从右往左取第一个非可信地址。
+// 取最左等于让攻击者每次换个假 IP 绕过限流。
 func (l *Limiter) ClientIP(r *http.Request) string {
 	host := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -321,7 +316,7 @@ func (l *Limiter) leave(key string) {
 	}
 }
 
-// reject 回 429。Retry-After 按令牌补充速度算，客户端照着重试就行，不用猜。
+// reject 回 429；Retry-After 按令牌补充速度算，客户端照着重试即可。
 func (l *Limiter) reject(w http.ResponseWriter, layer string, rate float64) {
 	secs := 1
 	if rate > 0 {
@@ -363,8 +358,8 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// maybeSweep 清掉长时间没动静的键：一个公网服务会被无数 IP 扫，map 不能只进不出。
-// 不用后台 goroutine，避免测试里留下跑不完的循环。
+// maybeSweep 清掉久未活动的键：公网会被无数 IP 扫，map 不能只进不出。
+// 不用后台 goroutine，免得测试留下跑不完的循环。
 func (l *Limiter) maybeSweep(now time.Time) {
 	if now.Sub(l.sweep) < time.Minute {
 		return
@@ -378,7 +373,7 @@ func (l *Limiter) maybeSweep(now time.Time) {
 	}
 }
 
-// credential 取请求里的凭据，只用来做限流键，不校验有效性。
+// credential 取凭据只用于限流键，不校验有效性。
 func credential(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if h == "" {

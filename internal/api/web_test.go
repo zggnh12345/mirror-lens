@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// TestWebUIRegressions 锁定三处 UI 修正，避免回退：
-// 1) 监测页错误从原始红字改为中文友好提示（.errchip），点击展开技术参数；
-// 2) 不可用节点与“长期一致”同行为统一 chip 样式（不再是裸红字 .err）；
-// 3) 设置页 Tab 用 .active 类切换，不依赖脆弱的 [hidden] 属性。
+// TestWebUIRegressions 锁定三处 UI 修正：
+// 1) 监测页错误用 .errchip 中文提示，点击展开技术参数；
+// 2) 不可用节点统一 chip 样式，不再用裸红字 .err；
+// 3) 设置页 Tab 用 .active 类切换，不依赖 [hidden]。
 func TestWebUIRegressions(t *testing.T) {
 	settings, err := webFS.ReadFile("web/settings.html")
 	if err != nil {
@@ -30,7 +30,7 @@ func TestWebUIRegressions(t *testing.T) {
 
 	s, ix, c := string(settings), string(index), string(css)
 
-	// 设置页：账号面板默认 active，Tab 切换基于 .active 类，且不再依赖 hidden 属性。
+	// 设置页账号面板默认 active，Tab 切换基于 .active 类。
 	if !strings.Contains(s, `<div data-panel="account" class="active">`) {
 		t.Error("账号面板应默认带 class=\"active\"")
 	}
@@ -44,13 +44,13 @@ func TestWebUIRegressions(t *testing.T) {
 		t.Error("app.css 应定义 [data-panel].active 显示规则")
 	}
 
-	// 面板切换只依赖 .active 类，任何面板都不应再带 hidden 属性（旧内核对 hidden 支持/优先级不稳）。
+	// 任何面板都不该带 hidden（旧内核对 hidden 支持不稳）。
 	for _, p := range []string{"account", "appearance", "probe", "accel", "config", "about"} {
 		if strings.Contains(s, `data-panel="`+p+`" hidden`) {
 			t.Errorf("面板 %s 不应再带 hidden 属性", p)
 		}
 	}
-	// matchMedia 监听器需兼容旧内核：不得直接 .addEventListener，必须有 addListener 兜底。
+	// matchMedia 要兼容旧内核：必须留 addListener 兜底。
 	if strings.Contains(s, `matchMedia('(prefers-color-scheme:dark)').addEventListener`) {
 		t.Error("matchMedia 不得直接调用 addEventListener（旧 webview 不支持会中断脚本）")
 	}
@@ -58,7 +58,7 @@ func TestWebUIRegressions(t *testing.T) {
 		t.Error("matchMedia 应保留 addListener 兜底以兼容旧内核")
 	}
 
-	// 监测页：错误改为中文友好提示 .errchip，点击展开原始技术参数；不再使用裸红字 .err。
+	// 监测页错误用 .errchip，可展开原始技术参数，不再用裸红字 .err。
 	if !strings.Contains(ix, `function errHuman(`) {
 		t.Error("index.html 应定义 errHuman 中文错误映射")
 	}
@@ -70,9 +70,8 @@ func TestWebUIRegressions(t *testing.T) {
 	}
 }
 
-// TestWebUISyntax 真正解析内嵌 JS，防止脚本因语法错误整体失效
-// （曾因 esc() 对象字面量畸形导致 settings.html 整段脚本解析失败、Tab 全失效）。
-// 依赖 node；若环境无 node 则跳过。
+// TestWebUISyntax 解析内嵌 JS，防止语法错误让整段脚本失效。
+// 依赖 node，环境无 node 时跳过。
 func TestWebUISyntax(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

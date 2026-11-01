@@ -1,4 +1,4 @@
-// Package store persists sources, probe results, settings and sessions in SQLite.
+// Package store persists sources, probes, settings and sessions.
 package store
 
 import (
@@ -27,20 +27,20 @@ type Source struct {
 	Enabled bool   `json:"enabled"`
 	Status  string `json:"status"` // pending | usable | degraded | dead | blocked | archived
 	Note    string `json:"note"`
-	// StatusAt 是进入当前状态的时间，StatusReason 是为什么进去的。
-	// 归档/清理都靠 StatusAt 判断「坏了多久」，所以只在状态真的变化时更新。
+	// StatusAt 进入当前状态的时间，StatusReason 原因。
+	// 只在状态变化时更新，归档/清理靠它判断「坏了多久」。
 	StatusAt     int64  `json:"status_at"`
 	StatusReason string `json:"status_reason"`
-	// ProbeAt 是最近一次探测尝试的时间；死源/封禁源靠它做低频恢复探测。
+	// ProbeAt 最近一次探测尝试的时间；死源/封禁源靠它做低频恢复探测。
 	ProbeAt int64 `json:"probe_at"`
 
 	DockerCap int `json:"docker_cap"`
 	GithubCap int `json:"github_cap"`
-	// GitCap 单独记：前缀代理能代 raw/release，不代表能做 git smart HTTP。
-	// 默认 0（不确定），实测通过后由调度器置 1。
+	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
+	// 默认 0（不确定），实测通过后置 1。
 	GitCap int `json:"git_cap"`
 
-	// Preferred 是用户手动指定的「优先源」：调度时排在同等可用性的源最前面。
+	// Preferred 用户手动指定的优先源，调度时排在同等可用性的源前面。
 	Preferred bool `json:"preferred"`
 
 	CreatedAt int64 `json:"created_at"`
@@ -51,15 +51,14 @@ type Source struct {
 	Uptime map[string]float64 `json:"uptime,omitempty"`
 	// 每种类型 24h 延迟 P95（毫秒，只算成功样本）；0 表示样本不足
 	P95 map[string]int64 `json:"p95_ms,omitempty"`
-	// 每种类型 24h 上游 429 占比（0~1）。分母只算真正拿到上游 HTTP 响应的请求
-	// （code 100–599）；DNS、连接失败、超时没有响应，不进分母。有效样本不足时
-	// 显式给 null——用 0 冒充「没有限流」比不给数字更容易误导。
+	// 每种类型 24h 上游 429 占比（0~1）。分母只算 code 100–599 的真实响应，
+	// DNS/连接失败/超时无响应不进分母。样本不足时给 null 而非 0。
 	Rate429 map[string]*float64 `json:"rate429,omitempty"`
 	// 每种类型的可信度及证据（近 7 天）
 	Trust map[string]Trust `json:"trust,omitempty"`
 }
 
-// Kinds 返回这个源被确认支持的加速类型。
+// Kinds 返回该源被确认支持的加速类型。
 func (s Source) Kinds() []string {
 	var out []string
 	if s.DockerCap == CapYes {
@@ -71,7 +70,7 @@ func (s Source) Kinds() []string {
 	return out
 }
 
-// Supports 表示这个类型是否已被确认可用。
+// Supports 该类型是否已被确认可用。
 func (s Source) Supports(kind string) bool {
 	switch kind {
 	case "docker":
@@ -103,10 +102,8 @@ type Check struct {
 
 type Store struct{ db *sql.DB }
 
-// Ready 做一次「真能写」的轻量检查：抢写锁、空更新一页、立刻回滚。
-//
-// 不用 PingContext：只读挂载、磁盘满、WAL 损坏这几种情况下 Ping 照样通，
-// 但下一次写缓存就会失败。/readyz 要发现的是这种问题。
+// Ready 做一次「真能写」的轻量检查：抢写锁、空更新、回滚。
+// 不用 PingContext：只读挂载、磁盘满、WAL 损坏下 Ping 照样通，写缓存才失败。
 func (s *Store) Ready(ctx context.Context) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -116,15 +113,15 @@ func (s *Store) Ready(ctx context.Context) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	// 无论下面成不成功都要放锁，用 Background 保证回滚本身不会被 ctx 取消掉。
+	// 回滚用 Background，避免被 ctx 取消导致锁不放。
 	defer conn.ExecContext(context.Background(), "ROLLBACK")
 	_, err = conn.ExecContext(ctx, "UPDATE settings SET value = value WHERE key = 'schema_version'")
 	return err
 }
 
 func Open(path string) (*Store, error) {
-	// foreign_keys 要显式打开，否则 checks 的 ON DELETE CASCADE 形同虚设，
-	// 删源之后检测记录会留成孤儿。
+	// foreign_keys 必须显式打开，否则 checks 的 ON DELETE CASCADE 失效，
+	// 删源后检测记录会留成孤儿。
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
@@ -134,8 +131,8 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
-	// 启动时立刻验证可写：bind mount 权限不对时，SQLite 可能能读能建表，
-	// 却在第一次写检测记录时才失败，那种失败会静默几分钟。
+	// 启动时验证可写：bind mount 权限不对时，SQLite 能读能建表，
+	// 却在首次写检测记录时才失败，会静默几分钟。
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _writable(x INTEGER);
 		INSERT INTO _writable(x) VALUES(1); DELETE FROM _writable;`); err != nil {
 		return nil, fmt.Errorf("数据目录不可写（%v）：容器内以 uid 10001 运行，请先 chown -R 10001:10001 挂载目录，或改用 named volume", err)
@@ -227,8 +224,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	}); err != nil {
 		return err
 	}
-	// 老库没有 status_at：从升级这一刻开始计时，而不是拿 created_at 倒推。
-	// 倒推会把所有历史死源在第一次巡检时一起归档，升级即清空列表。
+	// 老库没有 status_at：从升级此刻起计时，不能拿 created_at 倒推，
+	// 否则历史死源会在首次巡检时被一起归档，升级即清空列表。
 	if _, err := s.db.Exec(`UPDATE sources SET status_at=? WHERE status_at=0`, time.Now().Unix()); err != nil {
 		return err
 	}
@@ -252,11 +249,10 @@ func (s *Store) ensureColumns(table string, want map[string]string) error {
 	return nil
 }
 
-// upgradeFromV1 把 v1 的 (kind, base_url) 表结构升级成能力标记。
-//
-// v1 的 sources 表是 kind TEXT NOT NULL 且 UNIQUE(base_url,kind)。只加列不够：
-// 新代码不再写 kind，INSERT 会撞 NOT NULL，而 INSERT OR IGNORE 会把它当"已存在"
-// 静默跳过，表现成"什么地址都提示已在列表里"。所以这里整表重建。
+// upgradeFromV1 把 v1 的 (kind, base_url) 结构升级成能力标记。
+// v1 的 kind 是 NOT NULL 且 UNIQUE(base_url,kind)：新代码不写 kind，
+// INSERT 撞 NOT NULL，INSERT OR IGNORE 又会静默跳过（表现成「什么地址都提示已存在」），
+// 只能整表重建。
 func (s *Store) upgradeFromV1() error {
 	cols, err := s.columns("sources")
 	if err != nil {
@@ -266,7 +262,7 @@ func (s *Store) upgradeFromV1() error {
 		return nil // 已经是新结构
 	}
 
-	// 先把旧的 kind 映射存下来，重建表之后 checks 的历史记录还要用它回填
+	// 先存下旧的 kind 映射，重建表后回填 checks 的历史记录
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS _v1kind`); err != nil {
 		return err
 	}
@@ -384,8 +380,8 @@ func (s *Store) ListSources() ([]Source, error) {
 		}
 	}
 
-	// P95 一次查完再分桶：逐源查会变成 N 条 SQL。
-	// 只算成功样本——失败那几条的「延迟」是超时时间，混进去量的是耐心，不是速度。
+	// P95 一次查完再分桶，逐源查会变成 N 条 SQL。
+	// 只算成功样本：失败样本的「延迟」是超时时间，混进去量的是耐心不是速度。
 	type key struct {
 		id   int64
 		kind string
@@ -410,10 +406,8 @@ func (s *Store) ListSources() ([]Source, error) {
 		}
 	}
 
-	// 限流比例：同一个窗口里，这台源回了多少次 429。
-	// 分母只数 code 100–599：那才是一次真实的上游响应。code=0 是没拿到响应
-	// （DNS/连接/超时），把它算进分母等于拿「网络不通」稀释「被限流」。
-	// 老数据里的 code=0 不做任何推断，直接不进统计。
+	// 限流比例：同一窗口内该源的 429 占比。分母只数 code 100–599 的真实响应，
+	// code=0（DNS/连接/超时）不算，否则用「网络不通」稀释「被限流」。
 	type rate struct{ all, c429 int64 }
 	rates := map[key]*rate{}
 	erows, err := s.db.Query(`SELECT source_id,kind,COUNT(*),SUM(code=429) FROM source_events
@@ -431,7 +425,7 @@ func (s *Store) ListSources() ([]Source, error) {
 	for i := range out {
 		out[i].Rate429 = map[string]*float64{}
 		for _, k := range []string{"docker", "github"} {
-			// 两种类型都给出键：没有有效样本时是 null，不是「缺字段」。
+			// 两种类型都给出键：无有效样本时是 null，不是缺字段。
 			out[i].Rate429[k] = nil
 			if r := rates[key{out[i].ID, k}]; r != nil && r.all >= min429Samples {
 				v := float64(r.c429) / float64(r.all)
@@ -440,7 +434,7 @@ func (s *Store) ListSources() ([]Source, error) {
 		}
 	}
 
-	// 可信度按类型算，和上面的延迟、限流同一个窗口口径。
+	// 可信度按类型算，窗口口径与延迟、限流一致。
 	for _, k := range []string{"docker", "github"} {
 		tm, err := s.trustMap(k, time.Now())
 		if err != nil {
@@ -458,11 +452,11 @@ func (s *Store) ListSources() ([]Source, error) {
 	return out, nil
 }
 
-// min429Samples 是报限流比例的最小样本数。十次里两次 429 说明不了什么，
-// 但写成 20% 会让人立刻把一台好源停掉。
+// min429Samples 报限流比例的最小样本数：十次里两次 429 说明不了什么，
+// 写成 20% 会让人立刻停掉一台好源。
 const min429Samples = 20
 
-// minP95Samples 是出 P95 的最小样本数。三个样本的「95 分位」就是最大值，
+// minP95Samples 出 P95 的最小样本数：三个样本的 95 分位就是最大值，
 // 标成 P95 会让人误以为有统计意义。
 const minP95Samples = 5
 
@@ -517,8 +511,8 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	// INSERT OR IGNORE 时 LastInsertId 会返回上一次插入的 rowid，
-	// 必须用 RowsAffected 判断是否真的写进去了。
+	// INSERT OR IGNORE 时 LastInsertId 返回上次的 rowid，
+	// 得用 RowsAffected 判断是否真的写入。
 	n, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
@@ -532,13 +526,13 @@ func (s *Store) AddSource(x Source) (int64, error) {
 
 var ErrExists = errors.New("source already exists")
 
-// ErrArchived：已归档的源不能直接启用，只能走恢复流程。
+// ErrArchived 已归档的源不能直接启用，只能走恢复流程。
 var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复流程重新验证")
 
 func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool) error {
 	if enabled != nil {
 		if *enabled {
-			// 归档是人工/自动做过的判断，不能被一个「启用」开关顺手撤销：
+			// 归档是已经做过的判断，不能被「启用」开关顺手撤销；
 			// 恢复必须走显式流程（status=pending → 重新探测验证）。
 			var status string
 			if err := s.db.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
@@ -579,13 +573,10 @@ func (s *Store) SetStatus(id int64, status string) error {
 	return s.SetStatusWhy(id, status, "")
 }
 
-// SetCapsLive / SetStatusLive 是探测写回专用的条件更新：只对「没被归档」的行
-// 生效，返回是否真的写了。
-//
-// 探测从发起走到写回有几十秒，这期间用户可能刚把这个源归档。以前写回是
-// 无条件 UPDATE，拿着探测开始时的旧状态做判断，转手就把 archived 改回
-// usable——归档等于没做。这里把「状态仍是活的」这一条并进 UPDATE，由数据库
-// 保证不会覆盖人工决定。
+// SetCapsLive / SetStatusLive 探测写回专用的条件更新：只改没被归档的行，
+// 返回是否真的写入。
+// 探测发起到写回有几十秒，用户可能刚归档该源；把「状态仍是活的」并进
+// UPDATE，由数据库保证不覆盖人工决定。
 func (s *Store) SetCapsLive(id int64, docker, github int) (bool, error) {
 	res, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?
 		WHERE id=? AND status<>'archived'`, docker, github, id)
@@ -610,8 +601,8 @@ func (s *Store) SetStatusLive(id int64, status, reason string) (bool, error) {
 	return n > 0, nil
 }
 
-// SetStatusWhy 改状态并记下时间和原因。状态没变就不动 status_at——
-// 否则一个常年 dead 的源每次探测都会把「坏了多久」清零，永远归档不了。
+// SetStatusWhy 改状态并记时间和原因。状态没变不动 status_at，
+// 否则常年 dead 的源每次探测都把「坏了多久」清零，永远归档不了。
 func (s *Store) SetStatusWhy(id int64, status, reason string) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(`UPDATE sources SET
@@ -634,8 +625,8 @@ func (s *Store) TouchProbe(id int64) error {
 	return err
 }
 
-// ConsecutiveClean 数最近连续多少次 tier>=2 探测既通过又没被篡改。
-// 封禁源靠它决定能不能放回去：一次干净不够，要连续两次。
+// ConsecutiveClean 数最近连续多少次 tier>=2 探测通过且无篡改。
+// 封禁源靠它放回：一次干净不够，要连续两次。
 func (s *Store) ConsecutiveClean(sourceID int64, kind string) int {
 	rows, err := s.db.Query(`SELECT ok, digest_ok FROM checks
 		WHERE source_id=? AND kind=? AND tier>=2 ORDER BY ts DESC LIMIT 5`, sourceID, kind)
@@ -659,8 +650,8 @@ func (s *Store) ConsecutiveClean(sourceID int64, kind string) int {
 	return n
 }
 
-// ArchiveStale 把「坏了/被封超过 before 秒」的源归档：不再探测、不再参与调度，
-// 记录保留，面板可一键恢复。返回归档条数。
+// ArchiveStale 归档「坏了/被封超过 before 秒」的源：不再探测、不参与调度，
+// 记录保留可恢复。返回归档条数。
 func (s *Store) ArchiveStale(before int64) (int64, error) {
 	res, err := s.db.Exec(`UPDATE sources SET status='archived', status_at=?, status_reason=?
 		WHERE enabled=1 AND status IN ('dead','blocked') AND status_at>0 AND status_at<=?`,
@@ -671,8 +662,8 @@ func (s *Store) ArchiveStale(before int64) (int64, error) {
 	return res.RowsAffected()
 }
 
-// CleanupArchived 彻底删除归档超过 before 秒的源，连带检测记录和调度事件。
-// 只删 archived——别的状态再久也留着，删数据是单向操作。
+// CleanupArchived 删除归档超过 before 秒的源及检测记录、调度事件。
+// 只删 archived：别的状态再久也留着，删数据是单向操作。
 func (s *Store) CleanupArchived(before int64) (int64, error) {
 	rows, err := s.db.Query(`SELECT id FROM sources WHERE status='archived' AND status_at>0 AND status_at<=?`, before)
 	if err != nil {
@@ -702,15 +693,15 @@ func (s *Store) CleanupArchived(before int64) (int64, error) {
 }
 
 func (s *Store) DeleteSource(id int64) error {
-	// 三条语句必须一起成功或一起失败：删了一半会留下指向不存在源的检查记录，
-	// 面板上就会出现「幽灵源」，而且再删一次也清不掉。
+	// 三条语句必须一起成功或一起失败：删一半会留下指向不存在源的检查记录，
+	// 面板上出现「幽灵源」，再删一次也清不掉。
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	// source_events 没建外键，显式清；checks 有 CASCADE，但老库可能没开
-	// foreign_keys，也顺手清掉，不留孤儿。
+	// source_events 没建外键要显式清；checks 有 CASCADE，但老库可能没开
+	// foreign_keys，也一并清掉，不留孤儿。
 	for _, q := range []string{
 		`DELETE FROM source_events WHERE source_id=?`,
 		`DELETE FROM checks WHERE source_id=?`,
@@ -840,8 +831,8 @@ func (s *Store) GetSetting(key, def string) string {
 	return v
 }
 
-// Tx 在一个事务里执行 fn，fn 返回错误就整体回滚。
-// 需要「先判断再写」的地方都用它：单条 SQL 的原子性管不了跨语句的状态。
+// Tx 在一个事务里执行 fn，出错整体回滚。
+// 「先判断再写」的场景用它：单条 SQL 的原子性管不了跨语句状态。
 func (s *Store) Tx(fn func(*sql.Tx) error) error {
 	tx, err := s.db.Begin()
 	if err != nil {

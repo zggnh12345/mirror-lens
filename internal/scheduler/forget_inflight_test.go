@@ -10,9 +10,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 删除源的时候往往还有请求在跑。它们结束之后会回调 Report/Observe/release，
-// 迟到的回调不能把刚清掉的状态重建出来：内存里的熔断、动态吞吐、闸门，
-// 以及 source_events 里的一行记录都算「复活」。
+// 删源时仍有请求在跑：迟到回调不能重建熔断、吞吐、闸门和事件行。
 func TestForgetSurvivesLateCallbacks(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

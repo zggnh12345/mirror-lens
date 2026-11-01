@@ -31,7 +31,7 @@ func lifecycleSource(t *testing.T, st *store.Store, status string) int64 {
 	return id
 }
 
-// 摘要不一致必须封禁，并且原因写清楚——面板上「为什么封的」比一个红点有用。
+// 摘要不一致必须封禁，并写清原因（面板要知道为什么封）。
 func TestApplyBlocksOnDigestMismatch(t *testing.T) {
 	st := lifecycleStore(t)
 	id := lifecycleSource(t, st, "usable")
@@ -64,8 +64,7 @@ func TestBlockedNeedsTwoCleanVerifications(t *testing.T) {
 		t.Fatalf("一次干净仍应保持封禁，实际 %s", got.Status)
 	}
 
-	// 探测流程会先把本轮结果写进 checks，再调 apply。这里手动补上，
-	// 模拟「又跑了一轮且校验一致」。
+	// 探测流程先写 checks 再调 apply，这里手动补一条模拟又跑一轮。
 	if err := st.AddCheck(store.Check{SourceID: id, Kind: "docker", Tier: 2, OK: true, DigestOK: 1, TS: 100}); err != nil {
 		t.Fatal(err)
 	}

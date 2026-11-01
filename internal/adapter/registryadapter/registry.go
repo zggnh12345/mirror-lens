@@ -1,7 +1,7 @@
 // Package registryadapter 实现 Docker Registry V2 的只读代理。
 //
-// 客户端自己拼 /v2/<name>/manifests|blobs/...，所以"上游是哪个 registry"
-// 没有地方可塞——只能一个实例对一个上游，由配置决定。
+// 客户端自己拼 /v2/<name>/manifests|blobs/...，路径里塞不下"上游是哪个
+// registry"，只能一个实例对一个上游，由配置决定。
 package registryadapter
 
 import (
@@ -174,8 +174,8 @@ func validDigest(d string) bool {
 	return true
 }
 
-// normalizeAccept 排序去空格：同一个 tag，客户端 Accept 不同拿到的是
-// 不同字节（索引 vs 单平台清单），缓存键必须把这层差异带上。
+// normalizeAccept 排序去空格：同一 tag 下 Accept 不同拿到的字节不同
+// （索引 vs 单平台清单），缓存键必须带上这层差异。
 func normalizeAccept(s string) string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 反代会折叠 //、也会拒收 %2F，所以三种写法都得能解析出同一个上游地址。
+// 反代会折叠 //、也会拒收 %2F，所以几种写法都得解析出同一个上游地址。
 func TestPlanAcceptsFoldedAndEncodedForms(t *testing.T) {
 	cases := []struct {
 		path string

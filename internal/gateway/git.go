@@ -11,10 +11,9 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// ServeGit 处理 /git/<host>/<repo>.git/...
-//
-// 拉取是两段：GET info/refs 拿引用（小、可缓存几秒），POST git-upload-pack
-// 拿 packfile（大、跟客户端协商结果强相关，直通不缓存）。
+// ServeGit 处理 /git/<host>/<repo>.git/...。
+// GET info/refs 小、可缓存几秒；
+// POST git-upload-pack 大、与协商相关，不缓存。
 func (g *Gateway) ServeGit(w http.ResponseWriter, r *http.Request) {
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) { g.serveGit(w, r) })(w, r)
 }
@@ -36,8 +35,8 @@ func (g *Gateway) serveGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// upload-pack 的请求体是客户端与服务端的协商（have/want），响应是 packfile。
-	// 两份都不能缓冲：几百 MB 的包体，先落盘再转发等于把 clone 拖慢一倍。
+	// upload-pack 的请求/响应都不缓冲：几百 MB 的包体
+	// 先落盘再转发会把 clone 拖慢一倍。
 	if r.Method == http.MethodPost {
 		g.pipeGit(w, r, plan)
 		return
@@ -67,8 +66,8 @@ func (g *Gateway) serveGit(w http.ResponseWriter, r *http.Request) {
 	g.serveGitCached(w, r, entry, "MISS", false)
 }
 
-// serveGitCached 和 serveCached 的区别只有 Cache-Control：
-// info/refs 是「此刻的引用」，不能让中间层按 max-age 缓存，否则 clone 会拿到过期的 tip。
+// serveGitCached 与 serveCached 的差别只有 Cache-Control：
+// info/refs 是「此刻的引用」，按 max-age 缓存会让 clone 拿到过期 tip。
 func (g *Gateway) serveGitCached(w http.ResponseWriter, r *http.Request, e *store.CacheEntry, label string, fromCache bool) {
 	if e == nil {
 		http.Error(w, "502 缓存条目缺失", http.StatusBadGateway)
@@ -110,8 +109,8 @@ func (g *Gateway) pipeGit(w http.ResponseWriter, r *http.Request, plan *adapter.
 	req.ContentLength = r.ContentLength
 	req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
 	req.Header.Set("Accept-Encoding", "identity")
-	// Content-Encoding 必须一起转发：git 会把 fetch 请求体 gzip 后再发，
-	// 只转字节不转这个头，上游会把它当明文解析并回 400。
+	// Content-Encoding 必须一起转发：git 会把请求体 gzip，
+	// 只转字节不转头会让上游按明文解析并回 400。
 	for _, k := range []string{"Content-Type", "Content-Encoding", "Accept", "Git-Protocol"} {
 		if v := r.Header.Get(k); v != "" {
 			req.Header.Set(k, v)

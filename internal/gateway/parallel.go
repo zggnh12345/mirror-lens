@@ -21,29 +21,19 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 并行分片下载（阶段 7）。
-//
-// 允许并行的唯一前提是「有可信的整份摘要」——目前只有 Docker 按 digest 拉 blob。
-// 分片来自不同源，一旦某个源给的是另一个版本，每一片都能单独下成功，拼出来的
-// 文件却是错的。只有最后的 SHA-256 能发现这件事，所以没有摘要就一律单流。
-//
-// 三条硬规则：
-//  1. 只在写任何字节之前判断能不能并行，写出去之后不再改主意。
-//  2. 每片都校验 Content-Range 的起点、长度和总长；任何一项对不上就换官方源重取，
-//     仍不行就断开连接（客户端看到的是截断，不是一份"成功"的坏文件）。
-//  3. 拼完必须整份哈希等于 ExpectSHA 才允许发布；不等就丢弃，一次都不写索引。
+// 并行分片下载。唯一前提是「有可信的整份摘要」：分片来自不同源，
+// 版本不一致时每片都能成功、拼出来是错的，只有最后哈希能发现。
+// 只在写任何字节前决定并行；每片校验 Content-Range，对不上回官方源、
+// 再不行断开（绝不发拼错的文件）；整份哈希必须等于 ExpectSHA 才发布。
 
-// parSource 是一台通过预检的源。
 type parSource struct {
 	t     fetchTarget
 	name  string
 	ctype string
 }
 
-// tryParallel 尝试分片并行填充。
-//
-// 返回 true 表示这次响应已经由它接管（可能已经写出字节）；返回 false 表示
-// 什么都没写，调用方继续走原来的单流路径。
+// tryParallel 返回 true 表示已接管（可能已写出字节）；
+// false 表示什么都没写，调用方继续单流。
 func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) bool {
 	if !g.par.Enabled || g.par.Workers < 2 || g.par.ChunkSize <= 0 {
 		return false
@@ -145,18 +135,17 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	g.parFills.Add(1)
 	g.parBytes.Add(total)
 
-	// 剩下的段先并发跑起来，边跑边把第 0 段发给客户端。
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	dones := make([]chan error, n)
-	// 每台源在这次下载里实际供了几段、失败了几段。预检通过只说明支持 Range，
-	// 不代表它真的把数据给全了；按实际结果记账才不会把坏源记成好源。
+	// 每台源实际供了几段、失败几段按结果记账：预检只证明支持 Range，
+	// 不代表它真把数据给全了。
 	stats := make([]parStat, len(srcs))
 
 	sem := make(chan struct{}, g.par.Workers)
 	var wg sync.WaitGroup
-	// 中途放弃时必须先 cancel 再等所有分片协程退出，最后才能删 .part：
-	// 反过来会让协程往已关闭（或已被下一次请求重建）的文件里写。
+	// 中途放弃必须先 cancel、等协程退出、最后才删 .part：
+	// 反过来会让协程往已关闭或已重建的文件里写。
 	abort := func() {
 		cancel()
 		wg.Wait()
@@ -184,7 +173,6 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		}(i, off, length, src)
 	}
 
-	// 第 0 段：边收边发给客户端，同时写进 .part。
 	buf := make([]byte, 64<<10)
 	var got int64
 	for got < firstLen {
@@ -232,7 +220,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	atomic.AddInt32(&stats[0].ok, 1)
 
-	// 其余段按顺序补给客户端：谁先到不影响顺序，客户端看到的永远是从头开始的字节流。
+	// 其余段按顺序补给客户端，保证字节流从头连续。
 	for i := 1; i < n; i++ {
 		if err := <-dones[i]; err != nil {
 			abort()
@@ -270,9 +258,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
 		drop()
-		// 拼起来是错的，但这只证明「组合」错了，不证明每台源都给错了内容。
-		// 只有一台源时归因明确，照实记失败；多台时谁都可能，宁可不动评分，
-		// 否则正常源会跟着被熔断，越修越差。
+		// 拼错只证明「组合」错了：单源才归因记失败，
+		// 多源时不动评分，免得正常源被熔断。
 		if len(srcs) == 1 {
 			g.reportSource(plan.Kind, srcs[0].t, false, time.Since(start))
 		}
@@ -308,7 +295,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)
-	// 按每台源实际供的段数记账：一段没供上的记失败，供过且没出错的才记成功。
+	// 按每台源实际供的段数记账：一段没供上的记失败，
+	// 供过且没出错的才记成功。
 	for i := range srcs {
 		switch {
 		case atomic.LoadInt32(&stats[i].fail) > 0:
@@ -325,18 +313,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	return true
 }
 
-// parStat 记录一台源在一次并行下载里实际供成、供败的段数。
 type parStat struct {
 	ok, fail int32
 	code     int32 // 最后一次非 206 的状态码，用来区分「限流」和「坏了」
 }
 
-// preflightStatusIsSourceFailure 判断预检的 HTTP 状态是否该计入源故障。
-//
-// reportSource(false) 不只是记一笔：它会推进熔断计数、拉长冷却，还会写
-// source_events。所以只有「这台源现在真的不可用」才配触发它。认证、权限、
-// 资源不存在、协议能力缺失、Range 不满足都属于请求与源不匹配，换台源或换个
-// 对象就好，不代表源坏了。
+// preflightStatusIsSourceFailure：reportSource(false) 会推熔断、拉长冷却，
+// 只有「源真不可用」才触发。鉴权/404/能力缺失/Range 不满足都只是不匹配。
 func preflightStatusIsSourceFailure(status int) bool {
 	switch status {
 	case http.StatusRequestTimeout, // 408 临时超时
@@ -350,14 +333,13 @@ func preflightStatusIsSourceFailure(status int) bool {
 		http.StatusNetworkAuthenticationRequired: // 511 需要先过认证门户
 		return false
 	}
-	// 425（Too Early）故意不记：它是「请求来早了，重放一遍」的提示，
-	// 既不说明源过载，也不说明源坏了，重试即可。
-	// 其余 5xx 算服务端异常（500/502/503/504，以及 507 存储满这类）。
+	// 425（Too Early）不记：它只是「重放一遍」的提示，不代表源坏了。
+	// 其余 5xx（500/502/503/504/507）算服务端异常。
 	return status >= 500 && status <= 599
 }
 
-// parPreflight 用 1 字节的 Range 请求确认每台源支持分片、且说的是同一个总长。
-// 官方源排在最前：总长以它为准，镜像报的只能用来核对，不能用来定义事实。
+// parPreflight 用 1 字节 Range 探测各源支持分片、总长一致。
+// 官方源排最前，总长以它为准，镜像报的只用于核对。
 func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets []fetchTarget) ([]parSource, int64) {
 	ordered := make([]fetchTarget, 0, len(targets))
 	for _, t := range targets {
@@ -445,11 +427,11 @@ func (g *Gateway) reportSource(kind string, t fetchTarget, ok bool, d time.Durat
 	}
 }
 
-// parChunk 取一段写进 .part；先找分到的源，不行再回官方源重取一次。
-// idx 是这台源在 srcs 里的下标，成败都记到 stats[idx]：只有真的供出这段字节才算成功。
+// parChunk 取一段写进 .part，分到的源不行就回官方源重取。
+// 成败记到 stats[idx]，只有真供出这段字节才算成功。
 func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSource, idx int, off, length, total int64, part *os.File, stats []parStat) error {
-	// 占一个该源的并发名额：最快的源同时被所有任务要，也会被打成最慢的源。
-	// 名额满了就在这里等，等待不是源站故障，不记健康。
+	// 先占该源的并发名额，否则最快会被打成最慢；
+	// 名额满时等待不算源故障，不记健康。
 	if src.t.c != nil {
 		release, aerr := g.sched.Acquire(ctx, src.t.c.ID)
 		if aerr != nil {
@@ -526,7 +508,8 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 	return last
 }
 
-// rangeReq 发一个带 Range 的上游请求。认证仍由 cli 里的 bearerTransport 按主机处理。
+// rangeReq 发一个带 Range 的上游请求。
+// 认证仍由 cli 里的 bearerTransport 按主机处理。
 func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, from, to int64) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

@@ -62,7 +62,7 @@ func TestBackoffDoubles(t *testing.T) {
 	}
 }
 
-// git 能力默认关：前缀代理能取 raw 文件，不代表它实现了 smart HTTP。
+// git 能力默认关：能取 raw 文件不代表实现了 smart HTTP。
 func TestGitCapGatesCandidates(t *testing.T) {
 	st := newStore(t)
 	id := addSource(t, st, "https://gh-proxy.com", true, 100, 1500)
@@ -84,7 +84,7 @@ func TestGitCapGatesCandidates(t *testing.T) {
 	}
 }
 
-// 一次成功不等于 100%：样本少时要往 50% 收，避免新源凭一次探测冲上第一。
+// 一次成功不等于 100%：样本少时向 50% 收，免得新源冲上第一。
 func TestScoreSmoothsSmallSamples(t *testing.T) {
 	one := score(store.SourceStat{Samples: 1, OK: 1, LatencyMS: 50, SpeedKBps: 2000})
 	many := score(store.SourceStat{Samples: 10, OK: 10, LatencyMS: 50, SpeedKBps: 2000})

@@ -10,12 +10,10 @@ import (
 	"syscall"
 )
 
-// 磁盘上的三块地：blobs 是正式内容，tmp 是下载中的临时文件，
-// partial 是断了以后留着续传的半截文件。三块都算缓存占用。
+// blobs 是正式内容，tmp 是下载中的临时文件，partial 是续传用的半截文件。
 
-// DiskUsage 统计缓存目录实际占用。按磁盘上的真实文件算，不信数据库里的 size 列
-// ——文件可能被外部删掉，索引却还挂着。
-// 只走自己管理的目录，不跟随符号链接（WalkDir 默认不跟随）。
+// DiskUsage 按磁盘真实文件统计占用，不信索引里的 size：
+// 文件可能被外部删掉而索引还挂着。WalkDir 不跟随符号链接。
 func (s *Store) DiskUsage() (int64, error) {
 	var total int64
 	err := filepath.WalkDir(s.root, func(p string, d os.DirEntry, err error) error {
@@ -35,7 +33,7 @@ func (s *Store) DiskUsage() (int64, error) {
 	return total, err
 }
 
-// ListBlobs 返回磁盘上所有 blob 的 sha（文件名就是哈希）。
+// ListBlobs 返回所有 blob 的 sha（文件名即哈希）。
 func (s *Store) ListBlobs() ([]string, error) {
 	root := filepath.Join(s.root, "blobs")
 	shards, err := os.ReadDir(root)
@@ -64,8 +62,7 @@ func (s *Store) ListBlobs() ([]string, error) {
 	return out, nil
 }
 
-// FSFree 返回缓存所在文件系统的剩余字节。这是 NAS 磁盘还剩多少，
-// 和"我们允许用多少"（配额）是两件事，面板上分开显示。
+// FSFree 返回文件系统剩余字节；这与配额允许用多少是两件事，面板分开显示。
 func (s *Store) FSFree() (int64, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(s.root, &st); err != nil {
@@ -76,8 +73,8 @@ func (s *Store) FSFree() (int64, error) {
 
 var flockWarn sync.Once
 
-// lockFile 给文件加排他锁。拿不到（EWOULDBLOCK）说明有别的进程正在写。
-// 文件系统不支持 flock 时返回 ok=false 但不报错：不能因为挂的是 NFS 就让缓存整个失效。
+// lockFile 加排他锁，拿不到即别的进程在写。
+// 文件系统不支持 flock 时返回 false 不报错：挂 NFS 不能让缓存整体失效。
 func lockFile(f *os.File) (ok bool, err error) {
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	switch {
@@ -94,12 +91,10 @@ func lockFile(f *os.File) (ok bool, err error) {
 	return false, err
 }
 
-// SweepPartial 清理长期没人续传的半截文件。
-//
-// 两个文件必须配对删：.part 是数据，.json 是"下到哪了"。只删一个会让下次续传
-// 拿到对不上的长度。判断"没人用"不能只看 mtime——正在写的大文件 mtime 是新的，
-// 但一个刚被打开、还没写入的续传任务 mtime 也可能是旧的，所以先抢文件锁：
-// 抢到才算真的没人写，并且持锁删除，避免刚判断完又被新任务接手。
+// SweepPartial 清理久未续传的半截文件。.part 与 .json 必须配对删，
+// 只删一个会让下次续传拿到对不上的长度。
+// 判断在用不靠 mtime（刚打开还没写的任务 mtime 也旧），而是抢文件锁：
+// 抢到才算没人写，并持锁删除。
 func (s *Store) SweepPartial(olderThan int64) (files int, freed int64, err error) {
 	dir := s.partialDir()
 	entries, err := os.ReadDir(dir)
@@ -143,8 +138,7 @@ func (s *Store) SweepPartial(olderThan int64) (files int, freed int64, err error
 	return files, freed, nil
 }
 
-// stalePartial 判断一对文件是否该删：两个文件都超过时限才算，
-// 任一文件新近动过就再等一轮。
+// stalePartial 取两个文件里较新的 mtime，都超期才算 stale。
 func (s *Store) stalePartial(part, meta string, olderThan int64) bool {
 	newest := int64(0)
 	for _, p := range []string{part, meta} {
@@ -159,14 +153,14 @@ func (s *Store) stalePartial(part, meta string, olderThan int64) bool {
 	return newest > 0 && newest < olderThan
 }
 
-// dropPartialLocked 抢到锁才删，删完释放。抢不到说明有进程正在续传，这轮跳过。
+// dropPartialLocked 抢到锁才删；抢不到说明有进程在续传，跳过。
 func (s *Store) dropPartialLocked(part, meta string) (files int, freed int64, ok bool) {
 	f, err := os.OpenFile(part, os.O_RDWR, 0o644)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return 0, 0, false
 		}
-		// 数据文件已经没了，元信息单独留着没用
+		// 数据没了，元信息留着没用
 		if fi, e := os.Stat(meta); e == nil {
 			if os.Remove(meta) == nil {
 				return 1, fi.Size(), true
@@ -183,7 +177,7 @@ func (s *Store) dropPartialLocked(part, meta string) (files int, freed int64, ok
 	if locked {
 		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	}
-	// locked=false 且 lerr=nil：文件系统不支持锁，退回"只按时间判断"
+	// 不支持锁的文件系统退回只按时间判断
 
 	var size int64
 	for _, p := range []string{part, meta} {

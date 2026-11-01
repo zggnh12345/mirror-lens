@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// 「此刻不通」不等于「不支持这个协议」。把 429/5xx/超时 当成结论，源就会被
-// 永久标记成 CapNo，之后再也不会被探测——网络恢复了也回不来。
+// 「此刻不通」不等于「不支持这个协议」：把 429/5xx/超时 当成结论，
+// 源就会被永久标记成 CapNo，之后再也不会被探测——网络恢复了也回不来。
 func TestTransientFailuresAreNotConclusions(t *testing.T) {
 	cases := []struct {
 		name   string

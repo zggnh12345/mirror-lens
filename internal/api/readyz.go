@@ -7,19 +7,16 @@ import (
 	"time"
 )
 
-// readyCheck 是单项检查结果。error 只在失败时出现，避免把内部路径
-// 和 SQL 错误无谓地暴露在公网探针响应里——部署在内网也会被截图贴出去。
+// readyCheck 是单项检查结果。error 只在失败时出现，
+// 避免把内部路径和 SQL 错误暴露在探针响应里。
 type readyCheck struct {
 	OK      bool   `json:"ok"`
 	Error   string `json:"error,omitempty"`
 	Elapsed int64  `json:"elapsed_ms"`
 }
 
-// readyz 回答「现在能不能正常干活」。
-//
-// 只看本机依赖：数据库可写、缓存目录可用。
-// 刻意不检查公网源站——源站挂了 Mirror Lens 依然能服务缓存、依然能
-// 回源到别的源，把它算成就绪失败只会让编排器把好好的实例摘掉。
+// readyz 只看本机依赖：数据库可写、缓存目录可用。
+// 不检查公网源站：源站挂了仍能服务缓存，算成就绪失败会摘掉实例。
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -58,8 +55,8 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// cacheReady 只做目录级检查：stat + 剩余空间，不建文件。
-// 每次探针都写一个临时文件的话，K8s 的 1s 探针会把缓存目录刷满小文件。
+// cacheReady 只做 stat + 剩余空间检查，不建文件：
+// K8s 1s 一次的探针写临时文件会把缓存目录刷满。
 func (s *Server) cacheReady() error {
 	root := s.gw.CacheRoot()
 	if root == "" {

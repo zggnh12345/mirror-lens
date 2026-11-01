@@ -10,14 +10,9 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// digestFromHeader 从上游响应头里找一个 sha256 摘要，返回小写十六进制。
-//
-// 这些头都是供货方自己声明的：命中它只能证明「字节没传坏」，不能证明
-// 「这就是官方那份」——同一个坏镜像完全可以附上自己那份内容的正确摘要。
-// 所以它不把内容升级成 verified，只用来拒绝明显不一致的字节。
-//
-// 真正的可信摘要是客户端给的：docker 按 digest 拉 blob 时，摘要写在 URL 里，
-// 那份参照与供货方无关，才能算 verified。
+// digestFromHeader 从上游响应头找 sha256（小写十六进制）。
+// 上游自报摘要只证明「字节没传坏」，不是官方那份，只用来
+// 拒绝不一致的字节、不升级 verified；可信摘要来自客户端 URL。
 func digestFromHeader(h http.Header) string {
 	for _, k := range []string{"Content-Digest", "Digest"} {
 		if v := h.Get(k); v != "" {
@@ -37,7 +32,8 @@ func digestFromHeader(h http.Header) string {
 	return ""
 }
 
-// parseDigestHeader 解析 RFC 9530 的 `sha-256=:BASE64:`，兼容不带冒号的写法。
+// parseDigestHeader 解析 RFC 9530 的 `sha-256=:BASE64:`，
+// 兼容不带冒号的写法。
 func parseDigestHeader(v string) string {
 	for _, part := range strings.Split(v, ",") {
 		part = strings.TrimSpace(part)
@@ -80,10 +76,8 @@ func checkDigest(h http.Header, sum string) (checked, ok bool) {
 	return true, strings.EqualFold(want, sum)
 }
 
-// verifyState 判定这份内容算什么级别。
-//
-// 只有「客户端给的摘要」才算参照（docker 按 digest 拉取时摘要写在 URL 里）；
-// 上游自报的摘要不算，它只能挡住传坏的字节，挡不住换掉的内容。
+// verifyState：只有客户端给的摘要（docker digest 拉取时在 URL 里）才算参照；
+// 上游自报的摘要挡得住传坏，挡不住换内容，不算。
 func verifyState(plan *adapter.Plan) string {
 	if plan.ExpectSHA != "" {
 		return store.VerifyVerified

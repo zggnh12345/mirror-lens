@@ -71,7 +71,7 @@ limits:
 	}
 }
 
-// 只写几个字段，其余保持默认——配置文件不该要求写全。
+// 只写几个字段，其余保持默认。
 func TestPartialFileKeepsDefaults(t *testing.T) {
 	p := write(t, `
 addr: ":9000"
@@ -137,7 +137,7 @@ func TestInvalidValues(t *testing.T) {
 	}
 }
 
-// 显式指定了路径却读不到，必须报错——打错文件名却静默用默认值最难查。
+// 显式路径读不到必须报错，否则打错文件名会静默用默认值。
 func TestMissingExplicitFileFails(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "nope.yaml"), true); err == nil {
 		t.Fatal("显式路径不存在应报错")

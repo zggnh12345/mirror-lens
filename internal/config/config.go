@@ -1,7 +1,4 @@
-// Package config 集中管理启动参数。
-//
-// 参数变多之后命令行已经不好用了：这里只留 -config / -addr / -data / -no-seed
-// 四个开关，其余全部写在配置文件里，带默认值、带注释。
+// Package config 集中管理启动参数：命令行只留四个开关，其余走配置文件。
 // 优先级：命令行 > 环境变量 > 配置文件 > 内置默认。
 package config
 
@@ -27,7 +24,7 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 		}
 		v, err := time.ParseDuration(s)
 		if err != nil {
-			// 纯数字按秒处理，老习惯
+			// 纯数字按秒处理
 			var secs int64
 			if _, e2 := fmt.Sscanf(s, "%d", &secs); e2 == nil {
 				d.Duration = time.Duration(secs) * time.Second
@@ -54,8 +51,7 @@ type Cache struct {
 	RecoverAt float64 `yaml:"recover_at"`  // 回落到多少以下才重新武装
 }
 
-// Janitor 是后台巡检。清半截文件和过期条目都按时间判断，
-// 临时文件固定留 1 小时，不单独配。
+// Janitor 是后台巡检：容量、过期、半截文件、索引对账。
 type Janitor struct {
 	Interval     Duration `yaml:"interval"`
 	PartialTTL   Duration `yaml:"partial_ttl"`
@@ -77,45 +73,39 @@ type Registry struct {
 	TagTTL    Duration `yaml:"tag_ttl"`
 }
 
-// Sources 是多源调度。
-//
-// enabled=false 时只走官方源，行为与阶段 5 完全一致。
+// Sources 是多源调度；enabled=false 时只走官方源。
 type Sources struct {
 	Enabled       bool     `yaml:"enabled"`
 	MaxCandidates int      `yaml:"max_candidates"`
 	StickyTTL     Duration `yaml:"sticky_ttl"`
 	FailCooldown  Duration `yaml:"fail_cooldown"`
-	// MaxPerSource 是单台源同时进行的回源请求上限（预检与分片）。0 取默认 4，
-	// 负数表示不限。
+	// MaxPerSource 单源并发回源上限；0 取默认 4，负数不限。
 	MaxPerSource int `yaml:"max_per_source"`
-	// Dynamic 打开后，每台源的并发在 1..MaxPerSource 之间按实测吞吐自动调整
-	// （AIMD：排队且吞吐不退步就加一路，吞吐掉 40% 或失败就减一路/减半）。
+	// Dynamic 按实测吞吐在 1..MaxPerSource 间自动调并发（AIMD）：
+	// 排队且吞吐不退步就加一路，吞吐掉 40% 或失败就减。
 	Dynamic bool `yaml:"dynamic"`
 
-	// 源站生命周期。三个都是天数/分钟，0 表示用默认值。
-	//   ArchiveDays：dead/blocked 维持这么久自动归档（默认 14）
-	//   CleanupDays：归档维持这么久彻底删除（默认 180；负数 = 永不删除）
-	//   RecoveryMinutes：死源/封禁源最多多久探测一次（默认 60）
+	// 源站生命周期，0 表示用默认值。
+	// ArchiveDays：dead/blocked 维持 14 天自动归档
+	// CleanupDays：归档 180 天后删除，负数永不删
+	// RecoveryMinutes：死源最多 60 分钟探测一次
 	ArchiveDays     int `yaml:"archive_days"`
 	CleanupDays     int `yaml:"cleanup_days"`
 	RecoveryMinutes int `yaml:"recovery_minutes"`
 }
 
-// Parallel 是多源分片并行下载。
-//
-// 只在「有可信整份摘要」时启用：分片来自不同源，拼错一片只有最终哈希能发现，
-// 没有摘要就等于拿缓存赌运气。
+// Parallel 是多源分片并行下载，只在有可信整份摘要时启用：
+// 分片来自不同源，拼错一片只能靠最终哈希发现。
 type Parallel struct {
 	Enabled   bool  `yaml:"enabled"`
-	MinSizeMB int64 `yaml:"min_size_mb"` // 小于这个尺寸不值得分片（多几次握手反而更慢）
+	MinSizeMB int64 `yaml:"min_size_mb"` // 小于此尺寸不值得分片，握手更慢
 	ChunkMB   int64 `yaml:"chunk_mb"`    // 单片大小
 	Workers   int   `yaml:"workers"`     // 同时下载几片
 }
 
-// Auth 控制代理路径（/raw /http /git /v2）的访问控制。
-//
-// 默认放行：这个服务本身就是代理，当公共加速站用时不该先要 token。
-// require_token=true 时，非浏览器客户端必须带 Access Token；面板登录不受影响。
+// Auth 控制代理路径（/raw /http /git /v2）的访问。
+// 默认放行：本服务就是代理，公共加速站不该先要 token；
+// require_token=true 时非浏览器客户端必须带 Access Token。
 type Auth struct {
 	RequireToken bool `yaml:"require_token"`
 }
@@ -139,12 +129,12 @@ type Config struct {
 	Logging  logging.Config `yaml:"logging"`
 }
 
-// CDN 控制边缘缓存语义。默认关闭：关着的时候只发 60 秒的保守 TTL，
-// 打开后把条目 TTL 让给 CDN，并加 Age / Cache-Tag 方便清理。
+// CDN 控制边缘缓存语义。默认关闭时只发 60 秒保守 TTL，
+// 开启后把条目 TTL 让给 CDN，并加 Age / Cache-Tag 便于清理。
 type CDN struct {
 	Enabled bool `yaml:"enabled"`
-	// MaxAge 是给边缘的 TTL 上限（秒）。0 表示沿用条目自己的 TTL。
-	// 有上限才安全：release 资产同名覆盖很常见，缓存一年会发旧包。
+	// MaxAge 是边缘 TTL 上限（秒），0 沿用条目 TTL。
+	// 必须设上限：release 资产同名覆盖常见，缓存太久会发旧包。
 	MaxAge int `yaml:"max_age"`
 }
 
@@ -155,13 +145,12 @@ type Metrics struct {
 	RequireToken bool `yaml:"require_token"`
 }
 
-// Probe 是探测行为的开关。探测会去请求用户填的地址，默认只允许公网，
-// 免得「加个源」变成访问内网服务的入口。
+// Probe 探测开关。探测会请求用户填的地址，默认只允许公网，防 SSRF。
 type Probe struct {
 	AllowPrivate bool `yaml:"allow_private"`
 }
 
-// Default 是没写配置文件时也成立的一套值。
+// Default 是没有配置文件时的默认值。
 func Default() *Config {
 	return &Config{
 		Addr: ":8080",
@@ -211,8 +200,8 @@ func Default() *Config {
 	}
 }
 
-// Load 读配置文件；文件不存在时用默认值（path 为空也一样）。
-// 显式指定的路径读不到会报错——打错文件名却静默跑默认值最难查。
+// Load 读配置文件，不存在则用默认值（path 为空也一样）。
+// 显式指定的路径读不到要报错，否则打错文件名会静默跑默认值。
 func Load(path string, required bool) (*Config, error) {
 	c := Default()
 	if path == "" {
@@ -296,7 +285,7 @@ func (c *Config) Validate() error {
 		if u == "" {
 			return fmt.Errorf("registry.upstream 不能为空")
 		}
-		// 只写主机名，别把 https:// 和路径塞进来
+		// 只写主机名，不带 https:// 和路径
 		if strings.Contains(u, "://") || strings.Contains(u, "/") {
 			return fmt.Errorf("registry.upstream 只写主机名，比如 registry-1.docker.io")
 		}

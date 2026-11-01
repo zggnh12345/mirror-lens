@@ -14,8 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// cfgField 描述一个可编辑的配置项。get/set 直接读写 *config.Config，
-// 避免反射踩坑；展示与校验元数据手写，保证标签、范围、单位都准确。
+// cfgField 描述一个可编辑配置项。get/set 直接读写结构体，不用反射；
+// 展示与校验元数据手写，保证标签、范围、单位准确。
 type cfgField struct {
 	Section string   // 分组标题
 	Key     string   // 点号路径，对应 yaml 键
@@ -28,7 +28,7 @@ type cfgField struct {
 	HasMin  bool
 	HasMax  bool
 	Hint    string
-	Restart bool // true = 改完需重启服务才生效
+	Restart bool // true = 需重启生效
 	Get     func(*config.Config) string
 	Set     func(*config.Config, string) error
 }
@@ -65,9 +65,8 @@ func parseDur(s string) (time.Duration, error) {
 	return 0, fmt.Errorf("时间格式不对，写 30s / 5m / 300 这样")
 }
 
-// cfgSchema 是设置页「配置参数」一节的完整字段表，按分组排列。
-// 除日志级别外全部标记 Restart=true：绝大多数参数在启动时已拷贝进各子系统，
-// 热改内存里的 cfg 不会生效，必须重启；日志级别靠 logging.Setup 即时重建全局 logger。
+// cfgSchema 是设置页「配置参数」的字段表，按分组排列。
+// 除日志级别外都要重启：参数在启动时已拷进各子系统，热改 cfg 无效。
 var cfgSchema = []cfgField{
 	// 基础
 	{Section: "基础", Key: "addr", Label: "监听地址", Kind: "string", Restart: true,
@@ -239,9 +238,8 @@ var cfgSchema = []cfgField{
 
 func b2s(b bool) string { return strconv.FormatBool(b) }
 
-// effLevel 把配置里的日志级别折算成面板里一定存在的选项。
-// 空值等价于 info（logging 包就是这么解析的），warning 是 warn 的别名；
-// 若不归一化，面板会一个选项都不选中，看上去像"没设置"。
+// effLevel 把日志级别归一化到面板选项：空值当 info，warning 当 warn。
+// 不归一化则面板一个选项都不选中。
 func effLevel(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "debug":
@@ -255,7 +253,7 @@ func effLevel(v string) string {
 	}
 }
 
-// effFormat 同理：空值等价于 text。
+// effFormat 同理：空值当 text。
 func effFormat(v string) string {
 	if strings.EqualFold(strings.TrimSpace(v), "json") {
 		return "json"
@@ -323,7 +321,7 @@ func setDur(p *time.Duration, v string) error {
 	return nil
 }
 
-// configView 把当前 cfg 按分组整理成前端要的结构。
+// configView 把 cfg 按分组整理成前端要的结构。
 func configView(c *config.Config, path string) map[string]any {
 	groups := map[string][]map[string]any{}
 	order := []string{}
@@ -358,8 +356,7 @@ func configView(c *config.Config, path string) map[string]any {
 	}
 }
 
-// applyConfigValues 把提交的值套用到 *config.Config 的副本上，做范围与格式校验，
-// 返回出错字段。不改文件、不动原 cfg。
+// applyConfigValues 校验并套用到 cfg 副本，返回出错字段；不动文件与原 cfg。
 func applyConfigValues(c *config.Config, values map[string]string) (changed []string, errField string, err error) {
 	for _, f := range cfgSchema {
 		raw, ok := values[f.Key]
@@ -377,8 +374,8 @@ func applyConfigValues(c *config.Config, values map[string]string) (changed []st
 	return changed, "", nil
 }
 
-// writeConfigFile 把 values 写回 YAML 文件。节点级更新：保留结构/注释，
-// 只改被提交的那几个键；文件不存在则整份写出（会丢失原注释）。
+// writeConfigFile 把 values 写回 YAML。节点级更新保留原结构与注释，
+// 只改提交的键；文件不存在则整份写出。
 func writeConfigFile(path string, values map[string]string) error {
 	var root yaml.Node
 	exists := false
@@ -389,9 +386,9 @@ func writeConfigFile(path string, values map[string]string) error {
 		}
 	}
 	if !exists || root.Kind == 0 {
-		// 没有文件或解析不出结构：用默认 cfg 整份写出。
+		// 无文件或解析不出结构：用默认 cfg 整份写出。
 		def := config.Default()
-		// 仅把 values 应用到默认副本，避免把内存里运行态（含 secrets 无关）全量落盘差异过大。
+		// 只把 values 应用到默认副本，避免把运行态全量写入。
 		if _, _, err := applyConfigValues(def, values); err != nil {
 			return err
 		}
@@ -427,8 +424,7 @@ func findField(key string) *cfgField {
 	return nil
 }
 
-// setYAMLNode 在 yaml 文档树里定位 path 并把标量设为 value。
-// 缺失的 mapping 键会自动创建；list 类型（trusted_proxies）整段重建。
+// setYAMLNode 定位 path 并设置标量；缺的 mapping 键自动建，list 整段重建。
 func setYAMLNode(root *yaml.Node, path []string, value, kind string) error {
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
@@ -436,13 +432,11 @@ func setYAMLNode(root *yaml.Node, path []string, value, kind string) error {
 	cur := root
 	for i, seg := range path {
 		if i == len(path)-1 {
-			// 叶子
 			if kind == "list" {
 				return setSeqLeaf(cur, seg, value)
 			}
 			return setScalarLeaf(cur, seg, value, kind)
 		}
-		// 中间层：必须是 mapping
 		child, err := ensureMapKey(cur, seg)
 		if err != nil {
 			return err
@@ -454,7 +448,7 @@ func setYAMLNode(root *yaml.Node, path []string, value, kind string) error {
 
 func ensureMapKey(parent *yaml.Node, key string) (*yaml.Node, error) {
 	if parent.Kind != yaml.MappingNode {
-		// 原值是标量（被覆盖成对象），重建为 mapping
+		// 原值是标量，重建为 mapping
 		parent.Kind = yaml.MappingNode
 		parent.Tag = "!!map"
 		parent.Content = nil
@@ -531,7 +525,7 @@ func setSeqLeaf(parent *yaml.Node, key, value string) error {
 	return nil
 }
 
-// config 处理 GET（读取）/ PUT（校验 + 写文件 + 热更日志）。
+// configHandler 处理 GET 读取、PUT 校验 + 写盘 + 热更日志。
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	if s.cfg == nil {
 		writeJSON(w, 500, map[string]string{"error": "服务端未加载配置文件"})
@@ -582,7 +576,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "applied": changed})
 }
 
-// WithConfig 让 Server 持有一个可编辑的 cfg 副本与配置文件路径。
+// WithConfig 让 Server 持有可编辑的 cfg 副本与配置路径。
 func WithConfig(c *config.Config, path string) Option {
 	return func(s *Server) {
 		s.cfg = c
@@ -590,7 +584,7 @@ func WithConfig(c *config.Config, path string) Option {
 	}
 }
 
-// decodeJSON 容忍空体。
+// decodeJSON 解析请求体 JSON。
 func decodeJSON(r *http.Request, v any) error {
 	if r.Body == nil {
 		return fmt.Errorf("空请求体")

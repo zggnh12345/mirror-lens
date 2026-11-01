@@ -48,9 +48,8 @@ func TestRetryAfterHeader(t *testing.T) {
 	})
 }
 
-// 预检 429 带 Retry-After 时，冷却长度要按源说的来，而不是本地 5 分钟。
-// 把 FailCooldown 压到 50ms、Retry-After 设 120s：等 300ms 后仍被熔断，
-// 只可能是 header 真的传到了调度器。
+// 预检 429 带 Retry-After 时冷却按源说的算，不是本地 5 分钟。
+// FailCooldown 50ms、Retry-After 120s，等 300ms 仍熔断 = header 传到了。
 func TestPreflight429RetryAfterReachesScheduler(t *testing.T) {
 	g, st, _, body, _, mirror, os, ms := parFixture(t, 4<<20)
 	plan, cand := parPlan(t, os, body)

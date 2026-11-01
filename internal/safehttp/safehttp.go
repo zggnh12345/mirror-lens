@@ -1,7 +1,7 @@
 // Package safehttp 提供一个只允许访问公网的 http.Client。
 //
-// 代理服务等于替任意人发任意请求，所以这里的检查放在拨号层（Dialer.Control）：
-// 域名解析在拨号前完成，Control 拿到的是真正要连的 IP，DNS Rebinding
+// 代理等于替任意人发请求，检查放在拨号层（Dialer.Control）：
+// Control 拿到的是解析后的真实 IP，DNS Rebinding
 // （先解析成公网、再重解析成内网）在这一层被挡住。
 package safehttp
 
@@ -17,10 +17,8 @@ import (
 )
 
 // Options 控制超时与例外。
-//
-// AllowLoopback 只给单元测试用；AllowPrivate 是给「探测自己局域网里的源」
-// 这种明确场景留的开关，两个都默认关。开了就等于关掉整层防护，别在公网
-// 部署上打开。
+// AllowLoopback 只给测试；AllowPrivate 给「探测局域网源」这类场景。
+// 两者默认关，打开等于关掉整层防护，别在公网部署上开。
 type Options struct {
 	DialTimeout   time.Duration
 	HeaderTimeout time.Duration
@@ -36,7 +34,7 @@ type Guard struct {
 
 var errBlocked = errors.New("目标地址不允许访问")
 
-// ErrBlocked 供上层判断「被安全策略拦下」，好回 403 而不是 502。
+// ErrBlocked 供上层判断被拦，好回 403 而不是 502。
 var ErrBlocked = errBlocked
 
 func New(o Options) *Guard {
@@ -49,8 +47,7 @@ func New(o Options) *Guard {
 	if o.MaxRedirects <= 0 {
 		o.MaxRedirects = 5
 	}
-	// netip 的 IsPrivate/IsLoopback 已覆盖 10/8、172.16/12、192.168/16、
-	// 127/8、::1、fc00::/7；这里补它不管的几段。
+	// netip 已覆盖内网与回环段，这里补它不管的几段。
 	var extra = []string{
 		"0.0.0.0/8",     // 本网络
 		"100.64.0.0/10", // CGNAT，运营商内网
@@ -72,8 +69,8 @@ func New(o Options) *Guard {
 
 func Default() *Guard { return New(Options{}) }
 
-// Check 校验 URL 本身是否合法（协议、是否带凭据、主机是否 IP 字面量）。
-// 域名不在这里解析——真正的把关在拨号层。
+// Check 校验 URL 本身：协议、凭据、IP 字面量主机。
+// 域名不在这里解析，把关在拨号层。
 func (g *Guard) Check(u *url.URL) error {
 	if u == nil {
 		return errors.New("空 URL")
@@ -94,7 +91,7 @@ func (g *Guard) Check(u *url.URL) error {
 	return nil
 }
 
-// CheckIP 判断一个具体地址能不能连。
+// CheckIP 判断地址能否连接。
 func (g *Guard) CheckIP(ip netip.Addr) error {
 	ip = ip.Unmap()
 	if !ip.IsValid() {
@@ -118,8 +115,6 @@ func (g *Guard) CheckIP(ip netip.Addr) error {
 	return nil
 }
 
-// Client 返回带防护的客户端。超时留在 Transport 上，整体 Timeout 设 0，
-// 否则大文件会被整体超时切断。
 // Dialer 返回带地址检查的拨号器。TLS 探测这类自己握手的场景也得用它，
 // 否则就是绕过 Guard 的另一条路。
 func (g *Guard) Dialer() *net.Dialer {
@@ -140,6 +135,8 @@ func (g *Guard) Dialer() *net.Dialer {
 	}
 }
 
+// Client 返回带防护的客户端：超时留在 Transport 上、整体 Timeout 设 0，
+// 否则大文件会被整体超时切断。
 func (g *Guard) Client() *http.Client {
 	d := g.Dialer()
 	tr := &http.Transport{
@@ -156,8 +153,7 @@ func (g *Guard) Client() *http.Client {
 			if len(via) >= g.o.MaxRedirects {
 				return fmt.Errorf("重定向超过 %d 次", g.o.MaxRedirects)
 			}
-			// 每一跳都重新校验；目标主机若变成内网 IP 字面量会在这里被拦，
-			// 域名则交给拨号层的 Control。
+			// 每跳都重新校验：内网 IP 字面量在这里拦，域名交给拨号层。
 			return g.Check(req.URL)
 		},
 	}

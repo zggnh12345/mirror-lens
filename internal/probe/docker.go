@@ -61,8 +61,8 @@ func parseChallenge(h string) challenge {
 	return c
 }
 
-// Docker probes one registry mirror. tier 1 = liveness only, 2 = real manifest,
-// 3 = manifest plus a blob download for throughput.
+// Docker probes one registry mirror.
+// tier 1 = liveness, 2 = real manifest, 3 = manifest + blob download.
 func Docker(ctx context.Context, base string, tier int, expectedDigest string) Result {
 	base = trimBase(base)
 	host := hostOf(base)
@@ -141,12 +141,12 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 		res.Error = fmt.Sprintf("manifest 获取失败 (%d) %s", code, errStr(err))
 		return res
 	}
-	// 校验基准用索引（multi-arch list）的 digest：官方与各镜像站返回的
-	// 都是它。下面拉具体平台 manifest 只用于取 layer，不能覆盖这个值。
+	// 校验基准用索引（multi-arch list）的 digest：官方与各镜像站返回的都是它。
+	// 下面拉具体平台 manifest 只用于取 layer，不能覆盖这个值。
 	res.Digest = digest
 	if hdrBad {
-		// 响应头说的摘要和实际字节对不上：这不是「内容不一致」，是源在说谎，
-		// 后面拿它跟官方比已经没意义了。
+		// 响应头说的摘要和实际字节对不上：源在说谎，
+		// 拿它跟官方比已经没意义了。
 		res.DigestOK = 0
 		res.Detail = "Docker-Content-Digest 与实际内容不符"
 	}
@@ -162,8 +162,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 	if strings.Contains(mtype, "index") || strings.Contains(mtype, "list") || mf["manifests"] != nil {
 		d := pickPlatformDigest(mf)
 		if d != "" {
-			// 按 digest 取回来的东西，哈希必须等于这个 digest——内容寻址
-			// 的整个前提就在这。
+			// 按 digest 取回来的东西，哈希必须等于这个 digest。
 			if mf2, d2, bad2, code2, _, err2 := fetchManifest(ctx, client, base, tok, probeImage+"/manifests/"+d); err2 == nil && code2 == 200 {
 				mf = mf2
 				if bad2 || d2 != d {

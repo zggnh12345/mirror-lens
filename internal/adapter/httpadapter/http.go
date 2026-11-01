@@ -36,10 +36,8 @@ func (a *Adapter) Name() string { return "http" }
 
 // normalizeTarget 把几种写法归一成完整 URL。
 //
-// 容忍被折叠的斜杠是被反代逼出来的：Traefik 会把路径里的 // 合并成 /，
-// 于是 https://host/a 到这里已经变成 https:/host/a；而整体百分号编码的写法
-// 虽然能躲过折叠，Traefik 默认又拒收含 %2F 的路径（直接 400）。
-// 两条路都堵着，所以 /http/https/host/path 和 /http/https:/host/path 都得认。
+// 容忍被折叠的斜杠是被反代逼出来的：Traefik 把 // 合并成 /，整体百分号编码
+// 又会被 Traefik 以含 %2F 拒收，两条路都堵着，所以两种少斜杠写法都得认。
 func normalizeTarget(raw string) (string, bool) {
 	low := strings.ToLower(raw)
 	switch {

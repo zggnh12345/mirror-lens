@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// /http/ 的目标地址整体编码，路径里必然有 %2F；这条路由必须在 ServeMux 之前命中。
+// /http/ 目标地址整体编码，路径含 %2F，必须在 ServeMux 之前命中。
 func TestWantsHTTPProxy(t *testing.T) {
 	cases := []struct {
 		url  string

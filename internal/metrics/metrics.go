@@ -1,11 +1,9 @@
 // Package metrics 导出 Prometheus 文本格式指标。
 //
-// 只用手写文本格式，不引 prometheus/client_golang：这里指标是固定的一组，
-// 标签都是封闭集合（场景、状态码、源类型、模式），手写反而能把「不许出现
-// URL / IP / 文件名」这条约束写死在类型里——没有地方能塞高基数标签。
+// 手写文本格式不引 client_golang：指标固定、标签全是封闭集合
+// （场景、状态码、源类型、模式），类型上就塞不进 URL / IP / 文件名。
 //
-// 全局一个注册表（和 Prometheus 官方库的默认注册表一个思路），没启用时所有
-// 记录函数都是空操作，调用方不用到处判空。
+// 全局单注册表，未启用时记录函数都是空操作。
 package metrics
 
 import (
@@ -21,10 +19,10 @@ import (
 
 const prefix = "mirrorlens_"
 
-// 耗时桶（秒）。代理场景跨三个数量级：命中缓存几十毫秒，回源几十秒。
+// 耗时桶（秒）：命中几十毫秒、回源几十秒，跨三个数量级。
 var durBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300}
 
-// 吞吐量桶（字节/秒）。从 64 KiB/s 到 50 MiB/s。
+// 吞吐量桶（字节/秒）：64 KiB/s ~ 50 MiB/s。
 var tpBuckets = []float64{65536, 262144, 1048576, 4194304, 10485760, 52428800}
 
 type httpKey struct {
@@ -55,7 +53,7 @@ type hist struct {
 }
 
 func newHist(buckets []float64) *hist {
-	return &hist{counts: make([]uint64, len(buckets)+1)} // 最后一格是 +Inf
+	return &hist{counts: make([]uint64, len(buckets)+1)} // 末格是 +Inf
 }
 
 func (h *hist) observe(v float64, buckets []float64) {
@@ -80,7 +78,7 @@ type Registry struct {
 	tp    map[string]*hist
 
 	srcReq   map[srcKey]uint64
-	srcResp  map[string]uint64 // 真的收到 HTTP 响应的次数（429 率的分母）
+	srcResp  map[string]uint64 // 收到真实响应的次数（429 率分母）
 	src429   map[string]uint64
 	srcMiss  map[srcMissKey]uint64
 	srcDur   map[srcDurKey]*hist
@@ -89,8 +87,7 @@ type Registry struct {
 	srclimit map[int64]int
 	limited  map[string]uint64
 
-	// 快照类 gauge：由 janitor 周期性刷新，/metrics 只读取、不重算。
-	// 否则每次 Prometheus 抓取都递归扫整盘，缓存目录一上百万文件就卡死。
+	// 快照 gauge 由 janitor 刷新：抓取时重扫整盘，百万文件会卡死。
 	haveCache   bool
 	cacheBytes  uint64
 	cacheBlobs  uint64
@@ -98,8 +95,7 @@ type Registry struct {
 	haveSources bool
 	sources     map[SourceStat]uint64
 
-	// 命中率滚动窗口：每次 HTTP 命中/未命中时自增，janitor 周期读取与上轮的差值
-	// 算出「这轮」命中率，写入 hitRatio gauge。抓取时直接读 gauge，不重算。
+	// 命中率滚动窗口：janitor 用与上轮的差值算本轮命中率，抓取只读 gauge。
 	hitHits   map[string]*atomic.Uint64
 	hitTotal  map[string]*atomic.Uint64
 	haveRatio bool
@@ -107,14 +103,14 @@ type Registry struct {
 	lastHits  map[string]uint64
 	lastTotal map[string]uint64
 
-	// 热度：每个场景的累计请求数，janitor 周期取差值得到「这轮」请求量。
+	// 热度：累计请求数，janitor 取差值得到本轮请求量。
 	sceneTotal map[string]*atomic.Uint64
 	haveHot    bool
 	sceneDelta map[string]uint64
 	lastScene  map[string]uint64
 }
 
-// New 建一个空注册表。
+// New 返回空注册表。
 func New() *Registry {
 	return &Registry{
 		httpReq:    map[httpKey]uint64{},
@@ -152,7 +148,7 @@ func Enable() *Registry {
 	return r
 }
 
-// Disable 关掉记录（测试用）。
+// Disable 关闭记录（测试用）。
 func Disable() { current.Store(nil) }
 
 // Get 返回当前注册表，没启用时是 nil。
@@ -160,7 +156,7 @@ func Get() *Registry { return current.Load() }
 
 // ---------- 记录 ----------
 
-// HTTP 记一次请求。scene 是路径归类后的封闭集合，不是 URL。
+// HTTP 记一次请求。scene 是封闭集合，不是 URL。
 func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache string) {
 	r := current.Load()
 	if r == nil {
@@ -180,7 +176,7 @@ func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache st
 	}
 	if cache != "" {
 		r.cache[cacheKey{scene, cache}]++
-		// 命中率窗口：hit 才算命中，miss/pass 只进分母。
+		// hit 才算命中，miss/pass 只进分母。
 		tot := r.hitTotal[scene]
 		if tot == nil {
 			tot = &atomic.Uint64{}
@@ -202,8 +198,8 @@ func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache st
 			h.Add(1)
 		}
 	}
-	// 吞吐量只在真正回源的响应上量：命中缓存时 bytes/耗时 是磁盘和内存的速度，
-	// 拿它当「源站吞吐」是错的。小于 64 KiB 或 0.5 秒的样本也跳过，抖动太大。
+	// 吞吐只量回源：命中缓存时那是磁盘速度；
+	// 不足 64 KiB 或 0.5s 内的样本抖动太大，跳过。
 	if cache == "miss" && bytes >= 65536 && d >= 500*time.Millisecond {
 		t := r.tp[scene]
 		if t == nil {
@@ -227,8 +223,8 @@ func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.srcReq[srcKey{kind, res}]++
-	// 只有真的收到响应才进 429 率的分母：连不上、超时、DNS 失败根本
-	// 没有状态码，把它们算进分母会把 429 率稀释成一个好看的数字。
+	// 只有收到响应才进 429 率分母：连不上/超时没有状态码，
+	// 算进分母只会把比率稀释成一个好看的数字。
 	if code > 0 {
 		r.srcResp[kind]++
 	}
@@ -246,15 +242,14 @@ func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) 
 	}
 }
 
-// srcMissKey 是「某协议下某状态码的未命中」。code 只可能是 404/410，
-// 由 SourceMiss 把关——标签是封闭集合，不允许随手塞新值。
+// srcMissKey 的 code 只有 404/410，由 SourceMiss 把关，保证标签封闭。
 type srcMissKey struct {
 	kind string
 	code int
 }
 
-// SourceMiss 记一次「源上没有这个资源」。这和源站故障是两件事：镜像少一个
-// Release 文件不代表这台镜像坏了，所以它既不进退避也不拉低健康分，单独计数。
+// SourceMiss 记一次源上没有该资源。镜像少一个文件不代表源站坏了，
+// 故不进健康分、不进避退，单独计数。
 func SourceMiss(kind string, code int) {
 	if code != http.StatusNotFound && code != http.StatusGone {
 		return
@@ -268,9 +263,8 @@ func SourceMiss(kind string, code int) {
 	r.mu.Unlock()
 }
 
-// SourceTTFB 记首字节耗时。和 SourceResult 的完整耗时分开两个指标：
-// 同一个 stream 请求，TTFB 可能是 80ms、整份传完 40s，混在一个直方图里
-// 既看不出源站响应快慢，也算不出真实传输速度。
+// SourceTTFB 记首字节耗时，与 SourceResult 的完整耗时分成两个指标：
+// stream 请求 TTFB 80ms、传完 40s，混在一个直方图里两个数都读不出。
 func SourceTTFB(kind, mode string, d time.Duration) {
 	r := current.Load()
 	if r == nil || d <= 0 {
@@ -303,8 +297,8 @@ func SourceInflight(id int64, delta int) {
 	r.inflight[id] = v
 }
 
-// ForgetSource 清掉某个源的全部逐源指标。源被删掉后这些序列不该再出现在
-// /metrics 里：它们既没有对应的源，也会让 id 复用后的新源背上旧数字。
+// ForgetSource 清掉某源的逐源指标：源删了序列还在，
+// id 复用后新源会背上旧数字。
 func ForgetSource(id int64) {
 	r := current.Load()
 	if r == nil || id == 0 {
@@ -316,7 +310,7 @@ func ForgetSource(id int64) {
 	delete(r.srclimit, id)
 }
 
-// SourceLimit 记录某台源当前的并发上限（动态带宽调度会改它）。
+// SourceLimit 记录某源当前并发上限（动态调度会改）。
 func SourceLimit(id int64, n int) {
 	r := current.Load()
 	if r == nil || id == 0 {
@@ -338,16 +332,14 @@ func RateLimited(layer string) {
 	r.limited[layer]++
 }
 
-// SourceStat 是「某协议下某状态」的源站数标签。status 是封闭集合
-// （pending|usable|degraded|dead|blocked|archived），kind 是支持的几个协议，
-// 都不会爆炸成高基数。
+// SourceStat 是源站数标签。status 为封闭集合
+// （pending|usable|degraded|dead|blocked|archived），kind 是协议名。
 type SourceStat struct {
 	Kind   string
 	Status string
 }
 
-// SetCache 刷新缓存盘快照：占用字节、条目数、剩余字节。
-// 由 janitor 每轮巡检时调用；/metrics 直接读，不重扫目录。
+// SetCache 刷新缓存盘快照（字节/条目/剩余），由 janitor 每轮调用。
 func SetCache(bytes, blobs, free uint64) {
 	r := current.Load()
 	if r == nil {
@@ -373,9 +365,8 @@ func SetSources(m map[SourceStat]uint64) {
 	r.mu.Unlock()
 }
 
-// SnapshotHitRatio 由 janitor 周期调用：用本轮与上轮的累计差值算命中率。
-// 取差值而不是累计比，是为了反映「最近这段时间的真实命中率」——
-// 服务刚起的那几千次冷启动未命中不该永久拉低曲线。
+// SnapshotHitRatio 由 janitor 周期调用，用与上轮的差值算本轮命中率：
+// 累计比会让启动时的冷启动未命中永久拉低曲线。
 func SnapshotHitRatio() {
 	r := current.Load()
 	if r == nil {
@@ -396,7 +387,7 @@ func SnapshotHitRatio() {
 		if dt > 0 {
 			r.hitRatio[scene] = float64(nh-lastH) / float64(dt)
 		} else {
-			r.hitRatio[scene] = 0 // 本周期无流量：命中率无意义，归零避免 stale
+			r.hitRatio[scene] = 0 // 本周期无流量，归零避免 stale
 		}
 		r.lastTotal[scene] = now
 		r.lastHits[scene] = nh
@@ -404,8 +395,7 @@ func SnapshotHitRatio() {
 	r.haveRatio = true
 }
 
-// SnapshotSceneHotness 由 janitor 周期调用：取各场景累计请求数差值，
-// 得到「最近一轮」每个协议的请求量（热度），写入 sceneDelta gauge。
+// SnapshotSceneHotness 由 janitor 周期取累计请求数差值，写入 sceneDelta。
 func SnapshotSceneHotness() {
 	r := current.Load()
 	if r == nil {
@@ -415,7 +405,7 @@ func SnapshotSceneHotness() {
 	defer r.mu.Unlock()
 	for scene, c := range r.sceneTotal {
 		now := c.Load()
-		r.sceneDelta[scene] = now - r.lastScene[scene] // 零流量时 now 不增长，差值自然为 0
+		r.sceneDelta[scene] = now - r.lastScene[scene] // 零流量时差值自然为 0
 		r.lastScene[scene] = now
 	}
 	r.haveHot = true
@@ -423,7 +413,7 @@ func SnapshotSceneHotness() {
 
 // ---------- HTTP ----------
 
-// Scene 把路径压成有限个场景。绝不把 URL 本身当标签。
+// Scene 把路径压成有限场景：绝不把 URL 当标签。
 func Scene(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/v2/"):
@@ -457,7 +447,7 @@ func method(m string) string {
 	return "other"
 }
 
-// cacheResult 把 X-ML-Cache 归一成三个值；没这个头（面板、API）返回空。
+// cacheResult 把 X-ML-Cache 归一成三值；无此头返回空。
 func cacheResult(v string) string {
 	switch strings.ToUpper(strings.TrimSpace(v)) {
 	case "HIT", "HIT-REVAL":
@@ -492,17 +482,17 @@ func (w *recorder) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Flush 让流式响应照常工作：包一层不能把 Flusher 吃掉。
+// Flush 透传，包一层不能吃掉 Flusher。
 func (w *recorder) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-// Unwrap 让 http.ResponseController 能拿到底层连接（SetWriteDeadline 等）。
+// Unwrap 透传底层 writer，供 ResponseController 设超时等。
 func (w *recorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// Middleware 记录每个请求。放在最外层，连被限流的 429 也一并统计。
+// Middleware 记录每个请求；放最外层，限流的 429 也要统计。
 func Middleware(next http.Handler) http.Handler {
 	if current.Load() == nil {
 		return next
@@ -538,7 +528,6 @@ func (r *Registry) render() []byte {
 	defer r.mu.Unlock()
 
 	var b strings.Builder
-	// 请求数
 	if len(r.httpReq) > 0 {
 		b.WriteString("# HELP " + prefix + "http_requests_total 按场景、方法、状态码统计的请求数\n")
 		b.WriteString("# TYPE " + prefix + "http_requests_total counter\n")
@@ -547,10 +536,8 @@ func (r *Registry) render() []byte {
 				prefix, k.scene, k.method, strconv.Itoa(k.code), r.httpReq[k])
 		}
 	}
-	// 耗时
 	writeHist(&b, prefix+"http_request_duration_seconds", "请求耗时（秒），按场景", "scene",
 		r.httpDur, durBuckets)
-	// 字节
 	if len(r.httpBytes) > 0 {
 		b.WriteString("# HELP " + prefix + "http_response_bytes_total 写给客户端的响应字节数\n")
 		b.WriteString("# TYPE " + prefix + "http_response_bytes_total counter\n")
@@ -558,7 +545,6 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%shttp_response_bytes_total{scene=%q} %d\n", prefix, s, r.httpBytes[s])
 		}
 	}
-	// 缓存
 	if len(r.cache) > 0 {
 		b.WriteString("# HELP " + prefix + "cache_requests_total 缓存查询结果（hit/miss/pass）\n")
 		b.WriteString("# TYPE " + prefix + "cache_requests_total counter\n")
@@ -566,7 +552,7 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%scache_requests_total{scene=%q,result=%q} %d\n", prefix, k.scene, k.result, r.cache[k])
 		}
 	}
-	// 缓存盘快照（gauge，由 janitor 按时刷新）
+	// 缓存盘快照，janitor 按时刷新
 	if r.haveCache {
 		b.WriteString("# HELP " + prefix + "cache_bytes 缓存盘当前占用字节（磁盘实测，非索引之和）\n")
 		b.WriteString("# TYPE " + prefix + "cache_bytes gauge\n")
@@ -578,7 +564,7 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "cache_free_bytes gauge\n")
 		fmt.Fprintf(&b, "%scache_free_bytes %d\n", prefix, r.cacheFree)
 	}
-	// 源站数快照（gauge）
+	// 源站数快照
 	if r.haveSources {
 		b.WriteString("# HELP " + prefix + "sources 各协议/状态的源站数量\n")
 		b.WriteString("# TYPE " + prefix + "sources gauge\n")
@@ -587,7 +573,7 @@ func (r *Registry) render() []byte {
 		}
 	}
 
-	// 命中率（gauge，由 janitor 周期从滚动窗口算）
+	// 命中率：janitor 每轮用差值算
 	if r.haveRatio {
 		b.WriteString("# HELP " + prefix + "cache_hit_ratio 最近一个周期内的缓存命中率（0~1）\n")
 		b.WriteString("# TYPE " + prefix + "cache_hit_ratio gauge\n")
@@ -596,7 +582,7 @@ func (r *Registry) render() []byte {
 		}
 	}
 
-	// 热度（gauge，janitor 周期从累计请求数取差值）
+	// 热度：janitor 每轮取差值
 	if r.haveHot {
 		b.WriteString("# HELP " + prefix + "scene_requests_delta 最近一个周期内的场景请求量（热度）\n")
 		b.WriteString("# TYPE " + prefix + "scene_requests_delta gauge\n")
@@ -605,10 +591,8 @@ func (r *Registry) render() []byte {
 		}
 	}
 
-	// 吞吐
 	writeHist(&b, prefix+"download_throughput_bytes_per_second",
 		"回源响应的端到端吞吐量（字节/秒），仅统计未命中缓存的响应", "scene", r.tp, tpBuckets)
-	// 源站
 	if len(r.srcReq) > 0 {
 		b.WriteString("# HELP " + prefix + "source_requests_total 回源结果（ok/fail）\n")
 		b.WriteString("# TYPE " + prefix + "source_requests_total counter\n")
@@ -639,13 +623,12 @@ func (r *Registry) render() []byte {
 	}
 	writeHist2(&b, prefix+"source_fetch_duration_seconds",
 		"回源完整耗时（秒）：mode=single 整次回源，stream 整次流式传输，chunk 单段", r.srcDur, durBuckets)
-	// 首字节单独一列：调度看的是整次回源耗时，运维看的是源站响应快不快，
-	// 两个数字混在一起谁都读不出来。
+	// 首字节单独一列：调度看整次耗时，运维看源站响应速度。
 	if len(r.srcTTFB) > 0 {
 		writeHist2(&b, prefix+"source_ttfb_seconds",
 			"回源首字节耗时（秒）：mode=stream 从发出请求到收到响应头", r.srcTTFB, durBuckets)
 	}
-	// 并发上限（动态带宽调度调整后的结果）
+	// 并发上限（动态调度调整后）
 	if len(r.srclimit) > 0 {
 		lids := make([]int64, 0, len(r.srclimit))
 		for id := range r.srclimit {
@@ -658,7 +641,6 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%ssource_concurrency_limit{source_id=%q} %d\n", prefix, strconv.FormatInt(id, 10), r.srclimit[id])
 		}
 	}
-	// 并发
 	ids := make([]int64, 0, len(r.inflight))
 	for id := range r.inflight {
 		ids = append(ids, id)
@@ -671,7 +653,6 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%ssource_inflight{source_id=%q} %d\n", prefix, strconv.FormatInt(id, 10), r.inflight[id])
 		}
 	}
-	// 限流
 	if len(r.limited) > 0 {
 		b.WriteString("# HELP " + prefix + "ratelimit_rejected_total 入口限流拒绝数（按层）\n")
 		b.WriteString("# TYPE " + prefix + "ratelimit_rejected_total counter\n")
@@ -742,8 +723,8 @@ func writeHistBody2(b *strings.Builder, name, kind, mode string, h *hist, bucket
 	fmt.Fprintf(b, "%s_count{kind=%q,mode=%q} %d\n", name, kind, mode, h.n)
 }
 
-// trimFloat 用定点格式：le="1048576" 比 le="1.048576e+06" 好读，
-// 也避免个别客户端对指数写法的解析差异。
+// trimFloat 用定点格式：比 1.048576e+06 好读，
+// 也避开个别客户端对指数写法的解析差异。
 func trimFloat(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
@@ -793,8 +774,7 @@ func sortedSrc(m map[srcKey]uint64) []srcKey {
 	return out
 }
 
-// sortedMissKeys 让输出顺序稳定：同一份数据两次抓取要能 diff 出变化，
-// 而不是随机顺序。kind 升序，同 kind 内 code 升序。
+// sortedMissKeys 保证输出顺序稳定，两次抓取能直接 diff。
 func sortedMissKeys(m map[srcMissKey]uint64) []srcMissKey {
 	out := make([]srcMissKey, 0, len(m))
 	for k := range m {

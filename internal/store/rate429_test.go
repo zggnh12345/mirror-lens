@@ -44,8 +44,8 @@ func TestListSourcesRate429(t *testing.T) {
 	}
 }
 
-// 分母只数真实的上游响应：没拿到响应的（code=0）不进分母，否则
-// 一次 429 被几百次超时一稀释，看起来就像「很健康」。
+// 分母只数真实的上游响应：code=0 不进分母，否则一次 429 被几百次
+// 超时稀释，看起来就像「很健康」。
 func TestRate429IgnoresNoResponse(t *testing.T) {
 	st := openTest(t)
 	id := addSrc(t, st)

@@ -90,8 +90,7 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request) {
 	g.writeManifest(w, r, e, fromCache)
 }
 
-// fromCache=false 表示这份清单是刚回源拉下来的，回源字节已记过 fill，
-// 这里不能再记一次 hit（否则每次未命中都会被算成一次命中）。
+// fromCache=false 时字节已记 fill，再记 hit 会把每次未命中都算成命中。
 func (g *Gateway) writeManifest(w http.ResponseWriter, r *http.Request, e *store.CacheEntry, fromCache bool) {
 	if e == nil {
 		http.Error(w, "502 清单缺失", http.StatusBadGateway)
@@ -174,9 +173,8 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 客户端只要一段（断点续传）：直通上游，不落盘。
-	// 落盘路径只会回整份 200，客户端已经下了一半的字节就白费了——
-	// containerd 断点续传就是靠这个 Range 请求，这里和 /http 的处理保持一致。
+	// 客户端带 Range（containerd 断点续传）：直通不落盘。
+	// 落盘路径只回整份 200，会白费客户端已下的一半字节。
 	if r.Header.Get("Range") != "" {
 		g.passThrough(w, r, plan)
 		return

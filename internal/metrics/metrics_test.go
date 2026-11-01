@@ -68,7 +68,7 @@ func TestHistogramCumulative(t *testing.T) {
 	HTTP("docker", "GET", 200, 10*time.Millisecond, 0, "")
 	HTTP("docker", "GET", 200, 2*time.Second, 0, "")
 	out := string(Get().render())
-	// 10ms 落在 le=0.01 里，2s 落在 le=2.5 之前；累计桶必须是递增的
+	// 10ms 落 le=0.01，2s 落 +Inf；累计桶必须递增
 	if !strings.Contains(out, `mirrorlens_http_request_duration_seconds_bucket{scene="docker",le="0.01"} 1`) {
 		t.Fatalf("0.01 桶不对:\n%s", out)
 	}
@@ -265,7 +265,7 @@ func TestSceneHeatResetsWhenIdle(t *testing.T) {
 	if d := Get().sceneDelta["docker"]; d != 3 {
 		t.Fatalf("有流量时 delta 应为 3，实得 %d", d)
 	}
-	// 第二轮：零流量，gauge 必须归零（P0 修复点）
+	// 第二轮：零流量，gauge 必须归零
 	SnapshotSceneHotness()
 	if d := Get().sceneDelta["docker"]; d != 0 {
 		t.Fatalf("零流量时 delta 应归零，实得 %d", d)

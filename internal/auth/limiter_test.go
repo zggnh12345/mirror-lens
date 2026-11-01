@@ -34,7 +34,7 @@ func TestEmptyRemoteAddrUsesStableKey(t *testing.T) {
 	}
 }
 
-// 窗口内没有失败记录的 IP 不该在 map 里留空壳，长期运行会一直长。
+// 无失败记录的 IP 不该在 map 里留空壳，否则会一直增长。
 func TestLimiterDropsStaleKeys(t *testing.T) {
 	resetLimiter()
 	r := &http.Request{RemoteAddr: "203.0.113.9:5555"}

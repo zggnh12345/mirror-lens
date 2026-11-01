@@ -27,7 +27,7 @@ const (
 	KeySessionTTL = "session_ttl_hours"
 )
 
-// EnsureAdmin 首次启动时写入默认账号 admin/admin，并标记需要改密。
+// EnsureAdmin 首次启动写入默认账号 admin/admin，并标记需改密。
 func EnsureAdmin(st *store.Store) error {
 	if st.GetSetting(KeyHash, "") != "" {
 		return nil
@@ -45,12 +45,11 @@ func EnsureAdmin(st *store.Store) error {
 	return st.SetSetting(KeyMustChg, "1")
 }
 
-// ErrSetupDone 表示首次设置已经被人抢先做完了。
+// ErrSetupDone 表示首次设置已被别人做完。
 var ErrSetupDone = errors.New("账号已经设置过了")
 
-// Setup 首次设置账号：认领 must_change、写用户名、写密码，三件事在同一个事务里。
-// 认领是一条带条件的 UPDATE（value='1' → '0'），所以并发时只有一个调用能成功，
-// 失败的那个整体回滚，不会留下「用户名是 A、密码是 B」的半截状态。
+// Setup 在同一事务里认领 must_change、写用户名和密码。
+// 认领是条件 UPDATE，并发只有一个成功，失败者整体回滚。
 func Setup(st *store.Store, user, pass string) error {
 	h, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
 	if err != nil {
@@ -85,7 +84,7 @@ func Setup(st *store.Store, user, pass string) error {
 	return nil
 }
 
-// SetPassword 改密码，并作废所有已有会话（当前会话由调用方重新签发）。
+// SetPassword 改密码并作废所有会话；当前会话由调用方重发。
 func SetPassword(st *store.Store, pw string) error {
 	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 	if err != nil {
@@ -97,12 +96,12 @@ func SetPassword(st *store.Store, pw string) error {
 	return st.SetSetting(KeyMustChg, "0")
 }
 
-// SetUser 改用户名。会话不受影响（令牌与用户名无关）。
+// SetUser 改用户名，不影响会话（令牌与用户名无关）。
 func SetUser(st *store.Store, name string) error {
 	return st.SetSetting(KeyUser, name)
 }
 
-// ValidUser 用户名规则：3-32 位，字母数字和 _ - . ，不能是纯空白。
+// ValidUser 用户名 3-32 位，仅字母数字和 _ - .。
 func ValidUser(name string) bool {
 	if len(name) < 3 || len(name) > 32 {
 		return false
@@ -116,7 +115,6 @@ func ValidUser(name string) bool {
 	return true
 }
 
-// Check 校验用户名密码。
 func Check(st *store.Store, user, pass string) bool {
 	if user != st.GetSetting(KeyUser, DefaultUser) {
 		// 用户名错也跑一次哈希，避免用响应时间区分"用户不存在"和"密码错"
@@ -147,7 +145,7 @@ func SessionTTL(st *store.Store) time.Duration {
 	return time.Duration(h) * time.Hour
 }
 
-// Login 成功后签发会话并写 cookie。
+// Login 签发会话并写 cookie。
 func Login(w http.ResponseWriter, st *store.Store) error {
 	tok := NewToken()
 	if tok == "" {
@@ -180,11 +178,9 @@ func Logout(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	})
 }
 
-// MustChange 表示账号还在默认密码状态（没走过首次设置/改密）。
-//
-// 这种状态下会话不能当作「已认证」用于代理入口和指标抓取：默认口令是
-// 公开的 admin/admin，谁都能登进来拿一个 cookie，那样 Access Token 这道
-// 门就形同虚设。面板本身仍允许登录，否则没人能改密码。
+// MustChange 表示账号仍是默认密码。
+// 此时会话不能算已认证：admin/admin 谁都能登录，Access Token 形同虚设。
+// 面板仍允许登录，否则没人能改密码。
 func MustChange(st *store.Store) bool {
 	return st.GetSetting(KeyMustChg, "0") == "1"
 }
@@ -213,14 +209,13 @@ func clientIP(r *http.Request) string {
 		h = host
 	}
 	if h == "" {
-		// 空串会变成一张「谁都能往里塞」的共享票：既算不准限流，
-		// 也会在 map 里长期占着一个键。给它一个稳定的名字。
+		// 空串会让所有请求共用一个键，限流不准还会撑大 map。
 		return "unknown"
 	}
 	return h
 }
 
-// Allowed 判断该 IP 是否还能继续尝试登录。
+// Allowed 判断该 IP 还能否继续尝试登录。
 func Allowed(r *http.Request) bool {
 	loginLimiter.mu.Lock()
 	defer loginLimiter.mu.Unlock()
@@ -233,7 +228,7 @@ func Allowed(r *http.Request) bool {
 		}
 	}
 	if len(keep) == 0 {
-		// 没有有效记录就别把空切片留在 map 里：长期运行会被扫过的 IP 撑大。
+		// 空切片不留 map，否则长期运行会被扫过的 IP 撑大。
 		delete(loginLimiter.hits, ip)
 		return true
 	}

@@ -19,7 +19,7 @@ func newStore(t *testing.T) *store.Store {
 	return st
 }
 
-// 加一个源并灌 n 条探测样本（tier=3）。
+// 加一个源并灌 4 条 tier=3 样本。
 func addSource(t *testing.T, st *store.Store, base string, ok bool, lat, spd int64) int64 {
 	t.Helper()
 	id, err := st.AddSource(store.Source{BaseURL: base, Name: base, GithubCap: 1, DockerCap: 1, Status: "usable", Enabled: true})
@@ -27,7 +27,7 @@ func addSource(t *testing.T, st *store.Store, base string, ok bool, lat, spd int
 		t.Fatalf("加源: %v", err)
 	}
 	for i := 0; i < 4; i++ {
-		// 评分按协议隔离，这里灌的是 raw 的样本，查询也必须用 raw。
+		// 评分按协议隔离：灌 raw 的样本，查询也得用 raw。
 		if err := st.AddCheck(store.Check{SourceID: id, Kind: "raw", Tier: 3, OK: ok, LatencyMS: lat, SpeedKBps: spd}); err != nil {
 			t.Fatalf("加样本: %v", err)
 		}
@@ -65,7 +65,7 @@ func TestMaxCandidates(t *testing.T) {
 	}
 }
 
-// 代理请求失败只进冷却，不改探测样本——这是「测量与代理隔离」的底线。
+// 代理失败只进冷却，不改探测样本（测量与代理隔离）。
 func TestReportDoesNotTouchProbeSamples(t *testing.T) {
 	st := newStore(t)
 	id := addSource(t, st, "https://a.example", true, 200, 900)

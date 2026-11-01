@@ -95,8 +95,8 @@ func TestListSourcesP95(t *testing.T) {
 	}
 }
 
-// 老库升级：checks 表里没有 blob_ok / ttfb_ms，Open 之后要补上，且默认值
-// 是「未校验 / 没测」，不能是 0（0 会被读成「字节不符」）。
+// 老库升级：checks 表没有 blob_ok / ttfb_ms，Open 后要补上，
+// 默认值是「未校验 / 没测」而非 0（0 会被读成「字节不符」）。
 func TestMigrateAddsMetricColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	st, err := Open(path)

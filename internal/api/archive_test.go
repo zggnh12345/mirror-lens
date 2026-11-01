@@ -7,8 +7,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 归档是做过判断的状态：普通「启用」不能把它顶回调度，必须显式恢复
-// （status=pending，随后重新探测验证）。
+// 归档是判断过的状态：普通启用不能顶回调度，需显式给 pending 恢复。
 func TestArchivedSourceCannotBeEnabledDirectly(t *testing.T) {
 	st, h := newTestServer(t)
 	ck := setupPanel(t, h)
@@ -30,7 +29,7 @@ func TestArchivedSourceCannotBeEnabledDirectly(t *testing.T) {
 		t.Fatalf("状态被改成了 %s", got.Status)
 	}
 
-	// 显式恢复：同一个请求里给 pending，才允许重新启用。
+	// 显式恢复：同请求给 pending 才允许重新启用。
 	rec = patchJSON(h, "/api/sources/"+itoa(id), `{"enabled":true,"status":"pending"}`, ck)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("显式恢复应 200，得到 %d %s", rec.Code, rec.Body.String())
@@ -44,7 +43,7 @@ func TestArchivedSourceCannotBeEnabledDirectly(t *testing.T) {
 	}
 }
 
-// 归档的源不该出现在调度候选里（探测/调度都看不到它）。
+// 归档的源不出现在调度候选里。
 func TestArchivedSourceNotInCandidates(t *testing.T) {
 	st, h := newTestServer(t)
 	setupPanel(t, h)

@@ -19,7 +19,7 @@ func TestConfigViewGroupsAndFields(t *testing.T) {
 	if v["config_path"] != "/etc/mirror-lens/config.yaml" {
 		t.Fatalf("config_path 没带上: %v", v["config_path"])
 	}
-	// 找「缓存」分组，确认 max_gb 字段在且默认值 0
+	// 「缓存」分组里的 max_gb 默认 0
 	var found bool
 	for _, s := range secs {
 		if s["title"] != "缓存" {
@@ -77,7 +77,7 @@ func TestApplyConfigValuesValidAndInvalid(t *testing.T) {
 	}
 }
 
-// TestWriteConfigFilePreservesComments 验证只改一个键时，原文件的结构与注释不丢。
+// TestWriteConfigFilePreservesComments 只改一个键时结构注释不丢。
 func TestWriteConfigFilePreservesComments(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -119,7 +119,7 @@ logging:
 	}
 }
 
-// TestWriteConfigFileListKey 验证 trusted_proxies 这种列表键能整段重建。
+// TestWriteConfigFileListKey 验证列表键 trusted_proxies 整段重建。
 func TestWriteConfigFileListKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

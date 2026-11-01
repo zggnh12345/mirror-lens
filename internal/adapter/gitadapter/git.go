@@ -1,10 +1,10 @@
 // Package gitadapter 实现 Git Smart HTTP 的透明代理。
 //
-//	/git/<host>/<owner>/<repo>.git            → https://<host>/<owner>/<repo>.git
-//	/git/http/<host>/<owner>/<repo>.git      → 显式用 http 回源（默认 https）
+//	/git/<host>/<owner>/<repo>.git → https://<host>/<owner>/<repo>.git
+//	/git/http/<host>/<owner>/<repo>.git → 显式 http 回源（默认 https）
 //
 // 只代理读操作：info/refs 与 upload-pack。receive-pack（push）直接拒绝，
-// 镜像站不是代码托管平台，也不该替别人保管写权限。
+// 镜像站不是代码托管平台，不该替别人保管写权限。
 package gitadapter
 
 import (
@@ -20,7 +20,7 @@ import (
 
 const Prefix = "/git/"
 
-// 协议版本不同，info/refs 的响应体完全不同（v1 是 refs 列表，v2 是能力声明），
+// info/refs 的响应体随协议版本不同（v1 是 refs 列表，v2 是能力声明），
 // 缓存键必须分开，否则 v2 客户端会拿到 v1 的字节。
 const protoHeader = "Git-Protocol"
 
@@ -85,7 +85,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	svc := r.URL.Query().Get("service")
 	switch svc {
 	case "":
-		// 不带 service 的是 dumb 协议的裸对象请求，Git 现代版本用不到，拒掉免得成为任意文件读取口
+		// dumb 协议的裸对象请求，现代 Git 用不到，拒掉免得成为任意文件读取口
 		if r.Method == http.MethodGet && strings.Contains(repo, "/objects/") {
 			return nil, fmt.Errorf("%w: 不支持 dumb HTTP 协议", adapter.ErrBadPath)
 		}

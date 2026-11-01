@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// Hint.Code 要跟着事件落库：429 率靠它算，丢了这个字段就只能看到「失败」，
-// 分不清是「被限流」还是「坏了」。
+// Hint.Code 要跟着事件落库：429 率靠它算，否则分不清限流还是坏了。
 func TestReportKeepsStatusCode(t *testing.T) {
 	st := newStore(t)
 	id := addSource(t, st, "https://m.example", true, 100, 900)

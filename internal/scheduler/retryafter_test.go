@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Retry-After 决定冷却时长，但只在「比本地退避更久」时生效，且必须有上限。
+// Retry-After 参与冷却，但只在比本地退避更久时生效，且有上限。
 func TestReportRetryAfterDrivesCooldown(t *testing.T) {
 	cases := []struct {
 		name string
@@ -85,7 +85,7 @@ func TestReportSuccessClearsRetryAfterState(t *testing.T) {
 		t.Fatalf("成功应闭合熔断，实际 %+v", got)
 	}
 	sticky := got[0].Score
-	// 粘性只活 StickyTTL：过了这个点分数应掉回去，说明加分来自粘性而不是别的。
+	// 粘性只活 StickyTTL，过期后分数应掉回去。
 	now = now.Add(11 * time.Minute)
 	if later := s.Candidates("raw"); len(later) == 1 {
 		if later[0].Score >= sticky {

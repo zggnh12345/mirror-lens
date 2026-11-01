@@ -15,7 +15,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// newAuthServer 起一个「代理必须带 Token」的面板+网关，专测认证边界。
+// newAuthServer 起一个「代理必须带 Token」的面板+网关。
 func newAuthServer(t *testing.T, requireToken bool) (*store.Store, http.Handler) {
 	t.Helper()
 	dir := t.TempDir()
@@ -85,7 +85,7 @@ func TestRevokedTokenRejected(t *testing.T) {
 	}
 }
 
-// 空、缺位、乱码、错误 scheme：一律 401，不能因为解析失败就放行。
+// 空、缺位、乱码、错误 scheme 一律 401，解析失败不能放行。
 func TestMalformedTokenRejected(t *testing.T) {
 	metrics.Enable()
 	t.Cleanup(metrics.Disable)
@@ -137,14 +137,13 @@ func TestTokenAndSessionDoNotCross(t *testing.T) {
 	}
 }
 
-// metrics.require_token 与 auth.require_token 各自独立：
-// 代理匿名可访问时，指标仍要凭据；反过来也一样。
+// metrics.require_token 与 auth.require_token 彼此独立。
 func TestMetricsTokenIndependentFromProxyAuth(t *testing.T) {
 	metrics.Enable()
 	t.Cleanup(metrics.Disable)
 	st, h := newTestServerOpts(t, WithMetrics(true, true))
 
-	// 代理默认匿名：不带凭据不是 401（这里没配上游，会是别的错误码）。
+	// 代理默认匿名：不带凭据不是 401。
 	if r := get(h, "/raw/o/r/main/f.txt", nil, nil); r.Code == http.StatusUnauthorized {
 		t.Fatalf("代理未开 require_token 时不该 401，得到 %d", r.Code)
 	}

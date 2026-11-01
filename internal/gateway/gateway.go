@@ -1,6 +1,5 @@
 // Package gateway 是统一加速入口：认证 → 适配器解析 → 缓存 → 回源。
-//
-// 阶段 0/1 只挂载 /raw/，但流程和接口按后续 /http/、/git/、/v2/ 的形状写。
+// 阶段 0/1 只挂载 /raw/，接口按后续 /http/ /git/ /v2/ 的形状写。
 package gateway
 
 import (
@@ -70,7 +69,6 @@ type Gateway struct {
 	parFalls      atomic.Int64                      // 试过但退回单流（不支持 Range、源不够等）
 }
 
-// ParOptions 是并行分片的运行时参数，来自配置。
 type ParOptions struct {
 	Enabled   bool
 	MinSize   int64
@@ -78,8 +76,8 @@ type ParOptions struct {
 	Workers   int
 }
 
-// CDNOptions 控制边缘缓存语义。Enabled=false 时只发保守的短 TTL，
-// 打开后才把条目 TTL 让给边缘，并加可清理的缓存标签。
+// CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，
+// 打开后才把条目 TTL 让给边缘并加可清理的缓存标签。
 type CDNOptions struct {
 	Enabled bool
 	MaxAge  int // 秒；0 = 沿用条目 TTL
@@ -95,8 +93,7 @@ type Options struct {
 	CacheMaxBytes int64 // 缓存总量上限（字节），0 = 不限
 	Guard         *safehttp.Guard
 	Parallel      ParOptions
-	// RequireToken 控制 /raw /http /git /v2 是否需要 Access Token。
-	// 默认 false：匿名可读，适合当公共加速站；true 时非浏览器客户端必须带 token。
+	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
 	CDN          CDNOptions
 }
@@ -142,7 +139,6 @@ func New(st *store.Store, o Options) *Gateway {
 	}
 }
 
-// SetRawTTL 给测试用：把可变资源的重新验证间隔调小。
 // GC 暴露给 API 层做手动清理，保证和淘汰走同一套删除逻辑。
 func (g *Gateway) GC() *gc.GC { return g.gc }
 
@@ -150,8 +146,7 @@ func (g *Gateway) GC() *gc.GC { return g.gc }
 func (g *Gateway) CacheStore() *cache.Store { return g.cache }
 
 // VerifyFailed 返回进程内「校验不过、因此没落盘」的次数。
-//
-// 没有对应的缓存记录可查：坏内容一字节都不写索引，所以只能用计数器留痕。
+// 坏内容不写索引、没记录可查，只能用计数器留痕。
 func (g *Gateway) VerifyFailed() int64 {
 	if g == nil {
 		return 0
@@ -162,6 +157,7 @@ func (g *Gateway) VerifyFailed() int64 {
 // CacheLimit 是配置里的容量上限，0 表示不限。
 func (g *Gateway) CacheLimit() int64 { return g.cacheMaxBytes }
 
+// SetRawTTL 给测试用：把可变资源的重新验证间隔调小。
 func (g *Gateway) SetRawTTL(d time.Duration) { g.raw.TTL = d }
 
 // SetGitTTL 调整 info/refs 的缓存时长；0 表示不缓存。
@@ -174,7 +170,7 @@ type flight struct {
 	err    error
 }
 
-// setSource 告诉调用方这次是谁供的货，排查「为什么变慢」时一眼能看出。
+// setSource 标出供的哪台源，便于排查「为什么变慢」。
 func setSource(w http.ResponseWriter, plan *adapter.Plan) {
 	if plan != nil && plan.Source != "" {
 		w.Header().Set("X-ML-Source", plan.Source)
@@ -194,8 +190,8 @@ func (g *Gateway) ServeRaw(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-// ServeGH 是 release 资产与源码包的入口。和 /raw/ 一样自带 Bearer/Basic 认证：
-// 客户端是 curl、wget、gh，不会带面板 cookie。
+// ServeGH 处理 release 资产与源码包。自带 Bearer/Basic 认证：
+// 客户端是 curl/wget/gh，不会带面板 cookie。
 func (g *Gateway) ServeGH(w http.ResponseWriter, r *http.Request) {
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		g.serve(w, r, g.ghAd)
@@ -242,20 +238,20 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		default:
 			var ue *upstreamError
 			if errors.As(err, &ue) && (ue.Code == http.StatusNotFound || ue.Code == http.StatusGone) {
-				// 上游说文件没了，就不要拿旧的糊弄人
+				// 上游说文件没了：不要拿旧缓存糊弄人
 				g.st.CacheDelete(plan.CacheKey)
 				noStore(w.Header())
 				http.Error(w, fmt.Sprintf("%d 上游返回 %d", http.StatusNotFound, ue.Code), http.StatusNotFound)
 				return
 			}
-			// 超过缓存上限：不缓存，边下边发。大文件正是最需要加速的那类，
-			// 旧实现在这里直接 502，等于把 release 包全推给了源站。
+			// 超过缓存上限就边下边发、不缓存：大文件最需要加速，
+			// 早期直接 502 等于把 release 包全推回源站。
 			var tl *tooLargeError
 			if errors.As(err, &tl) {
 				g.fillStream(w, r, plan)
 				return
 			}
-			// 本地写不进去（盘满、权限）：别 502，直接边下边发，缓存这层先放下。
+			// 本地写不进去（盘满、权限）：别 502，直接边下边发。
 			var le *localError
 			if errors.As(err, &le) {
 				loggw(slog.LevelWarn, "本地写入失败，转透传", r.Context(), plan, logging.CacheCommitFailed, err)
@@ -321,8 +317,7 @@ func (g *Gateway) freshFor(e *store.CacheEntry, plan *adapter.Plan) bool {
 	return plan.Immutable || g.now().Sub(time.Unix(e.CreatedAt, 0)) < plan.TTL
 }
 
-// fetchOnce 保证同一个缓存键同时只有一次回源：并发请求等着，
-// 拿到的都是同一次写入完成后的完整文件。
+// fetchOnce 保证同一缓存键同时只有一次回源，其余请求等结果。
 func (g *Gateway) fetchOnce(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry) (*store.CacheEntry, bool, error) {
 	v, loaded := g.flights.LoadOrStore(plan.CacheKey, &flight{done: make(chan struct{})})
 	f := v.(*flight)
@@ -345,10 +340,8 @@ type fetchTarget struct {
 	c *scheduler.Candidate
 }
 
-// targets 决定这次回源按什么顺序试哪些地址。
-//
-// prev != nil 表示这是一次 TTL 到期后的重新验证：只回官方源。
-// 镜像站可能把旧内容当成「没变」，让它参与验证等于把过期数据固化下来。
+// targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
+// 镜像可能把旧内容当「没变」，让它验证等于固化过期数据。
 func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
 	if prev != nil || !g.sched.Enabled() {
@@ -367,12 +360,8 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 	return append(head, out...)
 }
 
-// fetch 按多源获取语义跑：目标是「拿到这份文件」，所以任何一台源答不上来
-// 都可以试下一台。代价是状态码不再是给客户端看的——客户端看到的是整条链
-// 走完后的结论（拿到 200，或者 404 说明所有源都没有，或者某个错误）。
-//
-// 三种失败要分开记：404/410 是「确定没有」（Miss，不罚源），401/403 是
-// 「没资格问」（换源，但也不罚源），其余才是这台源自己出问题（进冷却）。
+// fetch 试到哪台源能给出文件为止，客户端看到的是整条链的结论。
+// 404/410 记 Miss 不罚源，401/403 换源也不罚，其余才算源故障。
 func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry) (*store.CacheEntry, bool, error) {
 	if plan.Upstream == nil || plan.Upstream.Host == "" {
 		return nil, false, adapter.ErrNoTarget
@@ -383,8 +372,8 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 		e, notMod, code, err := g.fetchURL(ctx, plan, prev, t.u)
 		if err == nil {
 			if t.c != nil {
-				// 成功也要记状态码：429 率的分母是「上游真实响应过多少次」，
-				// 不记 200 的话分母里就只剩失败的请求。
+				// 成功也要记状态码：429 率的分母要含真实响应，
+				// 不记 200 的话分母里只剩失败请求。
 				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
 				if e != nil {
 					// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
@@ -394,21 +383,19 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			}
 			return e, notMod, nil
 		}
-		// 超过本地上限是策略判断，不是这台源的问题：记失败会把它打进
-		// 冷却/熔断，而它其实是好的。也不能再换源——同一份文件换个源
-		// 一样超限，交给流式链路直发即可。
+		// 超上限是策略判断不是源的问题：记失败会误伤冷却，
+		// 换源也一样超限，直接交给流式链路。
 		var tl *tooLargeError
 		if errors.As(err, &tl) {
 			return nil, false, err
 		}
-		// 404/410 是「这台源没有这个资源」，不是「这台源坏了」。镜像少一个
-		// Release 文件很常见：按故障处理会把整台源打进冷却、拉低健康分，
-		// 一次缺文件就牵连后续所有请求。记成 Miss，继续试下一个源。
+		// 404/410 是缺文件不是源坏了：按故障处理会误伤冷却，
+		// 记 Miss 后继续换源。
 		var ue *upstreamError
 		if errors.As(err, &ue) && isMiss(ue.Code) {
 			if t.c != nil {
-				// 响应是真实的：进 429 率的分母，但按成功计——它答得很正常，
-				// 只是没有这个文件。
+				// 404/410 也进 429 率分母并按成功计：
+				// 它答得很正常，只是没这个文件。
 				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
 			}
 			metrics.SourceMiss(plan.Kind, ue.Code)
@@ -420,9 +407,8 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 			lastErr = err
 			continue
 		}
-		// 401/403 换源，但不算这台源坏了：镜像要鉴权、开了防盗链很常见，
-		// 换一台往往还有救。它也不进 Miss 统计——资源在不在压根没答上来。
-		// 这条和 404/410 的区别是：Miss 是「确定没有」，这里是「没资格问」。
+		// 401/403 是「没资格问」：换源但不罚源，也不进 Miss 统计
+		// （资源在不在没答上来）；404/410 才是「确定没有」。
 		if errors.As(err, &ue) && isAuthDenied(ue.Code) {
 			if t.c != nil {
 				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
@@ -451,8 +437,7 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 				hint.Code = ue.Code
 			}
 			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
-			// 带宽控制同样要知道「这台源刚失败」：429 时继续按原并发打过去，
-			// 只会把冷却时间越拉越长。
+			// 带宽控制也要知道它刚失败：429 时照原并发打只会拖长冷却。
 			g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
 		}
 		loggw(slog.LevelWarn, "源不可用，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
@@ -461,8 +446,8 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	return nil, false, lastErr
 }
 
-// fetchURL 返回上游的状态码：0 表示根本没拿到响应（DNS/连接/超时/读中断）。
-// 调用方要靠它区分「对方回了 429」和「对方没理我们」。
+// fetchURL 返回上游状态码；0 表示没拿到响应。
+// 调用方据此区分「回了 429」和「没理我们」。
 func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -516,8 +501,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 
 	h := sha256.New()
-	// 声明的长度就超上限：一个字节都不用下，直接交给流式链路。
-	// 否则要先白下 maxSize 再报错，几百 MB 的 release 包等于白跑一遍。
+	// 声明长度就超上限时一个字节都不下：否则要白下 maxSize 才报错。
 	if resp.ContentLength > g.maxSize {
 		resp.Body.Close()
 		return nil, false, 0, &tooLargeError{Max: g.maxSize}
@@ -572,8 +556,8 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		TTL:          entryTTL(plan),
 		Verify:       verifyState(plan),
 	}
-	// 落盘和写索引必须在同一把 blob 锁里：janitor 的孤儿回收也在锁内查引用再删，
-	// 否则「文件已就位、索引还没写」的瞬间会被当成孤儿删掉。
+	// 落盘和写索引必须在同一把 blob 锁内：janitor 在锁内查引用再删，
+	// 否则「文件已就位、索引未写」的瞬间会被当孤儿清掉。
 	unlock := g.cache.LockBlob(sum)
 	if _, err := g.cache.Commit(tmpName, sum); err != nil {
 		unlock()
@@ -589,10 +573,8 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	return e, false, http.StatusOK, nil
 }
 
-// serveCached 发缓存里的内容。fromCache=false 表示这份内容是刚回源填进来的：
-// 回源字节已经由填充那边记过 fill，这里再记一次 hit 会把命中率算高。
-// 统计的 hit 字节按实际写给客户端的量算——Range 只要 10 MB 就记 10 MB，
-// 不是整个文件的长度。
+// fromCache=false 表示刚回源填充：字节已记 fill，再记 hit 会抬高命中率。
+// hit 字节按实际写出的量算，Range 只要 10 MB 就记 10 MB。
 func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.CacheEntry, label string, fromCache bool) {
 	if e == nil {
 		http.Error(w, "502 缓存条目缺失", http.StatusBadGateway)
@@ -633,8 +615,8 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		// 默认密码状态下不认 cookie：admin/admin 是公开的，能拿到会话就等于
-		// 能绕过 Access Token。面板登录照旧（要留一条改密码的路）。
+		// 默认密码时不认 cookie：admin/admin 是公开的，会话等于绕过
+		// Access Token。面板登录照旧，要留一条改密码的路。
 		if auth.Authed(r, g.st) && !auth.MustChange(g.st) {
 			next(w, r)
 			return
@@ -668,7 +650,6 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// entryTTL 把计划里的新鲜期换算成秒；不可变资源给一个足够长的值。
 func entryTTL(plan *adapter.Plan) int64 {
 	if plan.Immutable {
 		return 10 * 365 * 24 * 3600
@@ -691,11 +672,8 @@ func proxyToken(r *http.Request) string {
 	return ""
 }
 
-// loggw 统一回源/缓存类日志的字段。
-//
-// 固定带 request_id、kind、脱敏后的 cache_key；错误必须带 error_code，
-// 便于按代码聚合。不要在这里塞 URL、Token、Cookie —— 调用点也只传
-// 已经过 logging.SanitizeURL 的地址。
+// loggw 统一日志字段，错误必带 error_code 便于聚合。
+// 不要塞 URL/Token/Cookie，只传脱敏过的地址。
 func loggw(level slog.Level, msg string, ctx context.Context, plan *adapter.Plan, code logging.Code, err error, extra ...any) {
 	attrs := []any{
 		"request_id", logging.RequestID(ctx),
@@ -715,8 +693,7 @@ func loggw(level slog.Level, msg string, ctx context.Context, plan *adapter.Plan
 	slog.Log(ctx, level, msg, attrs...)
 }
 
-// codeFor 把错误归到稳定代码。分类只做粗粒度：日志要的是能聚合，
-// 不是精确到每一种 errno。
+// codeFor 只做粗粒度归类：日志要能聚合，不必精确到 errno。
 func codeFor(err error) logging.Code {
 	var ue *upstreamError
 	if errors.As(err, &ue) {
@@ -747,8 +724,8 @@ type upstreamError struct {
 
 func (e *upstreamError) Error() string { return fmt.Sprintf("上游返回 %d", e.Code) }
 
-// retryAfterHeader 解析 Retry-After：秒数或 HTTP-date，两种写法都合法。
-// 解析不出来、或者给了个过去的时间，就当没有这个头。
+// retryAfterHeader 解析 Retry-After（秒数或 HTTP-date）。
+// 解析不出、或时间已过去，都当没有这个头。
 func retryAfterHeader(h http.Header) time.Duration {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
@@ -768,9 +745,8 @@ func retryAfterHeader(h http.Header) time.Duration {
 	return 0
 }
 
-// localError 标记「我们自己这边的问题」：磁盘写不进去、缓存提交失败。
-// 这类失败换一台镜像也一样失败，更不该记到源站账上——磁盘满了把一排好源
-// 打成冷却/熔断，是最容易发生的误伤。
+// localError 标记本地故障（盘满、提交失败）：换源也一样失败，
+// 记到源站账上会把一排好源误伤成冷却/熔断。
 type localError struct{ err error }
 
 func (e *localError) Error() string { return e.err.Error() }
@@ -778,9 +754,8 @@ func (e *localError) Unwrap() error { return e.err }
 
 func local(err error) error { return &localError{err: err} }
 
-// isSourceFault 判断这次失败该不该算在源站头上。
-// 本地故障、超上限、客户端自己取消都不算；其余（连不上、超时、5xx、
-// 内容对不上、长度不符）才算。
+// isSourceFault：本地故障、超上限、客户端取消都不算源的账。
+// 其余（连不上、超时、5xx、内容/长度对不上）才算源故障。
 func isSourceFault(err error) bool {
 	if err == nil {
 		return false
@@ -799,7 +774,7 @@ func isSourceFault(err error) bool {
 	return true
 }
 
-// diskWriter 记住「写盘」这一步有没有失败，好把本地故障和上游中断分开。
+// diskWriter 记录写盘是否失败，用来分开本地故障和上游中断。
 type diskWriter struct {
 	w   io.Writer
 	err error
@@ -819,14 +794,13 @@ func (e *tooLargeError) Error() string {
 	return fmt.Sprintf("文件超过单文件上限 %d MB", e.Max>>20)
 }
 
-// isMiss 判断这个状态码是「没有这个资源」而不是「源站出问题」。
-// 410 是资源被明确下线，对客户端同样是「没有」。
+// isMiss：404/410 是「没有这个资源」，不是源站出问题。
 func isMiss(code int) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
 }
 
-// isAuthDenied 是「没资格问」，不是「没有」。两者都不算源站故障，但只有
-// 前者能说明资源确实不存在——所以鉴权失败不进 Miss 统计。
+// isAuthDenied 是「没资格问」而不是「没有」：不算源站故障，
+// 但也不进 Miss 统计（资源在不在没答上来）。
 func isAuthDenied(code int) bool {
 	return code == http.StatusUnauthorized || code == http.StatusForbidden
 }

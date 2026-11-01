@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// /api/export 至少返回 docker / github / containerd / k3s 四类配置片段，
-// 且空源站时给出占位文案而不是 panic 或残缺 JSON。
+// /api/export 返回 docker/github/containerd/k3s 四类片段，空源站给占位文案。
 func TestExportReturnsAllFormats(t *testing.T) {
 	_, h := newTestServer(t)
 	_, ck := login(t, h, "admin", "admin")
@@ -39,7 +38,7 @@ func TestExportReturnsAllFormats(t *testing.T) {
 			t.Fatalf("%q 片段为空", k)
 		}
 	}
-	// containerd 片段应是合法 hosts.toml 骨架（无源站时为占位，有源站时为 server= 开头）
+	// containerd 片段应是合法 hosts.toml 骨架
 	c := out["containerd"].(map[string]any)["snippet"].(string)
 	if !strings.Contains(c, "server = ") && !strings.Contains(c, "暂无可用源") {
 		t.Fatalf("containerd 片段异常：%s", c)

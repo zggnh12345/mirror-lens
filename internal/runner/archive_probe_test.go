@@ -7,8 +7,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 探测从发起走到写回有几十秒。这期间用户把它归档了，探测结果回来时
-// 不能把 archived 改回 usable——归档是人工决定，不能被一次自动探测撤销。
+// 探测期间被人工归档，结果回来不能把 archived 改回 usable。
 func TestArchivedDuringProbeSurvivesWriteback(t *testing.T) {
 	st, id := capStore(t, "usable", store.CapUnknown, store.CapUnknown)
 	e := New(st)

@@ -27,7 +27,7 @@ func TestMetricsViewEndpoint(t *testing.T) {
 		t.Fatal("设置后应换发会话")
 	}
 
-	// 监控未启用：接口应返回 enabled:false，而不是报错。
+	// 监控未启用时返回 enabled:false 而不是报错。
 	metrics.Disable()
 	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
 	req.AddCookie(newCk)

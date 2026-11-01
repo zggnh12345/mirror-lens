@@ -48,15 +48,14 @@ type Server struct {
 	metricsOn    bool
 	metricsToken bool
 
-	cfg     *config.Config // 可编辑的配置副本（设置页「配置参数」用）
-	cfgPath string         // 配置文件路径；为空则改动只存内存、不落盘
+	cfg     *config.Config // 可编辑的配置副本（设置页用）
+	cfgPath string         // 配置文件路径；空则改动只存内存
 }
 
-// Option 是 New 的可选开关，避免为了一个端点改所有调用点的签名。
+// Option 是 New 的可选开关，避免改所有调用点签名。
 type Option func(*Server)
 
-// WithMetrics 打开 /metrics；requireToken 时要求登录或 Access Token
-// （和代理路径同一套凭据），防止把流量数字暴露到公网。
+// WithMetrics 打开 /metrics；requireToken 时要求登录或 Access Token。
 func WithMetrics(enabled, requireToken bool) Option {
 	return func(s *Server) {
 		s.metricsOn = enabled
@@ -81,7 +80,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
-		// 还没设置过账号：直接给设置页，跳过默认密码登录这一步。
+		// 未设置账号时直接给设置页，跳过默认密码登录。
 		if s.needSetup() {
 			http.ServeFileFS(w, r, sub, "setup.html")
 			return
@@ -93,8 +92,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	})
 	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/api/login", s.login)
-	// Prometheus 抓取口。默认公开（和大多数自建服务一样），公网部署可在
-	// config.yaml 里把 metrics.require_token 打开，改用面板登录或 Access Token。
+	// Prometheus 抓取口。默认公开，公网部署可开 metrics.require_token。
 	if s.metricsOn {
 		mux.HandleFunc("/metrics", s.metrics)
 	}
@@ -105,14 +103,14 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		http.ServeFileFS(w, r, sub, "app.css")
 	})
 
-	// 图标公开：登录页与浏览器标签都要用
+	// 图标公开：登录页与标签页都要用
 	mux.HandleFunc("/icon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		http.ServeFileFS(w, r, sub, "icon.svg")
 	})
 
-	// 只校验登录，不校验「是否已经设置过账号」。设置页和登出要用它。
+	// authed 只校验登录，不管是否已设置账号（设置页、登出用）。
 	authed := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if !auth.Authed(r, s.st) {
@@ -127,13 +125,12 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 	}
 
-	// 受保护：首次设置态优先于登录校验。needSetup 期间，任何人（含匿名）
-	// 一律引到设置页；只有真正设过账号之后，才要求登录。旧的写法把登录
-	// 校验包在最外层，匿名请求还没轮到 needSetup 判断就被挡到 /login 了。
+	// guard 先判 needSetup 再判登录：首次设置期间匿名也能进设置页。
+	// 反过来的话匿名请求会先被挡到 /login。
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if s.needSetup() {
-				// /api/me 例外：放行给前端判断「还在首次设置态」，无需登录。
+				// /api/me 例外：前端靠它判断是否还在首次设置态。
 				if r.URL.Path == "/api/me" {
 					h(w, r)
 					return
@@ -148,7 +145,6 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 				http.Redirect(w, r, "/setup", http.StatusFound)
 				return
 			}
-			// 已设过账号：必须登录。
 			if !auth.Authed(r, s.st) {
 				if strings.HasPrefix(r.URL.Path, "/api/") {
 					writeJSON(w, 401, map[string]string{"error": "未登录"})
@@ -161,8 +157,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 	}
 
-	// 首次设置页：needSetup 期间任何人都能直接打开，不必先拿默认密码登录；
-	// 设完之后 needSetup 变 false，这个页就跳回面板。
+	// 首次设置页：needSetup 期间对匿名开放，设完即跳回面板。
 	mux.HandleFunc("/setup", func(w http.ResponseWriter, r *http.Request) {
 		if !s.needSetup() {
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -170,7 +165,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 		http.ServeFileFS(w, r, sub, "setup.html")
 	})
-	// 首次设置账号：needSetup 期间对匿名开放，设过一次返回 409，不需要先登录。
+	// 首次设置账号：needSetup 期间对匿名开放，设过返回 409。
 	mux.HandleFunc("/api/setup", s.setup)
 
 	mux.HandleFunc("/", guard(func(w http.ResponseWriter, r *http.Request) {
@@ -196,12 +191,12 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/password", guard(s.password))
 	mux.HandleFunc("/api/account", guard(s.account))
 
-	// 加速器：/raw/ 自带 Bearer/Basic 认证（客户端不会带 cookie）
+	// 加速器路径自带 Bearer/Basic 认证（客户端不带 cookie）
 	mux.HandleFunc("/raw/", s.gw.ServeRaw)
 	mux.HandleFunc("/gh/", s.gw.ServeGH)
 	mux.HandleFunc("/http/", s.gw.ServeHTTPProxy)
 	mux.HandleFunc("/git/", s.gw.ServeGit)
-	// Docker Registry V2：客户端只会拼 /v2/...，所以挂在根路径下
+	// Registry V2 客户端只拼 /v2/...，所以挂在根路径。
 	if s.gw.RegistryOn() {
 		mux.HandleFunc("/v2/", s.gw.ServeRegistry)
 	}
@@ -215,9 +210,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	return logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
 }
 
-// noStorePanel 给面板和接口加 no-store：这些响应带会话和实时状态，
-// 一旦被 CDN 或浏览器缓存，轻则看到旧数据，重则串号。代理路径不经过这里，
-// 它们的缓存语义由 gateway.cacheHeaders 按内容类型决定。
+// noStorePanel 给面板和接口加 no-store：响应带会话，缓存会串号。
+// 代理路径不经此处，缓存语义由 gateway.cacheHeaders 决定。
 func noStorePanel(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -229,11 +223,8 @@ func noStorePanel(next http.Handler) http.Handler {
 	})
 }
 
-// httpProxyBypass 在进 ServeMux 之前截住 /http/。
-//
-// /http/ 后面的目标地址是整体百分号编码的，路径里必然出现 %2F；
-// Go 1.22+ 的 ServeMux 不允许转义斜杠落在路径段内，会直接 404。
-// 这里按 EscapedPath 判断前缀，命中就交给网关自己解析。
+// httpProxyBypass 在进 ServeMux 前截住 /http/：目标地址整体编码，
+// 路径含 %2F，ServeMux 会 404，只能按 EscapedPath 自己解析。
 func httpProxyBypass(gw *gateway.Gateway, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if wantsHTTPProxy(r) {
@@ -248,9 +239,8 @@ func wantsHTTPProxy(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.EscapedPath(), "/http/")
 }
 
-// logRequests 只记面板接口；代理路径量大，交给网关自己的日志。
-// 注意不要在这里包一层通用 ResponseWriter：/raw/ /gh/ 是流式响应，
-// 包了就得把 Flush/Hijack 都转发，多一层风险不值得。
+// logRequests 只记面板接口，代理路径交给网关自己的日志。
+// 不给流式响应包 ResponseWriter：得转发 Flush/Hijack，不值得。
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/health" {
@@ -319,8 +309,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1"})
 }
 
-// maskUser 只留首字符和长度：日志要能看出「有人在试哪个账号」，但用户名本身
-// 不该落在日志里（日志会被打包、转发、贴进 issue）。
+// maskUser 只留首字符和长度：日志不该出现完整用户名。
 func maskUser(u string) string {
 	if u == "" {
 		return "(空)"
@@ -334,8 +323,7 @@ func (s *Server) needSetup() bool {
 	return s.st.GetSetting(auth.KeyMustChg, "0") == "1"
 }
 
-// setup 首次设置账号和密码。此时会话是用默认密码换来的，所以不再要旧密码，
-// 但要一次性把用户名和密码都定下来。
+// setup 首次设置账号：不校验旧密码，用户名和密码一次定下。
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]string{"error": "method"})
@@ -366,7 +354,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "别再用默认密码 admin"})
 		return
 	}
-	// 认领 + 写账号 + 写密码在一个事务里，并发设置只有一个能赢。
+	// 认领 + 写账号 + 写密码同事务，并发设置只有一个成功。
 	if err := auth.Setup(s.st, in.User, in.Pass); err != nil {
 		if errors.Is(err, auth.ErrSetupDone) {
 			writeJSON(w, 409, map[string]string{"error": "账号已经设置过了"})
@@ -375,7 +363,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	// Setup 已经作废了所有旧会话（包括此刻这个），给当前浏览器发一个新的。
+	// Setup 已作废所有会话（含当前），给当前浏览器重发一个。
 	if err := auth.Login(w, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
 		return
@@ -459,12 +447,11 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	// 防御性撤销墓碑：sources.id 是 AUTOINCREMENT，正常不会复用，但一旦
-	// 复用了而墓碑还在，新源的报告和闸门会被当成「已删除」静默丢弃。
+	// 撤销墓碑：id 一旦被复用而墓碑还在，新源的报告会被当成已删除丢弃。
 	if s.sch != nil {
 		s.sch.Revive(id)
 	}
-	// 立刻跑一次识别（两种类型都试），前端轮询这个源的状态即可
+	// 立刻跑一次识别（两种类型都试），前端轮询状态。
 	go s.eng.RunSource(id)
 	writeJSON(w, 200, map[string]any{"ok": true, "id": id})
 }
@@ -508,16 +495,15 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			Name      *string `json:"name"`
 			Note      *string `json:"note"`
 			Preferred *bool   `json:"preferred"`
-			// Status 只接受人工可做的三件事：归档、封禁、恢复待检。
-			// 不让手动置 usable——那等于绕过探测和校验。
+			// Status 只接受 archived/blocked/pending；usable 得靠探测。
 			Status *string `json:"status"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 			return
 		}
-		// 先落状态再落开关：归档源要恢复，必须同一个请求里显式给
-		// status=pending，否则 store 会拒绝「启用」（ErrArchived）。
+		// 先落状态再落开关：恢复归档源必须同请求给 status=pending，
+		// 否则 store 拒绝启用（ErrArchived）。
 		if in.Status != nil {
 			v := *in.Status
 			switch v {
@@ -532,7 +518,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case "pending":
-				// 恢复：先退回待检，让探测重新验证，不直接当可用。
+				// 恢复：退回待检让探测重新验证，不直接当可用。
 				if err := s.st.SetStatusWhy(id, "pending", "手动恢复，等待复检"); err != nil {
 					writeJSON(w, 500, map[string]string{"error": err.Error()})
 					return
@@ -557,7 +543,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// 状态/开关改了：让调度器立刻重算候选，别等 ListTTL 过期。
+		// 改了状态/开关就让调度器重算候选，别等 ListTTL 过期。
 		s.eng.Changed()
 		if in.Enabled != nil && *in.Enabled {
 			go s.eng.RunSource(id)
@@ -568,8 +554,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// 库里删干净还不够：调度器的候选缓存、熔断、并发闸门、动态吞吐和
-		// 逐源指标都还记着这个 id。不一起清掉，界面会继续把它排进候选。
+		// 只删库不够：调度器缓存、熔断、闸门、指标都还记着这个 id。
 		s.sch.Forget(id)
 		s.eng.Changed()
 		writeJSON(w, 200, map[string]any{"ok": true})
@@ -618,7 +603,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 			if c == nil || !c.OK || c.DigestOK == 0 {
 				continue
 			}
-			// 测过速但慢到没有实用价值的，不推荐
+			// 测过速但慢到没实用价值的不推荐
 			if c.SpeedKBps > 0 && c.SpeedKBps < 100 {
 				continue
 			}
@@ -652,7 +637,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		gSnippet = "（暂无可用源）"
 	}
 
-	// containerd hosts.toml（docker.io 加速）：现代 containerd 用 certs.d/<host>/hosts.toml
+	// containerd hosts.toml（docker.io 加速）：certs.d/<host>
 	var cLines []string
 	cLines = append(cLines, "server = \"https://registry-1.docker.io\"")
 	for _, x := range docker {
@@ -709,7 +694,7 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 	go func() {
-		// 不能用 r.Context()：handler 一返回它就被取消，抓取会全部失败。
+		// 不能用 r.Context()：handler 返回即取消，抓取会全失败。
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		n, err := discover.Scan(ctx, s.st)
@@ -782,7 +767,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// account 同时改用户名和密码：两个字段都可选，但必须带当前密码。
+// account 同时改用户名和密码，两个都可选，但必须带当前密码。
 func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]string{"error": "method"})
@@ -834,7 +819,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if passChanged {
-		// 密码变了，其他设备上的会话全部作废，当前浏览器换一个新令牌
+		// 密码变了就作废其他会话，当前浏览器换新令牌
 		s.st.DeleteAllSessions()
 		if err := auth.Login(w, s.st); err != nil {
 			writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
@@ -869,7 +854,7 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	// 改完密码踢掉所有旧会话，然后给当前浏览器发一个新的
+	// 作废旧会话，给当前浏览器发一个新令牌
 	s.st.DeleteAllSessions()
 	if err := auth.Login(w, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "密码已改，但会话创建失败，请重新登录"})
@@ -878,8 +863,7 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// metrics 输出 Prometheus 文本格式。默认公开，require_token 打开后要求
-// 面板登录或 Access Token——抓取端用 Bearer 就行。
+// metrics 输出 Prometheus 文本。require_token 时接受 Bearer 或登录会话。
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	if s.metricsToken && !(auth.Authed(r, s.st) && !auth.MustChange(s.st)) {
 		tok := scrapeToken(r)
@@ -901,7 +885,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	reg.Handler().ServeHTTP(w, r)
 }
 
-// scrapeToken 取抓取端带来的凭据：Bearer 或 Basic 的密码位。
+// scrapeToken 取 Bearer 或 Basic 密码位上的凭据。
 func scrapeToken(r *http.Request) string {
 	a := r.Header.Get("Authorization")
 	if len(a) > 7 && strings.EqualFold(a[:7], "bearer ") {

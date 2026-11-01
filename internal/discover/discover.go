@@ -12,8 +12,8 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 列表仓库：这些 README 里维护着镜像站清单。抓的是"候选"，不是"可用"，
-// 一律以 pending 入库，只有通过 L2 真拉取才会转成 usable。
+// 列表仓库：这些 README 里维护着镜像站清单。抓到的只是"候选"不是"可用"，
+// 一律 pending 入库，通过 L2 真拉取才转 usable。
 var listRepos = []struct {
 	kind string
 	url  string
@@ -36,7 +36,7 @@ var deny = map[string]bool{
 	"api.github.io": true, "github.dev": true,
 }
 
-// 关键词过滤：只保留看起来是加速器的域名，压掉列表里的杂音。
+// 关键词过滤：只保留看起来像加速器的域名，压掉列表杂音。
 var hints = []string{"docker", "mirror", "ghproxy", "gh-proxy", "ghp", "proxy", "registry", "hub", "加速"}
 
 // 文档站、代码托管站自身的子域，一律不是加速器
@@ -108,7 +108,7 @@ func Scan(ctx context.Context, st *store.Store) (added int, err error) {
 	}
 	sort.Strings(keys)
 	for _, h := range keys {
-		// 能力留空，交给探测判断：列表里说它是 docker 站，不代表真是
+		// 能力留空，交给探测判断：清单说它是 docker 站，不代表真是
 		_, e := st.AddSource(store.Source{
 			BaseURL:   "https://" + h,
 			Name:      h,

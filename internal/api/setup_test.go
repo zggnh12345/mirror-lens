@@ -92,7 +92,7 @@ func TestDefaultPasswordBlocksPanel(t *testing.T) {
 		t.Fatalf("未设置账号前 /api/sources 应 403 setup_required，得到 %d %s", r2.Code, r2.Body.String())
 	}
 
-	// /api/me 仍然可用：设置页和登录跳转要靠它判断状态，它不泄露任何东西。
+	// /api/me 仍可用：设置页和登录跳转靠它判断状态。
 	req = httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.AddCookie(ck)
 	r2b := httptest.NewRecorder()
@@ -246,8 +246,8 @@ func TestSetupThenPanelOpens(t *testing.T) {
 	}
 }
 
-// 首次进入不需要先用默认密码登录：needSetup 期间 /setup 与 /login 都直接给设置页，
-// 匿名直接 POST /api/setup 即可设账号，设完后面板可用、默认密码失效，重复设置返回 409。
+// 首次进入不需要先用默认密码登录：needSetup 期间 /setup 与 /login 都给设置页，
+// 匿名可直接 POST /api/setup 设账号，设完面板可用、重复设置返回 409。
 func TestFirstRunSetupNoPriorLogin(t *testing.T) {
 	_, h := newTestServer(t)
 

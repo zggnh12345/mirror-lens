@@ -10,15 +10,9 @@ import (
 	"testing"
 )
 
-// TestSegSelectedStateRendered 用 node 真正跑一遍设置页的 cfgControl，
+// TestSegSelectedStateRendered 用 node 跑一遍设置页的 cfgControl，
 // 检查开/关分段按钮的选中态落在 class 上。
-//
-// 背景（真实 bug）：按钮 HTML 曾经拼成 `<button ... data-v="true" on>`，
-// " on" 变成了裸属性 on 而不是 class，于是任何按钮都拿不到 .seg button.on，
-// 界面上开/关都是白底，看上去"既没有开也没有关"。
-//
-// 纯静态断言容易漏（写法换一种照样错），所以这里直接执行页面里的 JS 函数，
-// 再用正则检查产出的 HTML。
+// 曾把 " on" 拼成裸属性导致按钮全白，所以直接执行 JS 再查 HTML。
 func TestSegSelectedStateRendered(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

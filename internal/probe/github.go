@@ -22,8 +22,9 @@ const (
 	ghBigSize = 3953824
 )
 
-// GitHub probes one GitHub proxy. tier 1 = liveness, 2 = verified small file,
-// 3 = real release download with hash check and throughput.
+// GitHub probes one GitHub proxy.
+// tier 1 = liveness, 2 = verified small file, 3 = release download
+// with hash check and throughput.
 func GitHub(ctx context.Context, base string, tier int, expectedHash string) Result {
 	base = trimBase(base)
 	host := hostOf(base)
