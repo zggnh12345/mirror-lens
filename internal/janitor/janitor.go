@@ -200,6 +200,7 @@ func (j *Janitor) Once() Stats {
 			metrics.SetSources(m)
 		}
 		metrics.SnapshotHitRatio()
+		metrics.SnapshotSceneHotness()
 	}
 
 	if s.Expired+s.Missing+s.Orphans+s.Partials+s.TmpFiles > 0 || s.Freed > 0 {

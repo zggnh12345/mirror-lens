@@ -106,31 +106,40 @@ type Registry struct {
 	hitRatio  map[string]float64
 	lastHits  map[string]uint64
 	lastTotal map[string]uint64
+
+	// 热度：每个场景的累计请求数，janitor 周期取差值得到「这轮」请求量。
+	sceneTotal map[string]*atomic.Uint64
+	haveHot    bool
+	sceneDelta map[string]uint64
+	lastScene  map[string]uint64
 }
 
 // New 建一个空注册表。
 func New() *Registry {
 	return &Registry{
-		httpReq:   map[httpKey]uint64{},
-		httpDur:   map[string]*hist{},
-		httpBytes: map[string]uint64{},
-		cache:     map[cacheKey]uint64{},
-		tp:        map[string]*hist{},
-		srcReq:    map[srcKey]uint64{},
-		srcResp:   map[string]uint64{},
-		src429:    map[string]uint64{},
-		srcMiss:   map[srcMissKey]uint64{},
-		srcDur:    map[srcDurKey]*hist{},
-		srcTTFB:   map[srcDurKey]*hist{},
-		inflight:  map[int64]int{},
-		srclimit:  map[int64]int{},
-		limited:   map[string]uint64{},
-		sources:   map[SourceStat]uint64{},
-		hitHits:   map[string]*atomic.Uint64{},
-		hitTotal:  map[string]*atomic.Uint64{},
-		hitRatio:  map[string]float64{},
-		lastHits:  map[string]uint64{},
-		lastTotal: map[string]uint64{},
+		httpReq:    map[httpKey]uint64{},
+		httpDur:    map[string]*hist{},
+		httpBytes:  map[string]uint64{},
+		cache:      map[cacheKey]uint64{},
+		tp:         map[string]*hist{},
+		srcReq:     map[srcKey]uint64{},
+		srcResp:    map[string]uint64{},
+		src429:     map[string]uint64{},
+		srcMiss:    map[srcMissKey]uint64{},
+		srcDur:     map[srcDurKey]*hist{},
+		srcTTFB:    map[srcDurKey]*hist{},
+		inflight:   map[int64]int{},
+		srclimit:   map[int64]int{},
+		limited:    map[string]uint64{},
+		sources:    map[SourceStat]uint64{},
+		hitHits:    map[string]*atomic.Uint64{},
+		hitTotal:   map[string]*atomic.Uint64{},
+		hitRatio:   map[string]float64{},
+		lastHits:   map[string]uint64{},
+		lastTotal:  map[string]uint64{},
+		sceneTotal: map[string]*atomic.Uint64{},
+		sceneDelta: map[string]uint64{},
+		lastScene:  map[string]uint64{},
 	}
 }
 
@@ -178,6 +187,12 @@ func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache st
 			r.hitTotal[scene] = tot
 		}
 		tot.Add(1)
+		st := r.sceneTotal[scene]
+		if st == nil {
+			st = &atomic.Uint64{}
+			r.sceneTotal[scene] = st
+		}
+		st.Add(1)
 		if cache == "hit" {
 			h := r.hitHits[scene]
 			if h == nil {
@@ -387,6 +402,26 @@ func SnapshotHitRatio() {
 	r.haveRatio = true
 }
 
+// SnapshotSceneHotness 由 janitor 周期调用：取各场景累计请求数差值，
+// 得到「最近一轮」每个协议的请求量（热度），写入 sceneDelta gauge。
+func SnapshotSceneHotness() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for scene, c := range r.sceneTotal {
+		now := c.Load()
+		dt := now - r.lastScene[scene]
+		if dt > 0 || r.lastScene[scene] == 0 {
+			r.sceneDelta[scene] = dt
+		}
+		r.lastScene[scene] = now
+	}
+	r.haveHot = true
+}
+
 // ---------- HTTP ----------
 
 // Scene 把路径压成有限个场景。绝不把 URL 本身当标签。
@@ -559,6 +594,15 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "cache_hit_ratio gauge\n")
 		for _, s := range sortedKeys(r.hitRatio) {
 			fmt.Fprintf(&b, "%scache_hit_ratio{scene=%q} %s\n", prefix, s, trimFloat(r.hitRatio[s]))
+		}
+	}
+
+	// 热度（gauge，janitor 周期从累计请求数取差值）
+	if r.haveHot {
+		b.WriteString("# HELP " + prefix + "scene_requests_delta 最近一个周期内的场景请求量（热度）\n")
+		b.WriteString("# TYPE " + prefix + "scene_requests_delta gauge\n")
+		for _, s := range sortedKeys(r.sceneDelta) {
+			fmt.Fprintf(&b, "%sscene_requests_delta{scene=%q} %d\n", prefix, s, r.sceneDelta[s])
 		}
 	}
 
