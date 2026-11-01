@@ -97,6 +97,15 @@ type Registry struct {
 	cacheFree   uint64
 	haveSources bool
 	sources     map[SourceStat]uint64
+
+	// 命中率滚动窗口：每次 HTTP 命中/未命中时自增，janitor 周期读取与上轮的差值
+	// 算出「这轮」命中率，写入 hitRatio gauge。抓取时直接读 gauge，不重算。
+	hitHits   map[string]*atomic.Uint64
+	hitTotal  map[string]*atomic.Uint64
+	haveRatio bool
+	hitRatio  map[string]float64
+	lastHits  map[string]uint64
+	lastTotal map[string]uint64
 }
 
 // New 建一个空注册表。
@@ -117,6 +126,11 @@ func New() *Registry {
 		srclimit:  map[int64]int{},
 		limited:   map[string]uint64{},
 		sources:   map[SourceStat]uint64{},
+		hitHits:   map[string]*atomic.Uint64{},
+		hitTotal:  map[string]*atomic.Uint64{},
+		hitRatio:  map[string]float64{},
+		lastHits:  map[string]uint64{},
+		lastTotal: map[string]uint64{},
 	}
 }
 
@@ -157,6 +171,21 @@ func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache st
 	}
 	if cache != "" {
 		r.cache[cacheKey{scene, cache}]++
+		// 命中率窗口：hit 才算命中，miss/pass 只进分母。
+		tot := r.hitTotal[scene]
+		if tot == nil {
+			tot = &atomic.Uint64{}
+			r.hitTotal[scene] = tot
+		}
+		tot.Add(1)
+		if cache == "hit" {
+			h := r.hitHits[scene]
+			if h == nil {
+				h = &atomic.Uint64{}
+				r.hitHits[scene] = h
+			}
+			h.Add(1)
+		}
 	}
 	// 吞吐量只在真正回源的响应上量：命中缓存时 bytes/耗时 是磁盘和内存的速度，
 	// 拿它当「源站吞吐」是错的。小于 64 KiB 或 0.5 秒的样本也跳过，抖动太大。
@@ -329,6 +358,35 @@ func SetSources(m map[SourceStat]uint64) {
 	r.mu.Unlock()
 }
 
+// SnapshotHitRatio 由 janitor 周期调用：用本轮与上轮的累计差值算命中率。
+// 取差值而不是累计比，是为了反映「最近这段时间的真实命中率」——
+// 服务刚起的那几千次冷启动未命中不该永久拉低曲线。
+func SnapshotHitRatio() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for scene, tot := range r.hitTotal {
+		now := tot.Load()
+		h := r.hitHits[scene]
+		nh := uint64(0)
+		if h != nil {
+			nh = h.Load()
+		}
+		lastT := r.lastTotal[scene]
+		lastH := r.lastHits[scene]
+		dt := now - lastT
+		if dt > 0 {
+			r.hitRatio[scene] = float64(nh-lastH) / float64(dt)
+		}
+		r.lastTotal[scene] = now
+		r.lastHits[scene] = nh
+	}
+	r.haveRatio = true
+}
+
 // ---------- HTTP ----------
 
 // Scene 把路径压成有限个场景。绝不把 URL 本身当标签。
@@ -492,6 +550,15 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "sources gauge\n")
 		for _, k := range sortedSrcStat(r.sources) {
 			fmt.Fprintf(&b, "%ssources{kind=%q,status=%q} %d\n", prefix, k.Kind, k.Status, r.sources[k])
+		}
+	}
+
+	// 命中率（gauge，由 janitor 周期从滚动窗口算）
+	if r.haveRatio {
+		b.WriteString("# HELP " + prefix + "cache_hit_ratio 最近一个周期内的缓存命中率（0~1）\n")
+		b.WriteString("# TYPE " + prefix + "cache_hit_ratio gauge\n")
+		for _, s := range sortedKeys(r.hitRatio) {
+			fmt.Fprintf(&b, "%scache_hit_ratio{scene=%q} %s\n", prefix, s, trimFloat(r.hitRatio[s]))
 		}
 	}
 

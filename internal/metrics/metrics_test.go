@@ -226,6 +226,30 @@ func TestSnapshotGauges(t *testing.T) {
 	}
 }
 
+func TestCacheHitRatio(t *testing.T) {
+	setup(t)
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-ML-Cache", "HIT")
+		w.WriteHeader(200)
+	}))
+	miss := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-ML-Cache", "MISS")
+		w.WriteHeader(200)
+	}))
+	rec := httptest.NewRecorder()
+	// docker 场景：2 次命中 + 1 次未命中
+	for i := 0; i < 2; i++ {
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/v2/x/blobs/sha256:a", nil))
+	}
+	miss.ServeHTTP(rec, httptest.NewRequest("GET", "/v2/x/blobs/sha256:b", nil))
+	SnapshotHitRatio()
+	out := string(Get().render())
+	// 2/3 ≈ 0.6667
+	if !strings.Contains(out, `mirrorlens_cache_hit_ratio{scene="docker"} 0.6666666666666666`) {
+		t.Fatalf("命中率不对:\n%s", out)
+	}
+}
+
 func TestHandlerContentType(t *testing.T) {
 	setup(t)
 	RateLimited("ip") // 有一条样本，输出才不为空
