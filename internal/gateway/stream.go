@@ -309,6 +309,36 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		cacheable = false // 超过单文件上限就只透传，不占盘
 	}
 
+	// 补发旧前缀和「这次还落不落盘」是两件事。缓存策略可能在上次中断之后
+	// 变了（文件超过新的单文件上限、上游改成 no-store）：这时上游回的仍是
+	// 206 后半段，但客户端要的是整份。因为不缓存就跳过补发，等于把后半段
+	// 当成整份发出去，Content-Length 还对得上——坏得最隐蔽的那种。
+	partPath, _ := g.cache.PartialPaths(plan.CacheKey)
+	var prefix *os.File
+	if have > 0 {
+		pf, perr := os.Open(partPath)
+		if perr == nil {
+			if fi, serr := pf.Stat(); serr != nil {
+				pf.Close()
+				perr = serr
+			} else if fi.Size() != have {
+				pf.Close()
+				perr = fmt.Errorf("续传文件长度 %d，续传点是 %d", fi.Size(), have)
+			}
+		}
+		if perr != nil {
+			// 盘上的前半段没了，手里只有 206 的后半段：发出去就是残缺文件。
+			// 丢掉续传点，让客户端重试一次完整 GET。
+			g.cache.DropPartial(plan.CacheKey)
+			log.Printf("续传数据缺失，要求客户端重试: %v (%s)", perr, plan.Upstream)
+			noStore(w.Header())
+			http.Error(w, "502 续传数据缺失，请重新请求", http.StatusBadGateway)
+			return
+		}
+		prefix = pf
+		defer prefix.Close()
+	}
+
 	h := w.Header()
 	copyHeader(h, resp.Header, "Content-Type", "Content-Disposition", "Content-Language")
 	h.Set("Accept-Ranges", "bytes")
@@ -324,8 +354,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	label := "MISS"
 	if have > 0 {
 		label = "RESUME"
-	}
-	if !cacheable {
+	} else if !cacheable {
 		label = "BYPASS" // 不落盘：太大、no-store，或者写盘出错
 	}
 	h.Set("X-ML-Cache", label)
@@ -343,40 +372,34 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	sent := int64(0)    // 已经发给客户端的字节
 	written := int64(0) // 这次真正写进 .part 的字节
 
+	// 上次已经下好的字节先补给客户端，同时接着算哈希。这一步和 cacheable
+	// 无关：这次不落盘，客户端手里那半份也还是要补齐的。
+	if prefix != nil {
+		n, cerr := io.Copy(io.MultiWriter(w, hasher), prefix)
+		if cerr != nil {
+			// 只是补发旧字节时客户端断了：盘上那份没动过，续传点保持原样。
+			g.keepPartial(plan, resp, total, 0, nil)
+			return
+		}
+		sent = n
+		if !cacheable {
+			// 已经决定不落盘，盘上这份半成品留着只会一直过期。
+			g.cache.DropPartial(plan.CacheKey)
+		}
+	}
+
 	if cacheable {
-		partPath, _ := g.cache.PartialPaths(plan.CacheKey)
-		if have > 0 {
-			// 上次已经下好的字节，这次先补给客户端，同时接着算哈希
-			pf, err := os.Open(partPath)
-			if err == nil {
-				n, cerr := io.Copy(io.MultiWriter(w, hasher), pf)
-				pf.Close()
-				if cerr != nil {
-					// 只是补发旧字节时客户端断了：盘上那份没动过，续传点保持原样。
-					g.keepPartial(plan, resp, total, 0, nil)
-					return
-				}
-				sent = n
-			}
-			if sent != have {
-				have, sent = 0, 0
+		if have == 0 {
+			if err := g.cache.ResetPartial(plan.CacheKey); err != nil {
 				cacheable = false
-				g.cache.DropPartial(plan.CacheKey)
 			}
 		}
 		if cacheable {
-			if have == 0 {
-				if err := g.cache.ResetPartial(plan.CacheKey); err != nil {
-					cacheable = false
-				}
-			}
-			if cacheable {
-				var err error
-				part, err = g.cache.OpenPartial(plan.CacheKey)
-				if err != nil {
-					log.Printf("打开缓存文件失败，降级为透传: %v", err)
-					cacheable = false
-				}
+			var err error
+			part, err = g.cache.OpenPartial(plan.CacheKey)
+			if err != nil {
+				log.Printf("打开缓存文件失败，降级为透传: %v", err)
+				cacheable = false
 			}
 		}
 	}
@@ -471,7 +494,6 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		outcome = outcomeFail
 		return
 	}
-	partPath, _ := g.cache.PartialPaths(plan.CacheKey)
 	// 与 fetch()/并行填充同一把 blob 锁：落盘到写索引之间，janitor 不能插进来
 	// 把这个「文件已在、索引还没写」的 blob 当孤儿删掉。
 	unlock := g.cache.LockBlob(sha)

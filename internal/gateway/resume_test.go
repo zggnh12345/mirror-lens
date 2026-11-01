@@ -3,9 +3,11 @@ package gateway
 import (
 	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -168,5 +170,51 @@ func TestKeepPartialNilKeepsExistingMeta(t *testing.T) {
 	m, ok := cs.ReadPartial(plan.CacheKey)
 	if !ok || m.Have != 400 {
 		t.Fatalf("已有续传点被改坏了: %+v ok=%v", m, ok)
+	}
+}
+
+// 缓存策略在中途变了（文件超过新的单文件上限）：上游仍然只回 206 的后半段，
+// 但补发旧前缀和「这次还落不落盘」是两件事，客户端必须拿到整份。
+// 回归的是「if cacheable { 补发前缀 }」——不缓存就跳过补发，等于把后半段
+// 当整份发出去，而且 Content-Length 还对得上。
+func TestResumeReplaysPrefixWhenCacheNoLongerAllowed(t *testing.T) {
+	f := newHTTPFixture(t, 0)
+	target := f.srv.URL + "/f.bin"
+
+	// 第一次：允许缓存，传到一半断开，留下 .part 和续传点。
+	f.up.mu.Lock()
+	f.up.truncateOnce = true
+	f.up.mu.Unlock()
+	w1 := f.req(t, target, nil)
+	if got := w1.Body.Len(); got == 0 || got >= len(f.up.body) {
+		t.Fatalf("第一次应只收到半份，实际 %d 字节", got)
+	}
+	if n := len(partialFiles(t, f.dir)); n != 1 {
+		t.Fatalf("第一次应留下 1 个 .part，实际 %d", n)
+	}
+
+	// 第二次：上限调到比文件小，这次不允许缓存。
+	gw := New(f.st, Options{
+		Cache:    f.cs,
+		RawBase:  f.srv.URL,
+		MaxBytes: int64(len(f.up.body)) / 2,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
+	})
+	enc := url.PathEscape(target)
+	r := httptest.NewRequest(http.MethodGet, "http://gw/http/"+enc, nil)
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	w := httptest.NewRecorder()
+	gw.ServeHTTPProxy(w, r)
+
+	if !bytes.Equal(w.Body.Bytes(), f.up.body) {
+		t.Fatalf("续传必须给出整份 %d 字节，实际 %d 字节（后半段被当成整份发了）",
+			len(f.up.body), w.Body.Len())
+	}
+	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len(f.up.body)) {
+		t.Fatalf("Content-Length 应声明 %d，实际 %q", len(f.up.body), cl)
+	}
+	// 已经不缓存了，半成品别留着过期。
+	if n := len(partialFiles(t, f.dir)); n != 0 {
+		t.Fatalf("不缓存的响应不该留下 .part，实际 %d", n)
 	}
 }
