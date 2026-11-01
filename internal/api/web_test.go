@@ -39,6 +39,20 @@ func TestWebUIRegressions(t *testing.T) {
 		t.Error("app.css 应定义 [data-panel].active 显示规则")
 	}
 
+	// 面板切换只依赖 .active 类，任何面板都不应再带 hidden 属性（旧内核对 hidden 支持/优先级不稳）。
+	for _, p := range []string{"account", "appearance", "probe", "accel", "config", "about"} {
+		if strings.Contains(s, `data-panel="`+p+`" hidden`) {
+			t.Errorf("面板 %s 不应再带 hidden 属性", p)
+		}
+	}
+	// matchMedia 监听器需兼容旧内核：不得直接 .addEventListener，必须有 addListener 兜底。
+	if strings.Contains(s, `matchMedia('(prefers-color-scheme:dark)').addEventListener`) {
+		t.Error("matchMedia 不得直接调用 addEventListener（旧 webview 不支持会中断脚本）")
+	}
+	if !strings.Contains(s, `addListener`) {
+		t.Error("matchMedia 应保留 addListener 兜底以兼容旧内核")
+	}
+
 	// 监测页：错误改为中文友好提示 .errchip，点击展开原始技术参数；不再使用裸红字 .err。
 	if !strings.Contains(ix, `function errHuman(`) {
 		t.Error("index.html 应定义 errHuman 中文错误映射")

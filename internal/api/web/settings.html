@@ -65,7 +65,7 @@
   </div>
 
   <!-- 外观 -->
-  <div data-panel="appearance" hidden>
+  <div data-panel="appearance">
   <div class="sec">
     <h2>外观</h2>
     <p class="desc">跟随系统时，手机或电脑切到深色，面板会跟着变。</p>
@@ -79,7 +79,7 @@
   </div>
 
   <!-- 探测 -->
-  <div data-panel="probe" hidden>
+  <div data-panel="probe">
   <div class="sec">
     <h2>探测节奏</h2>
     <p class="desc">分三层跑：先探活，再验可用，最后测速和内容校验。数字越小越勤，也越费流量。</p>
@@ -111,7 +111,7 @@
   </div>
 
   <!-- 加速器 -->
-  <div data-panel="accel" hidden>
+  <div data-panel="accel">
   <div class="sec">
     <h2>加速器</h2>
     <p class="desc">在原始地址前加本站前缀就能用，客户端用 Access Token 认证（用户名随便填，密码位填 Token）。</p>
@@ -147,12 +147,12 @@
   </div>
 
   <!-- 配置参数 -->
-  <div data-panel="config" hidden>
+  <div data-panel="config">
     <div id="cfgBox"><div class="hint">加载中…</div></div>
   </div>
 
   <!-- 关于 -->
-  <div data-panel="about" hidden>
+  <div data-panel="about">
   <div class="sec">
     <h2>关于</h2>
     <div class="kv"><span>版本</span><span id="aboutVer">—</span></div>
@@ -210,7 +210,9 @@ document.querySelectorAll('#themeSeg button').forEach(function(b){
     toast('主题已切换为' + TNAME[t]);
   });
 });
-window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ applyTheme(curTheme()); });
+var mqDark = window.matchMedia('(prefers-color-scheme:dark)');
+if (mqDark.addEventListener) mqDark.addEventListener('change', function(){ applyTheme(curTheme()); });
+else if (mqDark.addListener) mqDark.addListener(function(){ applyTheme(curTheme()); });
 applyTheme(curTheme());
 
 /* ---- 分页 ---- */

@@ -174,7 +174,9 @@ $('#btnTheme').addEventListener('click', function(){
   applyTheme(t);
   toast('主题：' + TNAME[t]);
 });
-window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(){ applyTheme(curTheme()); });
+var mqDark = window.matchMedia('(prefers-color-scheme:dark)');
+if (mqDark.addEventListener) mqDark.addEventListener('change', function(){ applyTheme(curTheme()); });
+else if (mqDark.addListener) mqDark.addListener(function(){ applyTheme(curTheme()); });
 applyTheme(curTheme());
 
 /* ---- 渲染 ---- */
