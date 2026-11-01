@@ -1,6 +1,11 @@
 package api
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -62,5 +67,32 @@ func TestWebUIRegressions(t *testing.T) {
 	}
 	if strings.Contains(ix, `<span class="err"`) {
 		t.Error("不应再使用原始红字 .err 渲染错误")
+	}
+}
+
+// TestWebUISyntax 真正解析内嵌 JS，防止脚本因语法错误整体失效
+// （曾因 esc() 对象字面量畸形导致 settings.html 整段脚本解析失败、Tab 全失效）。
+// 依赖 node；若环境无 node 则跳过。
+func TestWebUISyntax(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node 不可用，跳过 JS 语法校验")
+	}
+	re := regexp.MustCompile(`<script>(.*?)</script>`)
+	for _, name := range []string{"web/settings.html", "web/index.html"} {
+		raw, err := webFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for i, b := range re.FindAllStringSubmatch(string(raw), -1) {
+			f := filepath.Join(t.TempDir(), fmt.Sprintf("%s_%d.js", filepath.Base(name), i))
+			if err := os.WriteFile(f, []byte(b[1]), 0o644); err != nil {
+				t.Fatalf("write temp: %v", err)
+			}
+			out, err := exec.Command(node, "--check", f).CombinedOutput()
+			if err != nil {
+				t.Errorf("%s 脚本块%d 语法错误:\n%s", name, i, string(out))
+			}
+		}
 	}
 }
