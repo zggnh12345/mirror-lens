@@ -45,7 +45,7 @@ type Result struct {
 	Detail    string `json:"detail"`
 }
 
-const userAgent = "mirror-lens/1.0 (+https://github.com/)"
+const userAgent = "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)"
 
 // ttfbReader 记下「第一次读到正文」用了多久。
 // 用 ResponseHeader 的时间不算 TTFB——镜像站常在发完头之后卡住正文。

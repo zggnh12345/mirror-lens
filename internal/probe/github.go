@@ -100,17 +100,25 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 	bu := base + "/" + ghBigURL
 	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, bu, nil)
 	if err != nil {
+		res.OK = false
+		res.DigestOK = -1
 		res.Error = errStr(err)
 		return res
 	}
 	req2.Header.Set("User-Agent", userAgent)
 	resp2, err := client.Do(req2)
 	if err != nil {
+		// 前面 raw 那步已经置过 OK=true，这里必须拉回来，
+		// 否则 release 拉不动也叫「通过」，探测就成了假阳性。
+		res.OK = false
+		res.DigestOK = -1
 		res.Error = "release 下载失败: " + errStr(err)
 		return res
 	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != 200 {
+		res.OK = false
+		res.DigestOK = -1
 		res.Error = fmt.Sprintf("release 返回 %d", resp2.StatusCode)
 		return res
 	}

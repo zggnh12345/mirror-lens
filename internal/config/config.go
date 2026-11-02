@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,13 +25,17 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 		}
 		v, err := time.ParseDuration(s)
 		if err != nil {
-			// 纯数字按秒处理
-			var secs int64
-			if _, e2 := fmt.Sscanf(s, "%d", &secs); e2 == nil {
+			// 纯数字按秒处理。必须整串都是数字：Sscanf("%d") 会把
+			// "300abc" 读成 300 并报成功，等于把写错的配置静默吞掉。
+			secs, e2 := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+			if e2 == nil && secs >= 0 {
 				d.Duration = time.Duration(secs) * time.Second
 				return nil
 			}
 			return fmt.Errorf("时间格式 %q 看不懂，写 30s / 5m / 300 这样", s)
+		}
+		if v < 0 {
+			return fmt.Errorf("时间不能为负: %q", s)
 		}
 		d.Duration = v
 		return nil
@@ -38,6 +43,9 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	var secs int64
 	if err := n.Decode(&secs); err != nil {
 		return fmt.Errorf("时间格式不合法: %s", n.Value)
+	}
+	if secs < 0 {
+		return fmt.Errorf("时间不能为负: %s", n.Value)
 	}
 	d.Duration = time.Duration(secs) * time.Second
 	return nil
@@ -102,6 +110,9 @@ type Parallel struct {
 	MinSizeMB int64 `yaml:"min_size_mb"` // 小于此尺寸不值得分片，握手更慢
 	ChunkMB   int64 `yaml:"chunk_mb"`    // 单片大小
 	Workers   int   `yaml:"workers"`     // 同时下载几片
+	// DisableTailVerify 关掉「尾部扣留」：正常情况下最后一段字节要等
+	// 整份 SHA-256 对上才放给客户端，关掉就退回边下边发的旧行为。
+	DisableTailVerify bool `yaml:"disable_tail_verify"`
 }
 
 // Auth 控制代理路径（/raw /http /git /v2）的访问。

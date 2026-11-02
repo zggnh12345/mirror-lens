@@ -77,6 +77,8 @@ type ParOptions struct {
 	MinSize   int64
 	ChunkSize int64
 	Workers   int
+	// TailVerify 为 true 时，最后一段字节要等整份哈希通过才放给客户端。
+	TailVerify bool
 }
 
 // CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，

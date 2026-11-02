@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -100,10 +101,24 @@ func (s *Store) OpenPartial(key string) (*os.File, error) {
 }
 
 // ResetPartial 清空数据文件，从头开始。
+// 必须先拿到那把 flock 再截断：共用缓存目录时，别人可能正拿着写，
+// 直接 WriteFile 会把人家写到一半的字节抹掉。
 func (s *Store) ResetPartial(key string) error {
 	part, _ := s.PartialPaths(key)
 	if err := os.MkdirAll(s.partialDir(), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(part, nil, 0o644)
+	f, err := os.OpenFile(part, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, lerr := lockFile(f); lerr != nil {
+		return fmt.Errorf("半截文件被另一个进程占用: %w", lerr)
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	_, err = f.Seek(0, io.SeekStart)
+	return err
 }

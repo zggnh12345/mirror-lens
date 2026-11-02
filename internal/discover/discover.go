@@ -122,7 +122,7 @@ func fetch(ctx context.Context, client *http.Client, f feed) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "mirror-lens/1.0")
+	req.Header.Set("User-Agent", "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)")
 	for k, v := range f.header {
 		req.Header.Set(k, v)
 	}

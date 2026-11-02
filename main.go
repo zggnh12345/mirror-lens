@@ -53,20 +53,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("读配置: %v", err)
 	}
-	// 只在命令行显式给出时覆盖配置文件
-	flag.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "addr":
-			cfg.Addr = *addr
-		case "data":
-			cfg.Data = *dataDir
-		case "no-seed":
-			cfg.NoSeed = *noSeed
-		}
-	})
-	cfg.Addr = envOr("ADDR", cfg.Addr)
-	cfg.Data = envOr("DATA_DIR", cfg.Data)
-	cfg.Cache.Dir = envOr("CACHE_DIR", cfg.Cache.Dir)
+	// 三层优先级：配置文件 < 环境变量 < 命令行。顺序就是优先级，
+	// 反过来写（先 flag 再 env）会让环境变量悄悄盖掉显式参数。
+	applyOverrides(cfg,
+		func(name string) bool {
+			seen := false
+			flag.Visit(func(f *flag.Flag) {
+				if f.Name == name {
+					seen = true
+				}
+			})
+			return seen
+		},
+		os.Getenv, *addr, *dataDir, *noSeed)
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("配置不合法: %v", err)
 	}
@@ -136,10 +135,11 @@ func main() {
 		RequireToken:      cfg.Auth.RequireToken,
 		CDN:               gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
-			Enabled:   cfg.Parallel.Enabled,
-			MinSize:   cfg.Parallel.MinSizeMB << 20,
-			ChunkSize: cfg.Parallel.ChunkMB << 20,
-			Workers:   cfg.Parallel.Workers,
+			Enabled:    cfg.Parallel.Enabled,
+			MinSize:    cfg.Parallel.MinSizeMB << 20,
+			ChunkSize:  cfg.Parallel.ChunkMB << 20,
+			Workers:    cfg.Parallel.Workers,
+			TailVerify: !cfg.Parallel.DisableTailVerify,
 		},
 	})
 	if cfg.Auth.RequireToken {
@@ -256,6 +256,30 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
 	log.Print("已退出")
+}
+
+// applyOverrides 把环境变量和命令行叠到配置上：先 env，后 flag。
+// set 用来判断某个 flag 是否真的被写了（flag 默认值是空串，不能靠非空判断）。
+func applyOverrides(cfg *config.Config, set func(string) bool, getenv func(string) string,
+	addr, data string, noSeed bool) {
+	if v := getenv("ADDR"); v != "" {
+		cfg.Addr = v
+	}
+	if v := getenv("DATA_DIR"); v != "" {
+		cfg.Data = v
+	}
+	if v := getenv("CACHE_DIR"); v != "" {
+		cfg.Cache.Dir = v
+	}
+	if set("addr") {
+		cfg.Addr = addr
+	}
+	if set("data") {
+		cfg.Data = data
+	}
+	if set("no-seed") {
+		cfg.NoSeed = noSeed
+	}
 }
 
 func envOr(k, def string) string {

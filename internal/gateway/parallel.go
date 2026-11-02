@@ -102,6 +102,16 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.cache.DropPartial(plan.CacheKey)
 	}
 
+	// 尾部扣留：最后 hold 字节先不给客户端，整份哈希对上才放出去。
+	// 校验失败时客户端收到的是「内容比 Content-Length 少」的短响应，
+	// 必然报错；不会像旧行为那样收下一个长度正确、内容错误的 200。
+	// 代价只是末尾多等一个校验的时间，不占额外磁盘，也不推迟首字节。
+	hold := int64(0)
+	if g.par.TailVerify {
+		hold = tailHold(total)
+	}
+	flushUntil := total - hold
+
 	firstLen := chunk
 	if n == 1 {
 		firstLen = total
@@ -216,10 +226,19 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for got < firstLen {
 		nr, rerr := resp0.Body.Read(buf)
 		if nr > 0 {
-			if _, werr := out.Write(buf[:nr]); werr != nil {
-				resp0.Body.Close()
-				abort()
-				return true // 客户端走了，不落缓存（分片是乱序的，留下也没法续）
+			wn := int64(nr)
+			if avail := flushUntil - got; avail < wn {
+				wn = avail
+			}
+			if wn > 0 {
+				if _, werr := out.Write(buf[:wn]); werr != nil {
+					resp0.Body.Close()
+					abort()
+					return true // 客户端走了，不落缓存（分片是乱序的，留下也没法续）
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
 			}
 			if _, werr := part.WriteAt(buf[:nr], got); werr != nil {
 				resp0.Body.Close()
@@ -270,12 +289,18 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		if off+length > total {
 			length = total - off
 		}
-		if _, werr := io.CopyN(out, io.NewSectionReader(part, off, length), length); werr != nil {
-			abort()
-			return true
+		wl := length
+		if avail := flushUntil - off; avail < wl {
+			wl = avail
 		}
-		if flusher != nil {
-			flusher.Flush()
+		if wl > 0 {
+			if _, werr := io.CopyN(out, io.NewSectionReader(part, off, wl), wl); werr != nil {
+				abort()
+				return true
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 	wg.Wait()
@@ -303,6 +328,18 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		}
 		log.Printf("并行填充：整份校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, parNames(srcs))
 		return true
+	}
+
+	// 哈希对了，把扣住的尾巴补齐；客户端这才拿到完整长度。
+	if hold > 0 {
+		if _, werr := io.CopyN(out, io.NewSectionReader(part, flushUntil, hold), hold); werr != nil {
+			abort()
+			log.Printf("并行填充：补发尾部失败: %v", werr)
+			return true
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}
 
 	ok = true // 分片全到齐且整份哈希对上：这条任务算成功
@@ -350,6 +387,19 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s", plan.CacheKey, total, n, len(srcs), time.Since(start).Round(time.Millisecond))
 	return true
+}
+
+// tailHold 返回要扣住的字节数：总量的八分之一，最多 1MB。
+// 小文件扣得少，大文件封顶，延迟只落在最后一个校验上。
+func tailHold(total int64) int64 {
+	if total <= 0 {
+		return 0
+	}
+	h := total / 8
+	if h > 1<<20 {
+		h = 1 << 20
+	}
+	return h
 }
 
 type parStat struct {

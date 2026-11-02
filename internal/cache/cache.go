@@ -46,9 +46,26 @@ func New(root string) (*Store, error) {
 
 func (s *Store) Root() string { return s.root }
 
+// validSha 只认 64 位小写十六进制。路径由哈希拼成，
+// 不校验字符集的话 "../../x" 这种串能爬出 blobs 目录。
+func validSha(sha string) bool {
+	if len(sha) != 64 {
+		return false
+	}
+	for i := 0; i < len(sha); i++ {
+		c := sha[i]
+		if c < '0' || c > '9' {
+			if c < 'a' || c > 'f' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // BlobPath 按哈希前两位分桶，避免单目录几十万文件。
 func (s *Store) BlobPath(sha string) string {
-	if len(sha) < 3 {
+	if !validSha(sha) {
 		return ""
 	}
 	return filepath.Join(s.root, "blobs", sha[:2], sha)
