@@ -114,6 +114,68 @@ func TestCSRFRejectsCrossOrigin(t *testing.T) {
 	}
 }
 
+// 反代场景：TLS 在前面终止，r.TLS 是 nil，Origin 却是 https。
+// 只有对端是可信任的反代时才采信 X-Forwarded-Proto/Host，否则就是白送一个绕过口。
+func TestCSRFOriginBehindTrustedProxy(t *testing.T) {
+	st, h := newAuthServer(t, false)
+	ck, tok := signedIn(t, st, h)
+	defer auth.SetTrustedProxies(nil)
+	auth.SetTrustedProxies([]string{"10.0.0.0/8"})
+
+	with := func(kv map[string]string) map[string]string {
+		m := map[string]string{"X-CSRF-Token": tok}
+		for k, v := range kv {
+			m[k] = v
+		}
+		return m
+	}
+	req := func(origin, xfp, xfh, remote, host string, want int) {
+		t.Helper()
+		hdr := with(map[string]string{"Origin": origin})
+		if xfp != "" {
+			hdr["X-Forwarded-Proto"] = xfp
+		}
+		if xfh != "" {
+			hdr["X-Forwarded-Host"] = xfh
+		}
+		if got := putRaw(h, "/api/settings", `{"l1_minutes":11}`, hdr, remote, host, ck); got != want {
+			t.Fatalf("Origin=%s xfp=%s xfh=%s remote=%s host=%s 应为 %d，得到 %d",
+				origin, xfp, xfh, remote, host, want, got)
+		}
+	}
+
+	// 反代后面：协议和主机都从可信转发头还原，端口一致 → 放行。
+	req("https://ml.xnat.cc:3333", "https", "ml.xnat.cc:3333", "10.1.1.5:51000", "mirror-lens:8080", 200)
+	// 端口不同 → 跨站。
+	req("https://ml.xnat.cc:8443", "https", "ml.xnat.cc:3333", "10.1.1.5:51000", "mirror-lens:8080", 403)
+	// 协议不同 → 跨站（http 页面伪造 https Origin 也算）。
+	req("http://ml.xnat.cc:3333", "https", "ml.xnat.cc:3333", "10.1.1.5:51000", "mirror-lens:8080", 403)
+	// 不可信对端自带转发头：一律忽略，伪造 Origin 仍然拦下。
+	req("https://evil.example", "https", "evil.example", "203.0.113.5:40000", "mirror-lens:8080", 403)
+	// 默认端口归一：http://a:80 与 http://a 同源。
+	req("http://ml.example.com:80", "", "", "203.0.113.5:40000", "ml.example.com", 200)
+}
+
+func putRaw(h http.Handler, path, body string, hdr map[string]string, remote, host string, ck *http.Cookie) int {
+	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if remote != "" {
+		req.RemoteAddr = remote
+	}
+	if host != "" {
+		req.Host = host
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	if ck != nil {
+		req.AddCookie(ck)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
 // 探测和发现是写操作，GET 不许触发。
 func TestProbeRequiresPost(t *testing.T) {
 	st, h := newAuthServer(t, false)

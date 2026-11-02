@@ -215,6 +215,22 @@ func Login(w http.ResponseWriter, r *http.Request, st *store.Store) error {
 	return nil
 }
 
+// remoteIP 取对端地址（不带端口）。
+func remoteIP(r *http.Request) net.IP {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	return net.ParseIP(strings.Trim(host, "[]"))
+}
+
+// IsTrustedProxy 判断对端是不是可信反代。只有它才有资格用 X-Forwarded-*：
+// 换句话说，来自不可信对端的 X-Forwarded-Proto / X-Forwarded-Host 一律当没看见。
+func IsTrustedProxy(r *http.Request) bool {
+	ip := remoteIP(r)
+	return ip != nil && trusted(ip)
+}
+
 func secureCookie(r *http.Request, st *store.Store) bool {
 	switch st.GetSetting("cookie_secure", "") {
 	case "1":
@@ -225,12 +241,7 @@ func secureCookie(r *http.Request, st *store.Store) bool {
 	if r.TLS != nil {
 		return true
 	}
-	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		host = h
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	return ip != nil && trusted(ip) && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+	return IsTrustedProxy(r) && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 var errNoEntropy = errors.New("无法生成随机会话令牌")

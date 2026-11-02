@@ -21,18 +21,60 @@ func sessionToken(r *http.Request) string {
 	return c.Value
 }
 
+// externalOrigin 拼出这次请求对外的源（协议 + 主机 + 端口）。
+//
+// 反代后面 r.TLS 是 nil、r.Host 也可能被改写成上游地址，所以只有在
+// 对端是可信反代时才采信 X-Forwarded-Proto / X-Forwarded-Host；
+// 不可信对端塞的转发头一律忽略，否则伪造一个 Origin 就等于绕过校验。
+func externalOrigin(r *http.Request) *url.URL {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if auth.IsTrustedProxy(r) {
+		if p := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))); p == "http" || p == "https" {
+			scheme = p
+		}
+		if h := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); h != "" {
+			host = h
+		}
+	}
+	return &url.URL{Scheme: scheme, Host: host}
+}
+
+// portOf 取有效端口：显式端口优先，否则按协议取默认端口。
+// 比较 http://a:80 与 http://a 时必须相等，否则同源会被误判成跨站。
+func portOf(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+// sameOrigin 比较协议、主机、端口三项，缺一不可。
+func sameOrigin(o string, r *http.Request) bool {
+	u, err := url.Parse(strings.TrimSpace(o))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil {
+		return false
+	}
+	w := externalOrigin(r)
+	return strings.EqualFold(u.Scheme, w.Scheme) &&
+		strings.EqualFold(u.Hostname(), w.Hostname()) &&
+		portOf(u) == portOf(w)
+}
+
 // crossSite 判断请求是不是别的站点发来的。任一命中即拒绝：
-//   - Origin 存在时必须和本站同源（"null" 也拒）；
+//   - Origin 存在时必须与本站同源（协议/主机/端口），"null" 也拒；
 //   - Sec-Fetch-Site 存在时必须是 same-origin / none。
 //
 // 这两个头老浏览器可能没有，所以真正的兜底是下面的 token。
 func crossSite(r *http.Request) bool {
 	if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" {
-		u, err := url.Parse(o)
-		if err != nil || u.Host == "" {
-			return true
-		}
-		if !strings.EqualFold(u.Host, r.Host) {
+		if !sameOrigin(o, r) {
 			return true
 		}
 	}
