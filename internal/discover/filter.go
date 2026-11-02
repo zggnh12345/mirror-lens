@@ -1,8 +1,11 @@
 package discover
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 )
 
 var (
@@ -84,4 +87,32 @@ func LooksLikeMirror(host, kind string) bool {
 		}
 	}
 	return false
+}
+
+// publicHost 判断候选主机能不能入库。发现清单来自第三方，任何人都能往里写条目：
+// 内网 IP 字面量、回环、元数据地址、带凭据的 URL 都必须在这里丢掉，
+// 否则这些地址会变成库里的「镜像源」，被探测和代理挨个去连。
+//
+// 只做字面检查（协议/凭据/IP 段/明显本地域名），域名解析交给拨号层的 Guard：
+// 本机 DNS 走 fakeip，在这里解析既不准也没意义。
+func publicHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	u, err := url.Parse("https://" + host)
+	if err != nil || u.Host != host || u.User != nil || u.Path != "" || u.RawQuery != "" {
+		return false
+	}
+	if err := safehttp.Default().Check(u); err != nil {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	switch {
+	case name == "localhost", strings.HasSuffix(name, ".localhost"),
+		strings.HasSuffix(name, ".local"), strings.HasSuffix(name, ".internal"),
+		strings.HasSuffix(name, ".home.arpa"), !strings.Contains(name, "."):
+		return false
+	}
+	return true
 }

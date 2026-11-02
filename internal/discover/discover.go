@@ -10,8 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
+
+// feedGuard 抓发现清单也走同一层防护：清单来自第三方仓库，重定向到内网
+// 或者域名解析成内网地址时必须在拨号层被拦下，不能因为「只是抓个文本」就放行。
+var feedGuard = safehttp.Default()
 
 // Scan 抓取全部发现源，把库里没有的主机写进 pending 池，返回新增数量。
 // 发现的只是候选：能力留空，由探测决定去留。
@@ -53,6 +58,10 @@ func Scan(ctx context.Context, st *store.Store) (int, error) {
 	added := 0
 	for _, h := range order {
 		c := best[h]
+		if !publicHost(c.host) {
+			log.Printf("discover: 丢弃不可信候选 %s（内网/保留地址或非法主机名）", c.host)
+			continue
+		}
 		note := "自动发现 · " + c.origin
 		if c.online {
 			note += "（在线）"
@@ -88,7 +97,7 @@ func Scan(ctx context.Context, st *store.Store) (int, error) {
 
 // fetchAll 并发抓取，单个源失败只影响自己。
 func fetchAll(ctx context.Context) []candidate {
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := feedGuard.Client()
 	perFeed := make([][]candidate, len(feeds))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
@@ -118,6 +127,9 @@ func fetchAll(ctx context.Context) []candidate {
 }
 
 func fetch(ctx context.Context, client *http.Client, f feed) ([]byte, error) {
+	// Guard.Client 的整体 Timeout 是 0（大文件不能整体超时），单条清单自己兜 25s。
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
 	if err != nil {
 		return nil, err
