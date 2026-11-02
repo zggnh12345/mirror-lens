@@ -114,9 +114,15 @@ type Store struct {
 
 	// 审计走单条后台通道：登录爆破时每个失败都同步写库会把写锁打满，
 	// 所以宁可丢几条事件，也不让审计拖慢认证。
-	auditOnce sync.Once
-	auditCh   chan AuditEvent
-	auditStop chan struct{}
+	//
+	// 启动由 Open 显式触发，不挂在「第一次写事件」上：否则进程启动后
+	// 若一直没人动面板，过期清理要等到第一条事件才跑。
+	auditMu      sync.Mutex
+	auditCh      chan AuditEvent
+	auditStop    chan struct{}
+	auditDone    chan struct{}
+	auditStarted bool
+	auditStopped bool
 }
 
 // Ready 做一次「真能写」的轻量检查：抢写锁、空更新、回滚。
@@ -154,13 +160,14 @@ func Open(path string) (*Store, error) {
 		INSERT INTO _writable(x) VALUES(1); DELETE FROM _writable;`); err != nil {
 		return nil, fmt.Errorf("数据目录不可写（%v）：容器内以 uid 10001 运行，请先 chown -R 10001:10001 挂载目录，或改用 named volume", err)
 	}
+	s.startAuditor()
 	return s, nil
 }
 
+// Close 先停审计再关库：反过来的话，队列里剩下的事件会往一个已关闭的
+// *sql.DB 上写，既丢记录又刷一堆错误日志。
 func (s *Store) Close() error {
-	if s.auditStop != nil {
-		close(s.auditStop)
-	}
+	s.stopAuditor()
 	return s.db.Close()
 }
 
