@@ -87,6 +87,9 @@ func TestLooksLikeMirror(t *testing.T) {
 	if LooksLikeMirror("mirrors.aliyun.com", KindDocker) {
 		t.Error("系统镜像站不该算 docker 加速器")
 	}
+	if LooksLikeMirror("registry.npmmirror.com", KindDocker) {
+		t.Error("npm registry 不该算 docker 加速器")
+	}
 	if !LooksLikeMirror("docker.1ms.run", KindDocker) {
 		t.Error("docker 前缀应通过")
 	}

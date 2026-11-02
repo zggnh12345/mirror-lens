@@ -29,6 +29,10 @@ var denySuffix = []string{"github.com", "github.io", "githubusercontent.com", "v
 // 关键词过滤：只留下像镜像加速器的域名，压掉列表里的杂音。
 var dockerHints = []string{"docker", "registry", "hub", "ghproxy", "gh-proxy", "ghp", "加速"}
 
+// 包管理器的 registry 也叫 registry，别当 Docker 加速器。
+var denyWord = []string{"npm", "pypi", "pythonhosted", "goproxy", "crates", "maven", "gradle",
+	"rubygems", "nuget", "debian", "ubuntu", "centos", "aliyun", "tuna", "ustc", "nodejs", "cpan"}
+
 func hostOf(raw string) string {
 	h := strings.ToLower(strings.TrimSpace(raw))
 	if i := strings.Index(h, "://"); i >= 0 {
@@ -50,8 +54,13 @@ func denied(h string) bool {
 	if h == "" || !strings.Contains(h, ".") {
 		return true
 	}
-	if denyHost[h] {
+	if denyHost[h] || strings.HasPrefix(h, "mirrors.") {
 		return true
+	}
+	for _, w := range denyWord {
+		if strings.Contains(h, w) {
+			return true
+		}
 	}
 	for _, sfx := range denySuffix {
 		if h == sfx || strings.HasSuffix(h, "."+sfx) {
