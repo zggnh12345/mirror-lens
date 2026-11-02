@@ -761,6 +761,41 @@ func (s *Store) ConsecutiveFailures(sourceID int64, kind string) int {
 	return n
 }
 
+// ObserveStreak 返回观察池口径的连续结果：最近一次 tier>=2 探测之后，
+// 该类型 L1 连续通过和连续失败的次数。L2 一旦落库，计数自然清零。
+func (s *Store) ObserveStreak(sourceID int64, kind string) (pass, fail int) {
+	// 按自增 id 而不是 ts 切分：同一秒内的多次探测 ts 相同，分不开。
+	var sinceID int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM checks WHERE source_id=? AND kind=? AND tier>=2`,
+		sourceID, kind).Scan(&sinceID); err != nil {
+		return 0, 0
+	}
+	rows, err := s.db.Query(`SELECT ok FROM checks WHERE source_id=? AND kind=? AND tier=1 AND id>?
+		ORDER BY id DESC LIMIT 8`, sourceID, kind, sinceID)
+	if err != nil {
+		return 0, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ok bool
+		if err := rows.Scan(&ok); err != nil {
+			return pass, fail
+		}
+		if ok {
+			if fail > 0 {
+				break
+			}
+			pass++
+			continue
+		}
+		if pass > 0 {
+			break
+		}
+		fail++
+	}
+	return pass, fail
+}
+
 // uptime 返回 since 之后该类型的成功率；无样本返回 -1。
 func (s *Store) uptime(sourceID, since int64, kind string) float64 {
 	var total, ok int

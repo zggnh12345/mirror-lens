@@ -140,6 +140,10 @@ func (e *Engine) Run(tier int) {
 	var jobs []job
 	for _, s := range srcs {
 		for _, k := range kindsFor(s, tier) {
+			// 观察池：能力未知的新源，L1 连续通过才放行 L2。
+			if !e.observed(s, k, tier) {
+				continue
+			}
 			jobs = append(jobs, job{s, k})
 		}
 	}
@@ -304,6 +308,9 @@ func kindsFor(s store.Source, tier int) []string {
 		switch {
 		case cap == store.CapYes:
 			out = append(out, k)
+		case cap == store.CapUnknown && tier == 1 && s.Status == "pending":
+			// 观察池：刚发现的源先只做轻量存活探测。
+			out = append(out, k)
 		case cap == store.CapUnknown && tier >= 2:
 			out = append(out, k)
 		case reidentify:
@@ -311,6 +318,40 @@ func kindsFor(s store.Source, tier int) []string {
 		}
 	}
 	return out
+}
+
+// 观察池：新源先只做 L1，连续通过 observePass 次才做完整 L2。
+const (
+	observePass = 2
+	observeFail = 6
+)
+
+// observed 判断这个源这一轮能不能进 L2。只有能力未知的 pending 源受限，
+// 死源复检、已确认能力的源照旧。
+func (e *Engine) observed(s store.Source, kind string, tier int) bool {
+	if tier < 2 || s.Status != "pending" {
+		return true
+	}
+	cap := s.DockerCap
+	if kind == "github" {
+		cap = s.GithubCap
+	}
+	if cap != store.CapUnknown {
+		return true
+	}
+	pass, _ := e.st.ObserveStreak(s.ID, kind)
+	return pass >= observePass
+}
+
+// observeFailures 返回两种类型里连续失败次数的较大值。
+func (e *Engine) observeFailures(s store.Source) int {
+	fail := 0
+	for _, k := range allKinds {
+		if _, f := e.st.ObserveStreak(s.ID, k); f > fail {
+			fail = f
+		}
+	}
+	return fail
 }
 
 // apply 写回能力标记和聚合状态，然后让调度器丢掉候选缓存。
@@ -421,6 +462,13 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		// 全没结论（超时/DNS/429）就标 pending 继续识别：判死会降频到
 		// 每小时一次，而它可能只是刚才网络抖了一下。
 		if s.DockerCap == store.CapUnknown && s.GithubCap == store.CapUnknown {
+			if tier == 1 && s.Status == "pending" {
+				// 观察池：连续失败才降频，别一次抖动就丢掉新源。
+				if e.observeFailures(s) >= observeFail {
+					_, _ = e.st.SetStatusLive(s.ID, "dead", "存活探测连续失败")
+				}
+				return
+			}
 			_, _ = e.st.SetStatusLive(s.ID, "pending", "探测未拿到结论，等待复测")
 			return
 		}
