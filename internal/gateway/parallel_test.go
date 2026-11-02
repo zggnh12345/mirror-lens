@@ -659,29 +659,99 @@ func TestParChunkFailsOverToOtherMirror(t *testing.T) {
 		t.Fatalf("换源补分片后内容应正确")
 	}
 	// 预检只打镜像，官方源一次都不该被 Range 请求。
-	// 镜像A 在第 2 段（2MB 起）整段 500，这一段必须由镜像B 补上，
-	// 不能落到官方源；官方只该服务它自己被分到的段和预检。
+	// 镜像A 只肯给第 0 字节，凡是它接到的正经分片都会 500。动态派活之后
+	// 具体分到哪几段不固定，所以按「A 实际请求过的段」来对账：这些段
+	// 必须由镜像B 补上，且一段都不许落到官方源。
+	mirror.mu.Lock()
+	var failedRanges []string
+	for _, rg := range mirror.ranges {
+		var from int64
+		if _, err := fmt.Sscanf(rg, "bytes=%d-", &from); err == nil && from >= 1 {
+			failedRanges = append(failedRanges, rg)
+		}
+	}
+	mirror.mu.Unlock()
+	if len(failedRanges) == 0 {
+		t.Fatal("镜像A 一段正经分片都没分到，测试没测到东西")
+	}
 	other.mu.Lock()
-	got := append([]string(nil), other.ranges...)
+	got := map[string]bool{}
+	for _, rg := range other.ranges {
+		got[rg] = true
+	}
 	other.mu.Unlock()
-	found := false
-	for _, rg := range got {
-		if rg == "bytes=2097152-4194303" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("失败的第 2 段应由镜像B 接手，实际它只收到 %v", got)
-	}
 	origin.mu.Lock()
-	bad := false
+	ogot := map[string]bool{}
 	for _, rg := range origin.ranges {
-		if rg == "bytes=2097152-4194303" {
-			bad = true
-		}
+		ogot[rg] = true
 	}
 	origin.mu.Unlock()
-	if bad {
-		t.Fatalf("还有镜像可用时，失败分片不该回官方")
+	covered := 0
+	for _, rg := range failedRanges {
+		if got[rg] {
+			covered++
+		}
+		if ogot[rg] {
+			t.Fatalf("还有镜像可用时，失败分片 %s 不该回官方", rg)
+		}
+	}
+	if covered == 0 {
+		t.Fatalf("镜像A 失败的 %v 一段都没被镜像B 接住", failedRanges)
+	}
+
+}
+
+// 动态派活的意义：慢源不该占着段位。40MB 里两台快源 + 一台每请求 30ms 的慢源，
+// 分段仍然只有 20 段、并发仍然 4，但慢源拿到的段数必须明显少于快源。
+func TestParallelDynamicBalancing(t *testing.T) {
+	g, st, _, body, _, _, os_, ms := parFixture(t, 40<<20)
+	plan, cand := parPlan(t, os_, body)
+
+	slow := &rangeSrv{body: body, delay: 30 * time.Millisecond}
+	os2 := httptest.NewServer(slow)
+	t.Cleanup(os2.Close)
+	third := &rangeSrv{body: body}
+	os3 := httptest.NewServer(third)
+	t.Cleanup(os3.Close)
+
+	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true}))
+	id, err := st.AddSource(store.Source{Name: "镜像A", BaseURL: ms.URL, Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cand.ID = id
+	id2, err := st.AddSource(store.Source{Name: "慢源", BaseURL: os2.URL, Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id3, err := st.AddSource(store.Source{Name: "镜像C", BaseURL: os3.URL, Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2 := &scheduler.Candidate{ID: id2, Name: "慢源", BaseURL: os2.URL}
+	c3 := &scheduler.Candidate{ID: id3, Name: "镜像C", BaseURL: os3.URL}
+	g.parTargets = func(*adapter.Plan) []fetchTarget {
+		return []fetchTarget{
+			{u: mustURL(t, ms.URL), c: cand},
+			{u: mustURL(t, os2.URL), c: c2},
+			{u: mustURL(t, os3.URL), c: c3},
+			{u: plan.Upstream},
+		}
+	}
+	rec := parRun(g, plan)
+	if !bytes.Equal(rec.Body.Bytes(), body) {
+		t.Fatal("动态派活后内容必须仍然逐字节正确")
+	}
+	// 各减掉预检那 1 次请求。
+	a := atomic.LoadInt32(&third.hits) - 1
+	sl := atomic.LoadInt32(&slow.hits) - 1
+	if a <= 0 {
+		t.Fatalf("第三台源应参与分片，实际 %d 段", a)
+	}
+	if sl >= a {
+		t.Fatalf("慢源不该比快源拿得多：慢 %d 段 vs 快 %d 段", sl, a)
+	}
+	if sl > 6 {
+		t.Fatalf("慢源拿太多段（%d），动态派活没起作用", sl)
 	}
 }

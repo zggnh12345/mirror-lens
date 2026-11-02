@@ -53,6 +53,9 @@ type RecentTask struct {
 
 // ActiveSnapshot 是 /api/accel/active 的响应。
 type ActiveSnapshot struct {
+	// Now 是服务器时间（Unix 秒）：面板的「刚刚完成」要跟它比，
+	// 不能拿浏览器时钟比，两边差几分钟就会把刚跑完的任务当成旧的。
+	Now         int64        `json:"now"`
 	Active      []LiveTask   `json:"active"`
 	Recent      []RecentTask `json:"recent"`
 	WindowBytes int64        `json:"window_bytes"`
@@ -281,6 +284,7 @@ func (r *taskReg) snapshot() ActiveSnapshot {
 	for _, t := range ts {
 		out.Active = append(out.Active, t.snapshot())
 	}
+	out.Now = time.Now().Unix()
 	out.WindowBytes = r.through()
 	if out.WindowBytes > 0 {
 		out.WindowBPS = out.WindowBytes / throughWindow

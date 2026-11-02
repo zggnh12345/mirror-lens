@@ -67,7 +67,7 @@
 
   <section id="liveSec" class="sec live" style="display:none">
     <div class="lvhead">
-      <h2>正在加速<span class="lvdot"></span></h2>
+      <h2><span id="lvTitle">正在加速</span><span class="lvdot" id="lvDot"></span></h2>
       <span class="lvthru" id="lvThru">–</span>
     </div>
     <div id="lvRows"></div>
@@ -664,8 +664,13 @@ function renderLive(d){
   const sec = document.getElementById('liveSec');
   const act = (d && d.active) || [];
   const rec = (d && d.recent) || [];
-  if (!act.length){ sec.style.display='none'; return; }
+  // 刚跑完的 20 秒内不藏起来，否则速度条一闪就没了，等于没有「最近完成」。
+  const now = d.now || (Date.now()/1000);
+  const fresh = rec.length && (now - rec[0].ended_at) < 20;
+  if (!act.length && !fresh){ sec.style.display='none'; return; }
   sec.style.display='';
+  document.getElementById('lvTitle').textContent = act.length ? '正在加速' : '刚刚完成';
+  document.getElementById('lvDot').style.background = act.length ? 'var(--ok)' : 'var(--faint)';
   document.getElementById('lvThru').innerHTML =
     '总计 <b>'+fmtSp(d.window_bps)+'</b> · 近 1 分钟 '+fmtB(d.window_bytes);
   const rows = act.map(function(t){

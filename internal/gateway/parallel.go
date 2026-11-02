@@ -77,6 +77,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		chunk = 256 << 10
 	}
 	n := int((total + chunk - 1) / chunk)
+	// 段数封顶：再大的对象也最多切 256 段。10GB 按 4MB 是 2560 个请求，
+	// 每个请求的头/鉴权开销会把并行省下的时间吃回去；抬到 256 段后
+	// 每段 40MB，依然是多源并行，只是每段更"值钱"。
+	for n > 256 {
+		chunk *= 2
+		n = int((total + chunk - 1) / chunk)
+	}
 
 	// 先开 .part，再写响应头：开不了文件还能干净地退回单流。
 	if err := g.cache.ResetPartial(plan.CacheKey); err != nil {
@@ -151,7 +158,25 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	// 不代表它真把数据给全了。
 	stats := make([]parStat, len(srcs))
 
-	sem := make(chan struct{}, g.par.Workers)
+	// 动态派活：谁先干完谁领下一段。静态 i%源数 的毛病是慢源手里压着好几段、
+	// 快源早早空转，最后一段被最慢那台按住，整份时长全看它。
+	// 段数不变、并发不变，只是把「按序号发牌」换成「按空闲领活」。
+	var next atomic.Int64
+	next.Store(1) // 第 0 段已经由 srcs[0] 直通给客户端
+	for i := 1; i < n; i++ {
+		dones[i] = make(chan error, 1)
+	}
+	busy := make([]atomic.Int32, len(srcs))
+	pick := func() int {
+		best, bestBusy, bestFail := 0, int32(1<<30), int32(1<<30)
+		for j := range srcs {
+			bz, fl := busy[j].Load(), atomic.LoadInt32(&stats[j].fail)
+			if bz < bestBusy || (bz == bestBusy && fl < bestFail) {
+				best, bestBusy, bestFail = j, bz, fl
+			}
+		}
+		return best
+	}
 	var wg sync.WaitGroup
 	// 中途放弃必须先 cancel、等协程退出、最后才删 .part：
 	// 反过来会让协程往已关闭或已重建的文件里写。
@@ -160,26 +185,30 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		wg.Wait()
 		drop()
 	}
-	for i := 1; i < n; i++ {
-		off := int64(i) * chunk
-		length := chunk
-		if off+length > total {
-			length = total - off
-		}
-		dones[i] = make(chan error, 1)
-		src := srcs[i%len(srcs)]
+	for w := 0; w < g.par.Workers; w++ {
 		wg.Add(1)
-		go func(i int, off, length int64, src parSource) {
+		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				dones[i] <- ctx.Err()
-				return
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n || ctx.Err() != nil {
+					return
+				}
+				off := int64(i) * chunk
+				length := chunk
+				if off+length > total {
+					length = total - off
+				}
+				si := pick()
+				busy[si].Add(1)
+				err := g.parChunk(ctx, plan, srcs[si], srcs, si, off, length, total, part, stats, task)
+				busy[si].Add(-1)
+				dones[i] <- err
+				if err != nil {
+					return
+				}
 			}
-			dones[i] <- g.parChunk(ctx, plan, src, srcs, i%len(srcs), off, length, total, part, stats, task)
-		}(i, off, length, src)
+		}()
 	}
 
 	buf := make([]byte, 64<<10)

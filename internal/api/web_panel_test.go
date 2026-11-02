@@ -198,6 +198,11 @@ func TestPanelLiveContract(t *testing.T) {
 			t.Errorf("实时区缺少 %q", want)
 		}
 	}
+	for _, want := range []string{"刚刚完成", `id="lvTitle"`, "d.now"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("任务刚结束就整块消失，缺少 %q", want)
+		}
+	}
 	if !strings.Contains(src, "loadLive(); }, 2000)") {
 		t.Error("实时区必须 2 秒一刷，否则进度条和速度看着是死的")
 	}

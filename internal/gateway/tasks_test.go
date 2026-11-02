@@ -15,6 +15,9 @@ func TestTaskSnapshotAndSpeed(t *testing.T) {
 	task.addSource(1, 2<<20, true)
 
 	snap := r.snapshot()
+	if snap.Now <= 0 {
+		t.Fatalf("快照必须带服务器时间，否则「刚刚完成」没法算")
+	}
 	if len(snap.Active) != 1 {
 		t.Fatalf("应有 1 条活跃任务，得到 %d", len(snap.Active))
 	}
