@@ -29,6 +29,14 @@ func TestPanelRowContract(t *testing.T) {
 	if strings.Contains(src, "function capChip(") || strings.Contains(src, "capChip(") {
 		t.Error("旧的 capChip 仍在：能力标签必须只出 HUB/RAW，不能再拼 ✓")
 	}
+	css, err := webFS.ReadFile("web/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	// 在线共用 .st 基类（灰底灰字），没有 .st.ok 就还是灰的。
+	if !strings.Contains(string(css), ".st.ok{") || !strings.Contains(string(css), ".st.ok{color:var(--ok)") {
+		t.Error("缺少 .st.ok 绿色样式：在线状态会显示成灰色")
+	}
 	if !strings.Contains(src, "var ST = {") {
 		t.Error("缺少集中状态映射 ST")
 	}

@@ -362,7 +362,7 @@ func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 }
 
 func (s *Store) ListSources() ([]Source, error) {
-	rows, err := s.db.Query(`SELECT ` + srcCols + ` FROM sources ORDER BY status='usable' DESC, name`)
+	rows, err := s.db.Query(`SELECT ` + srcCols + ` FROM sources ORDER BY CASE status WHEN 'usable' THEN 0 WHEN 'degraded' THEN 1 WHEN 'pending' THEN 2 WHEN 'dead' THEN 3 WHEN 'blocked' THEN 4 WHEN 'archived' THEN 5 ELSE 6 END, preferred DESC, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -515,9 +515,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.StatusAt, x.CreatedAt)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt)
 	if err != nil {
 		return 0, err
 	}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,5 +104,43 @@ func TestRecentSummaries(t *testing.T) {
 		if p.TS > now {
 			t.Fatalf("tier=1 的样本不应进状态条：%+v", p)
 		}
+	}
+}
+
+// 面板默认顺序：在线的排最前，其次慢、待检测、异常，最后归档；同层星标优先。
+func TestListSourcesDefaultOrder(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	add := func(name, status string, pref bool) {
+		t.Helper()
+		if _, err := st.AddSource(Source{Name: name, BaseURL: "https://" + name, Status: status, Enabled: true, Preferred: pref}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("dead.example", "dead", true)
+	add("pending.example", "pending", false)
+	add("slow.example", "degraded", false)
+	add("ok-b.example", "usable", false)
+	add("blocked.example", "blocked", false)
+	add("ok-a.example", "usable", false)
+	add("ok-pref.example", "usable", true)
+	add("archived.example", "archived", false)
+
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range list {
+		got = append(got, s.Name)
+	}
+	want := []string{"ok-pref.example", "ok-a.example", "ok-b.example", "slow.example",
+		"pending.example", "dead.example", "blocked.example", "archived.example"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("默认排序不对\n got=%v\nwant=%v", got, want)
 	}
 }
