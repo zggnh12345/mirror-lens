@@ -131,6 +131,15 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
+	// 面板：一条任务、多台源的贡献分开记，结束后进最近完成。
+	task := g.tasks.start(plan.Kind, planLabel(plan), "parallel", total, parNames(srcs))
+	ok := false
+	defer func() { task.finish(ok) }()
+	out := io.Writer(w)
+	if task != nil {
+		out = &taskWriter{ResponseWriter: w, t: task}
+	}
+
 	start := time.Now()
 	g.parFills.Add(1)
 	g.parBytes.Add(total)
@@ -169,7 +178,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 				dones[i] <- ctx.Err()
 				return
 			}
-			dones[i] <- g.parChunk(ctx, plan, src, i%len(srcs), off, length, total, part, stats)
+			dones[i] <- g.parChunk(ctx, plan, src, srcs, i%len(srcs), off, length, total, part, stats, task)
 		}(i, off, length, src)
 	}
 
@@ -178,7 +187,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for got < firstLen {
 		nr, rerr := resp0.Body.Read(buf)
 		if nr > 0 {
-			if _, werr := w.Write(buf[:nr]); werr != nil {
+			if _, werr := out.Write(buf[:nr]); werr != nil {
 				resp0.Body.Close()
 				abort()
 				return true // 客户端走了，不落缓存（分片是乱序的，留下也没法续）
@@ -232,7 +241,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		if off+length > total {
 			length = total - off
 		}
-		if _, werr := io.CopyN(w, io.NewSectionReader(part, off, length), length); werr != nil {
+		if _, werr := io.CopyN(out, io.NewSectionReader(part, off, length), length); werr != nil {
 			abort()
 			return true
 		}
@@ -267,6 +276,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		return true
 	}
 
+	ok = true // 分片全到齐且整份哈希对上：这条任务算成功
 	part.Close()
 	partPath, _ := g.cache.PartialPaths(plan.CacheKey)
 	unlock := g.cache.LockBlob(sha)
@@ -427,31 +437,50 @@ func (g *Gateway) reportSource(kind string, t fetchTarget, ok bool, d time.Durat
 	}
 }
 
-// parChunk 取一段写进 .part，分到的源不行就回官方源重取。
-// 成败记到 stats[idx]，只有真供出这段字节才算成功。
-func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSource, idx int, off, length, total int64, part *os.File, stats []parStat) error {
-	// 先占该源的并发名额，否则最快会被打成最慢；
-	// 名额满时等待不算源故障，不记健康。
-	if src.t.c != nil {
-		release, aerr := g.sched.Acquire(ctx, src.t.c.ID)
-		if aerr != nil {
-			return aerr
+// parChunk 取一段写进 .part。顺序是：分到的源 → 其它参与分片的镜像源 → 官方源。
+// 分片失败只换这一段，不整份重来；只有分到的那台源失败才记它的账，
+// 借用别的源成功算那台源的功劳，借用后仍失败不记（不是它接的活）。
+func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSource, srcs []parSource, idx int,
+	off, length, total int64, part *os.File, stats []parStat, task *liveTask) error {
+	type attempt struct {
+		u     *url.URL
+		idx   int  // -1 = 官方源
+		blame bool // 失败是否归因到这台源
+	}
+	atts := []attempt{{u: src.t.u, idx: idx, blame: true}}
+	for j := range srcs {
+		// 官方源在 srcs 里也有一席（预检会把它算进去），但换源时它必须垫底：
+		// 否则「官方排在第一位」就等于每段失败都直接回慢路。
+		if j == idx || srcs[j].t.u.String() == src.t.u.String() || srcs[j].t.u.String() == plan.Upstream.String() {
+			continue
 		}
-		defer release()
+		atts = append(atts, attempt{u: srcs[j].t.u, idx: j})
 	}
-	urls := []*url.URL{src.t.u}
 	if src.t.u.String() != plan.Upstream.String() {
-		urls = append(urls, plan.Upstream)
+		atts = append(atts, attempt{u: plan.Upstream, idx: -1})
 	}
+
 	t0 := time.Now()
 	var last error
-	for _, u := range urls {
-		// 只有分到的那台源才归因；回落到官方源不算官方源的功劳，也不算它的错。
-		blame := u.String() == src.t.u.String()
-		resp, err := g.rangeReq(ctx, plan, u, off, off+length-1)
+	for _, a := range atts {
+		// 借用别的源先占它的并发名额：否则最快的源会被打成最慢。
+		var release func()
+		if a.idx >= 0 {
+			if c := srcs[a.idx].t.c; c != nil {
+				rel, aerr := g.sched.Acquire(ctx, c.ID)
+				if aerr != nil {
+					return aerr
+				}
+				release = rel
+			}
+		}
+		resp, err := g.rangeReq(ctx, plan, a.u, off, off+length-1)
 		if err != nil {
-			if blame && ctx.Err() == nil {
-				atomic.AddInt32(&stats[idx].fail, 1)
+			if release != nil {
+				release()
+			}
+			if a.blame && ctx.Err() == nil {
+				atomic.AddInt32(&stats[a.idx].fail, 1)
 				if src.t.c != nil {
 					g.sched.Observe(src.t.c.ID, 0, 0, false, 0)
 				}
@@ -463,13 +492,14 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
-			if blame && ctx.Err() == nil {
-				atomic.AddInt32(&stats[idx].fail, 1)
+			if release != nil {
+				release()
 			}
-			if blame {
-				atomic.StoreInt32(&stats[idx].code, int32(resp.StatusCode))
+			if a.blame && ctx.Err() == nil {
+				atomic.AddInt32(&stats[a.idx].fail, 1)
+				atomic.StoreInt32(&stats[a.idx].code, int32(resp.StatusCode))
 			}
-			last = fmt.Errorf("分段响应对不上：%s 返回 %d %q", u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
+			last = fmt.Errorf("分段响应对不上：%s 返回 %d %q", a.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
 			continue
 		}
 		dw := &diskWriter{w: io.NewOffsetWriter(part, off)}
@@ -477,28 +507,35 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		resp.Body.Close()
 		if dw.err != nil {
 			// 写自己的 .part 失败：盘的问题，换源重试也一样。
+			if release != nil {
+				release()
+			}
 			return local(fmt.Errorf("写分片失败: %w", dw.err))
 		}
-		if cerr != nil {
-			if blame && ctx.Err() == nil {
-				atomic.AddInt32(&stats[idx].fail, 1)
+		if cerr != nil || n != length {
+			if release != nil {
+				release()
 			}
-			last = cerr
+			if a.blame && ctx.Err() == nil {
+				atomic.AddInt32(&stats[a.idx].fail, 1)
+			}
+			if cerr != nil {
+				last = cerr
+			} else {
+				last = fmt.Errorf("%s 少给了 %d 字节", a.u.Host, length-n)
+			}
 			continue
 		}
-		if n != length {
-			if blame && ctx.Err() == nil {
-				atomic.AddInt32(&stats[idx].fail, 1)
-			}
-			last = fmt.Errorf("%s 少给了 %d 字节", u.Host, length-n)
-			continue
-		}
-		if blame {
-			atomic.AddInt32(&stats[idx].ok, 1)
-			if src.t.c != nil {
+		if a.idx >= 0 {
+			atomic.AddInt32(&stats[a.idx].ok, 1)
+			if c := srcs[a.idx].t.c; c != nil {
 				// 分片是带宽控制器最准的样本：字节数和耗时都真实。
-				g.sched.Observe(src.t.c.ID, n, time.Since(t0), true, resp.StatusCode)
+				g.sched.Observe(c.ID, n, time.Since(t0), true, resp.StatusCode)
 			}
+			task.addSource(a.idx, n, true)
+		}
+		if release != nil {
+			release()
 		}
 		return nil
 	}

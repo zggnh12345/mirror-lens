@@ -370,6 +370,14 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
+	// 面板的活跃任务：从写出响应头的这一刻开始算，写完（或断开）才消失。
+	task := g.tasks.start(plan.Kind, planLabel(plan), "stream", total, oneSource(tgt))
+	defer func() { task.finish(outcome == outcomeOK) }()
+	out := io.Writer(w)
+	if task != nil {
+		out = &taskWriter{ResponseWriter: w, t: task}
+	}
+
 	hasher := sha256.New()
 	var part *os.File
 	sent := int64(0)    // 已经发给客户端的字节
@@ -378,7 +386,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// 先把旧前缀补给客户端并接着算哈希：这步与 cacheable 无关，
 	// 不落盘也要补齐客户端那半份。
 	if prefix != nil {
-		n, cerr := io.Copy(io.MultiWriter(w, hasher), prefix)
+		n, cerr := io.Copy(io.MultiWriter(out, hasher), prefix)
 		if cerr != nil {
 			// 只是补发旧字节时客户端断了：盘上那份没动过，续传点保持原样。
 			g.keepPartial(plan, resp, total, 0, nil)
@@ -411,7 +419,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
+			if _, werr := out.Write(buf[:n]); werr != nil {
 				// 客户端走了：把已下部分留给下一次续传
 				g.keepPartial(plan, resp, total, have+written, part)
 				return
@@ -760,4 +768,12 @@ func copyHeader(dst, src http.Header, keys ...string) {
 			dst.Set(k, v)
 		}
 	}
+}
+
+// oneSource 给面板用的源名列表；没有镜像源时写“官方”。
+func oneSource(t *fetchTarget) []string {
+	if t == nil || t.c == nil {
+		return []string{"官方"}
+	}
+	return []string{t.c.Name}
 }

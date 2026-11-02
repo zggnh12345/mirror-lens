@@ -202,6 +202,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	}
 	mux.HandleFunc("/api/tokens", guard(s.tokens))
 	mux.HandleFunc("/api/tokens/", guard(s.tokenItem))
+	mux.HandleFunc("/api/accel/active", guard(s.accelActive))
 	mux.HandleFunc("/api/accel/stats", guard(s.accelStats))
 	mux.HandleFunc("/api/accel/purge", guard(s.accelPurge))
 	mux.HandleFunc("/api/config", guard(s.configHandler))

@@ -114,6 +114,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			Upstream:  up,
 			Method:    http.MethodGet,
 			Header:    http.Header{"Accept": {accept}},
+			Label:     repo + ":" + ref,
 			CacheKey:  "docker:manifest:" + a.Upstream + "/" + repo + ":" + ref + "|accept=" + normalizeAccept(accept),
 			Cacheable: true,
 			TTL:       a.TagTTL,
@@ -132,6 +133,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			Kind:      "docker",
 			Upstream:  up,
 			Method:    http.MethodGet,
+			Label:     "layer " + shortDigest(ref),
 			CacheKey:  "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
 			Cacheable: true,
 			Immutable: true,
@@ -186,4 +188,12 @@ func normalizeAccept(s string) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, ",")
+}
+
+// shortDigest 把 sha256:xxxx... 缩成面板能放下的一小段。
+func shortDigest(d string) string {
+	if len(d) <= 19 {
+		return d
+	}
+	return d[:19] + "…"
 }

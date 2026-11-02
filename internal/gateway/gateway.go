@@ -67,6 +67,7 @@ type Gateway struct {
 	parFills      atomic.Int64                      // 真正走了并行分片的次数
 	parBytes      atomic.Int64                      // 并行分片下下来的字节
 	parFalls      atomic.Int64                      // 试过但退回单流（不支持 Range、源不够等）
+	tasks         *taskReg                          // 面板活跃任务表（内存）
 }
 
 type ParOptions struct {
@@ -134,6 +135,7 @@ func New(st *store.Store, o Options) *Gateway {
 		gc:            gc.New(st, o.Cache),
 		now:           time.Now,
 		par:           o.Parallel,
+		tasks:         newTaskReg(),
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
 	}
@@ -601,6 +603,7 @@ func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.C
 	// ServeContent 负责 Range / 206 / 416 / If-None-Match，不用自己写
 	http.ServeContent(cw, r, path.Base(e.Key), time.Unix(e.CreatedAt, 0), f)
 	if fromCache {
+		g.tasks.addThrough(cw.n)
 		g.st.CacheHit(e.Key)
 		if cw.n > 0 {
 			g.st.RecordTraffic(store.TrafficHit, store.KindOfKey(e.Key), cw.n)
@@ -637,6 +640,25 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func removeFile(name string) { _ = os.Remove(name) }
+
+// ActiveTasks 给面板用：正在传的任务 + 最近完成 + 整机 60 秒吞吐。
+func (g *Gateway) ActiveTasks() ActiveSnapshot {
+	if g == nil {
+		return ActiveSnapshot{}
+	}
+	return g.tasks.snapshot()
+}
+
+// planLabel 是面板显示的资源名；适配器没给就退回缓存键。
+func planLabel(plan *adapter.Plan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.Label != "" {
+		return plan.Label
+	}
+	return plan.CacheKey
+}
 
 // countWriter 只数真正写给客户端的字节，304 和 Range 都不会多算。
 type countWriter struct {

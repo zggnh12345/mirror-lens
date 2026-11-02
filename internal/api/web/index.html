@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=4">
+<link rel="stylesheet" href="/app.css?v=5">
 </head>
 <body>
 <header>
@@ -63,6 +63,15 @@
       <div id="ovConcList"></div>
       <div class="ovnote" id="ovConcNote"></div>
     </div>
+  </section>
+
+  <section id="liveSec" class="sec live" style="display:none">
+    <div class="lvhead">
+      <h2>正在加速<span class="lvdot"></span></h2>
+      <span class="lvthru" id="lvThru">–</span>
+    </div>
+    <div id="lvRows"></div>
+    <div class="lvrecent" id="lvRecent"></div>
   </section>
 
   <div class="toolbar">
@@ -637,7 +646,56 @@ api('/api/me').then(function(d){
 }).catch(function(){});
 load();
 loadMetrics();
-setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')){ load(true); loadMetrics(); } }, 15000);
+
+// 实时：活跃任务 2 秒一刷。只读展示，点不动、也改不了调度。
+function fmtB(n){
+  if (n == null || n < 0) return '–';
+  if (n >= 1073741824) return (n/1073741824).toFixed(2)+' GB';
+  if (n >= 1048576) return (n/1048576).toFixed(1)+' MB';
+  if (n >= 1024) return Math.round(n/1024)+' KB';
+  return n+' B';
+}
+function fmtSp(n){
+  if (!n) return '0 MB/s';
+  if (n >= 1048576) return (n/1048576).toFixed(1)+' MB/s';
+  return Math.max(1, Math.round(n/1024))+' KB/s';
+}
+function renderLive(d){
+  const sec = document.getElementById('liveSec');
+  const act = (d && d.active) || [];
+  const rec = (d && d.recent) || [];
+  if (!act.length){ sec.style.display='none'; return; }
+  sec.style.display='';
+  document.getElementById('lvThru').innerHTML =
+    '总计 <b>'+fmtSp(d.window_bps)+'</b> · 近 1 分钟 '+fmtB(d.window_bytes);
+  const rows = act.map(function(t){
+    const pct = t.total > 0 ? Math.min(100, t.done*100/t.total) : 0;
+    const tags = (t.sources||[]).filter(function(x){return x.bytes>0}).map(function(x){
+      return '<span class="lvtag p">'+esc(x.name)+' '+fmtB(x.bytes)+'</span>';
+    }).join('');
+    const mode = t.mode === 'parallel' ? '分片并行' : '单源';
+    return '<div class="lvrow"><div class="lvtop">'+
+      '<span class="lvt">'+esc(t.target)+'</span>'+
+      '<span class="lvsp">'+fmtSp(t.bps)+'</span></div>'+
+      '<div class="lvbar"><i style="width:'+pct.toFixed(1)+'%"></i></div>'+
+      '<div class="lvmeta"><span>'+fmtB(t.done)+(t.total>0?' / '+fmtB(t.total):'')+'</span>'+
+      '<span>'+mode+'</span><span>'+Math.round(t.elapsed_s)+'s</span>'+tags+'</div></div>';
+  }).join('');
+  document.getElementById('lvRows').innerHTML = rows;
+  document.getElementById('lvRecent').innerHTML = rec.slice(0,3).map(function(r){
+    return '<div>'+ (r.ok?'✓':'✗') +' '+esc(r.target)+' · '+fmtB(r.total)+' · '+r.dur_s.toFixed(1)+'s</div>';
+  }).join('');
+}
+async function loadLive(){
+  try{
+    const r = await fetch('/api/accel/active', {cache:'no-store'});
+    if (!r.ok) return;
+    renderLive(await r.json());
+  }catch(e){}
+}
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadLive(); }, 2000);
+
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')){ load(true); loadMetrics(); loadLive(); } }, 15000);
 document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); } });
 </script>
 </body>

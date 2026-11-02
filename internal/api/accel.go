@@ -12,6 +12,18 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+// accelActive 是面板「正在下载」用的只读快照：活跃任务 + 最近完成 + 近 60 秒总吞吐。
+// 数据全在内存里，重启即空，不落库。
+func (s *Server) accelActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		writeJSON(w, 405, map[string]string{"error": "方法不对"})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, s.gw.ActiveTasks())
+}
+
 // tokens 管理 Access Token：明文只返回一次，库里只存哈希。
 func (s *Server) tokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

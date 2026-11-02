@@ -52,6 +52,10 @@ type Plan struct {
 	// Source 是调度选中的镜像源名称，仅用于响应头与日志。
 	Source string
 
+	// Label 是给人看的资源名（镜像名/文件名），只用于面板展示。
+	// 空的就退回 CacheKey。
+	Label string
+
 	// OnResponse 拿到响应头后再决定能不能缓存、缓存多久。
 	// Cache-Control 只有这一刻才知道，不能全在 Plan 里定死。
 	OnResponse func(resp *http.Response) (cacheable bool, ttl time.Duration)

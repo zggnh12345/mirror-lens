@@ -184,3 +184,41 @@ out.Tags3=tagsOf(rowHtml(base({status:'degraded',github_cap:0})));
 out.Err404=rowHtml(base({status:'dead',last:{docker:{ok:false,error:'unexpected status 404 Not Found'}}})).indexOf('仓库地址无效')>=0;
 console.log(JSON.stringify(out));
 `
+
+// 实时区是「让人感觉到在加速」的唯一入口：必须有 DOM 容器、真的去拉
+// /api/accel/active、并且 2 秒一刷（15 秒那种刷新看不出进度条在动）。
+func TestPanelLiveContract(t *testing.T) {
+	raw, err := webFS.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	src := string(raw)
+	for _, want := range []string{`id="liveSec"`, `id="lvRows"`, `id="lvThru"`, "/api/accel/active", "function renderLive(", "loadLive()"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("实时区缺少 %q", want)
+		}
+	}
+	if !strings.Contains(src, "loadLive(); }, 2000)") {
+		t.Error("实时区必须 2 秒一刷，否则进度条和速度看着是死的")
+	}
+	if !strings.Contains(src, "app.css?v=5") {
+		t.Error("改了样式却没升 app.css 版本号，浏览器会继续用旧缓存")
+	}
+	css, err := webFS.ReadFile("web/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	for _, want := range []string{".lvbar i{", ".lvthru b{color:var(--ok)", ".lvtag.p{"} {
+		if !strings.Contains(string(css), want) {
+			t.Errorf("实时区样式缺少 %q", want)
+		}
+	}
+	// 路由必须挂在登录墙后面：任务名会暴露用户在拉什么镜像。
+	api, err := os.ReadFile("api.go")
+	if err != nil {
+		t.Fatalf("read api.go: %v", err)
+	}
+	if !strings.Contains(string(api), `mux.HandleFunc("/api/accel/active", guard(s.accelActive))`) {
+		t.Error("/api/accel/active 必须经过 guard")
+	}
+}

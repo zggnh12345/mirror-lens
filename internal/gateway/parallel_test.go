@@ -412,6 +412,17 @@ func TestParallelStatsExposed(t *testing.T) {
 	if s["fills"] != 1 || s["bytes"] != int64(len(body)) {
 		t.Fatalf("统计不对: %v", s)
 	}
+	// 面板看到的是同一条链路：任务结束后必须落在「最近完成」里，字节数要对得上。
+	snap := g.ActiveTasks()
+	if len(snap.Active) != 0 {
+		t.Fatalf("结束后不该还在活跃表: %+v", snap.Active)
+	}
+	if len(snap.Recent) != 1 || snap.Recent[0].Mode != "parallel" || snap.Recent[0].Total != int64(len(body)) {
+		t.Fatalf("最近完成不对: %+v", snap.Recent)
+	}
+	if snap.WindowBytes < int64(len(body)) {
+		t.Fatalf("吞吐窗口应记到这次下载的字节，得到 %d", snap.WindowBytes)
+	}
 }
 
 func mustURL(t *testing.T, raw string) *url.URL {
@@ -461,7 +472,7 @@ func TestParChunkIgnoresCancellation(t *testing.T) {
 
 	stats := make([]parStat, 1)
 	src := parSource{t: fetchTarget{u: plan.Upstream, c: cand}}
-	_ = g.parChunk(ctx, plan, src, 0, 0, 1<<20, int64(len(body)), part, stats)
+	_ = g.parChunk(ctx, plan, src, []parSource{src}, 0, 0, 1<<20, int64(len(body)), part, stats, nil)
 	if stats[0].fail != 0 || stats[0].ok != 0 {
 		t.Fatalf("取消不该计入源评分，实际 ok=%d fail=%d", stats[0].ok, stats[0].fail)
 	}
@@ -608,5 +619,69 @@ func TestParallelPreflightContentRange(t *testing.T) {
 				t.Fatalf("%s: want fail=%d, got ok=%d fail=%d", tt.name, tt.wantFail, okN, failN)
 			}
 		})
+	}
+}
+
+// 分到的那台源整段失败时，先把这一段换到另一台参与分片的镜像；
+// 只有所有镜像都不行才回官方源。否则一台坏源就能把整份拖回慢路。
+func TestParChunkFailsOverToOtherMirror(t *testing.T) {
+	g, st, _, body, origin, mirror, os_, ms := parFixture(t, 9<<20)
+	plan, cand := parPlan(t, os_, body)
+	mirror.failFrom = 1 // 这台只肯给第 0 字节，正文全 500
+
+	other := &rangeSrv{body: body, delay: 2 * time.Millisecond}
+	os2 := httptest.NewServer(other)
+	t.Cleanup(os2.Close)
+
+	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true}))
+	id, err := st.AddSource(store.Source{Name: "镜像A", BaseURL: "http://mirror", Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cand.ID = id
+	id2, err := st.AddSource(store.Source{Name: "镜像B", BaseURL: os2.URL, Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cand2 := &scheduler.Candidate{ID: id2, Name: "镜像B", BaseURL: os2.URL}
+	g.parTargets = func(*adapter.Plan) []fetchTarget {
+		return []fetchTarget{
+			{u: mustURL(t, ms.URL), c: cand},
+			{u: mustURL(t, os2.URL), c: cand2},
+			{u: plan.Upstream},
+		}
+	}
+	rec := parRun(g, plan)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("应接管，得到 %d", rec.Code)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), body) {
+		t.Fatalf("换源补分片后内容应正确")
+	}
+	// 预检只打镜像，官方源一次都不该被 Range 请求。
+	// 镜像A 在第 2 段（2MB 起）整段 500，这一段必须由镜像B 补上，
+	// 不能落到官方源；官方只该服务它自己被分到的段和预检。
+	other.mu.Lock()
+	got := append([]string(nil), other.ranges...)
+	other.mu.Unlock()
+	found := false
+	for _, rg := range got {
+		if rg == "bytes=2097152-4194303" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("失败的第 2 段应由镜像B 接手，实际它只收到 %v", got)
+	}
+	origin.mu.Lock()
+	bad := false
+	for _, rg := range origin.ranges {
+		if rg == "bytes=2097152-4194303" {
+			bad = true
+		}
+	}
+	origin.mu.Unlock()
+	if bad {
+		t.Fatalf("还有镜像可用时，失败分片不该回官方")
 	}
 }
