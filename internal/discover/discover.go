@@ -2,126 +2,124 @@ package discover
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"regexp"
 	"sort"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// 列表仓库：这些 README 里维护着镜像站清单。抓到的只是"候选"不是"可用"，
-// 一律 pending 入库，通过 L2 真拉取才转 usable。
-var listRepos = []struct {
-	kind string
-	url  string
-}{
-	{"docker", "https://raw.githubusercontent.com/dongyubin/DockerHub/main/README.md"},
-	{"docker", "https://raw.githubusercontent.com/dongyubin/DockerHub/master/README.md"},
-	{"github", "https://raw.githubusercontent.com/hunshcn/gh-proxy/master/README.md"},
-}
-
-var hostRe = regexp.MustCompile(`https?://([a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,})`)
-
-// 自身或文档站点，不是加速器
-var deny = map[string]bool{
-	"github.com": true, "raw.githubusercontent.com": true, "api.github.com": true,
-	"gitee.com": true, "docker.com": true, "docker.io": true, "hub.docker.com": true,
-	"registry-1.docker.io": true, "docs.docker.com": true, "img.shields.io": true,
-	"badgen.net": true, "shields.io": true, "opensource.org": true, "go.dev": true,
-	"golang.org": true, "githubusercontent.com": true, "camo.githubusercontent.com": true,
-	"user-images.githubusercontent.com": true, "avatars.githubusercontent.com": true,
-	"api.github.io": true, "github.dev": true,
-}
-
-// 关键词过滤：只保留看起来像加速器的域名，压掉列表杂音。
-var hints = []string{"docker", "mirror", "ghproxy", "gh-proxy", "ghp", "proxy", "registry", "hub", "加速"}
-
-// 文档站、代码托管站自身的子域，一律不是加速器
-var denySuffix = []string{"github.com", "github.io", "githubusercontent.com", "vercel.app", "jsdelivr.net", "cloudflare.com"}
-
-func LooksLikeMirror(host, kind string) bool {
-	if deny[host] || strings.Count(host, ".") < 1 {
-		return false
+// Scan 抓取全部发现源，把库里没有的主机写进 pending 池，返回新增数量。
+// 发现的只是候选：能力留空，由探测决定去留。
+func Scan(ctx context.Context, st *store.Store) (int, error) {
+	srcs, err := st.ListSources()
+	if err != nil {
+		return 0, err
 	}
-	for _, sfx := range denySuffix {
-		if host == sfx || strings.HasSuffix(host, "."+sfx) {
-			return false
-		}
-	}
-	h := strings.ToLower(host)
-	if kind == "github" {
-		return strings.Contains(h, "gh") || strings.Contains(h, "proxy") || strings.Contains(h, "mirror")
-	}
-	for _, k := range hints {
-		if strings.Contains(h, k) {
-			return true
-		}
-	}
-	return false
-}
-
-// Scan 抓取列表仓库，返回新发现的主机名（不含已在库里的）。
-func Scan(ctx context.Context, st *store.Store) (added int, err error) {
-	client := &http.Client{Timeout: 25 * time.Second}
-	known := map[string]bool{}
-	srcs, e := st.ListSources()
-	if e != nil {
-		return 0, e
-	}
+	known := make(map[string]bool, len(srcs))
 	for _, s := range srcs {
-		known[strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(s.BaseURL, "https://"), "http://"))] = true
-	}
-
-	found := map[string]string{} // host -> kind
-	for _, repo := range listRepos {
-		req, e := http.NewRequestWithContext(ctx, http.MethodGet, repo.url, nil)
-		if e != nil {
-			continue
-		}
-		req.Header.Set("User-Agent", "mirror-lens/1.0")
-		resp, e := client.Do(req)
-		if e != nil {
-			continue
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if resp.StatusCode != 200 {
-			continue
-		}
-		for _, m := range hostRe.FindAllStringSubmatch(string(body), -1) {
-			h := strings.ToLower(m[1])
-			if known[h] || found[h] != "" {
-				continue
-			}
-			if LooksLikeMirror(h, repo.kind) {
-				found[h] = repo.kind
-			}
+		if h := hostOf(s.BaseURL); h != "" {
+			known[h] = true
 		}
 	}
 
-	keys := make([]string, 0, len(found))
-	for h := range found {
-		keys = append(keys, h)
+	// 同一域名可能同时出现在列表仓库和状态页：状态页在前，优先保留在线标记。
+	var order []string
+	best := map[string]candidate{}
+	for _, c := range fetchAll(ctx) {
+		if known[c.host] {
+			continue
+		}
+		old, ok := best[c.host]
+		if !ok {
+			order = append(order, c.host)
+			best[c.host] = c
+			continue
+		}
+		if !old.online && c.online {
+			best[c.host] = c
+		}
 	}
-	sort.Strings(keys)
-	for _, h := range keys {
-		// 能力留空，交给探测判断：清单说它是 docker 站，不代表真是
-		_, e := st.AddSource(store.Source{
+	sort.Strings(order)
+
+	added := 0
+	for _, h := range order {
+		c := best[h]
+		note := "自动发现 · " + c.origin
+		if c.online {
+			note += "（在线）"
+		}
+		_, err := st.AddSource(store.Source{
 			BaseURL:   "https://" + h,
 			Name:      h,
 			Origin:    "discovered",
 			Enabled:   true,
 			Status:    "pending",
-			Note:      "自动发现，待验证",
+			Note:      note,
 			DockerCap: store.CapUnknown,
 			GithubCap: store.CapUnknown,
 		})
-		if e == nil {
+		if err == nil {
 			added++
 		}
 	}
+	if added > 0 {
+		log.Printf("discover: 新增 %d 个候选源", added)
+	}
 	return added, nil
+}
+
+// fetchAll 并发抓取，单个源失败只影响自己。
+func fetchAll(ctx context.Context) []candidate {
+	client := &http.Client{Timeout: 25 * time.Second}
+	perFeed := make([][]candidate, len(feeds))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for i, f := range feeds {
+		wg.Add(1)
+		go func(i int, f feed) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			body, err := fetch(ctx, client, f)
+			if err != nil {
+				log.Printf("discover: %s 抓取失败: %v", f.name, err)
+				return
+			}
+			perFeed[i] = parse(f, body)
+			log.Printf("discover: %s %d 条候选", f.name, len(perFeed[i]))
+		}(i, f)
+	}
+	wg.Wait()
+
+	var all []candidate
+	for _, c := range perFeed {
+		all = append(all, c...)
+	}
+	return all
+}
+
+func fetch(ctx context.Context, client *http.Client, f feed) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "mirror-lens/1.0")
+	for k, v := range f.header {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 }

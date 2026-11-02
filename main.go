@@ -179,8 +179,23 @@ func main() {
 	})
 	go jan.Run(ctx)
 
-	// 每天扫一次公开列表，新域名进 pending 池
+	// 启动 45 秒后扫一轮，之后每天一次；新域名进 pending 池
 	go func() {
+		scan := func() {
+			if n, err := discover.Scan(ctx, st); err != nil {
+				log.Printf("发现新源失败: %v", err)
+			} else if n > 0 {
+				log.Printf("发现 %d 个新候选", n)
+				eng.Run(2)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(45 * time.Second):
+		}
+		scan()
+
 		t := time.NewTicker(24 * time.Hour)
 		defer t.Stop()
 		for {
@@ -188,12 +203,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if n, err := discover.Scan(ctx, st); err != nil {
-					log.Printf("发现新源失败: %v", err)
-				} else if n > 0 {
-					log.Printf("发现 %d 个新候选", n)
-					eng.Run(2)
-				}
+				scan()
 			}
 		}
 	}()
