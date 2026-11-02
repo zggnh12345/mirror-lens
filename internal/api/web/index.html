@@ -42,6 +42,15 @@
     <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
   </div>
 
+  <section id="liveSec" class="sec live" style="display:none">
+    <div class="lvhead">
+      <h2><span id="lvTitle">正在加速</span><span class="lvdot" id="lvDot"></span></h2>
+      <span class="lvthru" id="lvThru">–</span>
+    </div>
+    <div id="lvRows"></div>
+    <div class="lvrecent" id="lvRecent"></div>
+  </section>
+
   <section id="ovSec" class="sec" style="margin-top:14px;display:none">
     <h2>运行概览</h2>
     <div class="ovcards">
@@ -63,15 +72,6 @@
       <div id="ovConcList"></div>
       <div class="ovnote" id="ovConcNote"></div>
     </div>
-  </section>
-
-  <section id="liveSec" class="sec live" style="display:none">
-    <div class="lvhead">
-      <h2><span id="lvTitle">正在加速</span><span class="lvdot" id="lvDot"></span></h2>
-      <span class="lvthru" id="lvThru">–</span>
-    </div>
-    <div id="lvRows"></div>
-    <div class="lvrecent" id="lvRecent"></div>
   </section>
 
   <div class="toolbar">
@@ -629,13 +629,14 @@ async function loadMetrics(){
       var keys = Object.keys(m.heat).filter(function(k){return m.heat[k]>0;});
       if(keys.length){
         keys.sort(function(a,b){return m.heat[b]-m.heat[a];});
-        var mx = m.heat[keys[0]];
-        $('#ovReq').textContent = keys.reduce(function(s,k){return s+m.heat[k];},0);
-        $('#ovHeat').innerHTML = keys.map(function(k){
-          var pct = mx? (m.heat[k]/mx*100).toFixed(0):0;
-          return '<div class="heatrow"><span class="hl">'+esc(k)+'</span><span class="hbar"><i style="width:'+pct+'%"></i></span><span class="hn">'+m.heat[k]+'</span></div>';
-        }).join('');
-        $('#ovHeatNote').textContent='单位：最近一个周期请求数';
+        var tot = keys.reduce(function(a,k){return a+m.heat[k];},0);
+        $('#ovReq').textContent = tot;
+        $('#ovHeat').innerHTML = '<div class="heatstack">'+keys.map(function(k,i){
+            return '<i style="width:'+(m.heat[k]/tot*100).toFixed(2)+'%;background:'+HEAT[i%HEAT.length]+'"></i>';
+          }).join('')+'</div><div class="heatlegend">'+keys.map(function(k,i){
+            return '<span><em style="background:'+HEAT[i%HEAT.length]+'"></em>'+esc(k)+' <b>'+m.heat[k]+'</b></span>';
+          }).join('')+'</div>';
+        $('#ovHeatNote').textContent='';
       } else { $('#ovReq').textContent='0'; $('#ovHeat').innerHTML='<div class="hint">这个周期还没有代理流量</div>'; $('#ovHeatNote').textContent=''; }
     }
   }catch(e){ /* 静默，避免刷屏 */ }
@@ -651,6 +652,8 @@ load();
 loadMetrics();
 
 // 实时：活跃任务 2 秒一刷。只读展示，点不动、也改不了调度。
+// 场景热度的四类颜色：按协议区分，图例与堆叠条同一套。
+var HEAT=['#2563eb','#7c3aed','#0ea5e9','#94a3b8','#f59e0b','#10b981'];
 function fmtB(n){
   if (n == null || n < 0) return '–';
   if (n >= 1073741824) return (n/1073741824).toFixed(2)+' GB';
@@ -676,20 +679,31 @@ function renderLive(d){
   document.getElementById('lvDot').style.background = act.length ? 'var(--ok)' : 'var(--faint)';
   document.getElementById('lvThru').innerHTML =
     '总计 <b>'+fmtSp(d.window_bps)+'</b> · 近 1 分钟 '+fmtB(d.window_bytes);
-  const rows = act.map(function(t){
+  // 最多显示 3 条：并发再多，面板也不该把下面的内容一路顶下去。
+  const shown = act.slice(0, 3);
+  const rows = shown.map(function(t){
     const pct = t.total > 0 ? Math.min(100, t.done*100/t.total) : 0;
-    const tags = (t.sources||[]).filter(function(x){return x.bytes>0}).map(function(x){
-      return '<span class="lvtag p">'+esc(x.name)+' '+fmtB(x.bytes)+'</span>';
+    // 源只留 host，一行放得下；超过 3 台收成 +N，避免行高忽高忽低。
+    const srcs = (t.sources||[]).filter(function(x){return x.bytes>0});
+    const tags = srcs.slice(0,3).map(function(x){
+      return '<span class="lvtag p">'+esc(x.name)+'</span>';
     }).join('');
-    const mode = t.mode === 'parallel' ? '分片并行' : '单源';
+    const more = srcs.length > 3 ? '<span class="lvmore">+'+(srcs.length-3)+'</span>' : '';
+    let mode = t.mode === 'parallel' ? '分片并行' : '单源';
+    if (t.mode === 'parallel' && t.par && t.par.segments){
+      mode += ' · '+t.par.segments+'段/'+t.par.sources+'源/'+t.par.workers+'并发';
+    }
     return '<div class="lvrow"><div class="lvtop">'+
       '<span class="lvt">'+esc(t.target)+'</span>'+
       '<span class="lvsp">'+fmtSp(t.bps)+'</span></div>'+
       '<div class="lvbar"><i style="width:'+pct.toFixed(1)+'%"></i></div>'+
       '<div class="lvmeta"><span>'+fmtB(t.done)+(t.total>0?' / '+fmtB(t.total):'')+'</span>'+
-      '<span>'+mode+'</span><span>'+Math.round(t.elapsed_s)+'s</span>'+tags+'</div></div>';
+      '<span>'+mode+'</span><span>'+Math.round(t.elapsed_s)+'s</span></div>'+
+      '<div class="lvsrcs"><span class="lvtaglist">'+tags+'</span>'+more+'</div></div>';
   }).join('');
-  document.getElementById('lvRows').innerHTML = rows;
+  const extra = act.length > shown.length
+    ? '<div class="lvmore-row">另有 '+(act.length-shown.length)+' 个任务在跑</div>' : '';
+  document.getElementById('lvRows').innerHTML = rows + extra;
   document.getElementById('lvRecent').innerHTML = rec.slice(0,3).map(function(r){
     return '<div>'+ (r.ok?'✓':'✗') +' '+esc(r.target)+' · '+fmtB(r.total)+' · '+r.dur_s.toFixed(1)+'s</div>';
   }).join('');

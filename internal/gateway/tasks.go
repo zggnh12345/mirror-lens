@@ -37,6 +37,15 @@ type LiveTask struct {
 	BPS     int64         `json:"bps"`
 	Elapsed float64       `json:"elapsed_s"`
 	Sources []SourceShare `json:"sources,omitempty"`
+	Par     *ParInfo      `json:"par,omitempty"` // 仅分片并行
+}
+
+// ParInfo 说清这次并行是怎么切的：几段、几台源、几个 worker。
+// 段数和并发数只有并行引擎自己知道，不靠源数量推。
+type ParInfo struct {
+	Segments int `json:"segments"`
+	Sources  int `json:"sources"`
+	Workers  int `json:"workers"`
 }
 
 // RecentTask 是刚结束的一条；不落库，只留最近几条。
@@ -76,6 +85,8 @@ type liveTask struct {
 	reg     *taskReg
 	started time.Time
 	done    atomic.Int64
+	parSeg  int // 分片并行的段数；0 表示不是并行
+	parWrk  int
 
 	mu      sync.Mutex
 	names   []string
@@ -160,6 +171,16 @@ func (t *liveTask) addSource(i int, n int64, ok bool) {
 	}
 }
 
+// setPar 记录分片并行的段数与并发数（并行引擎起步后调用一次）。
+func (t *liveTask) setPar(seg, workers int) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.parSeg, t.parWrk = seg, workers
+	t.mu.Unlock()
+}
+
 // finish 把任务移出活跃表，进最近完成列表。
 func (t *liveTask) finish(ok bool) {
 	if t == nil {
@@ -221,6 +242,12 @@ func (t *liveTask) snapshot() LiveTask {
 		Total:   t.total,
 		BPS:     t.bps(),
 		Elapsed: time.Since(t.started).Seconds(),
+	}
+	t.mu.Lock()
+	seg, wrk := t.parSeg, t.parWrk
+	t.mu.Unlock()
+	if seg > 0 {
+		lt.Par = &ParInfo{Segments: seg, Sources: len(t.names), Workers: wrk}
 	}
 	if len(t.names) > 0 {
 		lt.Sources = make([]SourceShare, 0, len(t.names))

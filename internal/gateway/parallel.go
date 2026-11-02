@@ -150,6 +150,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 
 	// 面板：一条任务、多台源的贡献分开记，结束后进最近完成。
 	task := g.tasks.start(plan.Kind, planLabel(plan), "parallel", total, parNames(srcs))
+	task.setPar(n, g.par.Workers)
 	ok := false
 	defer func() { task.finish(ok) }()
 	out := io.Writer(w)

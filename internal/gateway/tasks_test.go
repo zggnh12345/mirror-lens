@@ -70,3 +70,28 @@ func TestTaskUnknownTotal(t *testing.T) {
 		t.Fatalf("未知长度字段不对: %+v", a)
 	}
 }
+
+// 面板要显示「7段/3源/4并发」：段数和并发数不能靠源数量去猜。
+func TestTaskCarriesParallelInfo(t *testing.T) {
+	r := newTaskReg()
+	task := r.start("docker", "library/redis@sha256:7f3a", "parallel", 30<<20, []string{"A", "B", "C"})
+	task.setPar(7, 4)
+	task.add(1 << 20)
+
+	a := r.snapshot().Active[0]
+	if a.Par == nil {
+		t.Fatal("并行任务应带 par 字段")
+	}
+	if a.Par.Segments != 7 || a.Par.Sources != 3 || a.Par.Workers != 4 {
+		t.Fatalf("par 不对: %+v", *a.Par)
+	}
+
+	// 单源任务不能凭空长出 par。
+	s2 := r.start("raw", "f.bin", "stream", 10, []string{"X"})
+	s2.add(1)
+	for _, x := range r.snapshot().Active {
+		if x.Mode == "stream" && x.Par != nil {
+			t.Fatalf("单源不该有 par: %+v", x)
+		}
+	}
+}
