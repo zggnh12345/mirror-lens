@@ -231,7 +231,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	if prev != nil {
 		fresh := plan.Immutable || g.now().Sub(time.Unix(prev.CreatedAt, 0)) < plan.TTL
 		if fresh {
-			g.serveCached(w, r, prev, "HIT", true)
+			g.serveCached(w, r, plan, prev, "HIT", true)
 			return
 		}
 		// 磁盘低于底线就别再往里写了，命中的旧条目照常发，新的走直通。
@@ -243,11 +243,11 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		switch {
 		case err == nil && notMod:
 			g.st.CacheRefresh(plan.CacheKey)
-			g.serveCached(w, r, prev, "HIT-REVAL", true)
+			g.serveCached(w, r, plan, prev, "HIT-REVAL", true)
 			return
 		case err == nil:
 			setSource(w, plan)
-			g.serveCached(w, r, entry, "MISS", false)
+			g.serveCached(w, r, plan, entry, "MISS", false)
 			return
 		default:
 			var ue *upstreamError
@@ -274,7 +274,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			}
 			// 其余错误（超时、5xx、连不上）先给缓存里的旧版本，标 STALE
 			loggw(slog.LevelWarn, "回源失败，使用旧缓存", r.Context(), plan, codeFor(err), err)
-			g.serveCached(w, r, prev, "STALE", true)
+			g.serveCached(w, r, plan, prev, "STALE", true)
 			return
 		}
 	}
@@ -304,7 +304,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		return
 	}
 	setSource(w, plan)
-	g.serveCached(w, r, entry, "MISS", false)
+	g.serveCached(w, r, plan, entry, "MISS", false)
 }
 
 // FSFree 返回缓存盘的剩余字节，供 /readyz 判断是否还写得下。
@@ -520,8 +520,21 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		resp.Body.Close()
 		return nil, false, 0, &tooLargeError{Max: g.maxSize}
 	}
+	// 面板：回源这一段单独记一条任务。GitHub/git 走的是「先整份落盘再下发」，
+	// 以前这条链路一个任务都不登记，大文件下载时面板永远空着。
+	var ftask *liveTask
+	ftaskOK := false
+	if resp.ContentLength >= liveMinBytes {
+		ftask = g.tasks.start(plan.Kind, planLabel(plan), "fetch", resp.ContentLength, nil)
+	}
+	defer func() { ftask.finish(ftaskOK) }()
+
 	dw := &diskWriter{w: tmp}
-	n, err := io.Copy(io.MultiWriter(dw, h), io.LimitReader(resp.Body, g.maxSize+1))
+	sink := io.Writer(dw)
+	if ftask != nil {
+		sink = &taskOnlyWriter{w: dw, t: ftask}
+	}
+	n, err := io.Copy(io.MultiWriter(sink, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
 		// io.Copy 只会停在第一个出错的 writer 上，所以要分开看是盘还是网。
@@ -584,12 +597,13 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		loggw(slog.LevelError, "写缓存索引失败", ctx, plan, logging.CacheCommitFailed, err)
 	}
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), n)
+	ftaskOK = true
 	return e, false, http.StatusOK, nil
 }
 
 // fromCache=false 表示刚回源填充：字节已记 fill，再记 hit 会抬高命中率。
 // hit 字节按实际写出的量算，Range 只要 10 MB 就记 10 MB。
-func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.CacheEntry, label string, fromCache bool) {
+func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, e *store.CacheEntry, label string, fromCache bool) {
 	if e == nil {
 		http.Error(w, "502 缓存条目缺失", http.StatusBadGateway)
 		return
@@ -611,10 +625,25 @@ func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, e *store.C
 	w.Header().Set("ETag", `"`+e.SHA256+`"`)
 	g.cacheHeaders(w.Header(), e, g.now())
 	w.Header().Set("X-ML-Cache", label)
-	cw := &countWriter{ResponseWriter: w}
+	// 面板：从磁盘下发也记一条任务。Docker 命中缓存、GitHub 回源完的下发
+	// 都走这条路，以前这里一个任务都不登记，所以面板看着像「没动静」。
+	var task *liveTask
+	if r.Method == http.MethodGet && e.Size >= liveMinBytes {
+		mode := "cache"
+		if !fromCache {
+			mode = "served"
+		}
+		var kind string
+		if plan != nil {
+			kind = plan.Kind
+		}
+		task = g.tasks.start(kind, planLabel(plan), mode, e.Size, nil)
+		defer task.finish(true)
+	}
+	cw := &countWriter{ResponseWriter: w, t: task, through: fromCache}
 	// ServeContent 负责 Range / 206 / 416 / If-None-Match，不用自己写
 	http.ServeContent(cw, r, path.Base(e.Key), time.Unix(e.CreatedAt, 0), f)
-	if fromCache {
+	if fromCache && task == nil {
 		g.tasks.addThrough(cw.n)
 		g.st.CacheHit(e.Key)
 		if cw.n > 0 {
@@ -675,12 +704,21 @@ func planLabel(plan *adapter.Plan) string {
 // countWriter 只数真正写给客户端的字节，304 和 Range 都不会多算。
 type countWriter struct {
 	http.ResponseWriter
-	n int64
+	n       int64
+	t       *liveTask
+	through bool // 是否计入整机吞吐：回源已经记过的字节不要再记一遍
 }
 
 func (c *countWriter) Write(p []byte) (int, error) {
 	n, err := c.ResponseWriter.Write(p)
 	c.n += int64(n)
+	if c.t != nil && n > 0 {
+		if c.through {
+			c.t.add(int64(n))
+		} else {
+			c.t.addOnly(int64(n))
+		}
+	}
 	return n, err
 }
 

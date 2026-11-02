@@ -49,7 +49,7 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 命中就从盘上切，ServeContent 自己处理 Range 和 HEAD。
 	if e, _ := g.st.CacheGet(plan.CacheKey); e != nil && g.fresh(e) {
-		g.serveCached(w, r, e, "HIT", true)
+		g.serveCached(w, r, plan, e, "HIT", true)
 		return
 	}
 
@@ -65,7 +65,7 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	unlock := g.lockKey(plan.CacheKey)
 	defer unlock()
 	if e, _ := g.st.CacheGet(plan.CacheKey); e != nil && g.fresh(e) {
-		g.serveCached(w, r, e, "HIT", true)
+		g.serveCached(w, r, plan, e, "HIT", true)
 		return
 	}
 	g.fillStream(w, r, plan)
@@ -125,7 +125,7 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 			resp.Body.Close()
 			if prev != nil {
 				g.st.CacheRefresh(plan.CacheKey)
-				g.serveCached(w, r, prev, "HIT-REVAL", true)
+				g.serveCached(w, r, plan, prev, "HIT-REVAL", true)
 				return
 			}
 			prev = nil // 没有缓存却回了 304，去掉条件头再来
@@ -718,7 +718,7 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	}
 	if prev != nil {
 		log.Printf("回源失败，用旧缓存 %s: %v", plan.CacheKey, err)
-		g.serveCached(w, r, prev, "STALE", true)
+		g.serveCached(w, r, plan, prev, "STALE", true)
 		return
 	}
 	code := statusFor(err)

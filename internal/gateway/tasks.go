@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"io"
 	"net/http"
 	"sort"
 	"sync"
@@ -17,6 +18,8 @@ const (
 	sampleMinGap  = 250 * time.Millisecond
 	recentKeep    = 8
 	throughWindow = 60 // 整机吞吐窗口（秒）
+	// liveMinBytes 以下的小文件不上面板：几百毫秒就传完，闪一下只剩干扰。
+	liveMinBytes = 4 << 20
 )
 
 // SourceShare 是一台源在这次传输里实际供了多少字节。
@@ -146,7 +149,22 @@ func (t *liveTask) add(n int64) {
 		return
 	}
 	cur := t.done.Add(n)
-	t.reg.addThrough(n)
+	if t.reg != nil {
+		t.reg.addThrough(n)
+	}
+	t.sample(cur)
+}
+
+// addOnly 只记任务自己的进度与速度，不进整机吞吐窗口。
+// 回源和随后下发的是同一批字节，两边都计数会把「近 1 分钟」撑成两倍。
+func (t *liveTask) addOnly(n int64) {
+	if t == nil || n <= 0 {
+		return
+	}
+	t.sample(t.done.Add(n))
+}
+
+func (t *liveTask) sample(cur int64) {
 	t.mu.Lock()
 	last := len(t.samples) - 1
 	if last < 0 || time.Since(t.samples[last].at) >= sampleMinGap {
@@ -327,6 +345,21 @@ type taskWriter struct {
 
 func (w *taskWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
+	if n > 0 {
+		w.t.add(int64(n))
+	}
+	return n, err
+}
+
+// taskOnlyWriter 给「回源落盘」这一段计数。回源是真正的上游网络流量，
+// 所以计入整机吞吐；随后从磁盘下发的那段不再计，免得同一批字节算两次。
+type taskOnlyWriter struct {
+	w io.Writer
+	t *liveTask
+}
+
+func (w *taskOnlyWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
 	if n > 0 {
 		w.t.add(int64(n))
 	}

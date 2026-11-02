@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"strings"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter"
@@ -148,20 +149,10 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request) {
 
 	// digest 是内容哈希，命中就是永远命中，不用再回源验证
 	if e, _ := g.st.CacheGet(plan.CacheKey); e != nil {
-		f, err := g.cache.Open(e.SHA256)
-		if err == nil {
-			defer f.Close()
-			h := w.Header()
-			h.Set("Content-Type", "application/octet-stream")
-			h.Set("Docker-Content-Digest", digest)
-			h.Set("Accept-Ranges", "bytes")
-			h.Set("X-ML-Cache", "HIT")
-			g.st.CacheHit(e.Key)
-			cw := &countWriter{ResponseWriter: w}
-			http.ServeContent(cw, r, path.Base(e.SHA256), g.now(), f)
-			if cw.n > 0 {
-				g.st.RecordTraffic(store.TrafficHit, store.KindDocker, cw.n)
-			}
+		// 文件能打开就走统一的 writeBlobFile：它负责头、命中计数和面板任务。
+		if f, err := g.cache.Open(e.SHA256); err == nil {
+			_ = f.Close()
+			g.writeBlobFile(w, r, e, digest)
 			return
 		}
 		_ = g.st.CacheDelete(e.Key)
@@ -204,7 +195,14 @@ func (g *Gateway) writeBlobFile(w http.ResponseWriter, r *http.Request, e *store
 	h.Set("Accept-Ranges", "bytes")
 	h.Set("X-ML-Cache", "HIT")
 	g.st.CacheHit(e.Key)
-	cw := &countWriter{ResponseWriter: w}
+	// 面板：docker pull 命中缓存也是真在传，得留一条任务，
+	// 否则日常拉已经缓存的镜像时面板永远是空的。
+	var task *liveTask
+	if r.Method == http.MethodGet && e.Size >= liveMinBytes {
+		task = g.tasks.start("docker", shortDigest(digest), "cache", e.Size, nil)
+		defer task.finish(true)
+	}
+	cw := &countWriter{ResponseWriter: w, t: task, through: true}
 	http.ServeContent(cw, r, path.Base(e.SHA256), g.now(), f)
 	if cw.n > 0 {
 		g.st.RecordTraffic(store.TrafficHit, store.KindDocker, cw.n)
@@ -243,4 +241,13 @@ func (g *Gateway) headUpstream(w http.ResponseWriter, r *http.Request, plan *ada
 	h.Set("Accept-Ranges", "bytes")
 	h.Set("X-ML-Cache", "MISS")
 	w.WriteHeader(http.StatusOK)
+}
+
+// shortDigest 把 sha256:xxx 缩成面板一行放得下的形式。
+func shortDigest(d string) string {
+	d = strings.TrimPrefix(d, "sha256:")
+	if len(d) > 12 {
+		d = d[:12]
+	}
+	return "sha256:" + d
 }

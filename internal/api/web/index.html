@@ -689,12 +689,16 @@ function renderLive(d){
       return '<span class="lvtag p">'+esc(x.name)+'</span>';
     }).join('');
     const more = srcs.length > 3 ? '<span class="lvmore">+'+(srcs.length-3)+'</span>' : '';
-    let mode = t.mode === 'parallel' ? '分片并行' : '单源';
+    // 回源 / 下发 / 缓存命中都是真实传输，别都写成「单源」。
+    const modes = {parallel:'分片并行', stream:'单源', fetch:'回源', served:'下发', cache:'缓存命中'};
+    let mode = modes[t.mode] || t.mode || '';
+    // 缓存键带 gh:/docker: 之类前缀，手机上没必要占宽度。
+    const name = (t.target || '').replace(/^[a-z]+:/, '');
     if (t.mode === 'parallel' && t.par && t.par.segments){
       mode += ' · '+t.par.segments+'段/'+t.par.sources+'源/'+t.par.workers+'并发';
     }
     return '<div class="lvrow"><div class="lvtop">'+
-      '<span class="lvt">'+esc(t.target)+'</span>'+
+      '<span class="lvt">'+esc(name)+'</span>'+
       '<span class="lvsp">'+fmtSp(t.bps)+'</span></div>'+
       '<div class="lvbar"><i style="width:'+pct.toFixed(1)+'%"></i></div>'+
       '<div class="lvmeta"><span>'+fmtB(t.done)+(t.total>0?' / '+fmtB(t.total):'')+'</span>'+
