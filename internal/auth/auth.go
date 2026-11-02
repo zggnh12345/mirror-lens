@@ -6,10 +6,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -145,8 +147,51 @@ func SessionTTL(st *store.Store) time.Duration {
 	return time.Duration(h) * time.Hour
 }
 
+// 可信反代网段。空表示谁都不信：RemoteAddr 就是客户端。
+var trustedNets atomic.Value // []*net.IPNet
+
+// SetTrustedProxies 记住可信反代网段（"10.0.0.0/8" 或单 IP）。
+// 只有来自这些地址的请求才允许根据 X-Forwarded-For 改判客户端 IP。
+func SetTrustedProxies(spec []string) {
+	nets := make([]*net.IPNet, 0, len(spec))
+	for _, s := range spec {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if !strings.Contains(s, "/") {
+			ip := net.ParseIP(s)
+			if ip == nil {
+				continue
+			}
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			s = fmt.Sprintf("%s/%d", ip.String(), bits)
+		}
+		if _, n, err := net.ParseCIDR(s); err == nil {
+			nets = append(nets, n)
+		}
+	}
+	trustedNets.Store(nets)
+}
+
+func trusted(ip net.IP) bool {
+	nets, _ := trustedNets.Load().([]*net.IPNet)
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // Login 签发会话并写 cookie。
-func Login(w http.ResponseWriter, st *store.Store) error {
+//
+// Secure 的判定：显式设置优先（cookie_secure=1/0），否则看这一次请求
+// 是不是 HTTPS。反代后面不能无条件看 X-Forwarded-Proto，只有对端可信时才算。
+func Login(w http.ResponseWriter, r *http.Request, st *store.Store) error {
 	tok := NewToken()
 	if tok == "" {
 		return errNoEntropy
@@ -160,10 +205,29 @@ func Login(w http.ResponseWriter, st *store.Store) error {
 		Value:    tok,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secureCookie(r, st),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(ttl.Seconds()),
 	})
 	return nil
+}
+
+func secureCookie(r *http.Request, st *store.Store) bool {
+	switch st.GetSetting("cookie_secure", "") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && trusted(ip) && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 var errNoEntropy = errors.New("无法生成随机会话令牌")
@@ -203,16 +267,48 @@ type limiter struct {
 
 var loginLimiter = &limiter{hits: map[string][]time.Time{}}
 
+// clientIP 返回登录限流用的键。
+//
+// 之前只认 RemoteAddr：Traefik 之后所有登录都来自同一个容器地址，
+// 一个公网爆破者能把「所有 IP」的名额一起耗尽，等于把管理员锁在门外。
+// 现在对端可信时按 X-Forwarded-For 从右往左取第一个非可信地址
+// （取最左等于让攻击者每次换个假 IP）。
 func clientIP(r *http.Request) string {
-	h := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		h = host
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
 	}
-	if h == "" {
-		// 空串会让所有请求共用一个键，限流不准还会撑大 map。
-		return "unknown"
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil {
+		if host == "" {
+			// 空串会让所有请求共用一个键，限流不准还会撑大 map。
+			return "unknown"
+		}
+		return host
 	}
-	return h
+	if !trusted(ip) {
+		return ip.String()
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			c := net.ParseIP(strings.TrimSpace(parts[i]))
+			if c == nil {
+				continue
+			}
+			if trusted(c) {
+				continue
+			}
+			return c.String()
+		}
+	}
+	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+		if c := net.ParseIP(xr); c != nil && !trusted(c) {
+			return c.String()
+		}
+	}
+	return ip.String()
 }
 
 // Allowed 判断该 IP 还能否继续尝试登录。

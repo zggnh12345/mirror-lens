@@ -303,7 +303,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth.Reset(r)
-	if err := auth.Login(w, s.st); err != nil {
+	if err := auth.Login(w, r, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "无法创建会话"})
 		return
 	}
@@ -365,7 +365,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Setup 已作废所有会话（含当前），给当前浏览器重发一个。
-	if err := auth.Login(w, s.st); err != nil {
+	if err := auth.Login(w, r, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
 		return
 	}
@@ -838,7 +838,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	if passChanged {
 		// 密码变了就作废其他会话，当前浏览器换新令牌
 		s.st.DeleteAllSessions()
-		if err := auth.Login(w, s.st); err != nil {
+		if err := auth.Login(w, r, s.st); err != nil {
 			writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
 			return
 		}
@@ -873,7 +873,7 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 	}
 	// 作废旧会话，给当前浏览器发一个新令牌
 	s.st.DeleteAllSessions()
-	if err := auth.Login(w, s.st); err != nil {
+	if err := auth.Login(w, r, s.st); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "密码已改，但会话创建失败，请重新登录"})
 		return
 	}

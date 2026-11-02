@@ -60,6 +60,13 @@ func (g *gate) acquire(ctx context.Context) (func(), error) {
 		select {
 		case <-ch:
 		case <-ctx.Done():
+			// 排过队就得撤掉计数，否则 queued 只增不减，
+			// 面板和调度会一直以为有人在排队。
+			g.mu.Lock()
+			if g.queued > 0 {
+				g.queued--
+			}
+			g.mu.Unlock()
 			return nil, ctx.Err()
 		}
 	}

@@ -500,18 +500,23 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 
 func consensus[T any](items []T, digest func(T) string) string {
 	counts := map[string]int{}
+	valid := 0
 	best, bestN := "", 0
 	for _, it := range items {
 		d := digest(it)
 		if d == "" {
 			continue
 		}
+		valid++
 		counts[d]++
 		if counts[d] > bestN {
 			best, bestN = d, counts[d]
 		}
 	}
-	if bestN < 2 {
+	// 严格多数：票数必须超过有效票的一半。2:1 里的 2 票不等于多数
+	// （另一个人可能看到了不同的内容），平票更不算。这种时候宁可不写缓存，
+	// 让下一次请求重新取证，也不要把可能是错的内容钉死。
+	if bestN < 2 || bestN*2 <= valid {
 		return ""
 	}
 	return best

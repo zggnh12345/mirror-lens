@@ -226,6 +226,10 @@ func main() {
 	// 指标收集常开（几个 map 自增），开关只管是否暴露 /metrics。
 	metrics.Enable()
 
+	// 登录限流和 Cookie Secure 也按同一份可信代理判定走，
+	// 否则 Traefik 后面所有登录都共用它的地址。
+	auth.SetTrustedProxies(cfg.Limits.TrustedProxies)
+
 	lim := limits.New(cfg.Limits)
 	if lim.Enabled() {
 		log.Printf("入口限流已开: 全局 %.0f/s 并发 %d | 每 IP %d/分 并发 %d | 每 Token %d/分 并发 %d | 可信代理 %v",

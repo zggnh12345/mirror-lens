@@ -6,6 +6,7 @@ package scheduler
 
 import (
 	"context"
+	"log"
 	"math"
 	"net/url"
 	"sort"
@@ -191,16 +192,33 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
-		return s.order(kind, le.items)
+		out := s.order(kind, le.items)
+		s.mu.Unlock()
+		return out
 	}
+	s.mu.Unlock()
+
+	// 查库不能在 s.mu 里：这里两条 SQL，慢查询的时候 Observe/Acquire
+	// 全被堵住，表现是「所有源一起变慢」，还会被 AIMD 记到源头上。
+	q0 := time.Now()
 	stats, err := s.st.SourceCandidates(kind)
+	if d := time.Since(q0); d > 200*time.Millisecond {
+		log.Printf("调度：SourceCandidates(%s) 耗时 %v（锁外）", kind, d)
+	}
 	if err != nil {
 		return nil
 	}
+	cooling, cerr := s.st.SourceFailedRecently(kind, s.now().Add(-s.cfg.FailCooldown).Unix())
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 等锁期间别人可能已经填好，直接用，别重复查库也避免覆盖更新的列表。
+	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
+		return s.order(kind, le.items)
+	}
 	// 重启后从事件表恢复最近失败的源，接着熔断而不是重新试错。
-	if cooling, err := s.st.SourceFailedRecently(kind, s.now().Add(-s.cfg.FailCooldown).Unix()); err == nil {
+	if cerr == nil {
 		for _, st := range stats {
 			k := pkey(kind, st.ID)
 			if cooling[st.ID] && s.brk[k] == nil {

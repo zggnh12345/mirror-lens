@@ -539,7 +539,6 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		atts = append(atts, attempt{u: plan.Upstream, idx: -1})
 	}
 
-	t0 := time.Now()
 	var last error
 	for _, a := range atts {
 		// 借用别的源先占它的并发名额：否则最快的源会被打成最慢。
@@ -553,6 +552,9 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 				release = rel
 			}
 		}
+		// t0 必须在这里：排在上面会把「等并发名额」的时间算进源速度，
+		// 让最快的源显示成最慢的，AIMD 据此降速就形成了负反馈。
+		t0 := time.Now()
 		resp, err := g.rangeReq(ctx, plan, a.u, off, off+length-1)
 		if err != nil {
 			if release != nil {
