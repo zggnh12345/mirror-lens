@@ -65,6 +65,7 @@ func WithMetrics(enabled, requireToken bool) Option {
 
 func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Janitor, sch *scheduler.Scheduler, opts ...Option) http.Handler {
 	s := &Server{st: st, eng: eng, gw: gw, jan: j, sch: sch}
+	auth.EnsureCSRFSecret(st)
 	for _, o := range opts {
 		o(s)
 	}
@@ -125,6 +126,20 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 		}
 	}
 
+	// csrf 只加在会改状态的接口上：GET 一律不加，也不允许 GET 改状态。
+	csrf := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !s.csrfOK(r) {
+				writeJSON(w, 403, map[string]any{
+					"error": "请求校验失败，请刷新页面后重试",
+					"code":  "csrf",
+				})
+				return
+			}
+			h(w, r)
+		}
+	}
+
 	// guard 先判 needSetup 再判登录：首次设置期间匿名也能进设置页。
 	// 反过来的话匿名请求会先被挡到 /login。
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -178,18 +193,18 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/settings", guard(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, sub, "settings.html")
 	}))
-	mux.HandleFunc("/api/logout", authed(s.logout))
+	mux.HandleFunc("/api/logout", authed(csrf(s.logout)))
 	mux.HandleFunc("/api/me", guard(s.me))
 	mux.HandleFunc("/api/health", guard(s.health))
-	mux.HandleFunc("/api/sources", guard(s.sources))
-	mux.HandleFunc("/api/sources/", guard(s.sourceItem))
+	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
+	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
 	mux.HandleFunc("/api/series/", guard(s.series))
 	mux.HandleFunc("/api/export", guard(s.export))
-	mux.HandleFunc("/api/probe", guard(s.probe))
-	mux.HandleFunc("/api/discover", guard(s.discover))
-	mux.HandleFunc("/api/settings", guard(s.settings))
-	mux.HandleFunc("/api/password", guard(s.password))
-	mux.HandleFunc("/api/account", guard(s.account))
+	mux.HandleFunc("/api/probe", guard(csrf(s.probe)))
+	mux.HandleFunc("/api/discover", guard(csrf(s.discover)))
+	mux.HandleFunc("/api/settings", guard(csrf(s.settings)))
+	mux.HandleFunc("/api/password", guard(csrf(s.password)))
+	mux.HandleFunc("/api/account", guard(csrf(s.account)))
 
 	// 加速器路径自带 Bearer/Basic 认证（客户端不带 cookie）
 	mux.HandleFunc("/raw/", s.gw.ServeRaw)
@@ -200,13 +215,14 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	if s.gw.RegistryOn() {
 		mux.HandleFunc("/v2/", s.gw.ServeRegistry)
 	}
-	mux.HandleFunc("/api/tokens", guard(s.tokens))
-	mux.HandleFunc("/api/tokens/", guard(s.tokenItem))
+	mux.HandleFunc("/api/tokens", guard(csrf(s.tokens)))
+	mux.HandleFunc("/api/tokens/", guard(csrf(s.tokenItem)))
 	mux.HandleFunc("/api/accel/active", guard(s.accelActive))
 	mux.HandleFunc("/api/accel/stats", guard(s.accelStats))
-	mux.HandleFunc("/api/accel/purge", guard(s.accelPurge))
-	mux.HandleFunc("/api/config", guard(s.configHandler))
+	mux.HandleFunc("/api/accel/purge", guard(csrf(s.accelPurge)))
+	mux.HandleFunc("/api/config", guard(csrf(s.configHandler)))
 	mux.HandleFunc("/api/metrics", guard(s.metricsView))
+	mux.HandleFunc("/api/audit", guard(s.auditList))
 
 	return logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
 }
@@ -284,7 +300,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 405, map[string]string{"error": "method"})
 		return
 	}
+	if crossSite(r) {
+		writeJSON(w, 403, map[string]string{"error": "请求来源不对"})
+		return
+	}
 	if !auth.Allowed(r) {
+		s.auditAs(r, "", "login", "", "触发限流", false)
 		writeJSON(w, 429, map[string]string{"error": "尝试次数过多，请 5 分钟后再试"})
 		return
 	}
@@ -298,6 +319,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.Check(s.st, in.User, in.Pass) {
 		auth.Fail(r)
+		s.auditAs(r, maskUser(in.User), "login", "", "用户名或密码不对", false)
 		log.Printf("登录失败: %s user=%s", r.RemoteAddr, maskUser(in.User))
 		writeJSON(w, 401, map[string]string{"error": "用户名或密码不对"})
 		return
@@ -307,6 +329,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "无法创建会话"})
 		return
 	}
+	s.auditAs(r, maskUser(in.User), "login", "", "", true)
 	writeJSON(w, 200, map[string]any{"ok": true, "must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1"})
 }
 
@@ -328,6 +351,10 @@ func (s *Server) needSetup() bool {
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	if crossSite(r) {
+		writeJSON(w, 403, map[string]string{"error": "请求来源不对"})
 		return
 	}
 	if !s.needSetup() {
@@ -369,11 +396,13 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "已保存，但会话创建失败，请重新登录"})
 		return
 	}
+	s.auditAs(r, maskUser(in.User), "setup", "", "初始账号", true)
 	log.Printf("初始账号已设置: user=%s", maskUser(in.User))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "logout", "", "", true)
 	auth.Logout(w, r, s.st)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -383,6 +412,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"user":        s.st.GetSetting(auth.KeyUser, auth.DefaultUser),
 		"must_change": s.st.GetSetting(auth.KeyMustChg, "0") == "1",
 		"version":     Version,
+		"csrf":        auth.CSRF(s.st, sessionToken(r)),
 	})
 }
 
@@ -470,6 +500,7 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	}
 	// 立刻跑一次识别（两种类型都试），前端轮询状态。
 	go s.eng.RunSource(id)
+	s.audit(r, "source_add", strconv.FormatInt(id, 10), "", true)
 	writeJSON(w, 200, map[string]any{"ok": true, "id": id})
 }
 
@@ -565,6 +596,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 		if in.Enabled != nil && *in.Enabled {
 			go s.eng.RunSource(id)
 		}
+		s.audit(r, "source_update", strconv.FormatInt(id, 10), "", true)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	case http.MethodDelete:
 		if err := s.st.DeleteSource(id); err != nil {
@@ -574,6 +606,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 		// 只删库不够：调度器缓存、熔断、闸门、指标都还记着这个 id。
 		s.sch.Forget(id)
 		s.eng.Changed()
+		s.audit(r, "source_delete", strconv.FormatInt(id, 10), "", true)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method"})
@@ -698,6 +731,11 @@ func speedOf(x store.Source, kind string) int64 {
 // ---- 动作 ----
 
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeJSON(w, 405, map[string]string{"error": "方法不对"})
+		return
+	}
 	var in struct {
 		Tier int `json:"tier"`
 	}
@@ -706,10 +744,17 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		in.Tier = 2
 	}
 	go s.eng.Run(in.Tier)
+	s.audit(r, "probe", "", fmt.Sprintf("tier=%d", in.Tier), true)
 	writeJSON(w, 202, map[string]any{"ok": true, "tier": in.Tier})
 }
 
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeJSON(w, 405, map[string]string{"error": "方法不对"})
+		return
+	}
+	s.audit(r, "discover", "", "", true)
 	go func() {
 		// 不能用 r.Context()：handler 返回即取消，抓取会全失败。
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -769,6 +814,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		var parts []string
 		for k, n := range in {
 			if _, ok := settingKeys[k]; !ok {
 				continue
@@ -777,7 +823,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
+			parts = append(parts, fmt.Sprintf("%s=%d", k, n))
 		}
+		sort.Strings(parts)
+		s.audit(r, "settings", "", strings.Join(parts, " "), true)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method"})
@@ -843,6 +892,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.audit(r, "account", "", fmt.Sprintf("用户名改为 %s，密码 %s", in.User, map[bool]string{true: "已改", false: "未改"}[passChanged]), true)
 	writeJSON(w, 200, map[string]any{"ok": true, "user": in.User, "password_changed": passChanged})
 }
 
@@ -877,6 +927,7 @@ func (s *Server) password(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "密码已改，但会话创建失败，请重新登录"})
 		return
 	}
+	s.audit(r, "password", "", "", true)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

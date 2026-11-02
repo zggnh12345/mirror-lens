@@ -43,6 +43,9 @@ func newTestServerOpts(t *testing.T, opts ...Option) (*store.Store, http.Handler
 func postJSON(h http.Handler, path string, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if testCSRF != "" {
+		req.Header.Set("X-CSRF-Token", testCSRF)
+	}
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

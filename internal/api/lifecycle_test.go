@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,9 +11,16 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+// testCSRF 是 setupPanel 拿到的会话 token：测试里的写请求默认带上，
+// 单独验 CSRF 的用例自己构造请求、不用这两个 helper。
+var testCSRF string
+
 func patchJSON(h http.Handler, path, body string, ck *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if testCSRF != "" {
+		req.Header.Set("X-CSRF-Token", testCSRF)
+	}
 	if ck != nil {
 		req.AddCookie(ck)
 	}
@@ -33,6 +41,13 @@ func setupPanel(t *testing.T, h http.Handler) *http.Cookie {
 	}
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "ml_session" {
+			if me := get(h, "/api/me", nil, c); me.Code == 200 {
+				var out struct {
+					CSRF string `json:"csrf"`
+				}
+				_ = json.Unmarshal(me.Body.Bytes(), &out)
+				testCSRF = out.CSRF
+			}
 			return c
 		}
 	}

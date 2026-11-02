@@ -153,6 +153,8 @@ function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearT
 async function api(path, opt){
   opt = opt || {};
   opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers||{});
+  var _m = (opt.method || 'GET').toUpperCase();
+  if (_m !== 'GET' && _m !== 'HEAD' && window.ML_CSRF) opt.headers['X-CSRF-Token'] = window.ML_CSRF;
   var r = await fetch(path, opt);
   if (r.status === 401){ location.href = '/login'; throw new Error('未登录'); }
   var d = {};
@@ -641,6 +643,7 @@ async function loadMetrics(){
 
 /* ---- 启动 ---- */
 api('/api/me').then(function(d){
+  window.ML_CSRF = d.csrf || '';
   $('#sub').textContent = d.user + ' · v' + d.version;
   $('#pwbar').style.display = d.must_change ? '' : 'none';
 }).catch(function(){});

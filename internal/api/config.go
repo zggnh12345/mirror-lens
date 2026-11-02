@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -566,6 +567,12 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	*s.cfg = work
+	keys := make([]string, 0, len(body.Values))
+	for k := range body.Values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	s.audit(r, "config", "", strings.Join(keys, " "), true)
 	// 日志级别即时热更
 	if _, ok := body.Values["logging.level"]; ok {
 		if err := logging.Setup(s.cfg.Logging); err != nil {

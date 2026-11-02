@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -108,7 +109,15 @@ type Check struct {
 	Error     string `json:"error"`
 }
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+
+	// 审计走单条后台通道：登录爆破时每个失败都同步写库会把写锁打满，
+	// 所以宁可丢几条事件，也不让审计拖慢认证。
+	auditOnce sync.Once
+	auditCh   chan AuditEvent
+	auditStop chan struct{}
+}
 
 // Ready 做一次「真能写」的轻量检查：抢写锁、空更新、回滚。
 // 不用 PingContext：只读挂载、磁盘满、WAL 损坏下 Ping 照样通，写缓存才失败。
@@ -148,7 +157,12 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.auditStop != nil {
+		close(s.auditStop)
+	}
+	return s.db.Close()
+}
 
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
@@ -206,6 +220,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  ip TEXT NOT NULL DEFAULT '',
+  user TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  ok INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 `)
 	if err != nil {
 		return err

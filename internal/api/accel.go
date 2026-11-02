@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -52,6 +53,7 @@ func (s *Server) tokens(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		s.audit(r, "token_create", tok.Prefix, body.Name, true)
 		writeJSON(w, 200, map[string]any{
 			"token":  plain,
 			"id":     tok.ID,
@@ -79,6 +81,7 @@ func (s *Server) tokenItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "token_revoke", strconv.FormatInt(id, 10), "", true)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -236,6 +239,7 @@ func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	who := s.st.GetSetting(auth.KeyUser, auth.DefaultUser)
+	s.audit(r, "cache_purge", scope, fmt.Sprintf("条目=%d 释放=%dMB", res.Entries, res.Bytes>>20), true)
 	log.Printf("清空缓存: 范围=%s 操作人=%s 条目=%d 释放=%dMB 待重试=%d",
 		scope, who, res.Entries, res.Bytes>>20, res.Pending)
 	writeJSON(w, 200, map[string]any{

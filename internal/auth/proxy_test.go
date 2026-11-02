@@ -18,7 +18,7 @@ func TestClientIPUsesForwardedForOnlyBehindTrustedProxy(t *testing.T) {
 		if xff != "" {
 			r.Header.Set("X-Forwarded-For", xff)
 		}
-		return clientIP(r)
+		return ClientIP(r)
 	}
 	if got := behind("1.2.3.4, 10.1.1.7"); got != "1.2.3.4" {
 		t.Fatalf("应取右边第一个非可信地址，得到 %q", got)
@@ -36,7 +36,7 @@ func TestClientIPUsesForwardedForOnlyBehindTrustedProxy(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/login", nil)
 	r.RemoteAddr = "8.8.8.8:1234"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4")
-	if got := clientIP(r); got != "8.8.8.8" {
+	if got := ClientIP(r); got != "8.8.8.8" {
 		t.Fatalf("不可信对端不该改判 IP，得到 %q", got)
 	}
 }

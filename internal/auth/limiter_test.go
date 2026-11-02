@@ -29,7 +29,7 @@ func TestEmptyRemoteAddrUsesStableKey(t *testing.T) {
 	if hasUnknown {
 		t.Fatal("只是检查一次不该留下记录")
 	}
-	if ip := clientIP(r); ip != "unknown" {
+	if ip := ClientIP(r); ip != "unknown" {
 		t.Fatalf("空 RemoteAddr 应归到 unknown，得到 %q", ip)
 	}
 }

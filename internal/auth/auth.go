@@ -2,7 +2,9 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -27,6 +29,7 @@ const (
 	KeyHash       = "admin_password_hash"
 	KeyMustChg    = "must_change_password"
 	KeySessionTTL = "session_ttl_hours"
+	KeyCSRFSecret = "csrf_secret"
 )
 
 // EnsureAdmin 首次启动写入默认账号 admin/admin，并标记需改密。
@@ -273,7 +276,8 @@ var loginLimiter = &limiter{hits: map[string][]time.Time{}}
 // 一个公网爆破者能把「所有 IP」的名额一起耗尽，等于把管理员锁在门外。
 // 现在对端可信时按 X-Forwarded-For 从右往左取第一个非可信地址
 // （取最左等于让攻击者每次换个假 IP）。
-func clientIP(r *http.Request) string {
+// ClientIP 返回可信代理之后的客户端地址，供限流和审计共用。
+func ClientIP(r *http.Request) string {
 	host := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		host = h
@@ -315,7 +319,7 @@ func clientIP(r *http.Request) string {
 func Allowed(r *http.Request) bool {
 	loginLimiter.mu.Lock()
 	defer loginLimiter.mu.Unlock()
-	ip := clientIP(r)
+	ip := ClientIP(r)
 	cut := time.Now().Add(-5 * time.Minute)
 	keep := loginLimiter.hits[ip][:0]
 	for _, t := range loginLimiter.hits[ip] {
@@ -336,7 +340,7 @@ func Allowed(r *http.Request) bool {
 func Fail(r *http.Request) {
 	loginLimiter.mu.Lock()
 	defer loginLimiter.mu.Unlock()
-	ip := clientIP(r)
+	ip := ClientIP(r)
 	loginLimiter.hits[ip] = append(loginLimiter.hits[ip], time.Now())
 }
 
@@ -344,7 +348,7 @@ func Fail(r *http.Request) {
 func Reset(r *http.Request) {
 	loginLimiter.mu.Lock()
 	defer loginLimiter.mu.Unlock()
-	delete(loginLimiter.hits, clientIP(r))
+	delete(loginLimiter.hits, ClientIP(r))
 }
 
 // CleanPath 去掉查询串，用于日志。
@@ -353,4 +357,29 @@ func CleanPath(p string) string {
 		return p[:i]
 	}
 	return p
+}
+
+// EnsureCSRFSecret 首次启动生成一个进程外的随机密钥，用来派生 CSRF token。
+// 存在 settings 里而不是内存：多进程/重启后已发出的面板还能继续用。
+func EnsureCSRFSecret(st *store.Store) {
+	if st.GetSetting(KeyCSRFSecret, "") != "" {
+		return
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return
+	}
+	_ = st.SetSetting(KeyCSRFSecret, hex.EncodeToString(b))
+}
+
+// CSRF 按会话派生 token：同一会话稳定，换会话即失效，不需要额外的 cookie。
+// 攻击者读不到 /api/me（跨站读不了响应），也读不到这里。
+func CSRF(st *store.Store, sessionToken string) string {
+	secret := st.GetSetting(KeyCSRFSecret, "")
+	if secret == "" || sessionToken == "" {
+		return ""
+	}
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(sessionToken))
+	return hex.EncodeToString(m.Sum(nil))
 }

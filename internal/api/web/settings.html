@@ -29,6 +29,7 @@
   <button data-tab="probe">探测</button>
   <button data-tab="accel">加速器</button>
   <button data-tab="config">配置参数</button>
+  <button data-tab="audit">审计</button>
   <button data-tab="about">关于</button>
 </nav>
 
@@ -153,6 +154,15 @@
     <div id="cfgBox"><div class="hint">加载中…</div></div>
   </div>
 
+  <!-- 审计 -->
+  <div data-panel="audit">
+  <div class="sec" style="margin-top:14px">
+    <h2>最近操作</h2>
+    <p class="desc">登录、改账号、改设置、增删源、清缓存都记一条，保留 90 天。只记地址和动作，不记密码和令牌。</p>
+    <div id="auditBox"><div class="hint">加载中…</div></div>
+  </div>
+  </div>
+
   <!-- 关于 -->
   <div data-panel="about">
   <div class="sec">
@@ -181,6 +191,8 @@ function say(el, msg, kind){ el.className = 'hint' + (kind ? ' ' + kind : ''); e
 async function api(path, opt){
   opt = opt || {};
   opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers||{});
+  var _m = (opt.method || 'GET').toUpperCase();
+  if (_m !== 'GET' && _m !== 'HEAD' && window.ML_CSRF) opt.headers['X-CSRF-Token'] = window.ML_CSRF;
   var r = await fetch(path, opt);
   if (r.status === 401){ location.href = '/login'; throw new Error('未登录'); }
   var d = {};
@@ -225,8 +237,29 @@ document.querySelectorAll('#tabs button').forEach(function(b){
     document.querySelectorAll('[data-panel]').forEach(function(p){ p.classList.toggle('active', p.dataset.panel === t); });
     window.scrollTo(0, 0);
     if (t === 'config') loadConfig();
+    if (t === 'audit') loadAudit();
   });
 });
+
+/* ---- 审计 ---- */
+async function loadAudit(){
+  var box = $('#auditBox');
+  try{
+    var d = await api('/api/audit?limit=100');
+    if (!d.events || !d.events.length){ box.innerHTML = '<div class="hint">还没有记录</div>'; return; }
+    var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    box.innerHTML = d.events.map(function(e){
+      var t = new Date(e.ts * 1000);
+      var ts = (t.getMonth() + 1) + '-' + pad(t.getDate()) + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes());
+      return '<div class="kv" style="align-items:baseline">' +
+        '<span style="opacity:.55;font-variant-numeric:tabular-nums;white-space:nowrap">' + ts + ' · ' + esc(e.ip) + '</span>' +
+        '<span style="text-align:right">' + esc(e.action) + (e.target ? ' ' + esc(e.target) : '') +
+        (e.detail ? ' · ' + esc(e.detail) : '') + (e.ok ? '' : ' <b style="color:#d33">失败</b>') + '</span></div>';
+    }).join('');
+  }catch(err){
+    box.innerHTML = '<div class="hint error">' + esc(err.message) + '</div>';
+  }
+}
 
 /* ---- 加载 ---- */
 var ME = {};
@@ -240,6 +273,7 @@ var ME = {};
   })();
   try{
     ME = await api('/api/me');
+    window.ML_CSRF = ME.csrf || '';
     $('#acUser').value = ME.user;
     $('#aboutUser').textContent = ME.user;
     $('#aboutVer').textContent = 'v' + ME.version;
