@@ -47,6 +47,7 @@ type Cache struct {
 	Dir       string  `yaml:"dir"`         // 空 = <data>/cache
 	MaxFileMB int64   `yaml:"max_file_mb"` // 单文件上限，超了只透传
 	MaxGB     int64   `yaml:"max_gb"`      // 总量上限，0 = 不限
+	MinFreeGB int64   `yaml:"min_free_gb"` // 磁盘剩余低于此值就只透传，0 = 不设底线
 	WarnAt    float64 `yaml:"warn_at"`     // 用量到多少报一次警
 	RecoverAt float64 `yaml:"recover_at"`  // 回落到多少以下才重新武装
 }
@@ -240,7 +241,7 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("logging.level 只支持 debug/info/warn/error，收到 %q", c.Logging.Level)
 	}
-	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 {
+	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 || c.Cache.MinFreeGB < 0 {
 		return fmt.Errorf("容量上限不能是负数")
 	}
 	if c.Raw.TTL.Duration < 0 || c.Git.TTL.Duration < 0 || c.Registry.TagTTL.Duration < 0 {

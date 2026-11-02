@@ -39,7 +39,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		return false
 	}
 	// 没有可信摘要就没有拼装的资格；客户端自己带 Range 的（续传）也不掺和。
-	if plan.ExpectSHA == "" || !plan.Stream || !plan.Cacheable || r.Header.Get("Range") != "" {
+	if plan.ExpectSHA == "" || !plan.Stream || !plan.Cacheable || g.lowDisk() || r.Header.Get("Range") != "" {
 		return false
 	}
 	if _, ok := g.cache.ReadPartial(plan.CacheKey); ok {

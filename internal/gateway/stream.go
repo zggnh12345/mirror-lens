@@ -304,10 +304,15 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		have, total = start, t
 	}
 
-	cacheable := plan.Cacheable
+	cacheable := plan.Cacheable && !g.lowDisk()
 	ttl := plan.TTL
 	if plan.OnResponse != nil {
 		cacheable, ttl = plan.OnResponse(resp)
+	}
+	// 磁盘底线放在 OnResponse 之后判：适配器可能把 Cacheable 又改回 true，
+	// 也顺手把 no-store 之类的结论一并覆盖。这一处是最终裁决。
+	if g.lowDisk() {
+		cacheable = false
 	}
 	limit := g.limitFor(plan)
 	if total > limit {

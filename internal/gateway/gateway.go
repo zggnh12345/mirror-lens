@@ -53,6 +53,8 @@ type Gateway struct {
 	maxSize int64
 
 	cacheMaxBytes int64
+	cacheMinFree  int64 // 磁盘剩余低于此值暂停落盘，0 = 不设底线
+	diskLowFlag   atomic.Bool
 	quotaMu       sync.Mutex
 	gc            *gc.GC
 	now           func() time.Time
@@ -92,8 +94,11 @@ type Options struct {
 	RawTTL        time.Duration
 	Registry      *registryadapter.Adapter
 	CacheMaxBytes int64 // 缓存总量上限（字节），0 = 不限
-	Guard         *safehttp.Guard
-	Parallel      ParOptions
+	// CacheMinFreeBytes 是磁盘剩余底线：低于它就不落盘、改直通。
+	// 配额管"缓存能用多少"，这条管"别把同一块盘上的别人挤死"。
+	CacheMinFreeBytes int64
+	Guard             *safehttp.Guard
+	Parallel          ParOptions
 	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
 	CDN          CDNOptions
@@ -132,6 +137,7 @@ func New(st *store.Store, o Options) *Gateway {
 		regAd:         o.Registry,
 		maxSize:       o.MaxBytes,
 		cacheMaxBytes: o.CacheMaxBytes,
+		cacheMinFree:  o.CacheMinFreeBytes,
 		gc:            gc.New(st, o.Cache),
 		now:           time.Now,
 		par:           o.Parallel,
@@ -158,6 +164,9 @@ func (g *Gateway) VerifyFailed() int64 {
 
 // CacheLimit 是配置里的容量上限，0 表示不限。
 func (g *Gateway) CacheLimit() int64 { return g.cacheMaxBytes }
+
+// CacheMinFree 返回磁盘剩余底线（0 = 未设）。
+func (g *Gateway) CacheMinFree() int64 { return g.cacheMinFree }
 
 // SetRawTTL 给测试用：把可变资源的重新验证间隔调小。
 func (g *Gateway) SetRawTTL(d time.Duration) { g.raw.TTL = d }
@@ -223,7 +232,8 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			g.serveCached(w, r, prev, "HIT", true)
 			return
 		}
-		if r.Header.Get("Range") != "" || r.Method == http.MethodHead {
+		// 磁盘低于底线就别再往里写了，命中的旧条目照常发，新的走直通。
+		if g.lowDisk() || r.Header.Get("Range") != "" || r.Method == http.MethodHead {
 			g.passThrough(w, r, plan)
 			return
 		}
@@ -267,7 +277,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		}
 	}
 
-	if r.Header.Get("Range") != "" || r.Method == http.MethodHead {
+	if g.lowDisk() || r.Header.Get("Range") != "" || r.Method == http.MethodHead {
 		g.passThrough(w, r, plan)
 		return
 	}

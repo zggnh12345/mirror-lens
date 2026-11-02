@@ -42,7 +42,7 @@ func (g *Gateway) serveGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if plan.Cacheable {
+	if plan.Cacheable && !g.lowDisk() {
 		if e, _ := g.st.CacheGet(plan.CacheKey); e != nil && g.fresh(e) {
 			g.serveGitCached(w, r, e, "HIT", true)
 			return

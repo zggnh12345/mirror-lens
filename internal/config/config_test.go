@@ -150,3 +150,17 @@ func TestRegistryDisabledSkipsUpstreamCheck(t *testing.T) {
 		t.Fatalf("关掉 Docker 加速时不该要求上游: %v", err)
 	}
 }
+
+// 磁盘底线：不配 = 0（不启用），配了要能读出来，负数直接拒。
+func TestCacheMinFree(t *testing.T) {
+	c, err := Load(write(t, "cache:\n  min_free_gb: 10\n"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Cache.MinFreeGB != 10 {
+		t.Fatalf("min_free_gb 没读进来: %+v", c.Cache)
+	}
+	if _, err := Load(write(t, "cache:\n  min_free_gb: -1\n"), false); err == nil {
+		t.Fatal("负数应报错")
+	}
+}

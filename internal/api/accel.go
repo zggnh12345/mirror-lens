@@ -159,6 +159,12 @@ func (s *Server) accelStats(w http.ResponseWriter, r *http.Request) {
 	if s.gw != nil && s.gw.CacheLimit() > 0 {
 		cache["limit"] = s.gw.CacheLimit()
 	}
+	if s.gw != nil {
+		if mf := s.gw.CacheMinFree(); mf > 0 {
+			cache["min_free"] = mf
+			cache["disk_low"] = s.gw.DiskLow()
+		}
+	}
 
 	out := map[string]any{
 		"cache":   cache,

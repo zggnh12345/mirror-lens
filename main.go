@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -125,14 +126,15 @@ func main() {
 		log.Printf("Docker 加速已开: /v2/ → %s", cfg.Registry.Upstream)
 	}
 	gw := gateway.New(st, gateway.Options{
-		Cache:         cstore,
-		MaxBytes:      cfg.Cache.MaxFileMB << 20,
-		GitTTL:        cfg.Git.TTL.Duration,
-		RawTTL:        cfg.Raw.TTL.Duration,
-		Registry:      regAd,
-		CacheMaxBytes: cfg.Cache.MaxGB << 30,
-		RequireToken:  cfg.Auth.RequireToken,
-		CDN:           gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
+		Cache:             cstore,
+		MaxBytes:          cfg.Cache.MaxFileMB << 20,
+		GitTTL:            cfg.Git.TTL.Duration,
+		RawTTL:            cfg.Raw.TTL.Duration,
+		Registry:          regAd,
+		CacheMaxBytes:     cfg.Cache.MaxGB << 30,
+		CacheMinFreeBytes: cfg.Cache.MinFreeGB << 30,
+		RequireToken:      cfg.Auth.RequireToken,
+		CDN:               gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
 			Enabled:   cfg.Parallel.Enabled,
 			MinSize:   cfg.Parallel.MinSizeMB << 20,
@@ -183,6 +185,13 @@ func main() {
 		RecoverAt:     cfg.Cache.RecoverAt,
 		Evict:         gw.EvictTo,
 	})
+	if cfg.Cache.MaxGB > 0 {
+		msg := fmt.Sprintf("缓存上限 %d GB", cfg.Cache.MaxGB)
+		if cfg.Cache.MinFreeGB > 0 {
+			msg += fmt.Sprintf("，磁盘剩余低于 %d GB 时只透传", cfg.Cache.MinFreeGB)
+		}
+		log.Printf("%s", msg)
+	}
 	go jan.Run(ctx)
 
 	// 启动 45 秒后扫一轮，之后每天一次；新域名进 pending 池
