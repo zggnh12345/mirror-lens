@@ -318,9 +318,11 @@ func TestParallelFallsBackWithoutRange(t *testing.T) {
 }
 
 func TestParallelRejectsWrongContent(t *testing.T) {
-	g, st, cs, body, _, mirror, os, ms := parFixture(t, 9<<20)
+	g, st, cs, body, origin, mirror, os, ms := parFixture(t, 9<<20)
 	plan, cand := parPlan(t, os, body)
-	mirror.corruptAt = 3 << 20 // 第二段起全错：长度对、内容错
+	// 第二段起全错：长度对、内容错。两台源都坏，否则分片落到好源上就不是「拼出错数据」了。
+	origin.corruptAt = 3 << 20
+	mirror.corruptAt = 3 << 20
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true}))
 	id, err := st.AddSource(store.Source{Name: "镜像A", BaseURL: "http://mirror", Status: "usable", Enabled: true, DockerCap: 1})
 	if err != nil {

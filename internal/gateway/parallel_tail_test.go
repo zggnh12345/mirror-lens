@@ -11,10 +11,14 @@ import (
 // 尾部扣留的核心承诺：哈希没对上时，客户端拿不到完整长度的响应。
 // 旧行为是「长度正确的 200 + 错内容」，客户端只能靠自己算摘要才发现。
 func TestParallelHoldsTailWhenHashMismatch(t *testing.T) {
-	g, st, _, body, _, mirror, os_, ms := parFixture(t, 9<<20)
+	g, st, _, body, origin, mirror, os_, ms := parFixture(t, 9<<20)
 	g.par.TailVerify = true
 	// 破坏点落在最后 1MB 里：这些字节正是被扣住、还没发给客户端的那段。
-	mirror.corruptAt = int64(len(body)) - 512<<10
+	// 两台源都要破坏：分片落到哪台是按调度定的，只坏一台等于赌运气，
+	// 尾段正好由好源提供时校验会通过，测试就假红了。
+	bad := int64(len(body)) - 512<<10
+	origin.corruptAt = bad
+	mirror.corruptAt = bad
 
 	plan, cand := parPlan(t, os_, body)
 	g.parTargets = func(*adapter.Plan) []fetchTarget {
