@@ -403,7 +403,21 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		if list == nil {
 			list = []store.Source{}
 		}
-		writeJSON(w, 200, map[string]any{"sources": list, "busy": s.eng.Busy()})
+		// 最近 N 次探测一次批量查完，别让前端为每行再发一次 /api/series。
+		// 查询失败不拖垮整个列表：状态条空着，其余照常显示。
+		recentN := store.RecentN
+		recent, rerr := s.st.RecentSummaries(recentN)
+		if rerr != nil {
+			log.Printf("api/sources: 读最近探测失败: %v", rerr)
+			recent = nil
+		}
+		for i := range list {
+			list[i].Recent = recent[list[i].ID]
+		}
+		writeJSON(w, 200, map[string]any{
+			"sources": list, "busy": s.eng.Busy(),
+			"recent_n": recentN,
+		})
 	case http.MethodPost:
 		s.addSource(w, r)
 	default:
@@ -436,7 +450,9 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		name = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 	}
 	id, err := s.st.AddSource(store.Source{
-		BaseURL: base, Name: name, Origin: "manual", Enabled: true, Status: "pending",
+		BaseURL: base, Name: name,
+		SiteName: discover.ResolveSiteName("", base),
+		Origin:   "manual", Enabled: true, Status: "pending",
 		DockerCap: store.CapUnknown, GithubCap: store.CapUnknown,
 	})
 	if err == store.ErrExists {

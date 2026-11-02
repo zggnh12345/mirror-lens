@@ -29,4 +29,5 @@ type candidate struct {
 	kind   string
 	origin string // 来自哪个发现源
 	online bool   // 状态页报告在线
+	site   string // 状态页给出的展示名（1Panel data-name / AnyE JSON name），可能为空
 }

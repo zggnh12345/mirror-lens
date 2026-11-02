@@ -30,7 +30,11 @@ func Scan(ctx context.Context, st *store.Store) (int, error) {
 	// 同一域名可能同时出现在列表仓库和状态页：状态页在前，优先保留在线标记。
 	var order []string
 	best := map[string]candidate{}
+	names := map[string]string{} // 状态页给的名字，用于给库里已有的源补名
 	for _, c := range fetchAll(ctx) {
+		if c.site != "" && names[c.host] == "" {
+			names[c.host] = c.site
+		}
 		if known[c.host] {
 			continue
 		}
@@ -56,6 +60,7 @@ func Scan(ctx context.Context, st *store.Store) (int, error) {
 		_, err := st.AddSource(store.Source{
 			BaseURL:   "https://" + h,
 			Name:      h,
+			SiteName:  ResolveSiteName(c.site, "https://"+h),
 			Origin:    "discovered",
 			Enabled:   true,
 			Status:    "pending",
@@ -65,6 +70,14 @@ func Scan(ctx context.Context, st *store.Store) (int, error) {
 		})
 		if err == nil {
 			added++
+		}
+	}
+	// 库里已有的源：这轮状态页给了名字就补上（「未知」也允许被顶掉，真名不许覆盖）。
+	for _, s := range srcs {
+		if n := names[hostOf(s.BaseURL)]; n != "" {
+			if err := st.SetSiteNameIfEmpty(s.ID, n); err != nil {
+				log.Printf("discover: 补站点名失败 id=%d: %v", s.ID, err)
+			}
 		}
 	}
 	if added > 0 {

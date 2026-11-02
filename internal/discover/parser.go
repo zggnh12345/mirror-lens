@@ -2,13 +2,14 @@ package discover
 
 import (
 	"encoding/json"
+	"html"
 	"regexp"
 	"strings"
 )
 
 var (
 	optionTagRe  = regexp.MustCompile(`<label[^>]*class="mirror-option"[^>]*>`)
-	statusAttrRe = regexp.MustCompile(`data-(url|status)="([^"]*)"`)
+	statusAttrRe = regexp.MustCompile(`data-(url|status|name)="([^"]*)"`)
 	groupIDRe    = regexp.MustCompile(`id="group-[a-z0-9-]+"`)
 )
 
@@ -60,13 +61,15 @@ func parseStatusHTML(body []byte, f feed) []candidate {
 	var out []candidate
 	seen := map[string]bool{}
 	for _, tag := range optionTagRe.FindAllString(block, -1) {
-		var url, status string
+		var url, status, name string
 		for _, kv := range statusAttrRe.FindAllStringSubmatch(tag, -1) {
 			switch kv[1] {
 			case "url":
 				url = kv[2]
 			case "status":
 				status = kv[2]
+			case "name":
+				name = html.UnescapeString(kv[2])
 			}
 		}
 		h := hostOf(url)
@@ -74,13 +77,14 @@ func parseStatusHTML(body []byte, f feed) []candidate {
 			continue
 		}
 		seen[h] = true
-		out = append(out, candidate{host: h, kind: f.kind, origin: f.name, online: true})
+		out = append(out, candidate{host: h, kind: f.kind, origin: f.name, online: true, site: CleanSiteName(name)})
 	}
 	return out
 }
 
 type statusEntry struct {
 	URL      string `json:"url"`
+	Name     string `json:"name"`
 	Status   string `json:"status"`
 	Official bool   `json:"official"`
 	Access   string `json:"access"`
@@ -99,7 +103,7 @@ func parseStatusJSON(body []byte, f feed) []candidate {
 			continue
 		}
 		seen[h] = true
-		out = append(out, candidate{host: h, kind: f.kind, origin: f.name, online: true})
+		out = append(out, candidate{host: h, kind: f.kind, origin: f.name, online: true, site: CleanSiteName(e.Name)})
 	}
 	return out
 }

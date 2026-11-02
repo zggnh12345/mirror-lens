@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=2">
+<link rel="stylesheet" href="/app.css?v=3">
 </head>
 <body>
 <header>
@@ -183,44 +183,43 @@ applyTheme(curTheme());
 function speedText(k){ if(!k) return '—'; return k >= 1024 ? (k/1024).toFixed(1)+' MB/s' : k+' KB/s'; }
 function latText(ms){ return ms ? (ms < 1000 ? ms+'ms' : (ms/1000).toFixed(1)+'s') : '—'; }
 
-function capChip(kind, cap){
-  var label = kind === 'docker' ? 'Docker' : 'GitHub';
-  var cls = kind === 'docker' ? 'dk' : 'gh';
-  if (cap === 1) return '<span class="cap on '+cls+'"><span class="m">✓</span>'+label+'</span>';
-  if (cap === 0) return '<span class="cap no"><span class="m">—</span><span class="t">'+label+'</span></span>';
-  return '<span class="cap no"><span class="m">?</span><span class="t">'+label+'</span></span>';
-}
+/* ---- 状态与行形态 ---- */
+/* 状态映射只写这一处：颜色、中文、行底色都从这里派生。
+   别在渲染函数里再散落 if (x.status === 'dead')。 */
+var ST = {
+  usable:  {t:'在线',     c:'ok',   row:'ok'},
+  degraded:{t:'可用·慢',   c:'warn', row:'warn'},
+  pending: {t:'待检测',    c:'arc',  row:''},
+  dead:    {t:'异常',      c:'bad',  row:'bad'},
+  blocked: {t:'校验失败',  c:'bad',  row:'bad'},
+  archived:{t:'已归档',    c:'arc',  row:'off'}
+};
 
 function rowClass(x){
   var l = x.last || {}, any = l.docker || l.github;
   if (any && any.digest_ok === 0) return 'poison';
-  if (x.status === 'usable') return 'ok';
-  if (x.status === 'degraded') return 'warn';
-  if (x.status === 'dead' || x.status === 'blocked') return 'bad';
-  if (x.status === 'archived') return 'off';
-  return '';
+  var s = ST[x.status];
+  return s ? s.row : '';
 }
 
-var STATUS = {pending:'待检测', dead:'不可用', blocked:'已封禁', archived:'已归档', degraded:'不稳定'};
-function errHuman(e){
-  e = e || '';
-  if (/404/.test(e)) return '仓库地址无效，无法获取镜像清单';
-  if (/429/.test(e)) return '请求过于频繁，已被镜像源限流';
-  if (/403|401/.test(e)) return '访问被拒绝，可能需要鉴权';
-  if (/timeout|超时|timed out/i.test(e)) return '连接超时，镜像源响应过慢';
-  if (/connection|拒绝|refused|ECONN|ENOTFOUND|DNS|dns/i.test(e)) return '无法连接镜像源，请检查地址或网络';
-  if (/证书|cert|TLS|SSL/i.test(e)) return 'TLS 证书校验失败';
-  if (/manifest|清单/i.test(e)) return '镜像清单获取失败';
-  return '连接异常，点按查看技术详情';
-}
 function statusChip(x){
-  var label = STATUS[x.status];
-  if (!label) return '';
-  var cls = x.status === 'blocked' ? 'bad' : (x.status === 'dead' ? 'bad' : (x.status === 'degraded' ? 'warn' : 'arc'));
+  var s = ST[x.status];
+  if (!s) return '';
   var title = x.status_reason ? '原因：' + x.status_reason : '';
   if (x.status_at) title += (title ? '\n' : '') + '自 ' + new Date(x.status_at * 1000).toLocaleString() + ' 起';
-  return '<span class="st ' + cls + '" title="' + esc(title) + '">' + label + '</span>';
+  return '<span class="st ' + s.c + '" title="' + esc(title) + '">' + s.t + '</span>';
 }
+
+/* 能力标签只出 HUB 与 RAW：没探过的类型不挂标签，
+   否则一个泛称会让人以为两种代理都能用。 */
+function capTags(x){
+  var out = '';
+  if (x.docker_cap === 1) out += '<span class="cap on dk">HUB</span>';
+  if (x.github_cap === 1) out += '<span class="cap on gh">RAW</span>';
+  return out;
+}
+
+function domainOf(u){ return String(u || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''); }
 
 var TRUST = {'-1':'内容不符','0':'未验证','1':'仅可用','2':'内容一致','3':'长期一致'};
 function trustChip(x){
@@ -239,54 +238,120 @@ function trustChip(x){
     + TRUST[worst[1].level] + '</i>';
 }
 
-function rowHtml(x){
+/* Go 的错误形如 Get "https://…": reason。先剥掉 URL 段再匹配，
+   否则 URL 里的 404、路径里的 timeout 会误判成站点的问题。 */
+function errReason(e){
+  var s = String(e || '').replace(/\s+/g, ' ').trim();
+  var m = s.match(/^[A-Za-z ]*"[^"]*":\s*(.+)$/);
+  return m ? m[1] : s;
+}
+function errHuman(e){
+  var r = errReason(e);
+  if (/no such host|server misbehaving/i.test(r)) return '域名解析失败';
+  if (/TLS handshake timeout/i.test(r)) return 'TLS 握手超时';
+  if (/x509|certificate|证书/i.test(r)) return 'TLS 证书校验失败';
+  if (/(^|\D)(525|530)(\D|$)/.test(r)) return '源站故障（525/530）';
+  if (/(^|\D)401(\D|$)/.test(r)) return '鉴权失败，token 无效';
+  if (/(^|\D)403(\D|$)/.test(r)) return '仓库地址无效，访问被拒';
+  if (/(^|\D)404(\D|$)/.test(r) || /<html|text\/html/i.test(r)) return '仓库地址无效，无法获取镜像清单';
+  if (/(^|\D)429(\D|$)/.test(r)) return '限流，请稍后再试';
+  if (/connection reset|reset by peer|read tcp/i.test(r)) return '连接被重置';
+  if (/(^|\W)EOF(\W|$)/.test(r)) return '连接中断';
+  if (/timeout|timed out|超时/i.test(r)) return '请求超时';
+  if (/refused|unreachable|no route/i.test(r)) return '无法连接镜像源';
+  return '连接异常，点按查看技术详情';
+}
+
+/* 状态条格数由后端下发（recent_n），这里不写死 24。 */
+var RECENT_N = 0;
+function stripHtml(x){
+  var pts = x.recent || [], n = RECENT_N || pts.length;
+  if (!n) return '';
+  var pad = Math.max(0, n - pts.length), out = '';
+  for (var i = 0; i < n; i++){
+    if (i < pad){ out += '<i class="pip"></i>'; continue; }
+    var p = pts[i - pad];
+    var tip = (p.kind === 'docker' ? 'HUB' : 'RAW') + ' · ' + new Date(p.ts * 1000).toLocaleString()
+      + ' · ' + (p.ok ? ('成功' + (p.latency_ms ? ' ' + latText(p.latency_ms) : '')) : '失败');
+    out += '<i class="pip ' + (p.ok ? 'ok' : 'bad') + '" title="' + esc(tip) + '"></i>';
+  }
+  return '<span class="strip">' + out + '</span>';
+}
+
+/* 明细行：P95 / 429 / 速度 / 可用率 / 可信度 / 来源，展开后才显示。 */
+function detailStats(x){
   var l = x.last || {}, d = l.docker, g = l.github;
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
+  var bits = [];
+  var p95 = Math.max((x.p95_ms||{}).docker || 0, (x.p95_ms||{}).github || 0);
+  if (p95) bits.push('<i title="近 24 小时成功样本的第 95 百分位">P95 ' + latText(p95) + '</i>');
+  // null 表示「没有一次真实的上游响应」，不是 0%——不显示，也不当 0 处理。
+  var r429 = Math.max((x.rate429||{}).docker || 0, (x.rate429||{}).github || 0);
+  if (r429 >= 0.01) bits.push('<i title="近 24 小时 429 占真实上游响应的比例（连接失败、超时不计入）">429 ' + Math.round(r429*100) + '%</i>');
+  if (best && best.speed_kbps) bits.push('<i>' + speedText(best.speed_kbps) + '</i>');
   var up = x.uptime || {}, ups = [];
   if (typeof up.docker === 'number' && up.docker >= 0) ups.push(up.docker);
   if (typeof up.github === 'number' && up.github >= 0) ups.push(up.github);
-  var bits = [];
-  if (best && best.latency_ms) bits.push('<i>'+latText(best.latency_ms)+'</i>');
-  var p95 = Math.max((x.p95_ms||{}).docker || 0, (x.p95_ms||{}).github || 0);
-  if (p95) bits.push('<i title="近 24 小时成功样本的第 95 百分位">P95 '+latText(p95)+'</i>');
-  // null 表示「没有一次真实的上游响应」，不是 0%——不显示，也不当 0 处理。
-  var r429 = Math.max((x.rate429||{}).docker || 0, (x.rate429||{}).github || 0);
-  if (r429 >= 0.01) bits.push('<i title="近 24 小时 429 占真实上游响应的比例（连接失败、超时不计入）">429 '+Math.round(r429*100)+'%</i>');
-  if (best && best.speed_kbps) bits.push('<i>'+speedText(best.speed_kbps)+'</i>');
-  if (ups.length) bits.push('<i>可用率 '+Math.round(Math.max.apply(null,ups)*100)+'%</i>');
-  if (!best) bits.push('<i>待检测</i>');
-  else if (!best.ok && best.error) bits.push('<span class="errchip" onclick="event.stopPropagation();this.classList.toggle(\'open\')" title="点按查看技术详情">⚠ '+esc(errHuman(best.error))+'<span class="edetail">'+esc(best.error)+'</span></span>');
-  var originTag = {seed:'内置', discovered:'发现', manual:'自定义'}[x.origin] || x.origin;
-  return '<div class="row '+rowClass(x)+(x.enabled?'':' off')+'" data-id="'+x.id+'">'
+  if (ups.length) bits.push('<i>可用率 ' + Math.round(Math.max.apply(null, ups)*100) + '%</i>');
+  bits.push(trustChip(x));
+  bits.push('<span class="tag">' + esc({seed:'内置', discovered:'发现', manual:'自定义'}[x.origin] || x.origin) + '</span>');
+  return bits.filter(Boolean).join('<span class="sep">·</span>');
+}
+
+/* 一行两段：
+   第一段 站点名 + 域名 + 能力标签 + 状态；
+   第二段 异常时是红色人话原因，正常时是备注 + 延迟 + 最近 N 次状态条。 */
+function rowHtml(x){
+  var l = x.last || {}, d = l.docker, g = l.github;
+  var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
+  var bad = x.status === 'dead' || x.status === 'blocked';
+  var l1 = '<b class="site">' + esc(x.site_name || '未知') + '</b>'
+    + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
+    + capTags(x) + statusChip(x);
+  var l2 = '';
+  if (bad){
+    var err = (best && !best.ok && best.error) || x.status_reason || '';
+    if (err) l2 = '<span class="errchip" onclick="event.stopPropagation();this.classList.toggle(\'open\')" title="点按查看技术详情">⚠ '
+      + esc(errHuman(err)) + '<span class="edetail">' + esc(err) + '</span></span>';
+  } else {
+    var bits = [];
+    if (x.note) bits.push('<span class="note">' + esc(x.note) + '</span>');
+    // 延迟只在有成功样本时显示：异常行挂 0ms 会误导成「很快就失败了」。
+    if (best && best.ok && best.latency_ms) bits.push('<i>' + latText(best.latency_ms) + '</i>');
+    bits.push(stripHtml(x));
+    l2 = bits.join('');
+  }
+  return '<div class="row ' + rowClass(x) + (x.enabled ? '' : ' off') + '" data-id="' + x.id + '">'
     + '<span class="dot"></span>'
     + '<div class="main">'
-    +   '<div class="name">'+esc(x.name)+'<span class="tag">'+esc(originTag)+'</span></div>'
-    +   '<div class="meta">'+statusChip(x)+capChip('docker',x.docker_cap)+capChip('github',x.github_cap)+trustChip(x)
-    +     (bits.length?'<span class="sep">·</span>'+bits.join('<span class="sep">·</span>'):'')+'</div>'
+    +   '<div class="l1">' + l1 + '</div>'
+    +   '<div class="l2">' + l2 + '</div>'
     + '</div>'
-    + '<button class="pref'+(x.preferred?' on':'')+'" data-pref="'+x.id+'" title="'+(x.preferred?'取消优先':'设为优先')+'">'+(x.preferred?'★':'☆')+'</button>'
-    + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="'+x.id+'"'+(x.enabled?' checked':'')+'><span></span></label>'
+    + '<button class="pref' + (x.preferred?' on':'') + '" data-pref="' + x.id + '" title="' + (x.preferred?'取消优先':'设为优先') + '">' + (x.preferred?'★':'☆') + '</button>'
+    + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="' + x.id + '"' + (x.enabled?' checked':'') + '><span></span></label>'
     + '</div>'
     + (OPEN === x.id
-        ? '<div class="hist" id="hist-'+x.id+'"><svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
+        ? '<div class="hist" id="hist-' + x.id + '">'
+          + '<div class="detstats">' + detailStats(x) + '</div>'
+          + '<svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
           + '<div class="life">'
           +   (x.status === 'archived'
-                ? '<button class="btn sm" data-life="pending" data-id="'+x.id+'">恢复并复检</button>'
-                : '<button class="btn sm" data-life="archived" data-id="'+x.id+'">归档</button>')
-          +   (x.status === 'blocked' ? '<button class="btn sm" data-life="pending" data-id="'+x.id+'">解除封禁并复检</button>' : '')
-          +   (x.status_reason ? '<span class="why" title="'+esc(x.status_reason)+'">'+esc(x.status_reason)+'</span>' : '')
+                ? '<button class="btn sm" data-life="pending" data-id="' + x.id + '">恢复并复检</button>'
+                : '<button class="btn sm" data-life="archived" data-id="' + x.id + '">归档</button>')
+          +   (x.status === 'blocked' ? '<button class="btn sm" data-life="pending" data-id="' + x.id + '">解除封禁并复检</button>' : '')
+          +   (x.status_reason ? '<span class="why" title="' + esc(x.status_reason) + '">' + esc(x.status_reason) + '</span>' : '')
           + '</div>'
           + '<div class="legend"><span><i style="background:var(--ok)"></i>成功</span>'
           + '<span><i style="background:var(--bad)"></i>失败</span>'
           + '<span><i style="background:var(--poison)"></i>校验失败</span>'
           + '<span style="margin-left:auto;color:var(--faint)">最近 60 次 · 柱高=延迟</span></div>'
-          + '<div id="histInfo-'+x.id+'" style="margin-top:8px"></div></div>'
+          + '<div id="histInfo-' + x.id + '" style="margin-top:8px"></div></div>'
         : '');
 }
 
 function visible(){
   return DATA.filter(function(x){
-    if (Q && (x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
+    if (Q && (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
     if (FILTER === 'usable') return x.status === 'usable' || x.status === 'degraded';
     if (FILTER === 'docker') return x.docker_cap === 1;
     if (FILTER === 'github') return x.github_cap === 1;
@@ -312,6 +377,7 @@ async function load(quiet){
   try{
     var d = await api('/api/sources');
     DATA = d.sources || [];
+    RECENT_N = d.recent_n || RECENT_N;
     render();
   }catch(e){ if(!quiet) toast(e.message); }
 }

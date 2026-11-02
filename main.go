@@ -112,6 +112,12 @@ func main() {
 			log.Printf("已写入 %d 个内置候选源", n)
 		}
 	}
+	// 老库升级出 site_name 列后是空串：按内置映射补一次名字，面板才有的显示。
+	if n, err := discover.BackfillSiteNames(st); err != nil {
+		log.Printf("补站点名失败: %v", err)
+	} else if n > 0 {
+		log.Printf("已补 %d 个源的站点名", n)
+	}
 
 	var regAd *registryadapter.Adapter
 	if cfg.Registry.Enabled {

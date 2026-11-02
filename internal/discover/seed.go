@@ -53,7 +53,8 @@ func Seed(st *store.Store) (int, error) {
 	add := func(host, note, kind string) {
 		x := store.Source{
 			BaseURL: "https://" + host, Name: host,
-			Origin: "seed", Enabled: true, Status: "pending", Note: note,
+			SiteName: ResolveSiteName("", "https://"+host),
+			Origin:   "seed", Enabled: true, Status: "pending", Note: note,
 			DockerCap: store.CapUnknown, GithubCap: store.CapUnknown,
 		}
 		if kind == "docker" {

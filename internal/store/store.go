@@ -23,10 +23,14 @@ type Source struct {
 	ID      int64  `json:"id"`
 	BaseURL string `json:"base_url"`
 	Name    string `json:"name"`
-	Origin  string `json:"origin"` // seed | discovered | manual
-	Enabled bool   `json:"enabled"`
-	Status  string `json:"status"` // pending | usable | degraded | dead | blocked | archived
-	Note    string `json:"note"`
+	// SiteName 站点展示名（品牌名），来源链见 discover.SiteNameFor：
+	// 状态页 data-name → 状态 JSON name → 内置种子手写映射 → 未知。
+	// 与 Name 分开：Name 是用户可改的备注名，SiteName 只由来源链写入。
+	SiteName string `json:"site_name"`
+	Origin   string `json:"origin"` // seed | discovered | manual
+	Enabled  bool   `json:"enabled"`
+	Status   string `json:"status"` // pending | usable | degraded | dead | blocked | archived
+	Note     string `json:"note"`
 	// StatusAt 进入当前状态的时间，StatusReason 原因。
 	// 只在状态变化时更新，归档/清理靠它判断「坏了多久」。
 	StatusAt     int64  `json:"status_at"`
@@ -56,6 +60,10 @@ type Source struct {
 	Rate429 map[string]*float64 `json:"rate429,omitempty"`
 	// 每种类型的可信度及证据（近 7 天）
 	Trust map[string]Trust `json:"trust,omitempty"`
+
+	// Recent 最近 N 次探测摘要（时间升序，最多 RecentN 条），由 /api/sources 批量填充。
+	// 单独放字段而不是让前端逐源拉 /api/series/{id}：100+ 个源会变成 100+ 个请求。
+	Recent []RecentPoint `json:"recent,omitempty"`
 }
 
 // Kinds 返回该源被确认支持的加速类型。
@@ -148,6 +156,7 @@ CREATE TABLE IF NOT EXISTS sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   base_url TEXT NOT NULL,
   name TEXT NOT NULL,
+  site_name TEXT NOT NULL DEFAULT '',
   origin TEXT NOT NULL DEFAULT 'manual',
   enabled INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending',
@@ -221,6 +230,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 		"status_at":     "INTEGER NOT NULL DEFAULT 0",
 		"status_reason": "TEXT NOT NULL DEFAULT ''",
 		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
+		"site_name":     "TEXT NOT NULL DEFAULT ''",
 	}); err != nil {
 		return err
 	}
@@ -342,12 +352,12 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt)
+		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName)
 	return x, err
 }
 
@@ -505,9 +515,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.StatusAt, x.CreatedAt)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,git_cap,status_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.StatusAt, x.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
