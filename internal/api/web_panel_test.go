@@ -146,6 +146,7 @@ function mkEl(){
   };
 }
 global.document={querySelector:function(){return mkEl();},querySelectorAll:function(){return [];},
+  getElementById:function(){return mkEl();},
   addEventListener:function(){},createElement:function(){return mkEl();},body:mkEl(),
   documentElement:{dataset:{}},hidden:false};
 global.window={matchMedia:function(){return {matches:false,addEventListener:function(){}};},addEventListener:function(){}};
