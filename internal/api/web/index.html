@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=5">
+<link rel="stylesheet" href="/app.css?v=6">
 </head>
 <body>
 <header>
@@ -144,6 +144,26 @@
   </div>
 </div>
 
+<!-- 分组成员：点分组名直接开 -->
+<div class="sheet" id="sheetMem">
+  <div class="panel mempanel">
+    <div class="mempad">
+      <div class="phead">
+        <h2 id="memTitle">分组</h2>
+        <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <p class="hint" id="memSub" style="margin:2px 0 8px"></p>
+      <input type="text" id="memQ" placeholder="搜索站点或域名" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="memlist" id="memList"></div>
+    <div class="memfoot">
+      <button class="btn" id="memAll">全选</button>
+      <button class="btn" id="memNone">全不选</button>
+      <button class="btn primary" id="memDone" style="flex:1">完成</button>
+    </div>
+  </div>
+</div>
+
 <!-- 导出 -->
 <div class="sheet" id="sheetExp">
   <div class="panel">
@@ -168,8 +188,8 @@
 var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
 var GROUPS = [], GFILTER = 0, GMANAGE = false, RENAME = null, GRPEDIT = null;
-var SELG = null, SELSET = {};   // 批量选节点：SELG=目标组，SELSET=已勾选 id
-// 行骨架只在这里定义一次，选节点视图复用同一套，避免两份行模板各改各的。
+var MEM = null;   // 成员抽屉：{gid, q}
+// 行骨架只定义一次，主列表和成员抽屉复用同一套，避免两份模板各改各的。
 var L1 = '<div class="l1">', L2 = '<div class="l2">', MAIN = '<div class="main">';
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -368,17 +388,6 @@ function dispName(x){
 }
 
 function rowHtml(x){
-  if (SELG){
-    var ck = SELSET[x.id] ? ' checked' : '';
-    var sl1 = '<b class="site">' + esc(dispName(x)) + '</b>'
-      + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '<span class="gtag none">未分组</span>');
-    var sl2 = '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>';
-    return '<label class="row selrow" data-id="' + x.id + '">'
-      + '<input type="checkbox" class="selsrc" data-sel="' + x.id + '"' + ck + '>'
-      + '<span class="dot"></span>'
-      + MAIN + L1 + sl1 + '</div>' + L2 + sl2 + '</div></div>'
-      + '</label>';
-  }
   var l = x.last || {}, d = l.docker, g = l.github;
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
   var bad = x.status === 'dead' || x.status === 'blocked';
@@ -447,14 +456,6 @@ function groupOptions(sel, plain){
 }
 
 function gbarHtml(){
-  if (SELG){
-    var sg = GROUPS.find(function(v){ return v.id === SELG; }) || { name: '分组' };
-    return '<span class="gsellab">' + esc(sg.name) + ' · 已选 ' + Object.keys(SELSET).length + '</span>'
-      + '<button class="gchip" data-selall="1">全选</button>'
-      + '<button class="gchip" data-selnone="1">全不选</button>'
-      + '<button class="gchip add" data-selsave="1">保存</button>'
-      + '<button class="gchip" data-selcancel="1">取消</button>';
-  }
   // 未分组固定排在所有分组之后，新建组也插在它前面。
   var h = '<button class="gchip' + (GFILTER === 0 ? ' on' : '') + '" data-gf="0">全部</button>';
   GROUPS.forEach(function(g){
@@ -488,9 +489,6 @@ function renderGroups(){
 }
 
 function visible(){
-  if (SELG) return DATA.filter(function(x){
-    return !Q || (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) >= 0;
-  });
   return DATA.filter(function(x){
     if (Q && (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
     if (FILTER === 'usable') return x.status === 'usable' || x.status === 'degraded';
@@ -512,6 +510,7 @@ function render(){
   $('#sDocker').textContent = DATA.filter(function(x){return x.docker_cap===1;}).length;
   $('#sGithub').textContent = DATA.filter(function(x){return x.github_cap===1;}).length;
   renderGroups();
+  if (MEM && $('#sheetMem').classList.contains('on')) renderMem();
   $('#list').innerHTML = list.length ? list.map(rowHtml).join('')
     : '<div class="empty"><b>没有匹配的源</b>换个关键词，或者点上面「添加自定义加速」</div>';
   if (OPEN) drawHist(OPEN);
@@ -569,7 +568,6 @@ function drawHist(id){
 
 /* ---- 交互 ---- */
 $('#list').addEventListener('click', async function(ev){
-  if (SELG) return;   // 选节点模式下整行就是勾选框，不展开
   var pen = ev.target.closest('[data-ren]');
   if (pen){
     ev.stopPropagation();
@@ -639,29 +637,11 @@ $('#list').addEventListener('click', async function(ev){
 
 /* 分组条：筛选、新建、排序、改名、删除 */
 document.getElementById('gbar').addEventListener('click', async function(ev){
-  if (ev.target.closest('[data-selstart]')){
-    SELG = GFILTER; SELSET = {};
-    DATA.forEach(function(x){ if (x.group_id === SELG) SELSET[x.id] = 1; });
-    render(); return;
-  }
-  if (ev.target.closest('[data-selcancel]')){ SELG = null; SELSET = {}; render(); return; }
-  if (ev.target.closest('[data-selall]')){
-    SELSET = {}; DATA.forEach(function(x){ SELSET[x.id] = 1; }); render(); return;
-  }
-  if (ev.target.closest('[data-selnone]')){ SELSET = {}; render(); return; }
-  if (ev.target.closest('[data-selsave]')){
-    var pick = Object.keys(SELSET).map(Number);
-    try{
-      await api('/api/group-members', {method:'POST', body: JSON.stringify({group_id: SELG, ids: pick})});
-      var nm = (GROUPS.find(function(g){ return g.id === SELG; }) || {}).name || '分组';
-      SELG = null; SELSET = {}; toast('已把 ' + pick.length + ' 个源放进「' + nm + '」'); load(true);
-    }catch(e){ toast(e.message); }
-    return;
-  }
   var f = ev.target.closest('[data-gf]');
   if (f){
     GFILTER = Number(f.getAttribute('data-gf'));
     render();
+    if (GFILTER > 0) openMem(GFILTER);
     return;
   }
   if (ev.target.closest('[data-gmgr]')){ GMANAGE = !GMANAGE; render(); return; }
@@ -690,6 +670,70 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
     catch(e){ toast(e.message); }
   }
 });
+
+/* 分组成员：点分组名就开这张抽屉，右侧开关即加入/移出。
+   单个开关走 PATCH /api/sources/:id（改一个源），全选/全不选走 /api/group-members（整组覆盖）。 */
+function openMem(gid){
+  MEM = { gid: gid, q: '' };
+  var q = $('#memQ'); if (q) q.value = '';
+  renderMem();
+  openSheet('sheetMem');
+}
+function renderMem(){
+  if (!MEM) return;
+  var gid = MEM.gid, g = GROUPS.find(function(v){ return v.id === gid; }) || { name: '分组' };
+  var n = DATA.filter(function(x){ return x.group_id === gid; }).length;
+  $('#memTitle').textContent = g.name;
+  $('#memSub').textContent = n + ' / ' + DATA.length + ' 个源在这个组 · 点开关就加入或移出';
+  var q = (MEM.q || '').toLowerCase();
+  var rows = DATA.filter(function(x){
+    return !q || (dispName(x) + ' ' + x.base_url).toLowerCase().indexOf(q) >= 0;
+  });
+  var box = $('#memList');
+  if (!rows.length){ box.innerHTML = '<div class="empty"><b>没有匹配的源</b>换个关键词试试</div>'; return; }
+  box.innerHTML = rows.map(function(x){
+    var on = x.group_id === gid;
+    var tag = on ? '已在本组' : (x.group_name ? '现在在 ' + x.group_name : '未分组');
+    return '<div class="memrow ' + rowClass(x) + '">'
+      + '<span class="dot"></span>'
+      + MAIN + L1 + '<b class="site">' + esc(dispName(x)) + '</b></div>'
+      + L2 + '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>'
+      + '<span class="memtag' + (on ? ' on' : '') + '">' + esc(tag) + '</span></div></div>'
+      + '<button class="sw' + (on ? ' on' : '') + '" data-swt="' + x.id + '" role="switch" aria-checked="' + on + '"></button>'
+      + '</div>';
+  }).join('');
+}
+$('#memQ').addEventListener('input', function(){ if (MEM){ MEM.q = this.value; renderMem(); } });
+$('#memList').addEventListener('click', async function(ev){
+  var b = ev.target.closest('[data-swt]');
+  if (!b || !MEM) return;
+  var id = Number(b.getAttribute('data-swt'));
+  var x = DATA.find(function(v){ return v.id === id; });
+  if (!x) return;
+  var gid = MEM.gid, on = x.group_id !== gid, st = this.scrollTop;
+  b.disabled = true;
+  try{
+    await api('/api/sources/' + id, {method:'PATCH', body: JSON.stringify({group_id: on ? gid : 0})});
+    x.group_id = on ? gid : 0;
+    x.group_name = on ? ((GROUPS.find(function(g){ return g.id === gid; }) || {}).name || '') : '';
+    GROUPS.forEach(function(g){ g.sources = DATA.filter(function(v){ return v.group_id === g.id; }).length; });
+    render();
+    this.scrollTop = st;   // 开关一格不该把列表弹回顶部
+  }catch(e){ toast(e.message); }
+  b.disabled = false;
+});
+async function memBulk(all){
+  if (!MEM) return;
+  var ids = all ? DATA.map(function(x){ return x.id; }) : [];
+  try{
+    await api('/api/group-members', {method:'POST', body: JSON.stringify({group_id: MEM.gid, ids: ids})});
+    toast(all ? '全部源都放进这个组了' : '这个组清空了，源都回到未分组');
+    load(true);
+  }catch(e){ toast(e.message); }
+}
+$('#memAll').addEventListener('click', function(){ memBulk(true); });
+$('#memNone').addEventListener('click', function(){ memBulk(false); });
+$('#memDone').addEventListener('click', function(){ closeSheets(); });
 
 /* 新建/重命名分组共用一个小对话框，样式和「添加自定义加速」一致 */
 function openGroup(id){
@@ -730,13 +774,6 @@ async function saveName(inp){
   }catch(e){ toast(e.message); }
   load(true);
 }
-document.getElementById('list').addEventListener('change', function(ev){
-  var cb = ev.target.closest('.selsrc');
-  if (!cb) return;
-  var id = Number(cb.getAttribute('data-sel'));
-  if (cb.checked) SELSET[id] = 1; else delete SELSET[id];
-  renderGroups();
-});
 document.getElementById('list').addEventListener('keydown', function(ev){
   var inp = ev.target.closest('.renin');
   if (!inp) return;
@@ -771,7 +808,7 @@ document.querySelectorAll('.filters button').forEach(function(b){
 
 /* 抽屉 */
 function openSheet(id){ $('#'+id).classList.add('on'); }
-function closeSheets(){ document.querySelectorAll('.sheet').forEach(function(s){ s.classList.remove('on'); }); }
+function closeSheets(){ MEM = null; document.querySelectorAll('.sheet').forEach(function(s){ s.classList.remove('on'); }); }
 document.querySelectorAll('.sheet').forEach(function(s){
   s.addEventListener('click', function(ev){ if (ev.target === s || ev.target.closest('[data-close]')) closeSheets(); });
 });

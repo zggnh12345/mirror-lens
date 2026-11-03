@@ -440,8 +440,32 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .cfg .cfgl{flex:none;font-size:12px;color:var(--muted);padding-right:2px}
 
 /* 批量选节点 */
-.gsellab{font-size:12px;color:var(--muted);white-space:nowrap;padding:0 6px 0 2px}
-.row.selrow{cursor:pointer;gap:9px}
+
+
 .row.selrow input.selsrc{position:static;opacity:1;inset:auto;width:16px;height:16px;margin:0;
   flex:none;accent-color:var(--brand);cursor:pointer;z-index:auto}
-.row.selrow .gtag.none{color:var(--faint);border-color:var(--line);font-weight:500}
+
+/* 分组成员抽屉：头部和底部固定，中间列表自己滚 */
+.mempanel{display:flex;flex-direction:column;padding:0;max-height:82vh;overflow:hidden}
+.mempad{padding:14px 16px 10px;border-bottom:1px solid var(--line);flex:none}
+.mempad .phead{margin-bottom:0}
+.memlist{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.memrow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+.memrow:last-child{border-bottom:0}
+.memrow.ok .dot{background:var(--ok)}
+.memrow.warn .dot{background:var(--warn)}
+.memrow.bad .dot{background:var(--bad)}
+.memrow.poison .dot{background:var(--poison)}
+.memrow.in{background:var(--ok-soft)}
+.memtag{flex:none;font-size:10.5px;line-height:17px;padding:0 6px;border-radius:5px;
+  background:var(--card2);color:var(--faint);white-space:nowrap}
+.memtag.on{background:var(--ok-soft);color:var(--ok)}
+.memfoot{display:flex;gap:8px;padding:10px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none}
+/* 开关：绿=在组里 */
+.sw{position:relative;flex:none;width:44px;height:26px;padding:0;border:0;border-radius:13px;
+  background:var(--line2);transition:background .16s ease;cursor:pointer}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.28);transition:transform .16s ease}
+.sw.on{background:var(--ok)}
+.sw.on::after{transform:translateX(18px)}
+.sw:disabled{opacity:.55}
