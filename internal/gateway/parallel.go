@@ -431,6 +431,7 @@ func preflightStatusIsSourceFailure(status int) bool {
 
 // parPreflight 用 1 字节 Range 探测各源支持分片、总长一致。
 // 官方源排最前，总长以它为准，镜像报的只用于核对。
+// 各源同时探：串行探 3 台，客户端就得等到最后一台回来才有第一滴数据。
 func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets []fetchTarget) ([]parSource, int64) {
 	ordered := make([]fetchTarget, 0, len(targets))
 	for _, t := range targets {
@@ -443,71 +444,103 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 			ordered = append(ordered, t)
 		}
 	}
+	n := len(ordered)
+	if n > g.par.Workers {
+		n = g.par.Workers
+	}
+	if n == 0 {
+		return nil, -1
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	out := make([]parProbe, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			out[i] = g.probeTarget(ctx, plan, ordered[i])
+			// 大小已经够不上分片（或超上限）：剩下的源不必再探。
+			if out[i].ok && out[i].total > 0 && (out[i].total < g.par.MinSize || out[i].total > g.limitFor(plan)) {
+				cancel()
+			}
+		}(i)
+	}
+	wg.Wait()
+
 	var srcs []parSource
 	total := int64(-1)
-	for _, t := range ordered {
-		if len(srcs) >= g.par.Workers {
-			break
-		}
-		st := time.Now()
-		resp, err := g.rangeReq(ctx, plan, t.u, 0, 0)
-		if err != nil {
-			// 连不上、超时才算源故障；本次任务被取消则中性。
-			if ctx.Err() == nil {
-				g.reportSource(plan.Kind, t, false, time.Since(st))
-			}
-			continue
-		}
-		start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
-		ctype := resp.Header.Get("Content-Type")
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusPartialContent {
-			// 不是 206：可能是不支持 Range（200）、认证/权限、对象不存在、
-			// 限流或服务端异常。只有最后一类才记源故障。
-			if ctx.Err() == nil && preflightStatusIsSourceFailure(resp.StatusCode) {
-				// 429 的 Retry-After 交给调度器：源自己说了等多久，比固定退避准。
-				// 解析不出来就是 0，退回本地退避。
-				ra := time.Duration(0)
-				if resp.StatusCode == http.StatusTooManyRequests {
-					ra = retryAfterHeader(resp.Header)
-					if ra > 0 {
-						log.Printf("并行填充：%s 限流，Retry-After=%s", t.u.Host, ra)
-					}
-				}
-				g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode, Mode: "chunk"})
-			}
-			log.Printf("并行填充：%s 不参与分片（HTTP %d，Content-Range=%q）",
-				t.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
-			continue
-		}
-		if perr != nil || start != 0 || tot <= 0 {
-			// 回了 206 却给不出合法的 Content-Range：这不是「没有 Range 能力」，
-			// 是协议响应本身有问题，按源故障记。
-			if ctx.Err() == nil {
-				g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{Code: resp.StatusCode, Mode: "chunk"})
-			}
-			log.Printf("并行填充：%s 返回异常 Range 响应（Content-Range=%q）",
-				t.u.Host, resp.Header.Get("Content-Range"))
+	for _, p := range out {
+		if !p.ok || p.total <= 0 {
 			continue
 		}
 		if total < 0 {
-			total = tot
-			// 总长已经不够分片（或超上限），别再拿每台镜像源试一遍：
-			// 每个不认 Range 的源都要等它回一轮，客户端白白多等好几秒。
-			if total < g.par.MinSize || total > g.limitFor(plan) {
-				break
-			}
-		} else if tot != total {
+			total = p.total
+		} else if p.total != total {
 			// 两台源说的总长不一样：不是同一个对象，拼起来必错。
 			// 版本不一致是镜像缓存滞后，不是源故障，同样不降权。
-			log.Printf("并行填充：%s 报的总长 %d 与 %d 不符，排除", t.u.Host, tot, total)
+			log.Printf("并行填充：%s 报的总长 %d 与 %d 不符，排除", p.src.name, p.total, total)
 			continue
 		}
-		// 预检只证明「支持 Range」，不代表这次真的传成功，不记成功样本。
-		srcs = append(srcs, parSource{t: t, name: parName(t), ctype: ctype})
+		srcs = append(srcs, p.src)
 	}
 	return srcs, total
+}
+
+// probeTarget 探一台源：能不能给 1 字节 Range，对象总长多少。
+func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTarget) parProbe {
+	st := time.Now()
+	resp, err := g.rangeReq(ctx, plan, t.u, 0, 0)
+	if err != nil {
+		// 连不上、超时才算源故障；本次任务被取消则中性。
+		if ctx.Err() == nil {
+			g.reportSource(plan.Kind, t, false, time.Since(st))
+		}
+		return parProbe{}
+	}
+	start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
+	ctype := resp.Header.Get("Content-Type")
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		// 不是 206：可能是不支持 Range（200）、认证/权限、对象不存在、
+		// 限流或服务端异常。只有最后一类才记源故障。
+		if ctx.Err() == nil && preflightStatusIsSourceFailure(resp.StatusCode) {
+			// 429 的 Retry-After 交给调度器：源自己说了等多久，比固定退避准。
+			// 解析不出来就是 0，退回本地退避。
+			ra := time.Duration(0)
+			if resp.StatusCode == http.StatusTooManyRequests {
+				ra = retryAfterHeader(resp.Header)
+				if ra > 0 {
+					log.Printf("并行填充：%s 限流，Retry-After=%s", t.u.Host, ra)
+				}
+			}
+			g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode, Mode: "chunk"})
+		}
+		log.Printf("并行填充：%s 不参与分片（HTTP %d，Content-Range=%q）",
+			t.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
+		return parProbe{}
+	}
+	if perr != nil || start != 0 || tot <= 0 {
+		// 回了 206 却给不出合法的 Content-Range：这不是「没有 Range 能力」，
+		// 是协议响应本身有问题，按源故障记。
+		if ctx.Err() == nil {
+			g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{Code: resp.StatusCode, Mode: "chunk"})
+		}
+		log.Printf("并行填充：%s 返回异常 Range 响应（Content-Range=%q）",
+			t.u.Host, resp.Header.Get("Content-Range"))
+		return parProbe{}
+	}
+	// 预检只证明「支持 Range」，不代表这次真的传成功，不记成功样本。
+	return parProbe{src: parSource{t: t, name: parName(t), ctype: ctype}, total: tot, ok: true}
+}
+
+// parProbe 一台源的预检结果。
+type parProbe struct {
+	src   parSource
+	total int64
+	ok    bool
 }
 
 // decline 记一次「本来可以并行但条件不满足」，并把原因写进日志。
