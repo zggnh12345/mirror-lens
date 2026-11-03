@@ -138,10 +138,15 @@ func (e *Engine) Run(tier int) {
 		kind string
 	}
 	var jobs []job
+	now := time.Now().Unix()
 	for _, s := range srcs {
 		for _, k := range kindsFor(s, tier) {
 			// 观察池：能力未知的新源，L1 连续通过才放行 L2。
 			if !e.observed(s, k, tier) {
+				continue
+			}
+			// 判死的协议降频重探：误判能爬回来，又不去每轮敲真不支持的源。
+			if capOf(s, k) == store.CapNo && !e.reprobeDue(s, k, now) {
 				continue
 			}
 			jobs = append(jobs, job{s, k})
@@ -254,6 +259,18 @@ func (e *Engine) probeDue(s store.Source, now, gap int64) bool {
 	return s.ProbeAt == 0 || now-s.ProbeAt >= gap
 }
 
+// reprobeDue 判断 CapNo 协议这轮要不要重探：距该协议族上次探测不足
+// RecoveryEvery 就跳过。判死可能是探测格式过时/源改版造成的误判，降频
+// 重探让它能自己爬回来，又不每轮去敲「确实不支持」的源。
+func (e *Engine) reprobeDue(s store.Source, kind string, now int64) bool {
+	at, err := e.st.LastProbeAt(s.ID, store.Family(kind))
+	if err != nil {
+		return true // 查不到就放行，宁可多探一次也不卡死
+	}
+	gap := int64(e.opt.RecoveryEvery.Seconds())
+	return at == 0 || now-at >= gap
+}
+
 // RunSource 立刻识别单个源（新增自定义加速时用），两种类型都试一遍。
 func (e *Engine) RunSource(id int64) {
 	s, err := e.st.GetSource(id)
@@ -302,6 +319,18 @@ func (e *Engine) RunSource(id int64) {
 
 // kindsFor 决定这一轮该测哪些类型：L1 只测已确认支持的，
 // L2/L3 再加上没测过的（自动识别双栈站）。
+// capOf 取某协议族的能力值（CapYes/CapUnknown/CapNo），供探测调度判断用。
+func capOf(s store.Source, kind string) int {
+	switch kind {
+	case "ghcr":
+		return s.GhcrCap
+	case "github":
+		return s.GithubCap
+	default:
+		return s.DockerCap
+	}
+}
+
 func kindsFor(s store.Source, tier int) []string {
 	var out []string
 	// 死源且无任何协议确认过时两种都测：误判成 CapNo 的还能自己爬回来。
@@ -321,6 +350,10 @@ func kindsFor(s store.Source, tier int) []string {
 			// 观察池：刚发现的源先只做轻量存活探测。
 			out = append(out, k)
 		case cap == store.CapUnknown && tier >= 2:
+			out = append(out, k)
+		case cap == store.CapNo && tier >= 2:
+			// 判死可能是探测格式过时/源改版的误判，降频重探让它爬回来。
+			// 真不支持的仍是 404 快速返回，不烧带宽；降频在 Run 里做。
 			out = append(out, k)
 		case reidentify:
 			out = append(out, k)

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"sort"
 	"time"
 )
@@ -84,6 +85,19 @@ func (s *Store) HealthOf(id int64) (map[string]int, error) {
 		out[f] = n
 	}
 	return out, rows.Err()
+}
+
+// LastProbeAt 返回某协议族上次探测（NoteProbe）的时间戳，没探测过返回 0。
+// 用于 CapNo 协议降频重探：判死可能是探测格式过时导致的误判，隔一段时间
+// 再试一次，误判的能爬回来，真不支持的仍会 404 快速返回。
+func (s *Store) LastProbeAt(id int64, family string) (int64, error) {
+	var at int64
+	err := s.db.QueryRow(`SELECT last_at FROM source_health WHERE source_id=? AND family=?`,
+		id, family).Scan(&at)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return at, err
 }
 
 // SourceCandidates 返回某类协议当前可参与调度的源。
