@@ -32,12 +32,14 @@ const sourceSampleWindow = 10
 // 只影响这一个协议，源站整体状态和其他协议不受牵连。
 const HealthFails = 3
 
-// Family 把请求类型归到三个协议族：docker / github / git。
+// Family 把请求类型归到协议族：docker / ghcr / github / git。
 // raw、release 是 GitHub 内容的另一种地址形态，健康度跟 github 一致。
 func Family(kind string) string {
 	switch kind {
 	case "docker":
 		return "docker"
+	case "ghcr":
+		return "ghcr"
 	case "git":
 		return "git"
 	default:
@@ -91,6 +93,8 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	switch kind {
 	case "docker":
 		col = "docker_cap"
+	case "ghcr":
+		col = "ghcr_cap"
 	case "git":
 		col = "git_cap"
 	case "raw", "release", "github":

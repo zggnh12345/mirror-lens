@@ -40,6 +40,12 @@ var githubSeeds = []struct{ host, note string }{
 	{"gh.xxooo.cf", "待验证"},
 }
 
+// ghcr 镜像源：ghcr.io 在国内没有直连优势，靠这些镜像加速。匿名可拉。
+var ghcrSeeds = []struct{ host, note string }{
+	{"ghcr.dockerproxy.com", "实测可用，2.2s"},
+	{"ghcr.nju.edu.cn", "实测可用，2.9s"},
+}
+
 // Seed 把内置候选池写入空库；已有记录不覆盖。
 func Seed(st *store.Store) (int, error) {
 	n, err := st.Count()
@@ -59,6 +65,8 @@ func Seed(st *store.Store) (int, error) {
 		}
 		if kind == "docker" {
 			x.DockerCap = store.CapYes
+		} else if kind == "ghcr" {
+			x.GhcrCap = store.CapYes
 		} else {
 			x.GithubCap = store.CapYes
 		}
@@ -68,15 +76,18 @@ func Seed(st *store.Store) (int, error) {
 		}
 		// 同一个域名在两个清单里都出现过：合并能力，别丢掉
 		if old, err := st.ByURL(x.BaseURL); err == nil && old != nil {
-			d, g := old.DockerCap, old.GithubCap
+			d, g, h := old.DockerCap, old.GithubCap, old.GhcrCap
 			if x.DockerCap == store.CapYes {
 				d = store.CapYes
 			}
 			if x.GithubCap == store.CapYes {
 				g = store.CapYes
 			}
-			if d != old.DockerCap || g != old.GithubCap {
-				_ = st.SetCaps(old.ID, d, g)
+			if x.GhcrCap == store.CapYes {
+				h = store.CapYes
+			}
+			if d != old.DockerCap || g != old.GithubCap || h != old.GhcrCap {
+				_ = st.SetCaps(old.ID, d, g, h)
 			}
 		}
 	}
@@ -85,6 +96,9 @@ func Seed(st *store.Store) (int, error) {
 	}
 	for _, s := range githubSeeds {
 		add(s.host, s.note, "github")
+	}
+	for _, s := range ghcrSeeds {
+		add(s.host, s.note, "ghcr")
 	}
 	return added, nil
 }

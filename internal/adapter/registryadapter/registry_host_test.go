@@ -39,7 +39,9 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 		if got.host != c.host || got.path != c.up {
 			t.Fatalf("%s → %s%s，期望 %s%s", c.path, got.host, got.path, c.host, c.up)
 		}
-		if got.official != (c.host != "registry-1.docker.io") {
+		// ghcr.io 有镜像源，不再只回官方；其余 foreign 站点仍 OfficialOnly。
+		official := c.host != "registry-1.docker.io" && c.host != "ghcr.io"
+		if got.official != official {
 			t.Fatalf("%s 的 OfficialOnly=%v，不对", c.path, got.official)
 		}
 		if got.key != "" && !contains(got.key, c.host) {

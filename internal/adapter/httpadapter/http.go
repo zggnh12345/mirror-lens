@@ -63,6 +63,22 @@ func normalizeTarget(raw string) (string, bool) {
 	return raw, false
 }
 
+// githubKind 判断完整 URL 目标是否属于 GitHub 内容，返回应走的加速 kind。
+// GitHub 内容走 github_cap 源池（前缀代理），普通 URL 保持直通。
+func githubKind(u *url.URL) string {
+	switch strings.ToLower(u.Hostname()) {
+	case "raw.githubusercontent.com", "gist.githubusercontent.com", "media.githubusercontent.com":
+		return "raw"
+	case "objects.githubusercontent.com":
+		return "release"
+	case "github.com":
+		if strings.Contains(u.Path, "/releases/download/") {
+			return "release"
+		}
+	}
+	return "http"
+}
+
 func (a *Adapter) Match(p string) bool { return strings.HasPrefix(p, Prefix) }
 
 func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
@@ -86,7 +102,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	u.Fragment = ""
 
 	return &adapter.Plan{
-		Kind:      "http",
+		Kind:      githubKind(u),
 		Upstream:  u,
 		Method:    http.MethodGet,
 		Header:    http.Header{},

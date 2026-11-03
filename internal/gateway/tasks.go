@@ -331,9 +331,13 @@ func (r *taskReg) snapshot() ActiveSnapshot {
 	}
 	out.Now = time.Now().Unix()
 	out.WindowBytes = r.through()
-	if out.WindowBytes > 0 {
-		out.WindowBPS = out.WindowBytes / throughWindow
+	// 「总计」应是当前速率：各活跃任务 6 秒滑动窗口速度之和。用 60 秒平均
+	// 会严重滞后，和每行任务显示的速度（同窗口）永远对不上。
+	var sum int64
+	for _, t := range ts {
+		sum += t.bps()
 	}
+	out.WindowBPS = sum
 	return out
 }
 

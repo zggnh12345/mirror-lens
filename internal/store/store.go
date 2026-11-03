@@ -41,6 +41,9 @@ type Source struct {
 
 	DockerCap int `json:"docker_cap"`
 	GithubCap int `json:"github_cap"`
+	// GhcrCap 单独记：ghcr.io 的镜像源（ghcr.nju.edu.cn 等）只代 ghcr，
+	// 不做 docker hub 也不做 github 前缀代理。
+	GhcrCap int `json:"ghcr_cap"`
 	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
 	// 默认 0（不确定），实测通过后置 1。
 	GitCap int `json:"git_cap"`
@@ -90,6 +93,8 @@ func (s Source) Supports(kind string) bool {
 	switch kind {
 	case "docker":
 		return s.DockerCap == CapYes
+	case "ghcr":
+		return s.GhcrCap == CapYes
 	case "github":
 		return s.GithubCap == CapYes
 	}
@@ -190,6 +195,7 @@ CREATE TABLE IF NOT EXISTS sources (
   note TEXT NOT NULL DEFAULT '',
   docker_cap INTEGER NOT NULL DEFAULT -1,
   github_cap INTEGER NOT NULL DEFAULT -1,
+  ghcr_cap INTEGER NOT NULL DEFAULT -1,
   git_cap INTEGER NOT NULL DEFAULT 0,
   status_at INTEGER NOT NULL DEFAULT 0,
   status_reason TEXT NOT NULL DEFAULT '',
@@ -264,6 +270,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	}
 	if err := s.ensureColumns("sources", map[string]string{
 		"git_cap":       "INTEGER NOT NULL DEFAULT 0",
+		"ghcr_cap":      "INTEGER NOT NULL DEFAULT -1",
 		"preferred":     "INTEGER NOT NULL DEFAULT 0",
 		"status_at":     "INTEGER NOT NULL DEFAULT 0",
 		"status_reason": "TEXT NOT NULL DEFAULT ''",
@@ -398,12 +405,12 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID)
+		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID)
 	return x, err
 }
 
@@ -561,12 +568,16 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.DockerCap == 0 && x.GithubCap == 0 {
 		x.DockerCap, x.GithubCap = CapUnknown, CapUnknown
 	}
+	// ghcr 维度同样：未显式设置（零值）当未知，交给探测识别。
+	if x.GhcrCap == 0 {
+		x.GhcrCap = CapUnknown
+	}
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -628,8 +639,8 @@ func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, prefer
 	return nil
 }
 
-func (s *Store) SetCaps(id int64, docker, github int) error {
-	_, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=? WHERE id=?`, docker, github, id)
+func (s *Store) SetCaps(id int64, docker, github, ghcr int) error {
+	_, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?, ghcr_cap=? WHERE id=?`, docker, github, ghcr, id)
 	return err
 }
 
@@ -641,9 +652,9 @@ func (s *Store) SetStatus(id int64, status string) error {
 // 返回是否真的写入。
 // 探测发起到写回有几十秒，用户可能刚归档该源；把「状态仍是活的」并进
 // UPDATE，由数据库保证不覆盖人工决定。
-func (s *Store) SetCapsLive(id int64, docker, github int) (bool, error) {
-	res, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?
-		WHERE id=? AND status<>'archived'`, docker, github, id)
+func (s *Store) SetCapsLive(id int64, docker, github, ghcr int) (bool, error) {
+	res, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?, ghcr_cap=?
+		WHERE id=? AND status<>'archived'`, docker, github, ghcr, id)
 	if err != nil {
 		return false, err
 	}

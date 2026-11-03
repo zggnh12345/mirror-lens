@@ -46,7 +46,7 @@ func TestLiveWritesSkipArchivedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ok, err := st.SetCapsLive(id, store.CapYes, store.CapYes); err != nil {
+	if ok, err := st.SetCapsLive(id, store.CapYes, store.CapYes, store.CapUnknown); err != nil {
 		t.Fatal(err)
 	} else if ok {
 		t.Fatal("已归档的行不该被 SetCapsLive 改到")

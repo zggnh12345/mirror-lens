@@ -379,7 +379,7 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 	if err != nil || cb.Host == "" {
 		return nil, false
 	}
-	if kind == "docker" {
+	if kind == "docker" || kind == "ghcr" {
 		u := *base
 		u.Scheme = cb.Scheme
 		u.Host = cb.Host

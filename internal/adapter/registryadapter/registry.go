@@ -157,9 +157,9 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		accept := UpstreamAccept(r.Header.Get("Accept"), foreign)
 		up.Path = "/v2/" + name + "/manifests/" + ref
 		p := &adapter.Plan{
-			Kind:         "docker",
+			Kind:         a.kindForHost(host, foreign),
 			Upstream:     up,
-			OfficialOnly: foreign,
+			OfficialOnly: a.officialOnly(host, foreign),
 			Method:       http.MethodGet,
 			Header:       http.Header{"Accept": {accept}},
 			Label:        a.label(host, name, ref),
@@ -178,9 +178,9 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	case KindBlob:
 		up.Path = "/v2/" + name + "/blobs/" + ref
 		return &adapter.Plan{
-			Kind:         "docker",
+			Kind:         a.kindForHost(host, foreign),
 			Upstream:     up,
-			OfficialOnly: foreign,
+			OfficialOnly: a.officialOnly(host, foreign),
 			Method:       http.MethodGet,
 			Label:        "layer " + shortDigest(ref),
 			CacheKey:     "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
@@ -193,6 +193,27 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		}, nil
 	}
 	return nil, adapter.ErrNoMatch
+}
+
+// isGhcrHost ghcr.io 有国内镜像源可加速；其余 foreign 站点（quay/gcr/...）
+// 没有镜像源，仍直连官方。
+func isGhcrHost(host string) bool { return strings.EqualFold(host, "ghcr.io") }
+
+// kindForHost 决定回源类型：ghcr.io 走 ghcr 源池，docker hub 与其余 foreign
+// 站点走 docker（后者靠 OfficialOnly 直连）。
+func (a *Adapter) kindForHost(host string, foreign bool) string {
+	if foreign && isGhcrHost(host) {
+		return "ghcr"
+	}
+	return "docker"
+}
+
+// officialOnly ghcr.io 有镜像源时不再只回官方；其余 foreign 仍只回官方。
+func (a *Adapter) officialOnly(host string, foreign bool) bool {
+	if foreign && isGhcrHost(host) {
+		return false
+	}
+	return foreign
 }
 
 func checkRepo(repo string) error {

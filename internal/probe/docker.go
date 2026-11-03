@@ -16,8 +16,9 @@ import (
 
 // 用最热门、几乎一定被缓存过的镜像做探针。
 const (
-	probeImage = "library/alpine"
-	probeTag   = "latest"
+	probeImage     = "library/alpine"
+	probeImageGhcr = "sagernet/sing-box"
+	probeTag       = "latest"
 )
 
 var manifestAccept = strings.Join([]string{
@@ -64,6 +65,16 @@ func parseChallenge(h string) challenge {
 // Docker probes one registry mirror.
 // tier 1 = liveness, 2 = real manifest, 3 = manifest + blob download.
 func Docker(ctx context.Context, base string, tier int, expectedDigest string) Result {
+	return DockerWithImage(ctx, base, tier, expectedDigest, probeImage)
+}
+
+// Ghcr 探测 ghcr.io 镜像源：用 ghcr 上确定存在的公共镜像做探针。
+func Ghcr(ctx context.Context, base string, tier int) Result {
+	return DockerWithImage(ctx, base, tier, "", probeImageGhcr)
+}
+
+// DockerWithImage 用指定镜像做探针（ghcr 镜像源用 ghcr 上的公共镜像）。
+func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest string, image string) Result {
 	base = trimBase(base)
 	host := hostOf(base)
 	res := Result{DigestOK: -1, BlobOK: -1}
@@ -125,7 +136,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 			return res
 		}
 		if ch.Scope == "" {
-			ch.Scope = "repository:" + probeImage + ":pull"
+			ch.Scope = "repository:" + image + ":pull"
 		}
 		t, code, terr := fetchToken(ctx, client, ch)
 		if terr != nil || t == "" {
@@ -135,7 +146,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 		tok = t
 	}
 
-	mf, digest, hdrBad, code, mtype, err := fetchManifest(ctx, client, base, tok, probeImage+"/manifests/"+probeTag)
+	mf, digest, hdrBad, code, mtype, err := fetchManifest(ctx, client, base, tok, image+"/manifests/"+probeTag)
 	if err != nil || code != 200 {
 		res.HTTPCode = code
 		res.Error = fmt.Sprintf("manifest 获取失败 (%d) %s", code, errStr(err))
@@ -163,7 +174,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 		d := pickPlatformDigest(mf)
 		if d != "" {
 			// 按 digest 取回来的东西，哈希必须等于这个 digest。
-			if mf2, d2, bad2, code2, _, err2 := fetchManifest(ctx, client, base, tok, probeImage+"/manifests/"+d); err2 == nil && code2 == 200 {
+			if mf2, d2, bad2, code2, _, err2 := fetchManifest(ctx, client, base, tok, image+"/manifests/"+d); err2 == nil && code2 == 200 {
 				mf = mf2
 				if bad2 || d2 != d {
 					res.DigestOK = 0
@@ -183,7 +194,7 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 			// 测速从 blob 请求开始算：把 /v2/、token、manifest 的时间算进来，
 			// 量到的是握手速度，不是下载速度。
 			tb := time.Now()
-			n, sum, ttfb, err := fetchBlob(ctx, client, base, tok, d)
+			n, sum, ttfb, err := fetchBlob(ctx, client, base, tok, d, image)
 			if err != nil || n == 0 {
 				// 连第一层都拿不下来，对 Docker 客户端来说这台源就是用不了。
 				res.OK = false
@@ -371,8 +382,8 @@ func firstLayerDigest(mf map[string]any) string {
 
 // fetchBlob 下载最多 4 MB，返回字节数和这段内容的 sha256（"sha256:..."）。
 // 只有整层都在 cap 以内时，这个值才能拿去跟 digest 比。
-func fetchBlob(ctx context.Context, c *http.Client, base, tok, digest string) (int64, string, int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/"+probeImage+"/blobs/"+digest, nil)
+func fetchBlob(ctx context.Context, c *http.Client, base, tok, digest, image string) (int64, string, int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/"+image+"/blobs/"+digest, nil)
 	if err != nil {
 		return 0, "", 0, err
 	}

@@ -145,9 +145,9 @@ func TestApplyRecordsPerProtocolHealth(t *testing.T) {
 
 // 误判成 CapNo 的死源要继续识别，否则永远停在 dead。
 func TestDeadSourceWithNoCapsIsStillProbed(t *testing.T) {
-	s := store.Source{Status: "dead", DockerCap: store.CapNo, GithubCap: store.CapNo}
-	if got := kindsFor(s, 2); len(got) != 2 {
-		t.Fatalf("死源应两种都重测，得到 %v", got)
+	s := store.Source{Status: "dead", DockerCap: store.CapNo, GithubCap: store.CapNo, GhcrCap: store.CapNo}
+	if got := kindsFor(s, 2); len(got) != 3 {
+		t.Fatalf("死源应三种都重测，得到 %v", got)
 	}
 	// 还活着的源不浪费这份额度。
 	s.Status = "usable"

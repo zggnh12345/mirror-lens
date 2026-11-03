@@ -16,7 +16,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-var allKinds = []string{"docker", "github"}
+var allKinds = []string{"docker", "ghcr", "github"}
 
 // Options 是源站生命周期的三个时间参数，零值走默认。
 type Options struct {
@@ -126,7 +126,7 @@ func (e *Engine) Run(tier int) {
 	if tier >= 3 {
 		live := srcs[:0]
 		for _, s := range srcs {
-			if s.Status == "usable" || s.Status == "degraded" || s.DockerCap < 0 || s.GithubCap < 0 {
+			if s.Status == "usable" || s.Status == "degraded" || s.DockerCap < 0 || s.GithubCap < 0 || s.GhcrCap < 0 {
 				live = append(live, s)
 			}
 		}
@@ -173,9 +173,12 @@ func (e *Engine) Run(tier int) {
 			defer cancel()
 			j := jobs[i]
 			var r probe.Result
-			if j.kind == "docker" {
+			switch j.kind {
+			case "docker":
 				r = probe.Docker(ctx, j.src.BaseURL, tier, expected)
-			} else {
+			case "ghcr":
+				r = probe.Ghcr(ctx, j.src.BaseURL, tier)
+			default:
 				r = probe.GitHub(ctx, j.src.BaseURL, tier, "")
 			}
 			results[i] = pair{j, r}
@@ -268,9 +271,12 @@ func (e *Engine) RunSource(id int64) {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
 			var r probe.Result
-			if kind == "docker" {
+			switch kind {
+			case "docker":
 				r = probe.Docker(ctx, s.BaseURL, 2, expected)
-			} else {
+			case "ghcr":
+				r = probe.Ghcr(ctx, s.BaseURL, 2)
+			default:
 				r = probe.GitHub(ctx, s.BaseURL, 2, "")
 			}
 			mu.Lock()
@@ -291,7 +297,7 @@ func (e *Engine) RunSource(id int64) {
 	}
 	_ = e.st.TouchProbe(s.ID)
 	e.apply(*s, res, 2)
-	log.Printf("runner: 识别完成 %s → docker=%v github=%v", s.BaseURL, res["docker"].OK, res["github"].OK)
+	log.Printf("runner: 识别完成 %s → docker=%v ghcr=%v github=%v", s.BaseURL, res["docker"].OK, res["ghcr"].OK, res["github"].OK)
 }
 
 // kindsFor 决定这一轮该测哪些类型：L1 只测已确认支持的，
@@ -299,9 +305,12 @@ func (e *Engine) RunSource(id int64) {
 func kindsFor(s store.Source, tier int) []string {
 	var out []string
 	// 死源且无任何协议确认过时两种都测：误判成 CapNo 的还能自己爬回来。
-	reidentify := tier >= 2 && s.Status == "dead" && s.DockerCap != store.CapYes && s.GithubCap != store.CapYes
+	reidentify := tier >= 2 && s.Status == "dead" && s.DockerCap != store.CapYes && s.GithubCap != store.CapYes && s.GhcrCap != store.CapYes
 	for _, k := range allKinds {
 		cap := s.DockerCap
+		if k == "ghcr" {
+			cap = s.GhcrCap
+		}
 		if k == "github" {
 			cap = s.GithubCap
 		}
@@ -333,6 +342,9 @@ func (e *Engine) observed(s store.Source, kind string, tier int) bool {
 		return true
 	}
 	cap := s.DockerCap
+	if kind == "ghcr" {
+		cap = s.GhcrCap
+	}
 	if kind == "github" {
 		cap = s.GithubCap
 	}
@@ -373,9 +385,12 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		return
 	}
 	s = *cur
-	docker, github := s.DockerCap, s.GithubCap
+	docker, github, ghcr := s.DockerCap, s.GithubCap, s.GhcrCap
 	for k, r := range res {
 		capv := docker
+		if k == "ghcr" {
+			capv = ghcr
+		}
 		if k == "github" {
 			capv = github
 		}
@@ -387,22 +402,25 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 			// 超时/DNS/429/5xx 是此刻不通，写成 CapNo 等于永久判死。
 			capv = store.CapNo
 		}
-		if k == "docker" {
+		switch k {
+		case "docker":
 			docker = capv
-		} else {
+		case "ghcr":
+			ghcr = capv
+		default:
 			github = capv
 		}
 	}
-	if docker != s.DockerCap || github != s.GithubCap {
+	if docker != s.DockerCap || github != s.GithubCap || ghcr != s.GhcrCap {
 		// 条件更新：写之前那一瞬被归档，也不覆盖。
-		ok, err := e.st.SetCapsLive(s.ID, docker, github)
+		ok, err := e.st.SetCapsLive(s.ID, docker, github, ghcr)
 		if err != nil {
 			log.Printf("runner: set caps %d: %v", s.ID, err)
 		} else if !ok {
 			return
 		}
 	}
-	s.DockerCap, s.GithubCap = docker, github
+	s.DockerCap, s.GithubCap, s.GhcrCap = docker, github, ghcr
 
 	// 协议级健康分开记：docker 挂了不影响 github 的候选资格；
 	// 明确「不支持」不算坏，不记。
@@ -458,10 +476,10 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 	}
 
-	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes {
-		// 全没结论（超时/DNS/429）就标 pending 继续识别：判死会降频到
-		// 每小时一次，而它可能只是刚才网络抖了一下。
-		if s.DockerCap == store.CapUnknown && s.GithubCap == store.CapUnknown {
+	if s.DockerCap != store.CapYes && s.GithubCap != store.CapYes && s.GhcrCap != store.CapYes {
+		// 只要还有协议没结论（超时/DNS/429）就标 pending 继续识别：
+		// 判死会降频到每小时一次，而它可能只是刚才网络抖了一下。
+		if s.DockerCap == store.CapUnknown || s.GithubCap == store.CapUnknown || s.GhcrCap == store.CapUnknown {
 			if tier == 1 && s.Status == "pending" {
 				// 观察池：连续失败才降频，别一次抖动就丢掉新源。
 				if e.observeFailures(s) >= observeFail {
