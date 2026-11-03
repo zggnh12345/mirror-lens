@@ -492,6 +492,11 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 		}
 		if total < 0 {
 			total = tot
+			// 总长已经不够分片（或超上限），别再拿每台镜像源试一遍：
+			// 每个不认 Range 的源都要等它回一轮，客户端白白多等好几秒。
+			if total < g.par.MinSize || total > g.limitFor(plan) {
+				break
+			}
 		} else if tot != total {
 			// 两台源说的总长不一样：不是同一个对象，拼起来必错。
 			// 版本不一致是镜像缓存滞后，不是源故障，同样不降权。
