@@ -80,8 +80,13 @@ func TestMetricsViewEndpoint(t *testing.T) {
 	if len(m.Concurrency.Top) != 1 || m.Concurrency.Top[0].ID != 7 {
 		t.Fatalf("Top 并发应为 id=7，得到 %+v", m.Concurrency.Top)
 	}
-	if !m.Cache.HasCache || m.Cache.Bytes != 1000 || m.Cache.Blobs != 3 || m.Cache.Free != 500 {
-		t.Fatalf("缓存快照不对 %+v", m.Cache)
+	// 缓存占用现在按磁盘实时算（janitor 的 gauge 有 10 分钟滞后），所以不再
+	// 回放 SetCache 灌的值：测试库的 cache 目录是空的，应报 0 而不是 1000。
+	if !m.Cache.HasCache {
+		t.Fatalf("缓存快照应 has_cache，得到 %+v", m.Cache)
+	}
+	if m.Cache.Bytes != 0 {
+		t.Fatalf("空缓存目录 bytes 应为 0（实时算，非 gauge），得到 %d", m.Cache.Bytes)
 	}
 
 	// 未授权访问必须 401。
