@@ -46,15 +46,10 @@ var ghcrSeeds = []struct{ host, note string }{
 	{"ghcr.nju.edu.cn", "实测可用，2.9s"},
 }
 
-// Seed 把内置候选池写入空库；已有记录不覆盖。
+// Seed 把内置候选池写入库：新候选补进去，已有记录只合并能力、不覆盖人工改动。
+// 早期只在空库写入，导致后来新增的种子（如 ghcr 镜像源）对已部署库永不生效；
+// 现在改为幂等：AddSource 对重复 URL 返回 ErrExists，走 ByURL 合并能力分支。
 func Seed(st *store.Store) (int, error) {
-	n, err := st.Count()
-	if err != nil {
-		return 0, err
-	}
-	if n > 0 {
-		return 0, nil
-	}
 	added := 0
 	add := func(host, note, kind string) {
 		x := store.Source{

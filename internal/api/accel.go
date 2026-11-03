@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -242,6 +243,21 @@ func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, "cache_purge", scope, fmt.Sprintf("条目=%d 释放=%dMB", res.Entries, res.Bytes>>20), true)
 	log.Printf("清空缓存: 范围=%s 操作人=%s 条目=%d 释放=%dMB 待重试=%d",
 		scope, who, res.Entries, res.Bytes>>20, res.Pending)
+	// 立即刷新缓存盘快照，面板「缓存占用」不用等 janitor 下一轮才变。
+	if s.gw != nil {
+		cs := s.gw.CacheStore()
+		if used, err := cs.DiskUsage(); err == nil {
+			blobs := uint64(0)
+			if bl, err := cs.ListBlobs(); err == nil {
+				blobs = uint64(len(bl))
+			}
+			free := int64(0)
+			if f, err := cs.FSFree(); err == nil {
+				free = f
+			}
+			metrics.SetCache(uint64(used), blobs, uint64(free))
+		}
+	}
 	writeJSON(w, 200, map[string]any{
 		"ok":      true,
 		"scope":   scope,
