@@ -200,6 +200,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))
+	mux.HandleFunc("/api/group-members", guard(csrf(s.groupMembers)))
 	mux.HandleFunc("/api/groups/", guard(csrf(s.groupItem)))
 	mux.HandleFunc("/api/series/", guard(s.series))
 	mux.HandleFunc("/api/export", guard(s.export))
@@ -572,6 +573,30 @@ func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
 // groupItem 改名、调优先级、删组。
 // reorderGroups 一次提交完整顺序：面板上下移/拖拽都只发这一条，
 // 不用两两交换 rank，连点也不会撞出重复档位。
+// groupMembers 整组覆盖成员：面板里勾选/全选后一次提交，
+// 没勾的（原本在本组的）退回未分组。
+func (s *Server) groupMembers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	var in struct {
+		GroupID int64   `json:"group_id"`
+		IDs     []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil || in.GroupID <= 0 {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return
+	}
+	if err := s.st.SetGroupMembers(in.GroupID, in.IDs); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	s.eng.Changed()
+	s.audit(r, "group_members", strconv.FormatInt(in.GroupID, 10), "", true)
+	writeJSON(w, 200, map[string]any{"ok": true, "n": len(in.IDs)})
+}
+
 func (s *Server) reorderGroups(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]string{"error": "method"})

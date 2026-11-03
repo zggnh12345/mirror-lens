@@ -168,6 +168,9 @@
 var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
 var GROUPS = [], GFILTER = 0, GMANAGE = false, RENAME = null, GRPEDIT = null;
+var SELG = null, SELSET = {};   // 批量选节点：SELG=目标组，SELSET=已勾选 id
+// 行骨架只在这里定义一次，选节点视图复用同一套，避免两份行模板各改各的。
+var L1 = '<div class="l1">', L2 = '<div class="l2">', MAIN = '<div class="main">';
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on');},2200);}
@@ -365,6 +368,17 @@ function dispName(x){
 }
 
 function rowHtml(x){
+  if (SELG){
+    var ck = SELSET[x.id] ? ' checked' : '';
+    var sl1 = '<b class="site">' + esc(dispName(x)) + '</b>'
+      + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '<span class="gtag none">未分组</span>');
+    var sl2 = '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>';
+    return '<label class="row selrow" data-id="' + x.id + '">'
+      + '<input type="checkbox" class="selsrc" data-sel="' + x.id + '"' + ck + '>'
+      + '<span class="dot"></span>'
+      + MAIN + L1 + sl1 + '</div>' + L2 + sl2 + '</div></div>'
+      + '</label>';
+  }
   var l = x.last || {}, d = l.docker, g = l.github;
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
   var bad = x.status === 'dead' || x.status === 'blocked';
@@ -392,9 +406,9 @@ function rowHtml(x){
     + '<button class="ren" data-ren="' + x.id + '" title="改个名字">'
     +   '<svg viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4zM14 6l4 4"/></svg></button>'
     + '<span class="dot"></span>'
-    + '<div class="main">'
-    +   '<div class="l1">' + l1 + '</div>'
-    +   '<div class="l2">' + l2 + '</div>'
+    + MAIN
+    +   L1 + l1 + '</div>'
+    +   L2 + l2 + '</div>'
     + '</div>'
     + '<button class="pref' + (x.preferred?' on':'') + '" data-pref="' + x.id + '" title="' + (x.preferred?'取消优先':'设为优先') + '">' + (x.preferred?'★':'☆') + '</button>'
     + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="' + x.id + '"' + (x.enabled?' checked':'') + '><span></span></label>'
@@ -433,12 +447,22 @@ function groupOptions(sel, plain){
 }
 
 function gbarHtml(){
-  var h = '<button class="gchip' + (GFILTER === 0 ? ' on' : '') + '" data-gf="0">全部</button>'
-    + '<button class="gchip' + (GFILTER === -1 ? ' on' : '') + '" data-gf="-1">未分组</button>';
+  if (SELG){
+    var sg = GROUPS.find(function(v){ return v.id === SELG; }) || { name: '分组' };
+    return '<span class="gsellab">' + esc(sg.name) + ' · 已选 ' + Object.keys(SELSET).length + '</span>'
+      + '<button class="gchip" data-selall="1">全选</button>'
+      + '<button class="gchip" data-selnone="1">全不选</button>'
+      + '<button class="gchip add" data-selsave="1">保存</button>'
+      + '<button class="gchip" data-selcancel="1">取消</button>';
+  }
+  // 未分组固定排在所有分组之后，新建组也插在它前面。
+  var h = '<button class="gchip' + (GFILTER === 0 ? ' on' : '') + '" data-gf="0">全部</button>';
   GROUPS.forEach(function(g){
     h += '<button class="gchip' + (GFILTER === g.id ? ' on' : '') + '" data-gf="' + g.id + '">'
       + esc(g.name) + '<i>' + g.sources + '</i></button>';
   });
+  h += '<button class="gchip' + (GFILTER === -1 ? ' on' : '') + '" data-gf="-1">未分组</button>';
+  if (GFILTER > 0) h += '<button class="gchip add" data-selstart="1">选节点</button>';
   h += '<button class="gchip add" data-gnew="1">＋ 分组</button>';
   h += '<button class="gchip mgr' + (GMANAGE ? ' on' : '') + '" data-gmgr="1">管理</button>';
   if (GMANAGE){
@@ -464,6 +488,9 @@ function renderGroups(){
 }
 
 function visible(){
+  if (SELG) return DATA.filter(function(x){
+    return !Q || (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) >= 0;
+  });
   return DATA.filter(function(x){
     if (Q && (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
     if (FILTER === 'usable') return x.status === 'usable' || x.status === 'degraded';
@@ -542,6 +569,7 @@ function drawHist(id){
 
 /* ---- 交互 ---- */
 $('#list').addEventListener('click', async function(ev){
+  if (SELG) return;   // 选节点模式下整行就是勾选框，不展开
   var pen = ev.target.closest('[data-ren]');
   if (pen){
     ev.stopPropagation();
@@ -611,6 +639,25 @@ $('#list').addEventListener('click', async function(ev){
 
 /* 分组条：筛选、新建、排序、改名、删除 */
 document.getElementById('gbar').addEventListener('click', async function(ev){
+  if (ev.target.closest('[data-selstart]')){
+    SELG = GFILTER; SELSET = {};
+    DATA.forEach(function(x){ if (x.group_id === SELG) SELSET[x.id] = 1; });
+    render(); return;
+  }
+  if (ev.target.closest('[data-selcancel]')){ SELG = null; SELSET = {}; render(); return; }
+  if (ev.target.closest('[data-selall]')){
+    SELSET = {}; DATA.forEach(function(x){ SELSET[x.id] = 1; }); render(); return;
+  }
+  if (ev.target.closest('[data-selnone]')){ SELSET = {}; render(); return; }
+  if (ev.target.closest('[data-selsave]')){
+    var pick = Object.keys(SELSET).map(Number);
+    try{
+      await api('/api/group-members', {method:'POST', body: JSON.stringify({group_id: SELG, ids: pick})});
+      var nm = (GROUPS.find(function(g){ return g.id === SELG; }) || {}).name || '分组';
+      SELG = null; SELSET = {}; toast('已把 ' + pick.length + ' 个源放进「' + nm + '」'); load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
   var f = ev.target.closest('[data-gf]');
   if (f){
     GFILTER = Number(f.getAttribute('data-gf'));
@@ -683,6 +730,13 @@ async function saveName(inp){
   }catch(e){ toast(e.message); }
   load(true);
 }
+document.getElementById('list').addEventListener('change', function(ev){
+  var cb = ev.target.closest('.selsrc');
+  if (!cb) return;
+  var id = Number(cb.getAttribute('data-sel'));
+  if (cb.checked) SELSET[id] = 1; else delete SELSET[id];
+  renderGroups();
+});
 document.getElementById('list').addEventListener('keydown', function(ev){
   var inp = ev.target.closest('.renin');
   if (!inp) return;

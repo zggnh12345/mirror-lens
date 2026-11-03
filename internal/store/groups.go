@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Group 是一组源的集合，带一个优先级：rank 越小，调度时越先试。
 // 用户把实测快的源放进同一个组并置顶，候选源与分片就优先吃这组。
@@ -156,4 +159,36 @@ func (s *Store) attachGroups(list []Source) error {
 		}
 	}
 	return nil
+}
+
+// SetGroupMembers 用「这一组最终应该有哪些源」的方式整组覆盖：
+// ids 里的源归入该组（从别的组移过来），该组里不在 ids 的源退回未分组。
+// 在同一个事务里做完，避免面板保存到一半被读到中间状态。
+func (s *Store) SetGroupMembers(gid int64, ids []int64) error {
+	if gid == 0 {
+		return errors.New("分组 id 不能为 0")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM source_groups WHERE id=?`, gid).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return errors.New("分组不存在")
+	}
+	if _, err := tx.Exec(`UPDATE sources SET group_id=0 WHERE group_id=?`, gid); err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		q := `UPDATE sources SET group_id=? WHERE id IN (` + mark(len(ids)) + `)`
+		args := append([]any{gid}, intsToAny(ids)...)
+		if _, err := tx.Exec(q, args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
