@@ -47,6 +47,27 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 	}
 }
 
+// ghcr 对 schema1 / */* 直接 404，老客户端重试时就发这些；归一后照样能取到。
+func TestPlanNormalizesAccept(t *testing.T) {
+	for _, acc := range []string{"*/*", "application/vnd.docker.distribution.manifest.v1+prettyjws", "", "application/vnd.oci.image.index.v1+json"} {
+		r, _ := http.NewRequest(http.MethodGet, "http://gw/v2/ghcr.io/stackia/rtp2httpd/manifests/latest", nil)
+		if acc != "" {
+			r.Header.Set("Accept", acc)
+		}
+		p, err := New("registry-1.docker.io", 0, time.Minute).Plan(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := DefaultAccept
+		if acc == "application/vnd.oci.image.index.v1+json" {
+			want = acc
+		}
+		if got := p.Header.Get("Accept"); got != want {
+			t.Fatalf("Accept=%q 归一成了 %q", acc, got)
+		}
+	}
+}
+
 func TestPlanBlobKeepsHost(t *testing.T) {
 	got := plan(t, "/v2/ghcr.io/stackia/rtp2httpd/blobs/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	if got.host != "ghcr.io" || got.path != "/v2/stackia/rtp2httpd/blobs/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {

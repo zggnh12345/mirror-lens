@@ -148,10 +148,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 
 	switch kind {
 	case KindManifest:
-		accept := r.Header.Get("Accept")
-		if accept == "" {
-			accept = DefaultAccept
-		}
+		accept := UpstreamAccept(r.Header.Get("Accept"))
 		up.Path = "/v2/" + name + "/manifests/" + ref
 		p := &adapter.Plan{
 			Kind:         "docker",
@@ -220,6 +217,34 @@ func validDigest(d string) bool {
 		}
 	}
 	return true
+}
+
+// UpstreamAccept 把客户端的 Accept 收成上游认得的集合。
+// ghcr 对只带 schema1 或 */* 的请求直接 404，而老客户端重试时就这么发；
+// 这种情况补上完整的现代类型，其余沿用客户端的偏好，缓存键才不会乱。
+func UpstreamAccept(client string) string {
+	modern := map[string]bool{
+		"application/vnd.oci.image.index.v1+json":                   true,
+		"application/vnd.docker.distribution.manifest.list.v2+json": true,
+		"application/vnd.oci.image.manifest.v1+json":                true,
+		"application/vnd.docker.distribution.manifest.v2+json":      true,
+	}
+	var keep []string
+	seen := map[string]bool{}
+	for _, p := range strings.Split(client, ",") {
+		if i := strings.IndexByte(p, ';'); i >= 0 {
+			p = p[:i]
+		}
+		p = strings.ToLower(strings.TrimSpace(p))
+		if modern[p] && !seen[p] {
+			seen[p] = true
+			keep = append(keep, p)
+		}
+	}
+	if len(keep) == 0 {
+		return DefaultAccept
+	}
+	return strings.Join(keep, ",")
 }
 
 // normalizeAccept 排序去空格：同一 tag 下 Accept 不同拿到的字节不同
