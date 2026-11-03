@@ -90,6 +90,8 @@
     <button data-f="archived">已归档</button>
   </div>
 
+  <div class="gbar" id="gbar"></div>
+
   <div class="actions">
     <button class="btn primary grow" id="btnAdd">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>添加自定义加速
@@ -148,6 +150,7 @@
 'use strict';
 var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
+var GROUPS = [], GFILTER = 0, GMANAGE = false;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on');},2200);}
@@ -340,6 +343,7 @@ function rowHtml(x){
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
   var bad = x.status === 'dead' || x.status === 'blocked';
   var l1 = '<b class="site">' + esc(x.site_name || '未知') + '</b>'
+    + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '')
     + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
     + capTags(x) + statusChip(x);
   var l2 = '';
@@ -366,6 +370,11 @@ function rowHtml(x){
     + '</div>'
     + (OPEN === x.id
         ? '<div class="hist" id="hist-' + x.id + '">'
+          + '<div class="cfg">'
+          +   '<input class="nm" data-nm="' + x.id + '" value="' + esc(x.name) + '" maxlength="24" placeholder="给这个源起个名字">'
+          +   '<button class="btn sm" data-savenm="' + x.id + '">保存</button>'
+          +   '<select class="gs" data-gs="' + x.id + '">' + groupOptions(x.group_id) + '</select>'
+          + '</div>'
           + '<div class="detstats">' + detailStats(x) + '</div>'
           + '<svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
           + '<div class="life">'
@@ -383,6 +392,47 @@ function rowHtml(x){
         : '');
 }
 
+/* 分组：下拉选项 + 顶部条 + 管理面板 */
+function groupOptions(sel){
+  var h = '<option value="0"' + (!sel ? ' selected' : '') + '>未分组</option>';
+  GROUPS.forEach(function(g){
+    h += '<option value="' + g.id + '"' + (sel === g.id ? ' selected' : '') + '>'
+      + esc(g.name) + '（' + g.sources + '）</option>';
+  });
+  return h;
+}
+
+function gbarHtml(){
+  var h = '<button class="gchip' + (GFILTER === 0 ? ' on' : '') + '" data-gf="0">全部</button>'
+    + '<button class="gchip' + (GFILTER === -1 ? ' on' : '') + '" data-gf="-1">未分组</button>';
+  GROUPS.forEach(function(g){
+    h += '<button class="gchip' + (GFILTER === g.id ? ' on' : '') + '" data-gf="' + g.id + '">'
+      + esc(g.name) + '<i>' + g.sources + '</i></button>';
+  });
+  h += '<button class="gchip add" data-gnew="1">＋ 分组</button>';
+  h += '<button class="gchip mgr' + (GMANAGE ? ' on' : '') + '" data-gmgr="1">管理</button>';
+  if (GMANAGE){
+    h += '<div class="gmgr">';
+    if (!GROUPS.length) h += '<div class="hint">还没有分组。先建一个，把实测快的源放进去，再把它排到最前。</div>';
+    GROUPS.forEach(function(g, i){
+      h += '<div class="grow" data-gid="' + g.id + '">'
+        + '<b>' + esc(g.name) + '</b><span class="gcnt">' + g.sources + ' 个源</span>'
+        + '<button class="gbtn" data-gup="' + g.id + '"' + (i === 0 ? ' disabled' : '') + '>↑</button>'
+        + '<button class="gbtn" data-gdn="' + g.id + '"' + (i === GROUPS.length - 1 ? ' disabled' : '') + '>↓</button>'
+        + '<button class="gbtn" data-gren="' + g.id + '">改名</button>'
+        + '<button class="gbtn del" data-gdel="' + g.id + '">删除</button>'
+        + '</div>';
+    });
+    h += '<div class="hint">排在前面的组优先参与调度，组内再按速度/延迟和★排序。</div></div>';
+  }
+  return h;
+}
+
+function renderGroups(){
+  var el = document.getElementById('gbar');
+  if (el) el.innerHTML = gbarHtml();
+}
+
 function visible(){
   return DATA.filter(function(x){
     if (Q && (x.site_name+' '+x.name+' '+x.base_url).toLowerCase().indexOf(Q) < 0) return false;
@@ -392,6 +442,8 @@ function visible(){
     if (FILTER === 'manual') return x.origin === 'manual';
     if (FILTER === 'off') return !x.enabled;
     if (FILTER === 'archived') return x.status === 'archived';
+    if (GFILTER === -1) return !x.group_id;
+    if (GFILTER > 0) return x.group_id === GFILTER;
     return true;
   });
 }
@@ -402,6 +454,7 @@ function render(){
   $('#sTotal').textContent = DATA.length;
   $('#sDocker').textContent = DATA.filter(function(x){return x.docker_cap===1;}).length;
   $('#sGithub').textContent = DATA.filter(function(x){return x.github_cap===1;}).length;
+  renderGroups();
   $('#list').innerHTML = list.length ? list.map(rowHtml).join('')
     : '<div class="empty"><b>没有匹配的源</b>换个关键词，或者点上面「添加自定义加速」</div>';
   if (OPEN) drawHist(OPEN);
@@ -410,6 +463,7 @@ function render(){
 async function load(quiet){
   try{
     var d = await api('/api/sources');
+    try{ GROUPS = (await api('/api/groups')).groups || []; }catch(e){}
     DATA = d.sources || [];
     RECENT_N = d.recent_n || RECENT_N;
     render();
@@ -513,6 +567,83 @@ $('#list').addEventListener('click', async function(ev){
     OPEN = (OPEN === nid) ? null : nid;
     render();
   }
+});
+
+/* 分组条：筛选、新建、排序、改名、删除 */
+document.getElementById('gbar').addEventListener('click', async function(ev){
+  var f = ev.target.closest('[data-gf]');
+  if (f){
+    GFILTER = Number(f.getAttribute('data-gf'));
+    render();
+    return;
+  }
+  if (ev.target.closest('[data-gmgr]')){ GMANAGE = !GMANAGE; render(); return; }
+  if (ev.target.closest('[data-gnew]')){
+    var name = (prompt('分组名，例如「实测最快」') || '').trim();
+    if (!name) return;
+    try{ await api('/api/groups', {method:'POST', body: JSON.stringify({name: name})}); toast('已创建分组'); load(true); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  var up = ev.target.closest('[data-gup]') || ev.target.closest('[data-gdn]');
+  if (up){
+    var id = Number(up.getAttribute('data-gup') || up.getAttribute('data-gdn'));
+    var dir = up.hasAttribute('data-gup') ? -1 : 1;
+    var i = GROUPS.findIndex(function(g){ return g.id === id; });
+    var j = i + dir;
+    if (i < 0 || j < 0 || j >= GROUPS.length) return;
+    var a = GROUPS[i], c = GROUPS[j];
+    try{
+      await api('/api/groups/'+a.id, {method:'PATCH', body: JSON.stringify({rank: c.rank})});
+      await api('/api/groups/'+c.id, {method:'PATCH', body: JSON.stringify({rank: a.rank})});
+      load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  var ren = ev.target.closest('[data-gren]');
+  if (ren){
+    var gid = Number(ren.getAttribute('data-gren'));
+    var g = GROUPS.find(function(v){ return v.id === gid; });
+    var nn = (prompt('新的分组名', g ? g.name : '') || '').trim();
+    if (!nn) return;
+    try{ await api('/api/groups/'+gid, {method:'PATCH', body: JSON.stringify({name: nn})}); load(true); }
+    catch(e){ toast(e.message); }
+    return;
+  }
+  var del = ev.target.closest('[data-gdel]');
+  if (del){
+    if (!confirm('删除分组？组里的源会退回未分组，源本身不受影响。')) return;
+    try{ await api('/api/groups/'+del.getAttribute('data-gdel'), {method:'DELETE'}); GFILTER = 0; load(true); }
+    catch(e){ toast(e.message); }
+  }
+});
+
+/* 改名 / 换组 */
+document.getElementById('list').addEventListener('click', async function(ev){
+  var sv = ev.target.closest('[data-savenm]');
+  if (!sv) return;
+  ev.stopPropagation();
+  var id = sv.getAttribute('data-savenm');
+  var inp = document.querySelector('[data-nm="'+id+'"]');
+  var x = DATA.find(function(v){ return String(v.id) === id; }) || {};
+  var val = (inp && inp.value || '').trim() || x.site_name || '';
+  try{
+    await api('/api/sources/'+id, {method:'PATCH', body: JSON.stringify({name: val})});
+    toast('名字已保存');
+    load(true);
+  }catch(e){ toast(e.message); }
+});
+
+document.getElementById('list').addEventListener('change', async function(ev){
+  var sel = ev.target.closest('select[data-gs]');
+  if (!sel) return;
+  ev.stopPropagation();
+  var id = Number(sel.getAttribute('data-gs'));
+  try{
+    await api('/api/sources/'+id, {method:'PATCH', body: JSON.stringify({group_id: Number(sel.value)})});
+    toast(Number(sel.value) ? '已加入分组' : '已移出分组');
+    load(true);
+  }catch(e){ toast(e.message); }
 });
 
 $('#q').addEventListener('input', function(e){ Q = e.target.value.trim().toLowerCase(); render(); });

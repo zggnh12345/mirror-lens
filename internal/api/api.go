@@ -530,6 +530,87 @@ func normalizeURL(raw string) (string, error) {
 	return v, nil
 }
 
+// groups 是分组列表与新建。分组只影响调度顺序，不参与探测。
+func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		gs, err := s.st.ListGroups()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"groups": gs})
+	case http.MethodPost:
+		var in struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+			return
+		}
+		name := strings.TrimSpace(in.Name)
+		if name == "" || len([]rune(name)) > 24 {
+			writeJSON(w, 400, map[string]string{"error": "分组名 1-24 个字"})
+			return
+		}
+		id, err := s.st.CreateGroup(name)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		s.eng.Changed()
+		s.audit(r, "group_create", strconv.FormatInt(id, 10), name, true)
+		writeJSON(w, 200, map[string]any{"ok": true, "id": id})
+	default:
+		writeJSON(w, 405, map[string]string{"error": "只支持 GET/POST"})
+	}
+}
+
+// groupItem 改名、调优先级、删组。
+func (s *Server) groupItem(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/groups/"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "id 不对"})
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var in struct {
+			Name *string `json:"name"`
+			Rank *int    `json:"rank"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+			return
+		}
+		if in.Name != nil {
+			v := strings.TrimSpace(*in.Name)
+			if v == "" || len([]rune(v)) > 24 {
+				writeJSON(w, 400, map[string]string{"error": "分组名 1-24 个字"})
+				return
+			}
+			in.Name = &v
+		}
+		if err := s.st.UpdateGroup(id, in.Name, in.Rank); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		s.eng.Changed()
+		s.audit(r, "group_update", strconv.FormatInt(id, 10), "", true)
+		writeJSON(w, 200, map[string]any{"ok": true})
+	case http.MethodDelete:
+		if err := s.st.DeleteGroup(id); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		s.eng.Changed()
+		s.audit(r, "group_delete", strconv.FormatInt(id, 10), "", true)
+		writeJSON(w, 200, map[string]any{"ok": true})
+	default:
+		writeJSON(w, 405, map[string]string{"error": "只支持 PATCH/DELETE"})
+	}
+}
+
 func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/sources/"), 10, 64)
 	if err != nil {
@@ -543,6 +624,8 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			Name      *string `json:"name"`
 			Note      *string `json:"note"`
 			Preferred *bool   `json:"preferred"`
+			// GroupID 0 表示移出分组。
+			GroupID *int64 `json:"group_id"`
 			// Status 只接受 archived/blocked/pending；usable 得靠探测。
 			Status *string `json:"status"`
 		}
@@ -582,12 +665,18 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if in.Enabled != nil || in.Name != nil || in.Note != nil || in.Preferred != nil {
-			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred); err != nil {
+			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred, nil); err != nil {
 				if errors.Is(err, store.ErrArchived) {
 					writeJSON(w, 400, map[string]string{"error": err.Error()})
 					return
 				}
 				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		if in.GroupID != nil {
+			if err := s.st.SetSourceGroup(id, *in.GroupID); err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
 		}

@@ -14,7 +14,9 @@ type SourceStat struct {
 	BaseURL string `json:"base_url"`
 	Status  string `json:"status"`
 	// Preferred 用户手动设为优先，调度时排在前面。
-	Preferred bool  `json:"preferred"`
+	Preferred bool `json:"preferred"`
+	// GroupRank 所属分组的优先级，未分组给 999（排在所有组之后）。
+	GroupRank int `json:"group_rank"`
 	Samples   int   `json:"samples"`
 	OK        int   `json:"ok"`
 	LatencyMS int64 `json:"latency_ms"` // 样本中位数
@@ -98,17 +100,19 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	}
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
-	rows, err := s.db.Query(`SELECT id, name, base_url, status, preferred FROM sources
-		WHERE enabled = 1 AND status IN ('usable','degraded') AND `+col+` = 1
-		  AND id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
-		ORDER BY id`, Family(kind), HealthFails)
+	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
+			COALESCE(g.rank, 999)
+		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
+		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1
+		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
+		ORDER BY s.id`, Family(kind), HealthFails)
 	if err != nil {
 		return nil, err
 	}
 	var out []SourceStat
 	for rows.Next() {
 		var st SourceStat
-		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred); err != nil {
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred, &st.GroupRank); err != nil {
 			rows.Close()
 			return nil, err
 		}

@@ -66,6 +66,8 @@ type Candidate struct {
 	Trust int `json:"trust"`
 	// Preferred 是用户手动指定的优先源，同等可用性下排最前。
 	Preferred bool `json:"preferred"`
+	// GroupRank 是分组的优先级，越小越先试；未分组为 999。
+	GroupRank int `json:"group_rank"`
 }
 
 type stickyPick struct {
@@ -228,10 +230,18 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.order(kind, items)
+}
+
+// groupKey 把「未分组」归到最后一档：0 表示没有分组，组 rank 从 1 起。
+func groupKey(rank int) int {
+	if rank <= 0 {
+		return 999
+	}
+	return rank
 }
 
 // order 叠加熔断与粘性偏好。
@@ -266,7 +276,12 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
 			return !bi
 		}
-		// 手动优先的源排同组最前，但放在 atCap 之后，别把满员源硬塞前面。
+		// 分组优先级最高的一档：好组里的源先上，用户按实测速度分组才有意义。
+		// 放在 atCap 之后，仍然别把满员源硬塞前面。
+		if gi, gj := groupKey(out[i].GroupRank), groupKey(out[j].GroupRank); gi != gj {
+			return gi < gj
+		}
+		// 组内再看手动优先。
 		if out[i].Preferred != out[j].Preferred {
 			return out[i].Preferred
 		}

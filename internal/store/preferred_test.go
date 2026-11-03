@@ -31,7 +31,7 @@ func TestPreferredSourceRoundTrip(t *testing.T) {
 	}
 
 	on := true
-	if err := st.UpdateSource(id, nil, nil, nil, &on); err != nil {
+	if err := st.UpdateSource(id, nil, nil, nil, &on, nil); err != nil {
 		t.Fatal(err)
 	}
 	cand, err := st.SourceCandidates("docker")
@@ -43,7 +43,7 @@ func TestPreferredSourceRoundTrip(t *testing.T) {
 	}
 
 	off := false
-	if err := st.UpdateSource(id, nil, nil, nil, &off); err != nil {
+	if err := st.UpdateSource(id, nil, nil, nil, &off, nil); err != nil {
 		t.Fatal(err)
 	}
 	cand, err = st.SourceCandidates("docker")

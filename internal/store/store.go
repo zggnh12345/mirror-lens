@@ -48,6 +48,12 @@ type Source struct {
 	// Preferred 用户手动指定的优先源，调度时排在同等可用性的源前面。
 	Preferred bool `json:"preferred"`
 
+	// GroupID 所属分组（0=未分组）。GroupRank 是分组的优先级，越小越先试；
+	// 两者都参与调度排序，见 scheduler.Candidate。
+	GroupID   int64  `json:"group_id"`
+	GroupName string `json:"group_name,omitempty"`
+	GroupRank int    `json:"group_rank,omitempty"`
+
 	CreatedAt int64 `json:"created_at"`
 
 	// 每种类型最近一次检测结果
@@ -263,12 +269,20 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		"status_reason": "TEXT NOT NULL DEFAULT ''",
 		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
 		"site_name":     "TEXT NOT NULL DEFAULT ''",
+		"group_id":      "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}
 	// 老库没有 status_at：从升级此刻起计时，不能拿 created_at 倒推，
 	// 否则历史死源会在首次巡检时被一起归档，升级即清空列表。
 	if _, err := s.db.Exec(`UPDATE sources SET status_at=? WHERE status_at=0`, time.Now().Unix()); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_groups(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL DEFAULT '',
+		rank INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
 		return err
 	}
 	return s.migrateAccel()
@@ -384,12 +398,12 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName)
+		&x.DockerCap, &x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID)
 	return x, err
 }
 
@@ -491,6 +505,9 @@ func (s *Store) ListSources() ([]Source, error) {
 			out[i].Trust[k] = t
 		}
 	}
+	if err := s.attachGroups(out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -571,7 +588,7 @@ var ErrExists = errors.New("source already exists")
 // ErrArchived 已归档的源不能直接启用，只能走恢复流程。
 var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复流程重新验证")
 
-func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool) error {
+func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool, groupID *int64) error {
 	if enabled != nil {
 		if *enabled {
 			// 归档是已经做过的判断，不能被「启用」开关顺手撤销；
@@ -600,6 +617,11 @@ func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, prefer
 	}
 	if preferred != nil {
 		if _, err := s.db.Exec(`UPDATE sources SET preferred=? WHERE id=?`, *preferred, id); err != nil {
+			return err
+		}
+	}
+	if groupID != nil {
+		if _, err := s.db.Exec(`UPDATE sources SET group_id=? WHERE id=?`, *groupID, id); err != nil {
 			return err
 		}
 	}
