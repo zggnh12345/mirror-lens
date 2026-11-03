@@ -34,10 +34,52 @@ const DefaultAccept = "application/vnd.oci.image.index.v1+json," +
 	"application/vnd.docker.distribution.manifest.v1+prettyjws"
 
 type Adapter struct {
-	Upstream string        // registry-1.docker.io
-	Scheme   string        // 回源协议，默认 https；内网/测试可以改 http
-	MaxBytes int64         // 单个 blob 上限，超了只透传
-	TagTTL   time.Duration // tag 的重新验证间隔；digest 永久
+	Upstream string          // registry-1.docker.io
+	Scheme   string          // 回源协议，默认 https；内网/测试可以改 http
+	MaxBytes int64           // 单个 blob 上限，超了只透传
+	TagTTL   time.Duration   // tag 的重新验证间隔；digest 永久
+	Hosts    map[string]bool // 允许 /v2/<host>/... 前缀的站；nil 用 DefaultHosts
+}
+
+// DefaultHosts 是允许按 /v2/<host>/... 前缀回源的仓库站。
+// dpanel / 1Panel 这类工具会把完整镜像地址塞进路径（ghcr.io/owner/repo），
+// 不设白名单就等于让 URL 决定回源地址——那是 SSRF。
+var DefaultHosts = []string{
+	"docker.io", "registry-1.docker.io", "ghcr.io", "quay.io",
+	"gcr.io", "registry.k8s.io", "mcr.microsoft.com", "lscr.io",
+	"registry.gitlab.com", "public.ecr.aws", "cgr.dev",
+}
+
+func (a *Adapter) hostAllowed(h string) bool {
+	if a.Hosts != nil {
+		return a.Hosts[h]
+	}
+	for _, x := range DefaultHosts {
+		if x == h {
+			return true
+		}
+	}
+	return false
+}
+
+// splitHost 拆出路径里的仓库站前缀；没有或不在白名单就回落到默认上游。
+func (a *Adapter) splitHost(repo string) (host, name string) {
+	def := a.Upstream
+	if def == "" {
+		def = "registry-1.docker.io"
+	}
+	i := strings.IndexByte(repo, '/')
+	if i <= 0 || !strings.Contains(repo[:i], ".") {
+		return def, repo
+	}
+	h := strings.ToLower(repo[:i])
+	if h == "docker.io" {
+		h = "registry-1.docker.io"
+	}
+	if !a.hostAllowed(h) {
+		return def, repo
+	}
+	return h, repo[i+1:]
 }
 
 func New(upstream string, maxBytes int64, tagTTL time.Duration) *Adapter {
@@ -100,7 +142,9 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	if scheme == "" {
 		scheme = "https"
 	}
-	up := &url.URL{Scheme: scheme, Host: a.Upstream}
+	// 路径里可能带 ghcr.io / quay.io 之类前缀，回源站跟着它走。
+	host, name := a.splitHost(repo)
+	up := &url.URL{Scheme: scheme, Host: host}
 
 	switch kind {
 	case KindManifest:
@@ -108,14 +152,14 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		if accept == "" {
 			accept = DefaultAccept
 		}
-		up.Path = "/v2/" + repo + "/manifests/" + ref
+		up.Path = "/v2/" + name + "/manifests/" + ref
 		p := &adapter.Plan{
 			Kind:      "docker",
 			Upstream:  up,
 			Method:    http.MethodGet,
 			Header:    http.Header{"Accept": {accept}},
-			Label:     repo + ":" + ref,
-			CacheKey:  "docker:manifest:" + a.Upstream + "/" + repo + ":" + ref + "|accept=" + normalizeAccept(accept),
+			Label:     a.label(host, name, ref),
+			CacheKey:  "docker:manifest:" + host + "/" + name + ":" + ref + "|accept=" + normalizeAccept(accept),
 			Cacheable: true,
 			TTL:       a.TagTTL,
 		}
@@ -128,7 +172,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		return p, nil
 
 	case KindBlob:
-		up.Path = "/v2/" + repo + "/blobs/" + ref
+		up.Path = "/v2/" + name + "/blobs/" + ref
 		return &adapter.Plan{
 			Kind:      "docker",
 			Upstream:  up,
@@ -196,4 +240,12 @@ func shortDigest(d string) string {
 		return d
 	}
 	return d[:19] + "…"
+}
+
+// label 在跨站时带上站点名，面板里才分得清同名的 nginx。
+func (a *Adapter) label(host, name, ref string) string {
+	if host != a.Upstream {
+		return host + "/" + name + ":" + ref
+	}
+	return name + ":" + ref
 }
