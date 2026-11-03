@@ -198,6 +198,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/health", guard(s.health))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
+	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
+	mux.HandleFunc("/api/groups/", guard(csrf(s.groupItem)))
 	mux.HandleFunc("/api/series/", guard(s.series))
 	mux.HandleFunc("/api/export", guard(s.export))
 	mux.HandleFunc("/api/probe", guard(csrf(s.probe)))

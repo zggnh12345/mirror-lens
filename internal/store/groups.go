@@ -20,7 +20,7 @@ func (s *Store) ListGroups() ([]Group, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Group
+	out := []Group{}
 	for rows.Next() {
 		var g Group
 		if err := rows.Scan(&g.ID, &g.Name, &g.Rank, &g.Sources); err != nil {
