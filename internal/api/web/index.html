@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=6">
+<link rel="stylesheet" href="/app.css?v=7">
 </head>
 <body>
 <header>
@@ -699,7 +699,7 @@ function renderMem(){
       + MAIN + L1 + '<b class="site">' + esc(dispName(x)) + '</b></div>'
       + L2 + '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>'
       + '<span class="memtag' + (on ? ' on' : '') + '">' + esc(tag) + '</span></div></div>'
-      + '<button class="sw' + (on ? ' on' : '') + '" data-swt="' + x.id + '" role="switch" aria-checked="' + on + '"></button>'
+      + '<button class="mtog' + (on ? ' on' : '') + '" data-swt="' + x.id + '" role="switch" aria-checked="' + on + '"></button>'
       + '</div>';
   }).join('');
 }

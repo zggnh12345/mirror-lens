@@ -462,10 +462,10 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .memtag.on{background:var(--ok-soft);color:var(--ok)}
 .memfoot{display:flex;gap:8px;padding:10px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);flex:none}
 /* 开关：绿=在组里 */
-.sw{position:relative;flex:none;width:44px;height:26px;padding:0;border:0;border-radius:13px;
+.mtog{position:relative;flex:none;width:44px;height:26px;padding:0;border:0;border-radius:13px;
   background:var(--line2);transition:background .16s ease;cursor:pointer}
-.sw::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+.mtog::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
   background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.28);transition:transform .16s ease}
-.sw.on{background:var(--ok)}
-.sw.on::after{transform:translateX(18px)}
-.sw:disabled{opacity:.55}
+.mtog.on{background:var(--ok)}
+.mtog.on::after{transform:translateX(18px)}
+.mtog:disabled{opacity:.55}
