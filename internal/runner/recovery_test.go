@@ -143,15 +143,17 @@ func TestApplyRecordsPerProtocolHealth(t *testing.T) {
 	}
 }
 
-// 误判成 CapNo 的死源要继续识别，否则永远停在 dead。
+// 误判成 CapNo 的源要能爬回来：死源靠 reidentify 全测；活源也放行 CapNo
+// 协议，由 Run 里的 reprobeDue 按 RecoveryEvery 降频重探（不每轮敲）。
 func TestDeadSourceWithNoCapsIsStillProbed(t *testing.T) {
 	s := store.Source{Status: "dead", DockerCap: store.CapNo, GithubCap: store.CapNo, GhcrCap: store.CapNo}
 	if got := kindsFor(s, 2); len(got) != 3 {
 		t.Fatalf("死源应三种都重测，得到 %v", got)
 	}
-	// 还活着的源不浪费这份额度。
+	// 活源同样放行 CapNo：判死可能是探测格式过时/源改版的误判（如 gp 的
+	// ghcr 带前缀），降频重探由 Run 的 reprobeDue 控制，不在 kindsFor 过滤。
 	s.Status = "usable"
-	if got := kindsFor(s, 2); len(got) != 0 {
-		t.Fatalf("活着的 CapNo 源不该再测，得到 %v", got)
+	if got := kindsFor(s, 2); len(got) != 3 {
+		t.Fatalf("活着的 CapNo 源也应在 kindsFor 放行，得到 %v", got)
 	}
 }
