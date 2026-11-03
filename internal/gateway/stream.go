@@ -612,8 +612,9 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	for i, t := range targets {
 		tt := t
 		if t.fb && plan.OnFallback != nil {
-			// 主站点都失败了才走到这里：记住这个镜像其实在别处。
-			plan.OnFallback(t.u.Host)
+			// 主站点都失败了才走到这里：记住逻辑站点（ghcr.io），
+			// 不是加速源 host，否则下次拼不出正确路径。
+			plan.OnFallback(t.fbHost)
 		}
 		start := time.Now()
 		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)

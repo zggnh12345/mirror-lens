@@ -350,9 +350,10 @@ func (g *Gateway) fetchOnce(ctx context.Context, plan *adapter.Plan, prev *store
 }
 
 type fetchTarget struct {
-	u  *url.URL
-	c  *scheduler.Candidate
-	fb bool // 属于备用站点（plan.Fallbacks）
+	u      *url.URL
+	c      *scheduler.Candidate
+	fb     bool   // 属于备用站点（plan.Fallbacks）
+	fbHost string // 备用站点的逻辑站点（ghcr.io），不是加速源 host
 }
 
 // targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
@@ -388,10 +389,10 @@ func (g *Gateway) fallbackTargets(plan *adapter.Plan, prev *store.CacheEntry) []
 				if !ok || strings.EqualFold(u.Host, fb.URL.Host) {
 					continue
 				}
-				res = append(res, fetchTarget{u: u, c: &cc, fb: true})
+				res = append(res, fetchTarget{u: u, c: &cc, fb: true, fbHost: fb.URL.Host})
 			}
 		}
-		res = append(res, fetchTarget{u: fb.URL, fb: true})
+		res = append(res, fetchTarget{u: fb.URL, fb: true, fbHost: fb.URL.Host})
 	}
 	return res
 }
@@ -405,9 +406,9 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	var lastErr error
 	for _, t := range g.targets(plan, prev) {
 		if t.fb && plan.OnFallback != nil {
-			// 主站点都失败了才走到这里：记住这个镜像其实在别处，
-			// 下次 Plan 直接走对站点。
-			plan.OnFallback(t.u.Host)
+			// 主站点都失败了才走到这里：记住这个镜像其实在别处
+			// （记逻辑站点 ghcr.io，不是加速源 host，否则下次拼不出正确路径）。
+			plan.OnFallback(t.fbHost)
 		}
 		start := time.Now()
 		e, notMod, code, err := g.fetchURL(ctx, plan, prev, t.u)
