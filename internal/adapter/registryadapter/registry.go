@@ -218,7 +218,10 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 
 	case KindBlob:
 		up.Path = "/v2/" + name + "/blobs/" + ref
-		p := &adapter.Plan{
+		// 不给 blob 挂备用站点：镜像归属在拉 manifest 时已经记住
+		// （OnFallback 写 repoHost），blob 跟着 manifest 走同一个站点即可。
+		// 独立挂 fallback 会让每个 4xx 的层请求都多打一次真实外网。
+		return &adapter.Plan{
 			Kind:         a.kindForHost(host, foreign),
 			Upstream:     up,
 			OfficialOnly: a.officialOnly(host, foreign),
@@ -231,9 +234,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			RangeOK:      true,
 			MaxBytes:     a.MaxBytes,
 			ExpectSHA:    strings.TrimPrefix(ref, "sha256:"),
-		}
-		a.addGhcrFallback(p, name, host, def)
-		return p, nil
+		}, nil
 	}
 	return nil, adapter.ErrNoMatch
 }
