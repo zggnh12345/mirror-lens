@@ -56,12 +56,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 
 	ctx := r.Context()
 	srcs, total := g.parPreflight(ctx, plan, targets)
-	if len(srcs) < 2 {
-		g.decline(fmt.Sprintf("%d 台源里只有 %d 台支持分片", len(targets), len(srcs)))
+	// 先看大小：够不上分片就没必要纠结几台源。
+	if total > 0 && total < g.par.MinSize {
+		g.decline(fmt.Sprintf("文件 %d 字节小于分片下限 %d", total, g.par.MinSize))
 		return false
 	}
-	if total < g.par.MinSize {
-		g.decline(fmt.Sprintf("文件 %d 字节小于分片下限 %d", total, g.par.MinSize))
+	if len(srcs) < 2 {
+		g.decline(fmt.Sprintf("%d 台源里只有 %d 台支持分片", len(targets), len(srcs)))
 		return false
 	}
 	if total > g.limitFor(plan) {
