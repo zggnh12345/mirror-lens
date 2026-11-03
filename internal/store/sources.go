@@ -17,14 +17,14 @@ type SourceStat struct {
 	// Preferred 用户手动设为优先，调度时排在前面。
 	Preferred bool `json:"preferred"`
 	// GroupRank 所属分组的优先级，未分组给 999（排在所有组之后）。
-	GroupRank int   `json:"group_rank"`
+	GroupRank int `json:"group_rank"`
 	// GhcrPrefix 代 ghcr 时是否用带 ghcr.io 前缀的路径格式（见 Source.GhcrPrefix）。
 	GhcrPrefix bool  `json:"ghcr_prefix"`
 	Samples    int   `json:"samples"`
-	OK        int   `json:"ok"`
-	LatencyMS int64 `json:"latency_ms"` // 样本中位数
-	SpeedKBps int64 `json:"speed_kbps"` // 样本中位数
-	LastTS    int64 `json:"last_ts"`
+	OK         int   `json:"ok"`
+	LatencyMS  int64 `json:"latency_ms"` // 样本中位数
+	SpeedKBps  int64 `json:"speed_kbps"` // 样本中位数
+	LastTS     int64 `json:"last_ts"`
 	// Trust 是这台源在该类型上的可信度级别（见 trust.go）
 	Trust int `json:"trust"`
 }
