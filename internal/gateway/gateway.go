@@ -403,8 +403,63 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	if plan.Upstream == nil || plan.Upstream.Host == "" {
 		return nil, false, adapter.ErrNoTarget
 	}
+	targets := g.targets(plan, prev)
+	// 裸格式（Docker Hub 名 + ghcr 备用站点）：两条链并行探，谁先给出
+	// 文件用谁。串行要等 Docker Hub 那串 401 走完（实测 10 秒以上），
+	// 而镜像真在 ghcr 时 ghcr 那条一秒内就有结果。
+	if prev == nil && len(plan.Fallbacks) > 0 {
+		var main, fb []fetchTarget
+		for _, t := range targets {
+			if t.fb {
+				fb = append(fb, t)
+			} else {
+				main = append(main, t)
+			}
+		}
+		if len(main) > 0 && len(fb) > 0 {
+			return g.fetchRace(ctx, plan, main, fb)
+		}
+	}
+	return g.fetchSeq(ctx, plan, prev, targets)
+}
+
+// fetchRace 让两条源链并行探同一份内容，谁先成功用谁，另一条立刻取消。
+// 只在裸格式自动识别站点时用：普通请求没有第二条链可并行。
+func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []fetchTarget) (*store.CacheEntry, bool, error) {
+	type result struct {
+		e      *store.CacheEntry
+		notMod bool
+		source string
+		err    error
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch := make(chan result, 2)
+	run := func(ts []fetchTarget) {
+		// 每条链用独立副本：回源过程会改写 Source。
+		pc := *plan
+		e, notMod, err := g.fetchSeq(ctx, &pc, nil, ts)
+		ch <- result{e, notMod, pc.Source, err}
+	}
+	go run(main)
+	go run(fb)
+	var last result
+	for i := 0; i < 2; i++ {
+		r := <-ch
+		if r.err == nil {
+			cancel() // 另一条不用再试了
+			plan.Source = r.source
+			return r.e, r.notMod, nil
+		}
+		last = r
+	}
+	return nil, false, last.err
+}
+
+// fetchSeq 按给定顺序逐个源试，直到有一个交出文件。
+func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*store.CacheEntry, bool, error) {
 	var lastErr error
-	for _, t := range g.targets(plan, prev) {
+	for _, t := range targets {
 		if t.fb && plan.OnFallback != nil {
 			// 主站点都失败了才走到这里：记住这个镜像其实在别处
 			// （记逻辑站点 ghcr.io，不是加速源 host，否则下次拼不出正确路径）。
