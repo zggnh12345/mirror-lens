@@ -111,11 +111,12 @@ func (a *Adapter) rememberHost(name, host string) {
 	a.repoHost[name] = host
 }
 
-// addGhcrFallback 给裸格式（Docker Hub 名）的 plan 挂一个 ghcr.io 备用站点。
-// 不少镜像（sagernet/sing-box 等）只在 ghcr 上，裸名拉 Docker Hub 只会 401。
-// 显式带站点前缀的请求不猜，默认上游本来就是 ghcr 的也不猜。
+// addGhcrFallback 给裸格式的 plan 挂一个 ghcr.io 备用站点。
+// 只对默认上游 registry-1.docker.io 生效：只有「配成 Docker Hub 加速、
+// 却拉了 ghcr-only 镜像」这一种场景需要猜；自定义上游（内网 registry、
+// 测试替身）不该被引向外网。
 func (a *Adapter) addGhcrFallback(p *adapter.Plan, name, host, def string) {
-	if !strings.EqualFold(host, def) || strings.EqualFold(def, "ghcr.io") {
+	if !strings.EqualFold(host, def) || !strings.EqualFold(def, "registry-1.docker.io") {
 		return
 	}
 	gh := &url.URL{Scheme: p.Upstream.Scheme, Host: "ghcr.io", Path: p.Upstream.Path}
