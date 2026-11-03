@@ -17,7 +17,9 @@ type SourceStat struct {
 	Preferred bool `json:"preferred"`
 	// GroupRank 所属分组的优先级，未分组给 999（排在所有组之后）。
 	GroupRank int   `json:"group_rank"`
-	Samples   int   `json:"samples"`
+	// GhcrPrefix 代 ghcr 时是否用带 ghcr.io 前缀的路径格式（见 Source.GhcrPrefix）。
+	GhcrPrefix bool  `json:"ghcr_prefix"`
+	Samples    int   `json:"samples"`
 	OK        int   `json:"ok"`
 	LatencyMS int64 `json:"latency_ms"` // 样本中位数
 	SpeedKBps int64 `json:"speed_kbps"` // 样本中位数
@@ -105,7 +107,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
-			COALESCE(g.rank, 999)
+			s.ghcr_prefix, COALESCE(g.rank, 999)
 		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1
 		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
@@ -116,7 +118,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	var out []SourceStat
 	for rows.Next() {
 		var st SourceStat
-		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred, &st.GroupRank); err != nil {
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred, &st.GhcrPrefix, &st.GroupRank); err != nil {
 			rows.Close()
 			return nil, err
 		}

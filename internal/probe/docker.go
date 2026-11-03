@@ -69,8 +69,21 @@ func Docker(ctx context.Context, base string, tier int, expectedDigest string) R
 }
 
 // Ghcr 探测 ghcr.io 镜像源：用 ghcr 上确定存在的公共镜像做探针。
+// 两种路径格式都试：先裸格式 /v2/<repo>（官方换域名站），
+// 明确打不通再试带前缀 /v2/ghcr.io/<repo>（mirror-lens 同款，如 gp.zzgg.eu.org）。
 func Ghcr(ctx context.Context, base string, tier int) Result {
-	return DockerWithImage(ctx, base, tier, "", probeImageGhcr)
+	r := DockerWithImage(ctx, base, tier, "", probeImageGhcr)
+	if r.Verdict == VerdictYes {
+		return r
+	}
+	// 裸格式没通（可能 404/超时/5xx），试带 ghcr.io 前缀。带前缀成功才认，
+	// 否则仍返回裸格式的结果，保留更具体的失败原因。
+	r2 := DockerWithImage(ctx, base, tier, "", "ghcr.io/"+probeImageGhcr)
+	if r2.Verdict == VerdictYes {
+		r2.GhcrPrefix = true
+		return r2
+	}
+	return r
 }
 
 // DockerWithImage 用指定镜像做探针（ghcr 镜像源用 ghcr 上的公共镜像）。

@@ -386,6 +386,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 	}
 	s = *cur
 	docker, github, ghcr := s.DockerCap, s.GithubCap, s.GhcrCap
+	ghcrPrefix := s.GhcrPrefix
 	for k, r := range res {
 		capv := docker
 		if k == "ghcr" {
@@ -397,6 +398,9 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		switch {
 		case r.Verdict == probe.VerdictYes && tier >= 2:
 			capv = store.CapYes
+			if k == "ghcr" {
+				ghcrPrefix = r.GhcrPrefix
+			}
 		case r.Verdict == probe.VerdictNo && tier >= 2 && capv == store.CapUnknown:
 			// 只有明确说「没有这个协议」（404/410）才认 CapNo。
 			// 超时/DNS/429/5xx 是此刻不通，写成 CapNo 等于永久判死。
@@ -411,9 +415,9 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 			github = capv
 		}
 	}
-	if docker != s.DockerCap || github != s.GithubCap || ghcr != s.GhcrCap {
+	if docker != s.DockerCap || github != s.GithubCap || ghcr != s.GhcrCap || ghcrPrefix != s.GhcrPrefix {
 		// 条件更新：写之前那一瞬被归档，也不覆盖。
-		ok, err := e.st.SetCapsLive(s.ID, docker, github, ghcr)
+		ok, err := e.st.SetCapsLive(s.ID, docker, github, ghcr, ghcrPrefix)
 		if err != nil {
 			log.Printf("runner: set caps %d: %v", s.ID, err)
 		} else if !ok {
@@ -421,6 +425,7 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 	}
 	s.DockerCap, s.GithubCap, s.GhcrCap = docker, github, ghcr
+	s.GhcrPrefix = ghcrPrefix
 
 	// 协议级健康分开记：docker 挂了不影响 github 的候选资格；
 	// 明确「不支持」不算坏，不记。

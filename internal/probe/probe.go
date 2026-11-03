@@ -41,8 +41,10 @@ type Result struct {
 	TTFBMS    int64  `json:"ttfb_ms"`   // 从发请求到收到正文首字节；0 表示没测
 	TLSOK     bool   `json:"tls_ok"`
 	CertDays  int    `json:"cert_days"`
-	Error     string `json:"error"`
-	Detail    string `json:"detail"`
+	// GhcrPrefix 表示这次 ghcr 探测是通过「带 ghcr.io 前缀」格式打通的。
+	GhcrPrefix bool   `json:"ghcr_prefix,omitempty"`
+	Error      string `json:"error"`
+	Detail     string `json:"detail"`
 }
 
 const userAgent = "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)"

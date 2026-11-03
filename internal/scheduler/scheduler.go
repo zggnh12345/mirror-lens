@@ -68,6 +68,8 @@ type Candidate struct {
 	Preferred bool `json:"preferred"`
 	// GroupRank 是分组的优先级，越小越先试；未分组为 999。
 	GroupRank int `json:"group_rank"`
+	// GhcrPrefix 代 ghcr 时用带 ghcr.io 前缀的路径（见 store.Source.GhcrPrefix）。
+	GhcrPrefix bool `json:"ghcr_prefix,omitempty"`
 }
 
 type stickyPick struct {
@@ -230,7 +232,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.order(kind, items)
@@ -384,6 +386,12 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 		u.Scheme = cb.Scheme
 		u.Host = cb.Host
 		u.Path = base.Path
+		// 带 ghcr.io 前缀的源（mirror-lens 同款，如 gp.zzgg.eu.org）回源路径是
+		// /v2/ghcr.io/<repo>/...，而 base.Path 是 /v2/<repo>/...（name 已剥掉 ghcr.io）。
+		// 把开头的 /v2 换成 /v2/<base.Host> 即得。base.Host 在 ghcr 场景恒为 ghcr.io。
+		if kind == "ghcr" && c.GhcrPrefix {
+			u.Path = "/v2/" + base.Host + strings.TrimPrefix(base.Path, "/v2")
+		}
 		u.RawQuery = base.RawQuery
 		return &u, true
 	}
