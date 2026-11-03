@@ -49,6 +49,10 @@ type Plan struct {
 	// Docker blob 的 digest 就是内容哈希，比 ETag 硬。
 	ExpectSHA string
 
+	// OfficialOnly 为真时不试镜像源：上游不是 Docker Hub 时，
+	// Hub 镜像站不认 ghcr.io/quay.io 的路径，只会白等一轮 401。
+	OfficialOnly bool
+
 	// Source 是调度选中的镜像源名称，仅用于响应头与日志。
 	Source string
 

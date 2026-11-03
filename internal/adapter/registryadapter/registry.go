@@ -154,14 +154,15 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		}
 		up.Path = "/v2/" + name + "/manifests/" + ref
 		p := &adapter.Plan{
-			Kind:      "docker",
-			Upstream:  up,
-			Method:    http.MethodGet,
-			Header:    http.Header{"Accept": {accept}},
-			Label:     a.label(host, name, ref),
-			CacheKey:  "docker:manifest:" + host + "/" + name + ":" + ref + "|accept=" + normalizeAccept(accept),
-			Cacheable: true,
-			TTL:       a.TagTTL,
+			Kind:         "docker",
+			Upstream:     up,
+			OfficialOnly: host != a.Upstream,
+			Method:       http.MethodGet,
+			Header:       http.Header{"Accept": {accept}},
+			Label:        a.label(host, name, ref),
+			CacheKey:     "docker:manifest:" + host + "/" + name + ":" + ref + "|accept=" + normalizeAccept(accept),
+			Cacheable:    true,
+			TTL:          a.TagTTL,
 		}
 		if strings.HasPrefix(ref, "sha256:") {
 			p.Immutable = true
@@ -174,17 +175,18 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	case KindBlob:
 		up.Path = "/v2/" + name + "/blobs/" + ref
 		return &adapter.Plan{
-			Kind:      "docker",
-			Upstream:  up,
-			Method:    http.MethodGet,
-			Label:     "layer " + shortDigest(ref),
-			CacheKey:  "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
-			Cacheable: true,
-			Immutable: true,
-			Stream:    true,
-			RangeOK:   true,
-			MaxBytes:  a.MaxBytes,
-			ExpectSHA: strings.TrimPrefix(ref, "sha256:"),
+			Kind:         "docker",
+			Upstream:     up,
+			OfficialOnly: host != a.Upstream,
+			Method:       http.MethodGet,
+			Label:        "layer " + shortDigest(ref),
+			CacheKey:     "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
+			Cacheable:    true,
+			Immutable:    true,
+			Stream:       true,
+			RangeOK:      true,
+			MaxBytes:     a.MaxBytes,
+			ExpectSHA:    strings.TrimPrefix(ref, "sha256:"),
 		}, nil
 	}
 	return nil, adapter.ErrNoMatch

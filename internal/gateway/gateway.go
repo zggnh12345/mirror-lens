@@ -358,7 +358,7 @@ type fetchTarget struct {
 // 镜像可能把旧内容当「没变」，让它验证等于固化过期数据。
 func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
-	if prev != nil || !g.sched.Enabled() {
+	if prev != nil || plan.OfficialOnly || !g.sched.Enabled() {
 		return out
 	}
 	cands := g.sched.Candidates(plan.Kind)

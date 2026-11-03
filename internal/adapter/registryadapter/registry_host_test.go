@@ -14,10 +14,13 @@ func plan(t *testing.T, path string) *planT {
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-	return &planT{host: p.Upstream.Host, path: p.Upstream.Path, key: p.CacheKey, label: p.Label}
+	return &planT{host: p.Upstream.Host, path: p.Upstream.Path, key: p.CacheKey, label: p.Label, official: p.OfficialOnly}
 }
 
-type planT struct{ host, path, key, label string }
+type planT struct {
+	host, path, key, label string
+	official               bool
+}
 
 // dpanel/1Panel 把完整镜像地址塞进路径：ghcr.io 这类前缀要跟着回源，
 // 但只有白名单里的站才认，别的仍按 Docker Hub 仓库名处理（防 SSRF）。
@@ -34,6 +37,9 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 		got := plan(t, c.path)
 		if got.host != c.host || got.path != c.up {
 			t.Fatalf("%s → %s%s，期望 %s%s", c.path, got.host, got.path, c.host, c.up)
+		}
+		if got.official != (c.host != "registry-1.docker.io") {
+			t.Fatalf("%s 的 OfficialOnly=%v，不对", c.path, got.official)
 		}
 		if got.key != "" && !contains(got.key, c.host) {
 			t.Fatalf("%s 的缓存键没带站点：%s", c.path, got.key)
