@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -39,6 +40,9 @@ type Adapter struct {
 	MaxBytes int64           // 单个 blob 上限，超了只透传
 	TagTTL   time.Duration   // tag 的重新验证间隔；digest 永久
 	Hosts    map[string]bool // 允许 /v2/<host>/... 前缀的站；nil 用 DefaultHosts
+
+	mu       sync.RWMutex
+	repoHost map[string]string // 裸格式镜像名 → 实测所在站点（Docker Hub 没有时自动找 ghcr）
 }
 
 // DefaultHosts 是允许按 /v2/<host>/... 前缀回源的仓库站。
@@ -86,7 +90,37 @@ func New(upstream string, maxBytes int64, tagTTL time.Duration) *Adapter {
 	if tagTTL < 0 {
 		tagTTL = 0
 	}
-	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL}
+	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL, repoHost: map[string]string{}}
+}
+
+// rememberedHost 返回之前实测到的归属站点（裸格式镜像名）。
+func (a *Adapter) rememberedHost(name string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.repoHost[name]
+}
+
+// rememberHost 记住某个镜像名实际在哪个站点：下次 Plan 直接用它，
+// 不必再白等一轮 Docker Hub 的 401。
+func (a *Adapter) rememberHost(name, host string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.repoHost == nil {
+		a.repoHost = map[string]string{}
+	}
+	a.repoHost[name] = host
+}
+
+// addGhcrFallback 给裸格式（Docker Hub 名）的 plan 挂一个 ghcr.io 备用站点。
+// 不少镜像（sagernet/sing-box 等）只在 ghcr 上，裸名拉 Docker Hub 只会 401。
+// 显式带站点前缀的请求不猜，默认上游本来就是 ghcr 的也不猜。
+func (a *Adapter) addGhcrFallback(p *adapter.Plan, name, host, def string) {
+	if !strings.EqualFold(host, def) || strings.EqualFold(def, "ghcr.io") {
+		return
+	}
+	gh := &url.URL{Scheme: p.Upstream.Scheme, Host: "ghcr.io", Path: p.Upstream.Path}
+	p.Fallbacks = []adapter.Fallback{{URL: gh, Kind: "ghcr"}}
+	p.OnFallback = func(h string) { a.rememberHost(name, h) }
 }
 
 func (a *Adapter) Name() string { return "docker" }
@@ -150,6 +184,12 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		def = "registry-1.docker.io"
 	}
 	foreign := !strings.EqualFold(host, def)
+	// 裸格式（Docker Hub 名）：之前实测发现它其实在 ghcr.io，直接走对站点。
+	if !foreign {
+		if h := a.rememberedHost(name); h != "" {
+			host, foreign = h, true
+		}
+	}
 	up := &url.URL{Scheme: scheme, Host: host}
 
 	switch kind {
@@ -173,11 +213,12 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			// 按 digest 拉清单：摘要来自客户端，是可信参照，落盘前必须比对。
 			p.ExpectSHA = strings.TrimPrefix(ref, "sha256:")
 		}
+		a.addGhcrFallback(p, name, host, def)
 		return p, nil
 
 	case KindBlob:
 		up.Path = "/v2/" + name + "/blobs/" + ref
-		return &adapter.Plan{
+		p := &adapter.Plan{
 			Kind:         a.kindForHost(host, foreign),
 			Upstream:     up,
 			OfficialOnly: a.officialOnly(host, foreign),
@@ -190,7 +231,9 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			RangeOK:      true,
 			MaxBytes:     a.MaxBytes,
 			ExpectSHA:    strings.TrimPrefix(ref, "sha256:"),
-		}, nil
+		}
+		a.addGhcrFallback(p, name, host, def)
+		return p, nil
 	}
 	return nil, adapter.ErrNoMatch
 }

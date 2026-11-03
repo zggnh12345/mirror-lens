@@ -350,16 +350,18 @@ func (g *Gateway) fetchOnce(ctx context.Context, plan *adapter.Plan, prev *store
 }
 
 type fetchTarget struct {
-	u *url.URL
-	c *scheduler.Candidate
+	u  *url.URL
+	c  *scheduler.Candidate
+	fb bool // 属于备用站点（plan.Fallbacks）
 }
 
 // targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
 // 镜像可能把旧内容当「没变」，让它验证等于固化过期数据。
 func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
+	fbs := g.fallbackTargets(plan, prev)
 	if prev != nil || plan.OfficialOnly || !g.sched.Enabled() {
-		return out
+		return append(out, fbs...)
 	}
 	cands := g.sched.Candidates(plan.Kind)
 	var head []fetchTarget
@@ -371,7 +373,27 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 		}
 		head = append(head, fetchTarget{u: u, c: &cc})
 	}
-	return append(head, out...)
+	return append(append(head, out...), fbs...)
+}
+
+// fallbackTargets 把 plan 声明的备用站点排成 target（加速源在前、官方殿后）。
+// prev != nil 时只回官方，别让镜像替我们「验证」旧内容。
+func (g *Gateway) fallbackTargets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
+	var res []fetchTarget
+	for _, fb := range plan.Fallbacks {
+		if prev == nil && !plan.OfficialOnly && g.sched != nil && g.sched.Enabled() {
+			for _, c := range g.sched.Candidates(fb.Kind) {
+				cc := c
+				u, ok := g.sched.Rewrite(fb.Kind, fb.URL, cc)
+				if !ok || strings.EqualFold(u.Host, fb.URL.Host) {
+					continue
+				}
+				res = append(res, fetchTarget{u: u, c: &cc, fb: true})
+			}
+		}
+		res = append(res, fetchTarget{u: fb.URL, fb: true})
+	}
+	return res
 }
 
 // fetch 试到哪台源能给出文件为止，客户端看到的是整条链的结论。
@@ -382,6 +404,11 @@ func (g *Gateway) fetch(ctx context.Context, plan *adapter.Plan, prev *store.Cac
 	}
 	var lastErr error
 	for _, t := range g.targets(plan, prev) {
+		if t.fb && plan.OnFallback != nil {
+			// 主站点都失败了才走到这里：记住这个镜像其实在别处，
+			// 下次 Plan 直接走对站点。
+			plan.OnFallback(t.u.Host)
+		}
 		start := time.Now()
 		e, notMod, code, err := g.fetchURL(ctx, plan, prev, t.u)
 		if err == nil {

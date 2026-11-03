@@ -591,7 +591,15 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	// 最费流量的请求丢回官方源。
 	targets := g.targets(plan, nil)
 	if !plan.Stream {
-		targets = targets[len(targets)-1:] // 注册表自己已经挑过源了
+		// 注册表自己已经挑过源了：非流式只留官方源。但备用站点要一起留，
+		// 否则裸名拉 ghcr 镜像的 HEAD/小清单会卡在 Docker Hub 的 401 上。
+		var keep []fetchTarget
+		for _, t := range targets {
+			if t.c == nil || t.fb {
+				keep = append(keep, t)
+			}
+		}
+		targets = keep
 	}
 
 	var (
@@ -603,6 +611,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	)
 	for i, t := range targets {
 		tt := t
+		if t.fb && plan.OnFallback != nil {
+			// 主站点都失败了才走到这里：记住这个镜像其实在别处。
+			plan.OnFallback(t.u.Host)
+		}
 		start := time.Now()
 		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)
 		if rerr != nil {
@@ -626,7 +638,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			g.reportPass(plan.Kind, tt, start, 0, 0, false)
 			continue
 		}
-		if failoverStatus(resp.StatusCode) && i < len(targets)-1 {
+		// 裸格式（Docker Hub 名）的 401/403 说明镜像不在 Hub 上：
+		// 后面还有备用站点（ghcr）就换过去，别直接把 401 丢给客户端。
+		authFailover := plan.OnFallback != nil && isAuthDenied(resp.StatusCode)
+		if (failoverStatus(resp.StatusCode) || authFailover) && i < len(targets)-1 {
 			// 换源前先记这次响应（分母要有它）：5xx/429 进冷却，
 			// 404/410 只记未命中不冷却；响应未写出时才换源。
 			code, ra := resp.StatusCode, retryAfterHeader(resp.Header)

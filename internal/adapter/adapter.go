@@ -63,6 +63,21 @@ type Plan struct {
 	// OnResponse 拿到响应头后再决定能不能缓存、缓存多久。
 	// Cache-Control 只有这一刻才知道，不能全在 Plan 里定死。
 	OnResponse func(resp *http.Response) (cacheable bool, ttl time.Duration)
+
+	// Fallbacks 是主上游全部失败后按顺序再试的站点（裸格式镜像名自动
+	// 找 ghcr.io 用）。每个备用站点带自己的 kind，调度按它选加速源。
+	Fallbacks []Fallback
+
+	// OnFallback 在开始试备用站点时回调一次，参数是备用站点 host。
+	// 适配器用它记住「这个 repo 其实在别处」，下次直接走对站点，
+	// 不用再白等一轮 Docker Hub 的 401。
+	OnFallback func(host string)
+}
+
+// Fallback 是一个备用上游站点。路径与主上游相同，只换 host。
+type Fallback struct {
+	URL  *url.URL
+	Kind string
 }
 
 // Adapter 是每种协议的实现。
