@@ -199,6 +199,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
+	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))
 	mux.HandleFunc("/api/groups/", guard(csrf(s.groupItem)))
 	mux.HandleFunc("/api/series/", guard(s.series))
 	mux.HandleFunc("/api/export", guard(s.export))
@@ -569,6 +570,29 @@ func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
 }
 
 // groupItem 改名、调优先级、删组。
+// reorderGroups 一次提交完整顺序：面板上下移/拖拽都只发这一条，
+// 不用两两交换 rank，连点也不会撞出重复档位。
+func (s *Server) reorderGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil || len(in.IDs) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return
+	}
+	if err := s.st.ReorderGroups(in.IDs); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	s.eng.Changed()
+	s.audit(r, "group_reorder", "", "", true)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 func (s *Server) groupItem(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/groups/"), 10, 64)
 	if err != nil {

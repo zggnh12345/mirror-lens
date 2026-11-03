@@ -65,6 +65,53 @@ func (s *Store) UpdateGroup(id int64, name *string, rank *int) error {
 	return nil
 }
 
+// ReorderGroups 按给定 id 顺序重排优先级（rank = 下标+1）。
+// 一次事务内改完：两个分组的 rank 互换时不会出现短暂的重复档位，
+// 面板连点也不会因为读到中间态而乱序。
+func (s *Store) ReorderGroups(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE source_groups SET rank=? WHERE id=?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for i, id := range ids {
+		if _, err := stmt.Exec(i+1, id); err != nil {
+			return err
+		}
+	}
+	// 没在列表里的组统一压到最后（用 id 拉开，保持相对顺序），
+	// 这样即便前端只提交了一部分 id 也不会出现并列档位。
+	if _, err := tx.Exec(`UPDATE source_groups SET rank = 1000 + id WHERE id NOT IN (`+mark(len(ids))+`)`,
+		intsToAny(ids)...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func mark(n int) string {
+	out := "?"
+	for i := 1; i < n; i++ {
+		out += ",?"
+	}
+	return out
+}
+
+func intsToAny(v []int64) []any {
+	out := make([]any, len(v))
+	for i := range v {
+		out[i] = v[i]
+	}
+	return out
+}
+
 // DeleteGroup 删组，组内源退回未分组（不删源：用户删的是标签，不是站点）。
 func (s *Store) DeleteGroup(id int64) error {
 	if _, err := s.db.Exec(`UPDATE sources SET group_id=0 WHERE group_id=?`, id); err != nil {

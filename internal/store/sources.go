@@ -16,7 +16,7 @@ type SourceStat struct {
 	// Preferred 用户手动设为优先，调度时排在前面。
 	Preferred bool `json:"preferred"`
 	// GroupRank 所属分组的优先级，未分组给 999（排在所有组之后）。
-	GroupRank int `json:"group_rank"`
+	GroupRank int   `json:"group_rank"`
 	Samples   int   `json:"samples"`
 	OK        int   `json:"ok"`
 	LatencyMS int64 `json:"latency_ms"` // 样本中位数

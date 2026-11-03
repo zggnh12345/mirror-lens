@@ -122,8 +122,25 @@
     <input type="text" id="addUrl" placeholder="docker.1panel.live 或 https://gh-proxy.com" autocomplete="off" spellcheck="false">
     <label for="addName">备注名（可选）</label>
     <input type="text" id="addName" placeholder="不填就用域名" autocomplete="off">
+    <label for="addGroup">所属分组（可选）</label>
+    <select id="addGroup"></select>
     <div class="hint" id="addMsg"></div>
     <button class="btn primary full" id="btnAddGo">添加并识别</button>
+  </div>
+</div>
+
+<!-- 分组 -->
+<div class="sheet" id="sheetGrp">
+  <div class="panel">
+    <div class="phead">
+      <h2 id="grpTitle">新建分组</h2>
+      <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="hint" style="margin-top:2px">把实测快的源放进来，再把组排到最前，分片就会先吃这一组。</p>
+    <label for="grpName">分组名</label>
+    <input type="text" id="grpName" placeholder="例如 实测最快" maxlength="24" autocomplete="off" spellcheck="false">
+    <div class="hint" id="grpMsg"></div>
+    <button class="btn primary full" id="btnGrpGo">保存</button>
   </div>
 </div>
 
@@ -150,7 +167,7 @@
 'use strict';
 var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
-var GROUPS = [], GFILTER = 0, GMANAGE = false;
+var GROUPS = [], GFILTER = 0, GMANAGE = false, RENAME = null, GRPEDIT = null;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function toast(m){var t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('on');},2200);}
@@ -338,11 +355,23 @@ function detailStats(x){
 /* 一行两段：
    第一段 站点名 + 域名 + 能力标签 + 状态；
    第二段 异常时是红色人话原因，正常时是备注 + 延迟 + 最近 N 次状态条。 */
+// 自定义名放在 name 里，默认值等于域名；等于域名就说明没改过，继续显示站点名。
+function customName(x){
+  var n = (x.name || '').trim();
+  return (n && n !== domainOf(x.base_url || '')) ? n : '';
+}
+function dispName(x){
+  return customName(x) || (x.site_name || '').trim() || domainOf(x.base_url || '') || '未知';
+}
+
 function rowHtml(x){
   var l = x.last || {}, d = l.docker, g = l.github;
   var best = d && g ? ((d.speed_kbps||0) >= (g.speed_kbps||0) ? d : g) : (d || g);
   var bad = x.status === 'dead' || x.status === 'blocked';
-  var l1 = '<b class="site">' + esc(x.site_name || '未知') + '</b>'
+  var l1 = (RENAME === x.id
+      ? '<input class="renin" data-renin="' + x.id + '" value="' + esc(customName(x)) + '" maxlength="24"'
+        + ' placeholder="' + esc(dispName(x)) + '" autocomplete="off" spellcheck="false">'
+      : '<b class="site">' + esc(dispName(x)) + '</b>')
     + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '')
     + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
     + capTags(x) + statusChip(x);
@@ -360,6 +389,8 @@ function rowHtml(x){
     l2 = bits.join('');
   }
   return '<div class="row ' + rowClass(x) + (x.enabled ? '' : ' off') + '" data-id="' + x.id + '">'
+    + '<button class="ren" data-ren="' + x.id + '" title="改个名字">'
+    +   '<svg viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4zM14 6l4 4"/></svg></button>'
     + '<span class="dot"></span>'
     + '<div class="main">'
     +   '<div class="l1">' + l1 + '</div>'
@@ -371,8 +402,7 @@ function rowHtml(x){
     + (OPEN === x.id
         ? '<div class="hist" id="hist-' + x.id + '">'
           + '<div class="cfg">'
-          +   '<input class="nm" data-nm="' + x.id + '" value="' + esc(x.name) + '" maxlength="24" placeholder="给这个源起个名字">'
-          +   '<button class="btn sm" data-savenm="' + x.id + '">保存</button>'
+          +   '<span class="cfgl">分组</span>'
           +   '<select class="gs" data-gs="' + x.id + '">' + groupOptions(x.group_id) + '</select>'
           + '</div>'
           + '<div class="detstats">' + detailStats(x) + '</div>'
@@ -393,11 +423,11 @@ function rowHtml(x){
 }
 
 /* 分组：下拉选项 + 顶部条 + 管理面板 */
-function groupOptions(sel){
-  var h = '<option value="0"' + (!sel ? ' selected' : '') + '>未分组</option>';
+function groupOptions(sel, plain){
+  var h = '<option value="0"' + (!sel ? ' selected' : '') + '>' + (plain ? '不分组' : '未分组') + '</option>';
   GROUPS.forEach(function(g){
     h += '<option value="' + g.id + '"' + (sel === g.id ? ' selected' : '') + '>'
-      + esc(g.name) + '（' + g.sources + '）</option>';
+      + esc(g.name) + (plain ? '' : '（' + g.sources + '）') + '</option>';
   });
   return h;
 }
@@ -512,6 +542,16 @@ function drawHist(id){
 
 /* ---- 交互 ---- */
 $('#list').addEventListener('click', async function(ev){
+  var pen = ev.target.closest('[data-ren]');
+  if (pen){
+    ev.stopPropagation();
+    RENAME = Number(pen.getAttribute('data-ren'));
+    render();
+    var inp0 = document.querySelector('.renin');
+    if (inp0){ inp0.focus(); inp0.select(); }
+    return;
+  }
+  if (ev.target.closest('.renin')){ ev.stopPropagation(); return; }
   var cb = ev.target.closest('input[data-tog]');
   if (cb){
     var id = cb.getAttribute('data-tog');
@@ -578,13 +618,7 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
     return;
   }
   if (ev.target.closest('[data-gmgr]')){ GMANAGE = !GMANAGE; render(); return; }
-  if (ev.target.closest('[data-gnew]')){
-    var name = (prompt('分组名，例如「实测最快」') || '').trim();
-    if (!name) return;
-    try{ await api('/api/groups', {method:'POST', body: JSON.stringify({name: name})}); toast('已创建分组'); load(true); }
-    catch(e){ toast(e.message); }
-    return;
-  }
+  if (ev.target.closest('[data-gnew]')){ openGroup(null); return; }
   var up = ev.target.closest('[data-gup]') || ev.target.closest('[data-gdn]');
   if (up){
     var id = Number(up.getAttribute('data-gup') || up.getAttribute('data-gdn'));
@@ -592,24 +626,16 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
     var i = GROUPS.findIndex(function(g){ return g.id === id; });
     var j = i + dir;
     if (i < 0 || j < 0 || j >= GROUPS.length) return;
-    var a = GROUPS[i], c = GROUPS[j];
-    try{
-      await api('/api/groups/'+a.id, {method:'PATCH', body: JSON.stringify({rank: c.rank})});
-      await api('/api/groups/'+c.id, {method:'PATCH', body: JSON.stringify({rank: a.rank})});
-      load(true);
-    }catch(e){ toast(e.message); }
+    var ids = GROUPS.map(function(g){ return g.id; });
+    ids.splice(j, 0, ids.splice(i, 1)[0]);
+    GROUPS.splice(j, 0, GROUPS.splice(i, 1)[0]);   // 先本地换位，点一下就跟手
+    render();
+    try{ await api('/api/groups/order', {method:'POST', body: JSON.stringify({ids: ids})}); load(true); }
+    catch(e){ toast(e.message); load(true); }
     return;
   }
   var ren = ev.target.closest('[data-gren]');
-  if (ren){
-    var gid = Number(ren.getAttribute('data-gren'));
-    var g = GROUPS.find(function(v){ return v.id === gid; });
-    var nn = (prompt('新的分组名', g ? g.name : '') || '').trim();
-    if (!nn) return;
-    try{ await api('/api/groups/'+gid, {method:'PATCH', body: JSON.stringify({name: nn})}); load(true); }
-    catch(e){ toast(e.message); }
-    return;
-  }
+  if (ren){ openGroup(Number(ren.getAttribute('data-gren'))); return; }
   var del = ev.target.closest('[data-gdel]');
   if (del){
     if (!confirm('删除分组？组里的源会退回未分组，源本身不受影响。')) return;
@@ -618,21 +644,55 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
   }
 });
 
-/* 改名 / 换组 */
-document.getElementById('list').addEventListener('click', async function(ev){
-  var sv = ev.target.closest('[data-savenm]');
-  if (!sv) return;
-  ev.stopPropagation();
-  var id = sv.getAttribute('data-savenm');
-  var inp = document.querySelector('[data-nm="'+id+'"]');
-  var x = DATA.find(function(v){ return String(v.id) === id; }) || {};
-  var val = (inp && inp.value || '').trim() || x.site_name || '';
+/* 新建/重命名分组共用一个小对话框，样式和「添加自定义加速」一致 */
+function openGroup(id){
+  GRPEDIT = id || null;
+  var g = GRPEDIT ? GROUPS.find(function(v){ return v.id === GRPEDIT; }) : null;
+  $('#grpTitle').textContent = g ? '重命名分组' : '新建分组';
+  $('#grpName').value = g ? g.name : '';
+  $('#grpMsg').textContent = ''; $('#grpMsg').className = 'hint';
+  openSheet('sheetGrp');
+  setTimeout(function(){ $('#grpName').focus(); $('#grpName').select(); }, 240);
+}
+$('#btnGrpGo').addEventListener('click', async function(){
+  var name = $('#grpName').value.trim(), msg = $('#grpMsg'), btn = this;
+  if (!name){ msg.className = 'hint bad'; msg.textContent = '先起个名字'; return; }
+  btn.disabled = true; msg.className = 'hint'; msg.textContent = '保存中…';
+  try{
+    if (GRPEDIT) await api('/api/groups/'+GRPEDIT, {method:'PATCH', body: JSON.stringify({name: name})});
+    else await api('/api/groups', {method:'POST', body: JSON.stringify({name: name})});
+    closeSheets(); GMANAGE = true;
+    toast(GRPEDIT ? '分组名已更新' : '分组已创建');
+    load(true);
+  }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; }
+  btn.disabled = false;
+});
+$('#grpName').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('#btnGrpGo').click(); });
+
+/* 改名：行内输入框，回车或失焦保存，Esc 放弃 */
+async function saveName(inp){
+  if (!inp || inp._done) return;
+  inp._done = true;
+  var id = Number(inp.getAttribute('data-renin'));
+  var x = DATA.find(function(v){ return v.id === id; }) || {};
+  var val = (inp.value || '').trim() || domainOf(x.base_url || '');
+  RENAME = null;
   try{
     await api('/api/sources/'+id, {method:'PATCH', body: JSON.stringify({name: val})});
-    toast('名字已保存');
-    load(true);
+    toast('名字已更新');
   }catch(e){ toast(e.message); }
+  load(true);
+}
+document.getElementById('list').addEventListener('keydown', function(ev){
+  var inp = ev.target.closest('.renin');
+  if (!inp) return;
+  if (ev.key === 'Enter'){ ev.preventDefault(); saveName(inp); }
+  else if (ev.key === 'Escape'){ ev.preventDefault(); RENAME = null; render(); }
 });
+document.getElementById('list').addEventListener('blur', function(ev){
+  var inp = ev.target && ev.target.closest ? ev.target.closest('.renin') : null;
+  if (inp) saveName(inp);
+}, true);
 
 document.getElementById('list').addEventListener('change', async function(ev){
   var sel = ev.target.closest('select[data-gs]');
@@ -665,6 +725,7 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeS
 
 $('#btnAdd').addEventListener('click', function(){
   $('#addMsg').textContent = ''; $('#addMsg').className = 'hint';
+  $('#addGroup').innerHTML = groupOptions(0, true);   // 每次都按当前分组刷新
   openSheet('sheetAdd');
   setTimeout(function(){ $('#addUrl').focus(); }, 240);
 });
@@ -675,6 +736,8 @@ $('#btnAddGo').addEventListener('click', async function(){
   btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在识别这个地址支持什么…';
   try{
     var d = await api('/api/sources', {method:'POST', body: JSON.stringify({url: url, name: $('#addName').value.trim()})});
+    var gsel = Number($('#addGroup').value || 0);
+    if (gsel) await api('/api/sources/'+d.id, {method:'PATCH', body: JSON.stringify({group_id: gsel})});
     var n = 0, found = null;
     while (n++ < 25){
       await new Promise(function(r){ setTimeout(r, 1500); });
@@ -691,7 +754,7 @@ $('#btnAddGo').addEventListener('click', async function(){
       msg.className = tags.length ? 'hint ok' : 'hint bad';
       msg.textContent = tags.length ? ('识别完成：支持 ' + tags.join(' + ')) : '两种加速都不通，先留在列表里等复测';
     } else { msg.className = 'hint'; msg.textContent = '已添加，识别还在后台跑'; }
-    $('#addUrl').value = ''; $('#addName').value = '';
+    $('#addUrl').value = ''; $('#addName').value = ''; $('#addGroup').value = '0';
     setTimeout(function(){ closeSheets(); load(true); }, 1100);
   }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; }
   btn.disabled = false;
