@@ -239,6 +239,18 @@ func (s *Server) accelPurge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	// 半截/临时文件不在 cache_entries 里，但面板「缓存占用」按整个 cache
+	// 目录算；不清它们数字就不会降。scope=all 才做，留 1 分钟保护正在下的。
+	if scope == "all" && s.gw != nil {
+		cs := s.gw.CacheStore()
+		now := time.Now().Unix()
+		if n, freed, err := cs.SweepPartial(now - 60); err == nil && (n > 0 || freed > 0) {
+			log.Printf("清缓存: 顺带清半截文件 %d 个 释放=%dMB", n, freed>>20)
+		}
+		if n, err := cs.SweepTemp(now - 60); err == nil && n > 0 {
+			log.Printf("清缓存: 顺带清临时文件 %d 个", n)
+		}
+	}
 	who := s.st.GetSetting(auth.KeyUser, auth.DefaultUser)
 	s.audit(r, "cache_purge", scope, fmt.Sprintf("条目=%d 释放=%dMB", res.Entries, res.Bytes>>20), true)
 	log.Printf("清空缓存: 范围=%s 操作人=%s 条目=%d 释放=%dMB 待重试=%d",
