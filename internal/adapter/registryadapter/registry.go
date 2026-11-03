@@ -144,16 +144,22 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	}
 	// 路径里可能带 ghcr.io / quay.io 之类前缀，回源站跟着它走。
 	host, name := a.splitHost(repo)
+	// foreign 表示路径里真的带了别家站点前缀（ghcr.io 之类），不是默认上游。
+	def := a.Upstream
+	if def == "" {
+		def = "registry-1.docker.io"
+	}
+	foreign := !strings.EqualFold(host, def)
 	up := &url.URL{Scheme: scheme, Host: host}
 
 	switch kind {
 	case KindManifest:
-		accept := UpstreamAccept(r.Header.Get("Accept"))
+		accept := UpstreamAccept(r.Header.Get("Accept"), foreign)
 		up.Path = "/v2/" + name + "/manifests/" + ref
 		p := &adapter.Plan{
 			Kind:         "docker",
 			Upstream:     up,
-			OfficialOnly: host != a.Upstream,
+			OfficialOnly: foreign,
 			Method:       http.MethodGet,
 			Header:       http.Header{"Accept": {accept}},
 			Label:        a.label(host, name, ref),
@@ -174,7 +180,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		return &adapter.Plan{
 			Kind:         "docker",
 			Upstream:     up,
-			OfficialOnly: host != a.Upstream,
+			OfficialOnly: foreign,
 			Method:       http.MethodGet,
 			Label:        "layer " + shortDigest(ref),
 			CacheKey:     "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
@@ -220,9 +226,9 @@ func validDigest(d string) bool {
 }
 
 // UpstreamAccept 把客户端的 Accept 收成上游认得的集合。
-// ghcr 对只带 schema1 或 */* 的请求直接 404，而老客户端重试时就这么发；
-// 这种情况补上完整的现代类型，其余沿用客户端的偏好，缓存键才不会乱。
-func UpstreamAccept(client string) string {
+// ghcr 这类站很严格：只带 schema1、*/* 或纯 docker 类型时一律 404，
+// 而 docker 客户端重试时就这么发。所以过滤掉无用类型，非 Hub 站再补上 OCI 类型。
+func UpstreamAccept(client string, foreign bool) string {
 	modern := map[string]bool{
 		"application/vnd.oci.image.index.v1+json":                   true,
 		"application/vnd.docker.distribution.manifest.list.v2+json": true,
@@ -239,6 +245,14 @@ func UpstreamAccept(client string) string {
 		if modern[p] && !seen[p] {
 			seen[p] = true
 			keep = append(keep, p)
+		}
+	}
+	if foreign {
+		for _, t := range []string{"application/vnd.oci.image.index.v1+json", "application/vnd.oci.image.manifest.v1+json"} {
+			if !seen[t] {
+				seen[t] = true
+				keep = append(keep, t)
+			}
 		}
 	}
 	if len(keep) == 0 {

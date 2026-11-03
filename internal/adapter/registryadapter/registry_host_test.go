@@ -2,6 +2,7 @@ package registryadapter
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,9 +48,11 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 	}
 }
 
-// ghcr 对 schema1 / */* 直接 404，老客户端重试时就发这些；归一后照样能取到。
+// ghcr 对 schema1 / */* / 纯 docker 类型直接 404，老客户端重试时就发这些；
+// 归一后必须都带上 OCI 类型，否则回源必挂。
 func TestPlanNormalizesAccept(t *testing.T) {
-	for _, acc := range []string{"*/*", "application/vnd.docker.distribution.manifest.v1+prettyjws", "", "application/vnd.oci.image.index.v1+json"} {
+	for _, acc := range []string{"*/*", "application/vnd.docker.distribution.manifest.v1+prettyjws", "",
+		"application/vnd.docker.distribution.manifest.list.v2+json"} {
 		r, _ := http.NewRequest(http.MethodGet, "http://gw/v2/ghcr.io/stackia/rtp2httpd/manifests/latest", nil)
 		if acc != "" {
 			r.Header.Set("Accept", acc)
@@ -58,12 +61,12 @@ func TestPlanNormalizesAccept(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := DefaultAccept
-		if acc == "application/vnd.oci.image.index.v1+json" {
-			want = acc
+		got := p.Header.Get("Accept")
+		if !strings.Contains(got, "application/vnd.oci.image.index.v1+json") {
+			t.Fatalf("Accept=%q 归一成 %q，缺 OCI 索引类型", acc, got)
 		}
-		if got := p.Header.Get("Accept"); got != want {
-			t.Fatalf("Accept=%q 归一成了 %q", acc, got)
+		if strings.Contains(got, "prettyjws") || strings.Contains(got, "*/*") {
+			t.Fatalf("Accept=%q 归一成 %q，仍带无用类型", acc, got)
 		}
 	}
 }
