@@ -55,7 +55,9 @@
     <h2>运行概览</h2>
     <div class="ovcards">
       <div class="ovc ok"><b id="ovHit">–</b><span>命中率</span><svg class="spark" id="ovHitSpark" viewBox="0 0 120 34" preserveAspectRatio="none"></svg></div>
-      <div class="ovc"><b id="ovCache">–</b><span>缓存占用</span><span class="ovsub" id="ovCacheSub"></span></div>
+      <div class="ovc"><b id="ovCache">–</b><span>缓存占用</span><span class="ovsub" id="ovCacheSub"></span>
+        <button class="ovclr" id="ovClear" type="button" title="清空缓存" aria-label="清空缓存"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></button>
+      </div>
       <div class="ovc dk"><b id="ovConc">–</b><span>当前并发</span><span class="ovsub" id="ovConcSub"></span></div>
       <div class="ovc gh"><b id="ovReq">–</b><span>周期请求</span><span class="ovsub">最近一个周期</span></div>
     </div>
@@ -162,6 +164,27 @@ async function api(path, opt){
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
+
+/* 清空缓存：缓存卡片右上角一个图标，确认后清空全部。 */
+document.addEventListener('DOMContentLoaded', function(){
+  var b = document.getElementById('ovClear');
+  if (!b) return;
+  b.addEventListener('click', async function(){
+    var size = document.getElementById('ovCache').textContent;
+    var sub = document.getElementById('ovCacheSub').textContent;
+    if (!confirm('清空全部缓存？\n当前 ' + size + '，' + sub + '\n清空后第一次拉取要重新回源。')) return;
+    b.disabled = true;
+    try {
+      var d = await api('/api/accel/purge', {method:'POST', body: JSON.stringify({scope:'all'})});
+      toast('已清空 ' + d.entries + ' 项，释放 ' + fmtMB(d.bytes));
+      loadMetrics(); loadLive();
+    } catch(e) {
+      toast('清理失败：' + e.message);
+    } finally {
+      b.disabled = false;
+    }
+  });
+});
 
 /* ---- 主题 ---- */
 var THEMES = ['light','dark','system'];
