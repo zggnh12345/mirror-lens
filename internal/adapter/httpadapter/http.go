@@ -72,9 +72,15 @@ func githubKind(u *url.URL) string {
 	case "objects.githubusercontent.com":
 		return "release"
 	case "github.com":
-		if strings.Contains(u.Path, "/releases/download/") {
+		// 源码包（archive）和 release 资产一样是 github_cap 池的活；
+		// 归成 http 就只能直连 github.com，国内必挂。
+		if strings.Contains(u.Path, "/releases/download/") ||
+			strings.Contains(u.Path, "/releases/latest/download/") ||
+			strings.Contains(u.Path, "/archive/") {
 			return "release"
 		}
+	case "codeload.github.com":
+		return "release"
 	}
 	return "http"
 }
