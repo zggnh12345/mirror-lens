@@ -97,6 +97,10 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		sum := sha256.Sum256([]byte(auth))
 		p.CacheKey += fmt.Sprintf("|auth=%x", sum[:8])
 		p.Cacheable = false
+		// 凭据只能交给 GitHub 官方：第三方加速站会看到 PAT，
+		// 而且私有内容经镜像站转发也拿不到正确结果。
+		p.OfficialOnly = true
+		p.NoStore = true
 	}
 	return p, nil
 }

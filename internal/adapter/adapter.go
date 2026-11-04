@@ -53,6 +53,16 @@ type Plan struct {
 	// Hub 镜像站不认 ghcr.io/quay.io 的路径，只会白等一轮 401。
 	OfficialOnly bool
 
+	// Claim 非空时是并行竞速链的提交令牌：返回 true 才允许写缓存索引。
+	// 两条链同时下载同一资源时，只有第一条能拿到令牌，避免后完成的
+	// 那条把索引覆盖成另一份内容。
+	Claim func() bool
+
+	// NoStore 表示内容带凭据、任何情况下都不能落盘：入口分流到直通，
+	// 保存路径再做一次兜底。与 Cacheable=false 区分开——后者只表示
+	// 「不值得按 TTL 缓存」（如 git info/refs），仍可临时落盘。
+	NoStore bool
+
 	// Source 是调度选中的镜像源名称，仅用于响应头与日志。
 	Source string
 

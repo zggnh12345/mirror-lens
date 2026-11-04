@@ -101,6 +101,11 @@ func token(t *testing.T, st *store.Store) string {
 }
 
 func do(g *Gateway, tok, target string, hdr map[string]string) *httptest.ResponseRecorder {
+	// 带 token 就按认证模式跑：Authorization 是网关凭据，
+	// 校验后必须被摘掉，不能当成上游 PAT 透传。
+	if tok != "" {
+		g.requireToken = true
+	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)

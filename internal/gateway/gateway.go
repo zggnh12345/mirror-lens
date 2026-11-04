@@ -239,6 +239,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// 带凭据的私有内容一律直通：既不读索引，也不落盘。
+	// 用 NoStore 而不是 Cacheable：git info/refs 之类只是不值得按 TTL
+	// 缓存，仍需走原来的临时落盘路径。
+	if plan.NoStore {
+		g.fillStream(w, r, plan)
+		return
+	}
 	prev, err := g.st.CacheGet(plan.CacheKey)
 	if err != nil {
 		loggw(slog.LevelWarn, "缓存索引读取失败", r.Context(), plan, logging.CacheReadFailed, err)
@@ -451,9 +458,15 @@ func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch := make(chan result, 2)
+	// 两条链并行下载，但只有一条能提交缓存：令牌由先完成者拿走，
+	// 另一条内容照常返回、只是不写索引，避免后完成的把缓存覆盖成
+	// 另一份 manifest。
+	var claimed atomic.Bool
+	claim := func() bool { return claimed.CompareAndSwap(false, true) }
 	run := func(ts []fetchTarget) {
-		// 每条链用独立副本：回源过程会改写 Source。
+		// 每条链用独立副本：回源过程会改写 Source 和提交令牌。
 		pc := *plan
+		pc.Claim = claim
 		e, notMod, err := g.fetchSeq(ctx, &pc, nil, ts)
 		ch <- result{e, notMod, pc.Source, err}
 	}
@@ -467,7 +480,13 @@ func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []
 			plan.Source = r.source
 			return r.e, r.notMod, nil
 		}
+		if errors.Is(r.err, errRaceLost) {
+			continue // 这条只是没抢到提交权，等另一条链的结果
+		}
 		last = r
+	}
+	if last.err == nil {
+		last.err = errRaceLost
 	}
 	return nil, false, last.err
 }
@@ -485,6 +504,14 @@ const (
 // 它不是源站故障：不记健康分、不冷却、不进 AIMD。
 var errHedgeCanceled = errors.New("upstream canceled by hedge")
 
+// errRaceLost 表示并行竞速里另一条链先拿到提交权：内容本身可用，
+// 但不能写缓存，也不能算作源站失败。
+var errRaceLost = errors.New("race lost: cache already committed")
+
+// errNotCacheable 是保存路径的兜底：走到这里说明入口分流漏了，
+// 绝不能把内容写进公共缓存。
+var errNotCacheable = errors.New("plan is not cacheable")
+
 // hedgeRes 是一路对冲请求的结果。
 type hedgeRes struct {
 	up    *upstream
@@ -498,6 +525,10 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 	if errors.Is(err, errHedgeCanceled) {
 		// 主动取消是中性事件，不能当成源站失败。
 		return settleNext, nil, false, err
+	}
+	if errors.Is(err, errRaceLost) {
+		// 竞速输家：另一条链已经提交了同一份内容，本链直接收工。
+		return settleAbort, nil, false, err
 	}
 	if err == nil {
 		if t.c != nil {
@@ -952,6 +983,15 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 		CreatedAt:    g.now().Unix(),
 		TTL:          entryTTL(plan),
 		Verify:       verifyState(plan),
+	}
+	// 兜底：入口分流漏了也不能落盘；竞速里没抢到令牌的链直接放弃提交。
+	if plan.NoStore {
+		cleanup()
+		return nil, false, 0, errNotCacheable
+	}
+	if plan.Claim != nil && !plan.Claim() {
+		cleanup()
+		return nil, false, 0, errRaceLost
 	}
 	// 落盘和写索引必须在同一把 blob 锁内：janitor 在锁内查引用再删，
 	// 否则「文件已就位、索引未写」的瞬间会被当孤儿清掉。

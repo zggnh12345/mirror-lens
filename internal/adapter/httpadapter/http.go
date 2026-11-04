@@ -132,6 +132,8 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		sum := sha256.Sum256([]byte(auth))
 		p.CacheKey += fmt.Sprintf("|auth=%x", sum[:8])
 		p.Cacheable = false
+		p.OfficialOnly = true
+		p.NoStore = true
 	}
 	return p, nil
 }
