@@ -211,6 +211,23 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		if best < 0 {
 			return 0
 		}
+		// 空闲源里有明显更快的就换给它。慢源多领一段，整份就得多等它
+		// 一段——分片是等齐了才收尾，最后那段总是落在最慢那台上。
+		if busy[best].Load() == 0 {
+			if vb := sourceSpeed(stats, best); vb > 0 {
+				for j := range srcs {
+					if j == best || busy[j].Load() > 0 {
+						continue
+					}
+					if j > 0 && srcs[j].t.u.String() == plan.Upstream.String() {
+						continue
+					}
+					if sourceSpeed(stats, j) > vb*2 {
+						return j
+					}
+				}
+			}
+		}
 		return best
 	}
 	var wg sync.WaitGroup
@@ -411,7 +428,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 				scheduler.Hint{Code: http.StatusPartialContent, Mode: "parallel"})
 		}
 	}
-	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s", plan.CacheKey, total, n, len(srcs), time.Since(start).Round(time.Millisecond))
+	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s%s", plan.CacheKey, total, n, len(srcs),
+		time.Since(start).Round(time.Millisecond), parSpeedNote(srcs, stats))
 	return true
 }
 
@@ -431,6 +449,17 @@ func tailHold(total int64) int64 {
 type parStat struct {
 	ok, fail int32
 	code     int32 // 最后一次非 206 的状态码，用来区分「限流」和「坏了」
+	// 已完成段的实测吞吐，用来把木桶里最矮那块板换掉。
+	bytes, micros int64
+}
+
+// sourceSpeed 返回这台源每毫秒供了多少字节；没有样本时返回 0。
+func sourceSpeed(stats []parStat, j int) float64 {
+	b, m := atomic.LoadInt64(&stats[j].bytes), atomic.LoadInt64(&stats[j].micros)
+	if b <= 0 || m <= 0 {
+		return 0
+	}
+	return float64(b) / float64(m)
 }
 
 // preflightStatusIsSourceFailure：reportSource(false) 会推熔断、拉长冷却，
@@ -686,6 +715,8 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		}
 		if a.idx >= 0 {
 			atomic.AddInt32(&stats[a.idx].ok, 1)
+			atomic.AddInt64(&stats[a.idx].bytes, n)
+			atomic.AddInt64(&stats[a.idx].micros, int64(time.Since(t0)))
 			if c := srcs[a.idx].t.c; c != nil {
 				// 分片是带宽控制器最准的样本：字节数和耗时都真实。
 				g.sched.Observe(c.ID, n, time.Since(t0), true, resp.StatusCode)
@@ -746,4 +777,22 @@ func (g *Gateway) ParallelStats() map[string]int64 {
 		"bytes":     g.parBytes.Load(),
 		"fallbacks": g.parFalls.Load(),
 	}
+}
+
+// parSpeedNote 把每台源的实测吞吐拼成一句，出问题时一眼看出是谁拖的。
+func parSpeedNote(srcs []parSource, stats []parStat) string {
+	if len(srcs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("（")
+	for i := range srcs {
+		if i > 0 {
+			b.WriteString("，")
+		}
+		v := sourceSpeed(stats, i) * 1000 / 1048576
+		fmt.Fprintf(&b, "%s %.1fMB/s", srcs[i].name, v)
+	}
+	b.WriteString("）")
+	return b.String()
 }
