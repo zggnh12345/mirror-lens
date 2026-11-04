@@ -299,6 +299,30 @@ func TestHitRatioResetsWhenIdle(t *testing.T) {
 	}
 }
 
+func TestHedgeMetrics(t *testing.T) {
+	setup(t)
+	HedgeTrigger()
+	HedgeTrigger()
+	HedgeWin(1)
+	HedgeWin(2)
+	HedgeWin(2)
+	HedgeWin(9) // 越界排名不计数，防标签放大
+
+	rec := httptest.NewRecorder()
+	Get().Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		"mirrorlens_hedge_triggered_total 2",
+		"mirrorlens_hedge_extra_requests_total 2",
+		`mirrorlens_hedge_wins_total{rank="1"} 1`,
+		`mirrorlens_hedge_wins_total{rank="2"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("缺少 %q", want)
+		}
+	}
+}
+
 func TestHandlerContentType(t *testing.T) {
 	setup(t)
 	RateLimited("ip") // 有一条样本，输出才不为空
