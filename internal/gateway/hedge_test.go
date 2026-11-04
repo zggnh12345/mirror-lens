@@ -232,8 +232,8 @@ func TestRaceMainWinDoesNotRememberFallback(t *testing.T) {
 
 	var called atomic.Int32
 	plan := &adapter.Plan{
-		CacheKey:  "docker:manifest:registry-1.docker.io/library/golang:1.23-alpine",
-		Cacheable: true,
+		CacheKey:   "docker:manifest:registry-1.docker.io/library/golang:1.23-alpine",
+		Cacheable:  true,
 		OnFallback: func(h string) { called.Add(1) },
 	}
 	su, _ := url.Parse(slow.URL + "/file")

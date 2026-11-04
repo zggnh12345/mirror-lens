@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-
 // 统一写法：完整地址直接拼在域名后面，不必记 /raw/、/gh/ 这些前缀。
 func TestUniformTarget(t *testing.T) {
 	cases := []struct {

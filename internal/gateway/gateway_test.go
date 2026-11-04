@@ -85,6 +85,9 @@ func newGW(t *testing.T, allowLoopback bool) (*Gateway, *store.Store, *cache.Sto
 		RawBase: srv.URL,
 		Guard:   safehttp.New(safehttp.Options{AllowLoopback: allowLoopback}),
 	})
+	// 生产默认要求 Access Token；测试用例都带 token，走认证分支才能
+	// 覆盖「网关令牌被摘掉、不当作上游凭据」这条路径。
+	g.requireToken = true
 	return g, st, cs, up, srv
 }
 

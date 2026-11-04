@@ -1046,6 +1046,10 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if tok := proxyToken(r); tok != "" {
 			if _, ok := g.st.VerifyToken(tok); ok {
+				// 这是网关自己的访问令牌，不是上游凭据。必须摘掉：
+				// adapter 会把它当 GitHub token 透传出去，请求也因此
+				// 被当成「带凭据」而不落缓存。
+				r.Header.Del("Authorization")
 				next(w, r)
 				return
 			}
