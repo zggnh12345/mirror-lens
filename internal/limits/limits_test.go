@@ -1,6 +1,7 @@
 package limits
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -54,6 +55,18 @@ func TestPerIPBurstThen429(t *testing.T) {
 	}
 	if n := l.Hits()["ip"]; n != 1 {
 		t.Fatalf("拒绝计数应为 1，得到 %d", n)
+	}
+	// docker 只认 OCI 标准 errors 结构，否则整次 pull 直接失败
+	var body struct {
+		Errors []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(last.Body.Bytes(), &body); err != nil {
+		t.Fatalf("429 响应体不是合法 JSON: %v (%s)", err, last.Body.String())
+	}
+	if len(body.Errors) != 1 || body.Errors[0].Code != "TOOMANYREQUESTS" {
+		t.Fatalf("429 响应体不符合 OCI 格式: %s", last.Body.String())
 	}
 }
 

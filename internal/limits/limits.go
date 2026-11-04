@@ -337,10 +337,19 @@ func (l *Limiter) reject(w http.ResponseWriter, layer string, rate float64) {
 	w.Header().Set("X-ML-Limit", layer)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusTooManyRequests)
+	// 必须用 OCI 标准 errors 结构：docker 只认这个格式。
+	// 自定义 JSON 会让它报 "error parsing HTTP 429 response body" 并直接失败，
+	// 不会按 Retry-After 退避重试。
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error":       "请求过于频繁，稍后重试",
-		"limit":       layer,
-		"retry_after": secs,
+		"errors": []map[string]any{{
+			"code":    "TOOMANYREQUESTS",
+			"message": "too many requests, retry later",
+			"detail": map[string]any{
+				"limit":       layer,
+				"retry_after": secs,
+				"reason":      "请求过于频繁，稍后重试",
+			},
+		}},
 	})
 }
 
