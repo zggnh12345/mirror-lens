@@ -148,7 +148,12 @@
     <div class="tklist" id="tkList"></div>
 
     <h2 style="margin-top:20px">信任加速站</h2>
-    <p class="desc">勾选的源在拉私有仓库（带 PAT）时会同时竞速，取最快的一个；全部失败自动回退官方。只有你信任的源才该勾——它们能看到你的 token。要加新站，先去「源管理」。</p>
+    <p class="desc">从已有源里选。选中的源在拉私有仓库（带 PAT）时会同时竞速，取最快的一个；全部失败回退官方。</p>
+    <div class="saverow" style="margin-top:0;flex-wrap:wrap">
+      <select id="trGroup" style="flex:1;min-width:110px"></select>
+      <select id="trPick" style="flex:1;min-width:110px" disabled></select>
+      <button class="btn primary" id="trAdd" disabled>加入</button>
+    </div>
     <div class="hint" id="trMsg"></div>
     <div class="tklist" id="trList"></div>
   </div>
@@ -554,50 +559,100 @@ $('#btnLogout').addEventListener('click', async function(){
   location.href = '/login';
 });
 
-/* ---- 信任加速站（复用已有源，勾选即可） ---- */
+/* ---- 信任加速站（二级：先分组，再域名） ---- */
+var TR = {sources: [], groups: []};
+
+function trFillGroups(){
+  var prev = $('#trGroup').value;
+  var opts = ['<option value="">选择分组…</option>'];
+  TR.groups.forEach(function(g){
+    opts.push('<option value="g' + g.id + '">' + esc(g.name) + ' (' + g.sources + ')</option>');
+  });
+  var un = TR.sources.filter(function(x){ return (x.group_id || 0) === 0; }).length;
+  if (un) opts.push('<option value="g0">未分组 (' + un + ')</option>');
+  $('#trGroup').innerHTML = opts.join('');
+  if (prev && $('#trGroup').querySelector('option[value="' + prev + '"]')) $('#trGroup').value = prev;
+}
+
+function trFillPick(){
+  var gid = $('#trGroup').value;
+  var pick = $('#trPick');
+  $('#trAdd').disabled = true;
+  if (!gid){
+    pick.innerHTML = '<option value="">先选分组</option>';
+    pick.disabled = true;
+    return;
+  }
+  var id = gid.slice(1);
+  var avail = TR.sources.filter(function(x){
+    return String(x.group_id || 0) === id && !x.trusted && x.enabled;
+  });
+  if (!avail.length){
+    pick.innerHTML = '<option value="">该分组没有可选的源</option>';
+    pick.disabled = true;
+    return;
+  }
+  pick.disabled = false;
+  var opts = ['<option value="">选择域名…</option>'];
+  avail.forEach(function(x){
+    var label = (x.name && x.name !== x.base_url) ? x.name + ' — ' + x.base_url : x.base_url;
+    opts.push('<option value="' + x.id + '">' + esc(label) + '</option>');
+  });
+  pick.innerHTML = opts.join('');
+}
+
 async function loadTrusted(){
   var box = $('#trList');
-  try{
-    var d = await api('/api/trusted');
-    var list = d.sources || [];
-    box.innerHTML = '';
-    if (!list.length){
-      box.innerHTML = '<div class="hint">还没有源，先去「源管理」添加。</div>';
-      return;
-    }
-    list.forEach(function(x){
-      var row = document.createElement('label');
-      row.className = 'tkrow';
-      row.style.cursor = 'pointer';
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!x.trusted;
-      if (!x.enabled) cb.disabled = true;
-      cb.style.width = '18px'; cb.style.height = '18px'; cb.style.flex = '0 0 auto';
-      var info = document.createElement('div');
-      info.style.flex = '1'; info.style.minWidth = '0';
-      var tail = (x.enabled ? '' : ' · 已停用') + ' · ' + (x.status || '');
-      info.innerHTML = '<b>' + esc(x.name || x.base_url) + '</b>' +
-        '<div class="hint">' + esc(x.base_url) + tail + '</div>';
-      cb.addEventListener('change', async function(){
-        cb.disabled = true;
-        try{
-          await api('/api/trusted/' + x.id, {method:'PATCH', body: JSON.stringify({trusted: cb.checked})});
-          toast(cb.checked ? '已加入白名单，立即生效' : '已移出白名单');
-          say($('#trMsg'), '', '');
-        }catch(e){
-          cb.checked = !cb.checked;
-          say($('#trMsg'), e.message, 'bad');
-        }
-        cb.disabled = false;
-      });
-      row.appendChild(cb); row.appendChild(info);
-      box.appendChild(row);
-    });
-  }catch(e){
-    box.innerHTML = '<div class="hint bad">' + esc(e.message) + '</div>';
+  var d;
+  try{ d = await api('/api/trusted'); }
+  catch(e){ box.innerHTML = '<div class="hint bad">' + esc(e.message) + '</div>'; return; }
+
+  TR.sources = d.sources || [];
+  TR.groups = d.groups || [];
+  trFillGroups();
+  trFillPick();
+
+  var picked = TR.sources.filter(function(x){ return x.trusted; });
+  box.innerHTML = '';
+  if (!picked.length){
+    box.innerHTML = '<div class="hint">白名单为空，私有请求直接走官方。</div>';
+    return;
   }
+  picked.forEach(function(x){
+    var row = document.createElement('div');
+    row.className = 'tkrow';
+    var info = document.createElement('div');
+    info.innerHTML = '<b>' + esc(x.name || x.base_url) + '</b><div class="hint">' + esc(x.base_url) + '</div>';
+    var del = document.createElement('button');
+    del.className = 'btn danger';
+    del.textContent = '移除';
+    del.addEventListener('click', async function(){
+      try{
+        await api('/api/trusted/' + x.id, {method:'PATCH', body: JSON.stringify({trusted:false})});
+        toast('已移出白名单');
+        loadTrusted();
+      }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+    });
+    row.appendChild(info); row.appendChild(del);
+    box.appendChild(row);
+  });
 }
+
+$('#trGroup').addEventListener('change', trFillPick);
+$('#trPick').addEventListener('change', function(){
+  $('#trAdd').disabled = !this.value;
+});
+
+$('#trAdd').addEventListener('click', async function(){
+  var id = $('#trPick').value;
+  if (!id){ say($('#trMsg'), '先选分组和域名', 'bad'); return; }
+  try{
+    await api('/api/trusted/' + id, {method:'PATCH', body: JSON.stringify({trusted:true})});
+    say($('#trMsg'), '', '');
+    toast('已加入白名单，立即生效');
+    loadTrusted();
+  }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+});
 
 loadTrusted();
 </script>

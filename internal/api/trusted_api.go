@@ -34,6 +34,11 @@ func (s *Server) trusted(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	gs, err := s.st.ListGroups()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
 	out := make([]map[string]any, 0, len(list))
 	for _, x := range list {
 		out = append(out, map[string]any{
@@ -43,9 +48,10 @@ func (s *Server) trusted(w http.ResponseWriter, r *http.Request) {
 			"status":   x.Status,
 			"enabled":  x.Enabled,
 			"trusted":  x.Trusted,
+			"group_id": x.GroupID,
 		})
 	}
-	writeJSON(w, 200, map[string]any{"sources": out})
+	writeJSON(w, 200, map[string]any{"sources": out, "groups": gs})
 }
 
 // trustedItem 只改一个源的信任标记：PATCH {"trusted": true|false}。
