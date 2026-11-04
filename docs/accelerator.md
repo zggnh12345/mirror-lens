@@ -14,6 +14,7 @@ Release 资产 https://github.com/<owner>/<repo>/releases/download/<tag>/<file>
 
 任意 HTTP    https://example.com/path/file.iso
           →  http://<你的地址>/http/https://example.com/path/file.iso
+          →  http://<你的地址>/https://example.com/path/file.iso   （统一写法，推荐）
 
 Git 仓库     https://github.com/<owner>/<repo>.git
           →  http://<你的地址>/git/github.com/<owner>/<repo>.git
@@ -29,6 +30,15 @@ Docker 镜像  registry-1.docker.io/library/alpine:3.20
 | 原样前缀 | `/http/https://example.com/a.iso` | 最好用；反代折叠 `//` 后也能认 |
 | scheme/host/path | `/http/https/example.com/a.iso` | 任何反代都不会改动它 |
 | 整体编码 | `/http/https%3A%2F%2Fexample.com%2Fa.iso` | 直连端口时可用 |
+
+更省事的统一写法是省掉 `/http/`，把完整地址直接拼在域名后面：
+
+```
+/https://raw.githubusercontent.com/OneOhCloud/one-geoip/rule-set/one-china.srs
+/https/raw.githubusercontent.com/OneOhCloud/one-geoip/rule-set/one-china.srs   ← 反代折叠 // 后
+```
+
+它与 `/http/https://...` 完全等价，按目标主机自动分流（GitHub raw 走镜像源池，其它直通）。
 
 为什么这么宽松：Traefik 之类的反代会把路径里的 `//` 折叠成 `/`（`https://` → `https:/`），
 同时默认拒收含 `%2F` 的路径（直接回 400）。两种规范写法都会被反代破坏，所以三种形态都接受。
