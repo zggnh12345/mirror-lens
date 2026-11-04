@@ -115,6 +115,18 @@ type Parallel struct {
 	DisableTailVerify bool `yaml:"disable_tail_verify"`
 }
 
+// Hedge 控制上游响应头的延迟对冲：首选源迟迟不回响应头时，
+// 并行向第二个源发同一请求，谁先交出「符合本次请求语义」的响应头用谁。
+// 只在首选源慢的时候多打一个请求，正常情况零成本。
+type Hedge struct {
+	Enabled bool `yaml:"enabled"`
+	// AfterMS 是耐心预算：首选源这么多毫秒还没吐响应头，才启动第二个源。
+	AfterMS int `yaml:"after_ms"`
+	// GraceMS 只用于条件请求：备用源先回 200 时，再等首选源这么久，
+	// 看它是否回 304。304 能省掉一次整文件下载，值得这几十毫秒。
+	GraceMS int `yaml:"grace_ms"`
+}
+
 // Auth 控制代理路径（/raw /http /git /v2）的访问。
 // 默认放行：本服务就是代理，公共加速站不该先要 token；
 // require_token=true 时非浏览器客户端必须带 Access Token。
@@ -133,6 +145,7 @@ type Config struct {
 	Registry Registry       `yaml:"registry"`
 	Sources  Sources        `yaml:"sources"`
 	Parallel Parallel       `yaml:"parallel"`
+	Hedge    Hedge          `yaml:"hedge"`
 	Probe    Probe          `yaml:"probe"`
 	Auth     Auth           `yaml:"auth"`
 	Limits   limits.Config  `yaml:"limits"`
@@ -204,6 +217,7 @@ func Default() *Config {
 			ChunkMB:   4,
 			Workers:   4,
 		},
+		Hedge:   Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
 		Probe:   Probe{AllowPrivate: false},
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),

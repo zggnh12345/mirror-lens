@@ -63,6 +63,7 @@ type Gateway struct {
 	locks         *keymutex.Map // cacheKey -> 锁（流式填充用，空闲即回收）
 	verifyFail    atomic.Int64  // 校验不过、因此没落盘的次数（进程内计数）
 	par           ParOptions
+	hedge         HedgeOptions
 	parTargets    func(*adapter.Plan) []fetchTarget // 测试注入用，nil 时走 targets()
 	requireToken  bool                              // 代理路径是否强制 Access Token（false = 匿名放行）
 	cdn           CDNOptions                        // 边缘缓存策略（阶段 8）
@@ -88,6 +89,13 @@ type CDNOptions struct {
 	MaxAge  int // 秒；0 = 沿用条目 TTL
 }
 
+// HedgeOptions 是响应头对冲的运行时参数。
+type HedgeOptions struct {
+	Enabled bool
+	After   time.Duration // 首选源的响应头耐心预算
+	Grace   time.Duration // 条件请求里等 304 的宽限
+}
+
 type Options struct {
 	Cache         *cache.Store
 	RawBase       string
@@ -101,6 +109,7 @@ type Options struct {
 	CacheMinFreeBytes int64
 	Guard             *safehttp.Guard
 	Parallel          ParOptions
+	Hedge             HedgeOptions
 	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
 	CDN          CDNOptions
@@ -109,6 +118,12 @@ type Options struct {
 func New(st *store.Store, o Options) *Gateway {
 	if o.MaxBytes <= 0 {
 		o.MaxBytes = 256 << 20
+	}
+	if o.Hedge.After <= 0 {
+		o.Hedge.After = time.Second
+	}
+	if o.Hedge.Grace <= 0 {
+		o.Hedge.Grace = 300 * time.Millisecond
 	}
 	guard := o.Guard
 	if guard == nil {
@@ -143,6 +158,7 @@ func New(st *store.Store, o Options) *Gateway {
 		gc:            gc.New(st, o.Cache),
 		now:           time.Now,
 		par:           o.Parallel,
+		hedge:         o.Hedge,
 		tasks:         newTaskReg(),
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
@@ -456,91 +472,299 @@ func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []
 	return nil, false, last.err
 }
 
+// settleAction 表示一次上游尝试之后该做什么。
+type settleAction int
+
+const (
+	settleNext  settleAction = iota // 换下一个源
+	settleDone                      // 已经拿到文件
+	settleAbort                     // 直接把这个错误交回调用方
+)
+
+// errHedgeCanceled 标记「被对冲主动掐掉」的请求。
+// 它不是源站故障：不记健康分、不冷却、不进 AIMD。
+var errHedgeCanceled = errors.New("upstream canceled by hedge")
+
+// hedgeRes 是一路对冲请求的结果。
+type hedgeRes struct {
+	up    *upstream
+	idx   int
+	start time.Time
+	err   error
+}
+
+// settleTarget 处理一次上游尝试的结果：记账，并决定结束、换源还是放弃。
+func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchTarget, start time.Time, e *store.CacheEntry, notMod bool, code int, err error) (settleAction, *store.CacheEntry, bool, error) {
+	if errors.Is(err, errHedgeCanceled) {
+		// 主动取消是中性事件，不能当成源站失败。
+		return settleNext, nil, false, err
+	}
+	if err == nil {
+		if t.c != nil {
+			// 成功也要记状态码：429 率的分母要含真实响应，
+			// 不记 200 的话分母里只剩失败请求。
+			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
+			if e != nil {
+				// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
+				g.sched.Observe(t.c.ID, e.Size, time.Since(start), true, code)
+			}
+			plan.Source = t.c.Name
+		}
+		return settleDone, e, notMod, nil
+	}
+	// 超上限是策略判断不是源的问题：记失败会误伤冷却，
+	// 换源也一样超限，直接交给流式链路。
+	var tl *tooLargeError
+	if errors.As(err, &tl) {
+		return settleAbort, nil, false, err
+	}
+	// 404/410 是缺文件不是源坏了：按故障处理会误伤冷却，记 Miss 后继续换源。
+	var ue *upstreamError
+	if errors.As(err, &ue) && isMiss(ue.Code) {
+		if t.c != nil {
+			// 404/410 也进 429 率分母并按成功计：它答得很正常，只是没这个文件。
+			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+		}
+		metrics.SourceMiss(plan.Kind, ue.Code)
+		name := t.u.Host
+		if t.c != nil {
+			name = t.c.Name
+		}
+		loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", name, "status", ue.Code)
+		return settleNext, nil, false, err
+	}
+	// 401/403 是「没资格问」：换源但不罚源，也不进 Miss 统计。
+	if errors.As(err, &ue) && isAuthDenied(ue.Code) {
+		if t.c != nil {
+			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+		}
+		name := t.u.Host
+		if t.c != nil {
+			name = t.c.Name
+		}
+		loggw(slog.LevelInfo, "源要求鉴权，换下一个", ctx, plan, logging.AuthTokenInvalid, nil, "source", name, "status", ue.Code)
+		return settleNext, nil, false, err
+	}
+	// 本地故障（磁盘满、缓存提交失败）和客户端取消：换源没用，也不记源站。
+	if !isSourceFault(err) {
+		return settleAbort, nil, false, err
+	}
+	if t.c == nil {
+		return settleAbort, nil, false, err // 官方源失败就是失败，不再兜圈子
+	}
+	// 客户端自己取消（关页面、断网）不算这台源的账。
+	if ctx.Err() == nil {
+		var hint scheduler.Hint
+		if errors.As(err, &ue) {
+			hint.RetryAfter = ue.RetryAfter
+			hint.Code = ue.Code
+		}
+		g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
+		// 带宽控制也要知道它刚失败：429 时照原并发打只会拖长冷却。
+		g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
+	}
+	loggw(slog.LevelWarn, "源不可用，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
+	return settleNext, nil, false, err
+}
+
 // fetchSeq 按给定顺序逐个源试，直到有一个交出文件。
+// 第一轮会在前两个候选之间做响应头对冲：首选源超过 hedge.After
+// 还没吐响应头，就并行发第二个，谁先给出可用响应头用谁。
 func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*store.CacheEntry, bool, error) {
 	var lastErr error
-	for _, t := range targets {
+	// 回退链（裸格式猜站点）由 fetchRace 做整链并行，里面不再套对冲：
+	// 否则每条链各开两路，一个请求会变成四个上游请求。
+	hedged := g.hedge.Enabled && len(targets) > 1 && !targets[0].fb && len(plan.Fallbacks) == 0
+	for i := 0; i < len(targets); i++ {
+		t := targets[i]
 		if t.fb && plan.OnFallback != nil {
 			// 主站点都失败了才走到这里：记住这个镜像其实在别处
 			// （记逻辑站点 ghcr.io，不是加速源 host，否则下次拼不出正确路径）。
 			plan.OnFallback(t.fbHost)
 		}
 		start := time.Now()
-		e, notMod, code, err := g.fetchURL(ctx, plan, prev, t.u)
-		if err == nil {
-			if t.c != nil {
-				// 成功也要记状态码：429 率的分母要含真实响应，
-				// 不记 200 的话分母里只剩失败请求。
-				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
-				if e != nil {
-					// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
-					g.sched.Observe(t.c.ID, e.Size, time.Since(start), true, code)
+		var (
+			e      *store.CacheEntry
+			notMod bool
+			code   int
+			err    error
+		)
+		if hedged && i == 0 {
+			var (
+				up    *upstream
+				idx   int
+				tried int
+				herr  error
+			)
+			up, idx, tried, herr = g.pickUpstream(ctx, plan, prev, targets)
+			if up == nil {
+				if ctx.Err() != nil {
+					return nil, false, ctx.Err()
 				}
-				plan.Source = t.c.Name
+				lastErr = herr
+				if tried >= len(targets) {
+					return nil, false, lastErr
+				}
+				i = tried - 1 // 试过的候选不再重来
+				continue
 			}
-			return e, notMod, nil
+			t = targets[idx]
+			e, notMod, code, err = g.saveBody(ctx, plan, prev, up)
+		} else {
+			e, notMod, code, err = g.fetchURL(ctx, plan, prev, t.u)
 		}
-		// 超上限是策略判断不是源的问题：记失败会误伤冷却，
-		// 换源也一样超限，直接交给流式链路。
-		var tl *tooLargeError
-		if errors.As(err, &tl) {
-			return nil, false, err
+		act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, err)
+		switch act {
+		case settleDone:
+			return entry, nm, nil
+		case settleAbort:
+			return nil, false, lerr
+		default:
+			lastErr = lerr
 		}
-		// 404/410 是缺文件不是源坏了：按故障处理会误伤冷却，
-		// 记 Miss 后继续换源。
-		var ue *upstreamError
-		if errors.As(err, &ue) && isMiss(ue.Code) {
-			if t.c != nil {
-				// 404/410 也进 429 率分母并按成功计：
-				// 它答得很正常，只是没这个文件。
-				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
-			}
-			metrics.SourceMiss(plan.Kind, ue.Code)
-			name := t.u.Host
-			if t.c != nil {
-				name = t.c.Name
-			}
-			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", name, "status", ue.Code)
-			lastErr = err
-			continue
-		}
-		// 401/403 是「没资格问」：换源但不罚源，也不进 Miss 统计
-		// （资源在不在没答上来）；404/410 才是「确定没有」。
-		if errors.As(err, &ue) && isAuthDenied(ue.Code) {
-			if t.c != nil {
-				g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
-			}
-			name := t.u.Host
-			if t.c != nil {
-				name = t.c.Name
-			}
-			loggw(slog.LevelInfo, "源要求鉴权，换下一个", ctx, plan, logging.AuthTokenInvalid, nil, "source", name, "status", ue.Code)
-			lastErr = err
-			continue
-		}
-		// 本地故障（磁盘满、缓存提交失败）和客户端取消：换源没用，也不记源站。
-		if !isSourceFault(err) {
-			return nil, false, err
-		}
-		if t.c == nil {
-			return nil, false, err // 官方源失败就是失败，不再兜圈子
-		}
-		// 客户端自己取消（关页面、断网）不算这台源的账。
-		if ctx.Err() == nil {
-			var hint scheduler.Hint
-			var ue *upstreamError
-			if errors.As(err, &ue) {
-				hint.RetryAfter = ue.RetryAfter
-				hint.Code = ue.Code
-			}
-			g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
-			// 带宽控制也要知道它刚失败：429 时照原并发打只会拖长冷却。
-			g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
-		}
-		loggw(slog.LevelWarn, "源不可用，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
-		lastErr = err
 	}
 	return nil, false, lastErr
+}
+
+// pickUpstream 做响应头对冲：先发首选源，hedge.After 内没等到可用响应头，
+// 再发第二个源。只把胜者的 Body 交出去，落败请求在这里关掉并取消。
+// 返回实际启动过的候选数，调用方据此跳过已经试过的源。
+//
+// 304 优先的语义：304 一到即胜；条件请求里备用源先回 200 时，再给首选源
+// 一个 grace 宽限，看它是否回 304——能省掉一次整文件下载。宽限不是无限等，
+// 到点就采用手上这个 200。
+func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*upstream, int, int, error) {
+	n := len(targets)
+	if n > 2 {
+		n = 2
+	}
+	hctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	ch := make(chan hedgeRes, n)
+	started := 0
+	launch := func(i int) {
+		started++
+		go func() {
+			st := time.Now()
+			up, err := g.openUpstream(hctx, plan, prev, targets[i].u)
+			if hctx.Err() != nil {
+				if up != nil {
+					up.resp.Body.Close()
+					up.cancel()
+				}
+				ch <- hedgeRes{idx: i, start: st, err: errHedgeCanceled}
+				return
+			}
+			ch <- hedgeRes{up: up, idx: i, start: st, err: err}
+		}()
+	}
+	launch(0)
+	pending := 1
+
+	var hedgeC <-chan time.Time
+	if n > 1 {
+		tm := time.NewTimer(g.hedge.After)
+		defer tm.Stop()
+		hedgeC = tm.C
+	}
+	var graceC <-chan time.Time
+	var held *hedgeRes
+	var lastErr error
+
+	drop := func(r hedgeRes) {
+		if r.up != nil {
+			// 直接断，不 Drain：大文件 Drain 等于白读一遍流量。
+			r.up.resp.Body.Close()
+			r.up.cancel()
+		}
+	}
+
+	for pending > 0 || held != nil {
+		select {
+		case r := <-ch:
+			pending--
+			if r.err != nil {
+				if !errors.Is(r.err, errHedgeCanceled) {
+					lastErr = r.err
+				}
+				// 快速失败（404/429/连不上）：不必等计时器，立刻补下一个。
+				if started < n {
+					launch(started)
+					pending++
+				}
+				continue
+			}
+			switch r.up.resp.StatusCode {
+			case http.StatusNotModified:
+				// 304 是条件请求的最优结果：一到即胜，不产生任何下载。
+				if held != nil {
+					drop(*held)
+				}
+				return r.up, r.idx, started, nil
+			case http.StatusOK:
+				if prev != nil && started > 1 && held == nil {
+					// 备用源先回了 200：给首选源一个宽限窗口等它的 304。
+					rr := r
+					held = &rr
+					gt := time.NewTimer(g.hedge.Grace)
+					defer gt.Stop()
+					graceC = gt.C
+					continue
+				}
+				if held != nil {
+					// 宽限期内首选源也回了 200：两个都是完整响应，
+					// 用排名靠前的那个，后到的丢掉。
+					drop(r)
+					return held.up, held.idx, started, nil
+				}
+				return r.up, r.idx, started, nil
+			default:
+				code := r.up.resp.StatusCode
+				var hint scheduler.Hint
+				hint.Code = code
+				hint.RetryAfter = retryAfterHeader(r.up.resp.Header)
+				drop(r)
+				// 404/410/401/403 答得正常、只是没文件/没资格，按成功记；
+				// 429/5xx 才是源站问题，记失败并带上 Retry-After。
+				ok := isMiss(code) || isAuthDenied(code)
+				if t := targets[r.idx]; t.c != nil {
+					g.sched.Report(plan.Kind, *t.c, ok, time.Since(r.start), hint)
+					if !ok {
+						g.sched.Observe(t.c.ID, 0, 0, false, code)
+					}
+				}
+				lastErr = &upstreamError{Code: code, RetryAfter: hint.RetryAfter}
+				if started < n {
+					launch(started)
+					pending++
+				}
+			}
+		case <-hedgeC:
+			hedgeC = nil
+			if started < n {
+				launch(started)
+				pending++
+			}
+		case <-graceC:
+			graceC = nil
+			h := held
+			held = nil
+			return h.up, h.idx, started, nil
+		case <-ctx.Done():
+			if held != nil {
+				drop(*held)
+			}
+			return nil, 0, started, ctx.Err()
+		}
+	}
+	if held != nil {
+		return held.up, held.idx, started, nil
+	}
+	if lastErr == nil {
+		lastErr = &upstreamError{Code: 0}
+	}
+	return nil, 0, started, lastErr
 }
 
 // fetchURL 返回上游状态码；0 表示没拿到响应。

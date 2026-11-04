@@ -141,6 +141,11 @@ func main() {
 			Workers:    cfg.Parallel.Workers,
 			TailVerify: !cfg.Parallel.DisableTailVerify,
 		},
+		Hedge: gateway.HedgeOptions{
+			Enabled: cfg.Hedge.Enabled,
+			After:   time.Duration(cfg.Hedge.AfterMS) * time.Millisecond,
+			Grace:   time.Duration(cfg.Hedge.GraceMS) * time.Millisecond,
+		},
 	})
 	if cfg.Auth.RequireToken {
 		log.Printf("代理路径需要 Access Token（auth.require_token=true）")

@@ -31,7 +31,13 @@ type fakeUpstream struct {
 func (u *fakeUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt32(&u.hits, 1)
 	if u.delay > 0 {
-		time.Sleep(u.delay)
+		// 可中断：客户端取消（如对冲落败）时立即返回，
+		// 否则 Close() 会为每个在途请求白等满 delay。
+		select {
+		case <-time.After(u.delay):
+		case <-r.Context().Done():
+			return
+		}
 	}
 	u.mu.Lock()
 	body, etag, status, digest := u.body, u.etag, u.status, u.digest
