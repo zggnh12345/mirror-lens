@@ -110,3 +110,29 @@ func TestGhcrFallbackSkipsDockerHubOfficial(t *testing.T) {
 		}
 	}
 }
+
+// 记住备用站点后，同一 tag 的缓存键不能跟着源站变：否则这次命中
+// 南京大学、下次命中凤凰城，会各算一个 key，每次都得回源。
+func TestManifestCacheKeyStableAfterFallback(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	path := "/v2/star/portainer/manifests/latest"
+	req := func() *http.Request {
+		r, _ := http.NewRequest(http.MethodGet, "http://gw"+path, nil)
+		return r
+	}
+	first, err := a.Plan(req())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.rememberHost("star/portainer", "mirror-nju.example.com")
+	second, err := a.Plan(req())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Upstream.Host != "mirror-nju.example.com" {
+		t.Fatalf("第二次应换到记住的站点，实际 %s", second.Upstream.Host)
+	}
+	if first.CacheKey != second.CacheKey {
+		t.Fatalf("换源后缓存键变了：%s → %s", first.CacheKey, second.CacheKey)
+	}
+}

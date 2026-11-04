@@ -190,6 +190,10 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	}
 	// 路径里可能带 ghcr.io / quay.io 之类前缀，回源站跟着它走。
 	host, name := a.splitHost(repo)
+	// origin 是客户端请求的逻辑仓库（ghcr.io / docker.io），不随后续
+	// 记住的镜像站点漂移；缓存身份只认它，否则同一 tag 会因为这次
+	// 命中南京大学、下次命中凤凰城而算出两个 key，反复回源。
+	origin := host
 	// foreign 表示路径里真的带了别家站点前缀（ghcr.io 之类），不是默认上游。
 	def := a.Upstream
 	if def == "" {
@@ -215,9 +219,12 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			Method:       http.MethodGet,
 			Header:       http.Header{"Accept": {accept}},
 			Label:        a.label(host, name, ref),
-			CacheKey:     "docker:manifest:" + host + "/" + name + ":" + ref + "|accept=" + normalizeAccept(accept),
-			Cacheable:    true,
-			TTL:          a.TagTTL,
+			// 缓存键里的 Accept 固定按客户端原样归一（foreign=false），
+			// 不能跟着回源站点补 OCI 类型：否则同一个 tag 在「官方/镜像」
+			// 两条路径上算出两个键，换源就丢命中。
+			CacheKey:  "docker:manifest:" + origin + "/" + name + ":" + ref + "|accept=" + UpstreamAccept(r.Header.Get("Accept"), false),
+			Cacheable: true,
+			TTL:       a.TagTTL,
 		}
 		if strings.HasPrefix(ref, "sha256:") {
 			p.Immutable = true
