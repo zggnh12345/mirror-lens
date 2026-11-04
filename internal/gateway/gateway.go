@@ -545,10 +545,23 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 
 // fetchURL 返回上游状态码；0 表示没拿到响应。
 // 调用方据此区分「回了 429」和「没理我们」。
-func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+// upstream 是一次已经拿到响应头的上游请求。Body 的所有权在调用方手里：
+// 胜者读、落败者 Close；cancel 用来主动掐掉落败请求。
+// 拆出这一层是为了做响应头对冲（hedging）：先比 header，再让胜者下 Body。
+type upstream struct {
+	resp   *http.Response
+	u      *url.URL
+	cancel context.CancelFunc
+}
+
+// openUpstream 只负责到响应头为止，不读 Body。
+// 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
+func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*upstream, error) {
+	uctx, cancel := context.WithCancel(ctx)
+	req, err := http.NewRequestWithContext(uctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, false, 0, err
+		cancel()
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
 	// 必须拿原始字节：压缩后的内容算不出上游的哈希，也校验不了长度
@@ -568,9 +581,20 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 
 	resp, err := g.cli.Do(req)
 	if err != nil {
-		return nil, false, 0, err
+		cancel()
+		return nil, err
 	}
-	defer resp.Body.Close()
+	return &upstream{resp: resp, u: u, cancel: cancel}, nil
+}
+
+// saveBody 接管胜者的响应体：状态判断、落盘、校验、提交。
+// 304 直接复用 prev，不产生任何下载。
+func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, up *upstream) (*store.CacheEntry, bool, int, error) {
+	resp := up.resp
+	defer func() {
+		resp.Body.Close()
+		up.cancel()
+	}()
 
 	if resp.StatusCode == http.StatusNotModified {
 		return prev, true, http.StatusNotModified, nil
@@ -661,7 +685,7 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 		ContentType:  resp.Header.Get("Content-Type"),
 		ETag:         resp.Header.Get("ETag"),
 		LastModified: resp.Header.Get("Last-Modified"),
-		Upstream:     u.String(),
+		Upstream:     up.u.String(),
 		CreatedAt:    g.now().Unix(),
 		TTL:          entryTTL(plan),
 		Verify:       verifyState(plan),
@@ -682,6 +706,15 @@ func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), n)
 	ftaskOK = true
 	return e, false, http.StatusOK, nil
+}
+
+// fetchURL 是「单源完整取」的薄包装：非对冲路径与旧行为完全一致。
+func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, int, error) {
+	up, err := g.openUpstream(ctx, plan, prev, u)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	return g.saveBody(ctx, plan, prev, up)
 }
 
 // fromCache=false 表示刚回源填充：字节已记 fill，再记 hit 会抬高命中率。
