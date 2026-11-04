@@ -71,8 +71,9 @@ func TestLargeGHAssetStreamsInsteadOfFailing(t *testing.T) {
 	if e, _ := g.st.CacheGet("gh:o/r/releases/download/v1/big.bin"); e != nil {
 		t.Fatalf("超上限的文件不该入缓存，却拿到 %+v", e)
 	}
-	if n := atomic.LoadInt32(&hits); n != 4 {
-		t.Fatalf("两次请求应各探一次+流一次，上游计数 4，实际 %d", n)
+	// 直接流式，不再先探一次头：两次请求各打一次上游就够了。
+	if n := atomic.LoadInt32(&hits); n != 2 {
+		t.Fatalf("两次请求应各打一次上游（直接流式），期望计数 2，实际 %d", n)
 	}
 }
 

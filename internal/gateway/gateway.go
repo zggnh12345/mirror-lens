@@ -314,6 +314,12 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		return
 	}
 
+	// 首次未命中也要边下边发：release 资产十几 MB，
+	// 等整份落盘再回包，首字节就等于下载全长。
+	if plan.Stream {
+		g.fillStream(w, r, plan)
+		return
+	}
 	entry, _, err := g.fetchOnce(r.Context(), plan, nil)
 	if err != nil {
 		var tl *tooLargeError
