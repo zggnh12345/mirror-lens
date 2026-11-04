@@ -158,6 +158,11 @@ func (a *Adapter) Route(path string) (Kind, string, string, error) {
 		if ref == "" || strings.ContainsAny(ref, "/?#") {
 			return KindUnknown, "", "", adapter.ErrBadPath
 		}
+		// docker 26 拉 attestation manifest 时用的是 sha256-<hex> 这种 tag 形式，
+		// 上游按 tag 查必然 404；它本意就是 digest，这里还原成冒号形式。
+		if d, ok := dashDigest(ref); ok {
+			ref = d
+		}
 		return KindManifest, repo, ref, nil
 	}
 	if i := strings.LastIndex(p, "/blobs/"); i > 0 {
@@ -295,6 +300,22 @@ func validDigest(d string) bool {
 		}
 	}
 	return true
+}
+
+// dashDigest 把 sha256-<64hex> 还原成 sha256:<hex>。
+// docker 拉 attestation manifest 时用的是这种 tag 形式，上游按 tag 查只会 404。
+func dashDigest(ref string) (string, bool) {
+	h, ok := strings.CutPrefix(ref, "sha256-")
+	if !ok || len(h) != 64 {
+		return "", false
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return "", false
+		}
+	}
+	return "sha256:" + h, true
 }
 
 // UpstreamAccept 把客户端的 Accept 收成上游认得的集合。
