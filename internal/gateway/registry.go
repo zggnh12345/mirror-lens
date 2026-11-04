@@ -96,15 +96,28 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e, _ := g.st.CacheGet(plan.CacheKey)
-	fromCache := e != nil
-	if e == nil || (!plan.Immutable && !g.fresh(e)) {
-		e, _, err = g.fetchOnce(r.Context(), plan, e)
-		if err != nil {
-			code := statusFor(err)
-			http.Error(w, fmt.Sprintf("%d 回源失败: %v", code, err), code)
+	// 用 plan 的 TTL 判断新鲜度：条目自己的 ttl 字段在历史数据里可能是 0，
+	// 那样 tag 会永远被判过期，每次都去回源验证（实测 1.5s 起步）。
+	fromCache := e != nil && g.freshFor(e, plan)
+	if !fromCache {
+		ne, notMod, ferr := g.fetchOnce(r.Context(), plan, e)
+		if ferr != nil {
+			code := statusFor(ferr)
+			http.Error(w, fmt.Sprintf("%d 回源失败: %v", code, ferr), code)
 			return
 		}
-		fromCache = false
+		// 304：内容没变，把条目的时钟推一下，否则下一跳又被判过期，
+		// 永远停在「每次都要回源验证」的状态里。
+		if notMod {
+			g.st.CacheRefresh(plan.CacheKey)
+			fromCache = true
+			if ne == nil {
+				ne, _ = g.st.CacheGet(plan.CacheKey)
+			}
+		}
+		if ne != nil {
+			e = ne
+		}
 		g.enforceQuota()
 	}
 	setSource(w, plan)

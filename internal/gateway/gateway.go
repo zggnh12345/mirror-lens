@@ -262,6 +262,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			g.passThrough(w, r, plan)
 			return
 		}
+		// 大文件（release 包、镜像层）：边下边发，首字节立刻走，
+		// 下完照样入库。以前只有超出上限或写盘失败才走这条，
+		// 正常 MISS 要等整份落盘，32MB 的包首字节就要 20 秒。
+		if plan.Stream {
+			g.fillStream(w, r, plan)
+			return
+		}
 		entry, notMod, err := g.fetchOnce(r.Context(), plan, prev)
 		switch {
 		case err == nil && notMod:
