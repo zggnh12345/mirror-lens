@@ -248,6 +248,14 @@ func noStorePanel(next http.Handler) http.Handler {
 // 路径含 %2F，ServeMux 会 404，只能按 EscapedPath 自己解析。
 func httpProxyBypass(gw *gateway.Gateway, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tgt, ok := uniformTarget(r); ok {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/http/" + tgt
+			r2.URL.RawPath = ""
+			r2.RequestURI = r2.URL.RequestURI()
+			gw.ServeHTTPProxy(w, r2)
+			return
+		}
 		if wantsHTTPProxy(r) {
 			gw.ServeHTTPProxy(w, r)
 			return
@@ -258,6 +266,28 @@ func httpProxyBypass(gw *gateway.Gateway, next http.Handler) http.Handler {
 
 func wantsHTTPProxy(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.EscapedPath(), "/http/")
+}
+
+// uniformTarget 支持「把完整地址直接拼在域名后面」的统一写法：
+//
+//	/https://raw.githubusercontent.com/o/r/main/f
+//	/https:/raw.githubusercontent.com/o/r/main/f   ← 反代会把 // 折叠成 /
+//	/https/raw.githubusercontent.com/o/r/main/f
+//
+// 三种都等价于 /http/https://raw.githubusercontent.com/...。用完整 URL 是
+// 最常见的前缀代理用法，不必记 /raw/、/gh/ 这些分门别类的路径。
+func uniformTarget(r *http.Request) (string, bool) {
+	p := r.URL.EscapedPath()
+	if strings.HasPrefix(p, "/http/") {
+		return "", false // 老写法，交给 wantsHTTPProxy
+	}
+	switch {
+	case strings.HasPrefix(p, "/https://"), strings.HasPrefix(p, "/http://"),
+		strings.HasPrefix(p, "/https:/"), strings.HasPrefix(p, "/http:/"),
+		strings.HasPrefix(p, "/https/"):
+		return p[1:], true
+	}
+	return "", false
 }
 
 // logRequests 只记面板接口，代理路径交给网关自己的日志。
