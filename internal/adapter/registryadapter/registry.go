@@ -119,6 +119,12 @@ func (a *Adapter) addGhcrFallback(p *adapter.Plan, name, host, def string) {
 	if !strings.EqualFold(host, def) || !strings.EqualFold(def, "registry-1.docker.io") {
 		return
 	}
+	// ghcr 没有 library 命名空间：Docker Hub 官方镜像（library/xxx）在
+	// ghcr 上必然 404。挂备链只会白打一次请求，还会把主链拆成两条并行链，
+	// 让主链内部的对冲（hedge）失去机会。
+	if strings.HasPrefix(name, "library/") {
+		return
+	}
 	gh := &url.URL{Scheme: p.Upstream.Scheme, Host: "ghcr.io", Path: p.Upstream.Path}
 	p.Fallbacks = []adapter.Fallback{{URL: gh, Kind: "ghcr"}}
 	p.OnFallback = func(h string) { a.rememberHost(name, h) }

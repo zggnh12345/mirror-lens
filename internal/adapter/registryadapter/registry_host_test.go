@@ -88,3 +88,25 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// ghcr 没有 library 命名空间：Docker Hub 官方镜像别挂 ghcr 备链。
+// 挂了不仅白打 404，还会把主链拆成两条并行链，主链内部就没法对冲了。
+func TestGhcrFallbackSkipsDockerHubOfficial(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	for _, c := range []struct {
+		path string
+		want int
+	}{
+		{"/v2/library/golang/manifests/1.23-alpine", 0},
+		{"/v2/fluxcd/flux2/manifests/latest", 1},
+	} {
+		r, _ := http.NewRequest(http.MethodGet, "http://gw"+c.path, nil)
+		p, err := a.Plan(r)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		if len(p.Fallbacks) != c.want {
+			t.Fatalf("%s 备链 %d 条，期望 %d", c.path, len(p.Fallbacks), c.want)
+		}
+	}
+}
