@@ -639,24 +639,28 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	if n > 2 {
 		n = 2
 	}
-	hctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+	// 每路请求各自一个 ctx。不能用共享 ctx + defer cancel：那会在函数
+	// 返回的瞬间掐断胜者的 Body（大文件必然读到一半报 context canceled）。
+	// 落败者由 drop 显式取消，胜者的 ictx 挂到 up.cancel 上，读完再释放。
 	ch := make(chan hedgeRes, n)
+	cancels := make([]context.CancelFunc, n)
 	started := 0
 	launch := func(i int) {
 		started++
 		if i > 0 {
 			metrics.HedgeTrigger()
 		}
+		ictx, icancel := context.WithCancel(ctx)
+		cancels[i] = icancel
 		go func() {
 			st := time.Now()
-			up, err := g.openUpstream(hctx, plan, prev, targets[i].u)
-			if hctx.Err() != nil {
+			up, err := g.openUpstream(ictx, plan, prev, targets[i].u)
+			if ictx.Err() != nil {
 				if up != nil {
 					up.resp.Body.Close()
 					up.cancel()
 				}
+				icancel()
 				ch <- hedgeRes{idx: i, start: st, err: errHedgeCanceled}
 				return
 			}
@@ -677,7 +681,8 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	var lastErr error
 	win := -1
 	defer func() {
-		if win >= 0 {
+		// 只有真发过第二路才算对冲胜出；单路成功不该进这个指标。
+		if win >= 0 && started > 1 {
 			metrics.HedgeWin(win + 1)
 		}
 	}()
@@ -688,6 +693,25 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 			r.up.resp.Body.Close()
 			r.up.cancel()
 		}
+		if c := cancels[r.idx]; c != nil {
+			c()
+		}
+	}
+
+	// take 把这一路的 ictx 释放挂到 up.cancel 上：调用方读完 Body 再调，
+	// 既清理落败路径又不会提前掐断胜者的下载。
+	take := func(r hedgeRes) *upstream {
+		// 先把别的路都掐掉，免得它们跑满超时才退（测试里就是白等 2s）。
+		for j, c := range cancels {
+			if j != r.idx && c != nil {
+				c()
+			}
+		}
+		if r.up != nil && cancels[r.idx] != nil {
+			oc, ic := r.up.cancel, cancels[r.idx]
+			r.up.cancel = func() { oc(); ic() }
+		}
+		return r.up
 	}
 
 	for pending > 0 || held != nil {
@@ -712,7 +736,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 					drop(*held)
 				}
 				win = r.idx
-				return r.up, r.idx, started, nil
+				return take(r), r.idx, started, nil
 			case http.StatusOK:
 				if prev != nil && started > 1 && held == nil {
 					// 备用源先回了 200：给首选源一个宽限窗口等它的 304。
@@ -728,10 +752,10 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 					// 用排名靠前的那个，后到的丢掉。
 					drop(r)
 					win = held.idx
-					return held.up, held.idx, started, nil
+					return take(*held), held.idx, started, nil
 				}
 				win = r.idx
-				return r.up, r.idx, started, nil
+				return take(r), r.idx, started, nil
 			default:
 				code := r.up.resp.StatusCode
 				var hint scheduler.Hint
@@ -764,7 +788,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 			h := held
 			held = nil
 			win = h.idx
-			return h.up, h.idx, started, nil
+			return take(*h), h.idx, started, nil
 		case <-ctx.Done():
 			if held != nil {
 				drop(*held)
@@ -774,7 +798,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	}
 	if held != nil {
 		win = held.idx
-		return held.up, held.idx, started, nil
+		return take(*held), held.idx, started, nil
 	}
 	if lastErr == nil {
 		lastErr = &upstreamError{Code: 0}

@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -243,4 +245,37 @@ func TestRaceMainWinDoesNotRememberFallback(t *testing.T) {
 	if n := called.Load(); n != 0 {
 		t.Fatalf("主链成功，却记了 %d 次 fallback 站点", n)
 	}
+}
+
+// 胜者的 Body 必须在 pickUpstream 返回之后还能完整读出来。
+// 旧实现用共享 ctx + defer cancel，函数一返回就把 Body 掐了，
+// 小文件靠内核缓冲侥幸读完，十几 MB 的 release 必然读到一半报
+// "context canceled" —— 线上 /gh/ 502 就是这么来的。
+func TestHedgeWinnerBodySurvivesReturn(t *testing.T) {
+	g, _, _, _, _ := newGW(t, true)
+	g.hedge = HedgeOptions{Enabled: true, After: 50 * time.Millisecond, Grace: 50 * time.Millisecond}
+	body := strings.Repeat("x", 4<<20)
+	fast := httptest.NewServer(&fakeUpstream{body: body, etag: `"v1"`})
+	defer fast.Close()
+	slow := httptest.NewServer(&fakeUpstream{body: body, etag: `"v1"`, delay: 2 * time.Second})
+	defer slow.Close()
+
+	targets := append(hedgeTargets(fast), hedgeTargets(slow)...)
+	plan := &adapter.Plan{CacheKey: "docker:blob:test-body", Cacheable: true}
+	up, idx, started, err := g.pickUpstream(context.Background(), plan, nil, targets)
+	if err != nil {
+		t.Fatalf("pickUpstream: %v", err)
+	}
+	if idx != 0 {
+		t.Fatalf("快的源应该赢，实际 idx=%d", idx)
+	}
+	n, cerr := io.Copy(io.Discard, up.resp.Body)
+	if cerr != nil {
+		t.Fatalf("读胜者 Body 失败（%d/%d 字节）: %v", n, len(body), cerr)
+	}
+	if n != int64(len(body)) {
+		t.Fatalf("只读到 %d 字节，期望 %d", n, len(body))
+	}
+	up.cancel()
+	_ = started
 }
