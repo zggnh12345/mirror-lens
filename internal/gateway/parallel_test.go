@@ -262,12 +262,13 @@ func TestParallelAssemblesInOrder(t *testing.T) {
 	if _, ok := cs.ReadPartial("docker:blob:abc"); ok {
 		t.Fatalf(".part 应已清理")
 	}
-	// 两台源都该被用上：镜像至少下一段，官方至少下第一段。
+	// 镜像源至少下一段；官方只做预检和兜底，不再抢首段（首段卡在
+	// 官方直连上会让整条流慢到几十 KB/s）。
 	if atomic.LoadInt32(&mirror.hits) == 0 {
 		t.Fatalf("镜像没被用上")
 	}
-	if atomic.LoadInt32(&origin.hits) < 2 {
-		t.Fatalf("官方应参与（预检 + 首段），实际 %d 次", origin.hits)
+	if atomic.LoadInt32(&origin.hits) < 1 {
+		t.Fatalf("官方至少应参与预检，实际 %d 次", origin.hits)
 	}
 	if g.parFills.Load() != 1 {
 		t.Fatalf("并行计数应为 1，得到 %d", g.parFills.Load())
@@ -755,5 +756,32 @@ func TestParallelDynamicBalancing(t *testing.T) {
 	}
 	if sl > 6 {
 		t.Fatalf("慢源拿太多段（%d），动态派活没起作用", sl)
+	}
+}
+
+// 官方源不能排第一：第 0 段是直通客户端的，官方直连被墙时整条流卡死。
+// 实测 /v2/ghcr.io/sagernet/sing-box 31MB：官方排首时 22 KB/s，38 秒 1.2 MB。
+func TestPreferMirrorsPutsOfficialLast(t *testing.T) {
+	mk := func(u string) parSource {
+		pu, _ := url.Parse(u)
+		return parSource{t: fetchTarget{u: pu}}
+	}
+	srcs := []parSource{
+		mk("https://ghcr.io/v2/sagernet/sing-box/blobs/sha256:x"),
+		mk("https://ghcr.nju.edu.cn/v2/ghcr.io/sagernet/sing-box/blobs/sha256:x"),
+		mk("https://docker.sparkcr.cn/v2/ghcr.io/sagernet/sing-box/blobs/sha256:x"),
+	}
+	preferMirrors(srcs, "https://ghcr.io/v2/sagernet/sing-box/blobs/sha256:x")
+	if got := srcs[len(srcs)-1].t.u.Host; got != "ghcr.io" {
+		t.Fatalf("官方源应排最后，实际最后是 %s", got)
+	}
+	if got := srcs[0].t.u.Host; got == "ghcr.io" {
+		t.Fatal("第 0 段不能交给官方源")
+	}
+	// 只有一个源时保持原样，不能把唯一可用的源挪掉。
+	one := []parSource{mk("https://ghcr.io/v2/x/blobs/y")}
+	preferMirrors(one, "https://ghcr.io/v2/x/blobs/y")
+	if len(one) != 1 || one[0].t.u.Host != "ghcr.io" {
+		t.Fatal("单源不应改变")
 	}
 }

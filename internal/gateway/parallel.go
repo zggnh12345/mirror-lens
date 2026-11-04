@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,17 @@ import (
 // 版本不一致时每片都能成功、拼出来是错的，只有最后哈希能发现。
 // 只在写任何字节前决定并行；每片校验 Content-Range，对不上回官方源、
 // 再不行断开（绝不发拼错的文件）；整份哈希必须等于 ExpectSHA 才发布。
+
+// preferMirrors 把官方源排到最后。官方直连通常最慢、还可能间歇性不通，
+// 而第 0 段是直通客户端的，它排第一就会让整条流卡在开头。
+func preferMirrors(srcs []parSource, upstream string) {
+	if len(srcs) < 2 {
+		return
+	}
+	sort.SliceStable(srcs, func(i, j int) bool {
+		return srcs[i].t.u.String() != upstream && srcs[j].t.u.String() == upstream
+	})
+}
 
 type parSource struct {
 	t     fetchTarget
@@ -56,6 +68,10 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 
 	ctx := r.Context()
 	srcs, total := g.parPreflight(ctx, plan, targets)
+	// 官方源只用来确认总长，不参与供数：国内直连 ghcr.io / docker.io 常常
+	// 只有几十 KB/s、甚至间歇性不通，而第 0 段是直通客户端的。官方排在
+	// 第一位时整条流会卡死在开头（线上实测 22 KB/s、38 秒只走 1.2 MB）。
+	preferMirrors(srcs, plan.Upstream.String())
 	// 先看大小：够不上分片就没必要纠结几台源。
 	if total > 0 && total < g.par.MinSize {
 		g.decline(fmt.Sprintf("文件 %d 字节小于分片下限 %d", total, g.par.MinSize))
@@ -180,12 +196,20 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	busy := make([]atomic.Int32, len(srcs))
 	pick := func() int {
-		best, bestBusy, bestFail := 0, int32(1<<30), int32(1<<30)
+		best, bestBusy, bestFail := -1, int32(1<<30), int32(1<<30)
 		for j := range srcs {
+			// 官方源是兜底不是主力：只有镜像源全不可用时（parChunk 换源）
+			// 才轮到它，派活阶段一律跳过。
+			if j > 0 && srcs[j].t.u.String() == plan.Upstream.String() {
+				continue
+			}
 			bz, fl := busy[j].Load(), atomic.LoadInt32(&stats[j].fail)
-			if bz < bestBusy || (bz == bestBusy && fl < bestFail) {
+			if best < 0 || bz < bestBusy || (bz == bestBusy && fl < bestFail) {
 				best, bestBusy, bestFail = j, bz, fl
 			}
+		}
+		if best < 0 {
+			return 0
 		}
 		return best
 	}
