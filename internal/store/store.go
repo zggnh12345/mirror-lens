@@ -39,6 +39,9 @@ type Source struct {
 	// ProbeAt 最近一次探测尝试的时间；死源/封禁源靠它做低频恢复探测。
 	ProbeAt int64 `json:"probe_at"`
 
+	// 信任标记：勾上后私有请求（带 PAT）会发给这个源，多站竞速。
+	Trusted bool `json:"trusted"`
+
 	DockerCap int `json:"docker_cap"`
 	GithubCap int `json:"github_cap"`
 	// GhcrCap 单独记：ghcr.io 的镜像源（ghcr.nju.edu.cn 等）只代 ghcr，
@@ -206,15 +209,8 @@ CREATE TABLE IF NOT EXISTS sources (
   status_reason TEXT NOT NULL DEFAULT '',
   probe_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
+  trusted INTEGER NOT NULL DEFAULT 0,
   UNIQUE(base_url)
-);
-CREATE TABLE IF NOT EXISTS trusted_relays (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL DEFAULT '',
-  url TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  UNIQUE(url)
 );
 CREATE TABLE IF NOT EXISTS checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +287,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
 		"site_name":     "TEXT NOT NULL DEFAULT ''",
 		"group_id":      "INTEGER NOT NULL DEFAULT 0",
+		"trusted":       "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}
@@ -419,14 +416,14 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted`
 
 const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID)
+		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted)
 	return x, err
 }
 
