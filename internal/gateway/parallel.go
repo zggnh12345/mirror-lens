@@ -450,16 +450,16 @@ type parStat struct {
 	ok, fail int32
 	code     int32 // 最后一次非 206 的状态码，用来区分「限流」和「坏了」
 	// 已完成段的实测吞吐，用来把木桶里最矮那块板换掉。
-	bytes, micros int64
+	bytes, nanos int64
 }
 
-// sourceSpeed 返回这台源每毫秒供了多少字节；没有样本时返回 0。
+// sourceSpeed 返回这台源的实测吞吐（MB/s）；没有样本时返回 0。
 func sourceSpeed(stats []parStat, j int) float64 {
-	b, m := atomic.LoadInt64(&stats[j].bytes), atomic.LoadInt64(&stats[j].micros)
-	if b <= 0 || m <= 0 {
+	b, ns := atomic.LoadInt64(&stats[j].bytes), atomic.LoadInt64(&stats[j].nanos)
+	if b <= 0 || ns <= 0 {
 		return 0
 	}
-	return float64(b) / float64(m)
+	return float64(b) * 1e9 / (float64(ns) * 1048576)
 }
 
 // preflightStatusIsSourceFailure：reportSource(false) 会推熔断、拉长冷却，
@@ -502,8 +502,10 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 		}
 	}
 	n := len(ordered)
-	if n > g.par.Workers {
-		n = g.par.Workers
+	// 分片只用 Workers 台，但预检要多探几台：默认源池里排第 5 位之后的
+	// 优质源（比如南京大学 GHCR）否则永远进不了候选。
+	if max := g.par.Workers * 2; n > max {
+		n = max
 	}
 	if n == 0 {
 		return nil, -1
@@ -716,7 +718,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if a.idx >= 0 {
 			atomic.AddInt32(&stats[a.idx].ok, 1)
 			atomic.AddInt64(&stats[a.idx].bytes, n)
-			atomic.AddInt64(&stats[a.idx].micros, int64(time.Since(t0)))
+			atomic.AddInt64(&stats[a.idx].nanos, int64(time.Since(t0)))
 			if c := srcs[a.idx].t.c; c != nil {
 				// 分片是带宽控制器最准的样本：字节数和耗时都真实。
 				g.sched.Observe(c.ID, n, time.Since(t0), true, resp.StatusCode)
@@ -790,8 +792,7 @@ func parSpeedNote(srcs []parSource, stats []parStat) string {
 		if i > 0 {
 			b.WriteString("，")
 		}
-		v := sourceSpeed(stats, i) * 1000 / 1048576
-		fmt.Fprintf(&b, "%s %.1fMB/s", srcs[i].name, v)
+		fmt.Fprintf(&b, "%s %.1fMB/s", srcs[i].name, sourceSpeed(stats, i))
 	}
 	b.WriteString("）")
 	return b.String()
