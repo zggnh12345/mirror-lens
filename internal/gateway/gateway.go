@@ -69,10 +69,16 @@ type Gateway struct {
 	parTargets    func(*adapter.Plan) []fetchTarget // 测试注入用，nil 时走 targets()
 	requireToken  bool                              // 代理路径是否强制 Access Token（false = 匿名放行）
 	cdn           CDNOptions                        // 边缘缓存策略（阶段 8）
-	parFills      atomic.Int64                      // 真正走了并行分片的次数
-	parBytes      atomic.Int64                      // 并行分片下下来的字节
-	parFalls      atomic.Int64                      // 试过但退回单流（不支持 Range、源不够等）
-	tasks         *taskReg                          // 面板活跃任务表（内存）
+	priv          PrivateOptions                    // 私有请求的中转与回退策略
+	privMu        sync.Mutex
+	privFails     map[string]int
+	privUntil     map[string]time.Time
+	privClient    *http.Client
+	privSem       chan struct{} // 回退官方时限制同时下载的文件数
+	parFills      atomic.Int64  // 真正走了并行分片的次数
+	parBytes      atomic.Int64  // 并行分片下下来的字节
+	parFalls      atomic.Int64  // 试过但退回单流（不支持 Range、源不够等）
+	tasks         *taskReg      // 面板活跃任务表（内存）
 }
 
 type ParOptions struct {
@@ -115,6 +121,7 @@ type Options struct {
 	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
 	CDN          CDNOptions
+	Private      PrivateOptions
 }
 
 func New(st *store.Store, o Options) *Gateway {
@@ -143,7 +150,7 @@ func New(st *store.Store, o Options) *Gateway {
 			CheckRedirect: cli.CheckRedirect,
 		}
 	}
-	return &Gateway{
+	gw := &Gateway{
 		locks:         keymutex.New(),
 		st:            st,
 		cache:         o.Cache,
@@ -164,7 +171,13 @@ func New(st *store.Store, o Options) *Gateway {
 		tasks:         newTaskReg(),
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
+		priv:          o.Private,
+		privClient:    &http.Client{},
 	}
+	if n := o.Private.FallbackSem; n > 0 {
+		gw.privSem = make(chan struct{}, n)
+	}
+	return gw
 }
 
 // GC 暴露给 API 层做手动清理，保证和淘汰走同一套删除逻辑。

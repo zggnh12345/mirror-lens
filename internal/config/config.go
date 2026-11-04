@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -115,6 +116,25 @@ type Parallel struct {
 	DisableTailVerify bool `yaml:"disable_tail_verify"`
 }
 
+// Private 是带凭据（PAT）的私有请求的加速策略：凭据只发给显式信任的
+// 自建中转；没配置或中转故障就回退官方多连接并行。
+type Private struct {
+	Trusted []TrustedRelay `yaml:"trusted"`
+	// BreakAfter 连续失败几次熔断；BreakSeconds 熔断时长。
+	BreakAfter   int `yaml:"break_after"`
+	BreakSeconds int `yaml:"break_seconds"`
+	// FallbackConcurrency 回退官方时最多几个文件同时在下载。
+	FallbackConcurrency int `yaml:"fallback_concurrency"`
+}
+
+// TrustedRelay 是自建加速端。URL 含 {url} 则替换成原地址，
+// 否则按「relay + "/" + 原地址」拼接（兼容 ghproxy 式前缀）。
+type TrustedRelay struct {
+	Name      string `yaml:"name"`
+	URL       string `yaml:"url"`
+	TimeoutMS int    `yaml:"timeout_ms"`
+}
+
 // Hedge 控制上游响应头的延迟对冲：首选源迟迟不回响应头时，
 // 并行向第二个源发同一请求，谁先交出「符合本次请求语义」的响应头用谁。
 // 只在首选源慢的时候多打一个请求，正常情况零成本。
@@ -145,6 +165,7 @@ type Config struct {
 	Registry Registry       `yaml:"registry"`
 	Sources  Sources        `yaml:"sources"`
 	Parallel Parallel       `yaml:"parallel"`
+	Private  Private        `yaml:"private"`
 	Hedge    Hedge          `yaml:"hedge"`
 	Probe    Probe          `yaml:"probe"`
 	Auth     Auth           `yaml:"auth"`
@@ -219,6 +240,11 @@ func Default() *Config {
 			// 8 并发反而把每连接压到 0.2-0.4MB/s，总速不如 4。
 			Workers: 4,
 		},
+		Private: Private{
+			BreakAfter:          3,
+			BreakSeconds:        60,
+			FallbackConcurrency: 2,
+		},
 		Hedge:   Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
 		Probe:   Probe{AllowPrivate: false},
 		Auth:    Auth{RequireToken: false},
@@ -285,6 +311,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Janitor.Interval.Duration <= 0 {
 		return fmt.Errorf("janitor.interval 必须大于 0")
+	}
+	if c.Private.BreakAfter < 0 || c.Private.BreakSeconds < 0 || c.Private.FallbackConcurrency < 0 {
+		return fmt.Errorf("private 的熔断与并发参数不能是负数")
+	}
+	for _, t := range c.Private.Trusted {
+		u, err := url.Parse(t.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("private.trusted %q 的 url 必须是 http(s) 地址，收到 %q", t.Name, t.URL)
+		}
 	}
 	if c.Janitor.PartialTTL.Duration < 0 || c.Janitor.ExpiredGrace.Duration < 0 {
 		return fmt.Errorf("janitor 的时限不能是负数")

@@ -26,6 +26,15 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	if !plan.OfficialOnly || !plan.Stream || r.Header.Get("Range") != "" {
 		return false
 	}
+	// 回退路径要限并发：中转全挂时，N 个客户端同时各开 4 路会把官方打限流。
+	if g.privSem != nil {
+		select {
+		case g.privSem <- struct{}{}:
+			defer func() { <-g.privSem }()
+		case <-r.Context().Done():
+			return false
+		}
+	}
 	ctx := r.Context()
 
 	// 1 字节预检：确认支持 Range、拿到总长。还没写任何字节，失败可直接退回单流。

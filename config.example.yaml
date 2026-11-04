@@ -110,6 +110,26 @@ parallel:
   # 同时下载几片（2~16）
   workers: 4
 
+# ── 私有内容的加速白名单 ─────────────────────────────────
+#
+# 带 PAT 的私有请求默认直连官方（不缓存、不外发凭据），可以另外配
+# 自己建的中转来提速。只有这里列出的地址能收到 PAT；为空则完全不启用。
+# 中转失败（5xx / 连不上 / 404）自动回退到「官方多连接并行」，
+# 连续 break_after 次失败后熔断 break_seconds 秒，期间直接走官方。
+#
+# url 两种写法都行：
+#   url: https://relay.example.com/{url}   → 替换成 https://github.com/...
+#   url: https://relay.example.com/        → 前缀拼接（ghproxy 式）
+private:
+  trusted: []
+  #   - name: my-relay
+  #     url: https://relay.example.com/{url}
+  #     timeout_ms: 8000
+  break_after: 3
+  break_seconds: 60
+  # 回退官方时最多几个文件同时下载（每个文件内部 4 连接）
+  fallback_concurrency: 2
+
 # ── 响应头对冲 ──────────────────────────────────────────
 #
 # 调度器排序是历史统计，猜不到这一次的瞬时延迟：首选源握手成功却迟迟

@@ -158,6 +158,11 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 		}
 	}
 
+	// 私有请求先试显式信任的自建中转（PAT 只发给白名单里的地址）。
+	if pm == nil && prev == nil && g.tryTrusted(w, r, plan) {
+		return
+	}
+
 	// 私有内容只能打官方源，但可以同源开多连接抢带宽（不落盘）。
 	if pm == nil && prev == nil && g.tryOfficialParallel(w, r, plan) {
 		return
