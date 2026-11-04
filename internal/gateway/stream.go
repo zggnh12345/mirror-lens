@@ -90,8 +90,34 @@ func (g *Gateway) fresh(e *store.CacheEntry) bool {
 }
 
 // lockKey 用引用计数的锁表：否则每个 URL 留一把锁，只增不减。
+// 注意不可重入：持锁期间别再对同一个 key 调它。
 func (g *Gateway) lockKey(k string) func() {
 	return g.locks.Lock(k)
+}
+
+// beginFill 给冷对象登记一个填充者：同一 CacheKey 只放一个请求回源。
+func (g *Gateway) beginFill(key string) (chan struct{}, bool) {
+	g.fillMu.Lock()
+	defer g.fillMu.Unlock()
+	if ch, ok := g.fillFlights[key]; ok {
+		return ch, false
+	}
+	if g.fillFlights == nil {
+		g.fillFlights = make(map[string]chan struct{})
+	}
+	ch := make(chan struct{})
+	g.fillFlights[key] = ch
+	return ch, true
+}
+
+// endFill 交还填充权并唤醒所有等待者。
+func (g *Gateway) endFill(key string, ch chan struct{}) {
+	g.fillMu.Lock()
+	if g.fillFlights[key] == ch {
+		delete(g.fillFlights, key)
+	}
+	g.fillMu.Unlock()
+	close(ch)
 }
 
 // fillStream 边下边发；中途断了留下 .part，下次带 If-Range 续。
@@ -105,6 +131,36 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 		} else {
 			g.cache.DropPartial(plan.CacheKey)
 		}
+	}
+
+	// 冷对象只放一个请求回源：热门发布时 N 个客户端同时下同一个包，
+	// 不合并的话就是 N 份上游流量，而且互相抢带宽（实测 3 并发 12MB
+	// 从 11s 变成 55/78/97s）。后来者等第一个下完，直接读缓存返回。
+	// 私有内容不落盘，合并反而会让所有人串行等，所以只合并可缓存的。
+	if prev == nil && pm == nil && plan.Cacheable && !plan.NoStore {
+		for i := 0; i < 2; i++ {
+			ch, leader := g.beginFill(plan.CacheKey)
+			if leader {
+				defer g.endFill(plan.CacheKey, ch)
+				break
+			}
+			select {
+			case <-ch:
+			case <-r.Context().Done():
+				return
+			}
+			if e, err := g.st.CacheGet(plan.CacheKey); err == nil && e != nil && g.freshFor(e, plan) {
+				g.serveCached(w, r, plan, e, "HIT", true)
+				return
+			}
+			// 第一个请求没成功（客户端中途断开等），下一轮自己抢着回源。
+			prev, _ = g.st.CacheGet(plan.CacheKey)
+		}
+	}
+
+	// 私有内容只能打官方源，但可以同源开多连接抢带宽（不落盘）。
+	if pm == nil && prev == nil && g.tryOfficialParallel(w, r, plan) {
+		return
 	}
 
 	// 有可信摘要且多台源支持 Range 时走分片并行；

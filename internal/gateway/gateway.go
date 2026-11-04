@@ -61,7 +61,9 @@ type Gateway struct {
 	sched         *scheduler.Scheduler
 	flights       sync.Map      // cacheKey -> *flight（缓冲型适配器用）
 	locks         *keymutex.Map // cacheKey -> 锁（流式填充用，空闲即回收）
-	verifyFail    atomic.Int64  // 校验不过、因此没落盘的次数（进程内计数）
+	fillMu        sync.Mutex
+	fillFlights   map[string]chan struct{} // cacheKey -> 正在回源的流式填充
+	verifyFail    atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
 	par           ParOptions
 	hedge         HedgeOptions
 	parTargets    func(*adapter.Plan) []fetchTarget // 测试注入用，nil 时走 targets()
