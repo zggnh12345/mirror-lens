@@ -14,6 +14,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/tuning"
 )
 
 var allKinds = []string{"docker", "ghcr", "github"}
@@ -623,13 +624,13 @@ func (e *Engine) Loop(ctx context.Context) {
 			l1, l2, l3 := e.lastRun[1], e.lastRun[2], e.lastRun[3]
 			e.mu.Unlock()
 			now := time.Now()
-			if now.Sub(l1) >= minutes(e.st.GetSetting("l1_minutes", "3")) {
+			if now.Sub(l1) >= minutes(e.st.GetSetting("l1_minutes", strconv.Itoa(tuning.L1Minutes))) {
 				go e.Run(1)
 			}
-			if now.Sub(l2) >= minutes(e.st.GetSetting("l2_minutes", "15")) {
+			if now.Sub(l2) >= minutes(e.st.GetSetting("l2_minutes", strconv.Itoa(tuning.L2Minutes))) {
 				go e.Run(2)
 			}
-			if now.Sub(l3) >= minutes(e.st.GetSetting("l3_minutes", "360")) {
+			if now.Sub(l3) >= minutes(e.st.GetSetting("l3_minutes", strconv.Itoa(tuning.L3Minutes))) {
 				go e.Run(3)
 			}
 			if now.Sub(lastMaint) >= time.Hour {

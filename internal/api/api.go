@@ -29,6 +29,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/tuning"
 )
 
 // Version 面板与 /api/me 显示的版本号。
@@ -947,9 +948,9 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 var settingKeys = map[string]struct {
 	def, min, max int
 }{
-	"l1_minutes":        {15, 1, 1440},
-	"l2_minutes":        {60, 2, 1440},
-	"l3_minutes":        {360, 10, 10080},
+	"l1_minutes":        {tuning.L1Minutes, 1, 1440},
+	"l2_minutes":        {tuning.L2Minutes, 2, 1440},
+	"l3_minutes":        {tuning.L3Minutes, 10, 10080},
 	"session_ttl_hours": {168, 1, 8760},
 	"export_limit":      {6, 1, 20},
 }
