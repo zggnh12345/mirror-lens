@@ -413,6 +413,34 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 	return append(append(head, out...), fbs...)
 }
 
+// parallelTargets 给分片并行凑源：普通回退链 3 台就够，
+// 分片越多越吃带宽，按 Worker 数取源（最多 8 台），不把
+// max_candidates 当成取数上限。
+func (g *Gateway) parallelTargets(plan *adapter.Plan) []fetchTarget {
+	out := []fetchTarget{{u: plan.Upstream}}
+	fbs := g.fallbackTargets(plan, nil)
+	if plan.OfficialOnly || !g.sched.Enabled() {
+		return append(out, fbs...)
+	}
+	n := g.par.Workers
+	if n < 4 {
+		n = 4
+	}
+	if n > 8 {
+		n = 8
+	}
+	var head []fetchTarget
+	for _, c := range g.sched.CandidatesN(plan.Kind, n) {
+		cc := c
+		u, ok := g.sched.Rewrite(plan.Kind, plan.Upstream, cc)
+		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
+			continue
+		}
+		head = append(head, fetchTarget{u: u, c: &cc})
+	}
+	return append(append(head, out...), fbs...)
+}
+
 // fallbackTargets 把 plan 声明的备用站点排成 target（加速源在前、官方殿后）。
 // prev != nil 时只回官方，别让镜像替我们「验证」旧内容。
 func (g *Gateway) fallbackTargets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {

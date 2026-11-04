@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,8 @@ func newTokenCache() *tokenCache { return &tokenCache{m: map[string]tokenEntry{}
 // 到上限先清过期的。
 const tokenCacheMax = 256
 
-// pruneLocked 清掉已过期 token；调用方持锁。
+// pruneLocked 清掉已过期 token；仍然超限就按到期时间淘汰最旧的一批。
+// 调用方持锁。只清过期是不够的：全部未过期时条目会无限长下去。
 func (c *tokenCache) pruneLocked() {
 	if len(c.m) < tokenCacheMax {
 		return
@@ -41,6 +43,23 @@ func (c *tokenCache) pruneLocked() {
 		if !now.Before(e.exp) {
 			delete(c.m, k)
 		}
+	}
+	if len(c.m) < tokenCacheMax {
+		return
+	}
+	// 留 3/4 的余量，避免每次写入都触发一次全排序。
+	keep := tokenCacheMax * 3 / 4
+	type kv struct {
+		k   string
+		exp time.Time
+	}
+	all := make([]kv, 0, len(c.m))
+	for k, e := range c.m {
+		all = append(all, kv{k, e.exp})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].exp.Before(all[j].exp) })
+	for _, x := range all[:len(all)-keep] {
+		delete(c.m, x.k)
 	}
 }
 

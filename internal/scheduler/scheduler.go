@@ -192,12 +192,18 @@ func (s *Scheduler) deleted(id int64) bool { return s.isGone(id) }
 
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
 func (s *Scheduler) Candidates(kind string) []Candidate {
+	return s.CandidatesN(kind, s.cfg.MaxCandidates)
+}
+
+// CandidatesN 取前 limit 个源。分片并行要按 Worker 数凑源，
+// 不该被回退链长度（max_candidates）卡住。
+func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if !s.Enabled() {
 		return nil
 	}
 	s.mu.Lock()
 	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
-		out := s.order(kind, le.items)
+		out := s.orderN(kind, le.items, limit)
 		s.mu.Unlock()
 		return out
 	}
@@ -219,7 +225,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 	defer s.mu.Unlock()
 	// 等锁期间别人可能已经填好，直接用，别重复查库也避免覆盖更新的列表。
 	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
-		return s.order(kind, le.items)
+		return s.orderN(kind, le.items, limit)
 	}
 	// 重启后从事件表恢复最近失败的源，接着熔断而不是重新试错。
 	if cerr == nil {
@@ -235,7 +241,7 @@ func (s *Scheduler) Candidates(kind string) []Candidate {
 		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
-	return s.order(kind, items)
+	return s.orderN(kind, items, limit)
 }
 
 // groupKey 把「未分组」归到最后一档：0 表示没有分组，组 rank 从 1 起。
@@ -251,6 +257,10 @@ func groupKey(rank int) int {
 // 打开的直接排除（降权仍会排前面，白等一次超时）；半开的排队尾，有健康源
 // 时不拿真实请求去赌；冷却逾期一个周期未探，则插队首只试一次。
 func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
+	return s.orderN(kind, in, 0)
+}
+
+func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 	now := s.now()
 	out := make([]Candidate, 0, len(in))
 	for _, c := range in {
@@ -299,8 +309,11 @@ func (s *Scheduler) order(kind string, in []Candidate) []Candidate {
 		}
 		return out[i].Score > out[j].Score
 	})
-	if len(out) > s.cfg.MaxCandidates {
-		out = out[:s.cfg.MaxCandidates]
+	if limit <= 0 {
+		limit = s.cfg.MaxCandidates
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }

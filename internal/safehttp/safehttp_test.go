@@ -20,7 +20,9 @@ func TestCheckIPBlocksInternal(t *testing.T) {
 			t.Errorf("%s 应该被拦下", s)
 		}
 	}
-	for _, s := range []string{"1.1.1.1", "140.82.121.3", "2606:4700:4700::1111", "198.18.0.5"} {
+	// 198.18.0.0/15 是本机 sing-box 的 fakeip 段，必须放行，
+	// 否则所有走 fakeip 解析的上游都会被自己拦死。
+	for _, s := range []string{"1.1.1.1", "140.82.121.3", "2606:4700:4700::1111", "198.18.0.4"} {
 		ip := netip.MustParseAddr(s)
 		if err := g.CheckIP(ip); err != nil {
 			t.Errorf("%s 应该放行，却报 %v", s, err)

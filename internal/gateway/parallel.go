@@ -57,7 +57,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	if _, ok := g.cache.ReadPartial(plan.CacheKey); ok {
 		return false
 	}
-	targets := g.targets(plan, nil)
+	targets := g.parallelTargets(plan)
 	if g.parTargets != nil {
 		targets = g.parTargets(plan)
 	}
