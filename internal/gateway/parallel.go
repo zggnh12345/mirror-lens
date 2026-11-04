@@ -456,6 +456,10 @@ func preflightStatusIsSourceFailure(status int) bool {
 // parPreflight 用 1 字节 Range 探测各源支持分片、总长一致。
 // 官方源排最前，总长以它为准，镜像报的只用于核对。
 // 各源同时探：串行探 3 台，客户端就得等到最后一台回来才有第一滴数据。
+// parProbeTimeout 限制预检总时长。探测只取 1 字节，正常源 1s 内必回；
+// 官方源被墙时曾经把首包拖满 20s 的连接超时。
+var parProbeTimeout = 5 * time.Second
+
 func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets []fetchTarget) ([]parSource, int64) {
 	ordered := make([]fetchTarget, 0, len(targets))
 	for _, t := range targets {
@@ -476,15 +480,24 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 		return nil, -1
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	// 预检必须有时长上限：官方源不可达时它会一直等满 ResponseHeaderTimeout
+	// （20s），而响应头要等预检结束才写，用户看到的就是「点了没反应」。
+	ctx, cancel := context.WithTimeout(ctx, parProbeTimeout)
 	defer cancel()
 	out := make([]parProbe, n)
 	var wg sync.WaitGroup
+	var goodMirrors atomic.Int32
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			out[i] = g.probeTarget(ctx, plan, ordered[i])
+			if out[i].ok && out[i].total > 0 && ordered[i].u.String() != plan.Upstream.String() {
+				// 两台镜像源都确认过总长，交叉校验已经成立，没必要再等官方。
+				if goodMirrors.Add(1) >= 2 {
+					cancel()
+				}
+			}
 			// 大小已经够不上分片（或超上限）：剩下的源不必再探。
 			if out[i].ok && out[i].total > 0 && (out[i].total < g.par.MinSize || out[i].total > g.limitFor(plan)) {
 				cancel()

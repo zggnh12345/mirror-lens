@@ -785,3 +785,32 @@ func TestPreferMirrorsPutsOfficialLast(t *testing.T) {
 		t.Fatal("单源不应改变")
 	}
 }
+
+// 官方源卡死时预检不能跟着卡死：响应头要等预检结束才写，
+// 官方拖满 20s 连接超时，用户看到的就是「点了没反应」。
+func TestParPreflightCapsSlowOfficial(t *testing.T) {
+	old := parProbeTimeout
+	parProbeTimeout = 150 * time.Millisecond
+	defer func() { parProbeTimeout = old }()
+
+	g, _, _, body, origin, _, os, ms := parFixture(t, 9<<20)
+	origin.delay = 10 * time.Second
+	plan, cand := parPlan(t, os, body)
+	mu, err := url.Parse(ms.URL + "/v2/library/x/blobs/sha256:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := []fetchTarget{{u: plan.Upstream}, {u: mu, c: cand}}
+
+	start := time.Now()
+	srcs, total := g.parPreflight(context.Background(), plan, targets)
+	if el := time.Since(start); el > 2*time.Second {
+		t.Fatalf("预检被官方源拖住 %v", el)
+	}
+	if total != int64(len(body)) {
+		t.Fatalf("总长应取自镜像源 %d，实际 %d", len(body), total)
+	}
+	if len(srcs) != 1 || srcs[0].t.u.Host != mu.Host {
+		t.Fatalf("官方超时应被丢弃，只剩镜像源，实际 %d 个", len(srcs))
+	}
+}
