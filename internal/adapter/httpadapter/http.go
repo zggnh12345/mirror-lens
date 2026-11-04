@@ -8,6 +8,7 @@
 package httpadapter
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/http"
@@ -107,8 +108,9 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	}
 	u.Fragment = ""
 
-	return &adapter.Plan{
-		Kind:      githubKind(u),
+	kind := githubKind(u)
+	p := &adapter.Plan{
+		Kind:      kind,
 		Upstream:  u,
 		Method:    http.MethodGet,
 		Header:    http.Header{},
@@ -121,7 +123,17 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		OnResponse: func(resp *http.Response) (bool, time.Duration) {
 			return policy(resp)
 		},
-	}, nil
+	}
+	// 私有仓库：GitHub 对未认证请求一律 404，需把调用方的 Authorization
+	// 带给上游。只对 GitHub 内容透传，普通 URL 不转发凭据（免得换源时
+	// 把 token 送给第三方镜像）。带凭据的响应不进公共缓存。
+	if auth := r.Header.Get("Authorization"); auth != "" && kind != "http" {
+		p.Header.Set("Authorization", auth)
+		sum := sha256.Sum256([]byte(auth))
+		p.CacheKey += fmt.Sprintf("|auth=%x", sum[:8])
+		p.Cacheable = false
+	}
+	return p, nil
 }
 
 // normalize 让同一个资源的不同写法落到同一个缓存键上。

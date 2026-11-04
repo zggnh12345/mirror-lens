@@ -5,6 +5,8 @@
 package raw
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -74,7 +76,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		key += "?" + r.URL.RawQuery
 	}
 
-	return &adapter.Plan{
+	p := &adapter.Plan{
 		Kind:      "raw",
 		Upstream:  &up,
 		Method:    http.MethodGet,
@@ -86,5 +88,15 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		Immutable: commitRE.MatchString(ref),
 		TTL:       a.TTL,
 		RangeOK:   true,
-	}, nil
+	}
+	// 私有仓库：GitHub 对未认证的 raw 请求一律回 404，必须把调用方的
+	// Authorization 原样带给上游。同时换独立缓存键且不落盘——
+	// 否则私有内容会被匿名请求命中，或留在公共缓存里。
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		p.Header.Set("Authorization", auth)
+		sum := sha256.Sum256([]byte(auth))
+		p.CacheKey += fmt.Sprintf("|auth=%x", sum[:8])
+		p.Cacheable = false
+	}
+	return p, nil
 }
