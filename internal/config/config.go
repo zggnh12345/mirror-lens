@@ -215,9 +215,9 @@ func Default() *Config {
 			Enabled:   true,
 			MinSizeMB: 8,
 			ChunkMB:   4,
-			// 4 并发撑不满带宽：镜像站普遍按连接限速（南大 ghcr 单连接
-			// 1.4MB/s、8 连接 7MB/s），并发数才是速度上限。
-			Workers: 8,
+			// 4 是实测拐点：南大 GHCR 对同一出口的连接数限速很凶，
+			// 8 并发反而把每连接压到 0.2-0.4MB/s，总速不如 4。
+			Workers: 4,
 		},
 		Hedge:   Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
 		Probe:   Probe{AllowPrivate: false},
