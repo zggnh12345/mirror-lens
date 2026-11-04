@@ -45,6 +45,7 @@ func TestLiveTaskCoversFetchServeAndHit(t *testing.T) {
 	tok := token(t, st)
 	target := "http://gw/raw/o/r/main/big.bin"
 
+	g.requireToken = true
 	if rec := do(g, tok, target, nil); rec.Body.Len() != len(body) {
 		t.Fatalf("首次下载应拿到 %d 字节，实际 %d", len(body), rec.Body.Len())
 	}

@@ -101,11 +101,6 @@ func token(t *testing.T, st *store.Store) string {
 }
 
 func do(g *Gateway, tok, target string, hdr map[string]string) *httptest.ResponseRecorder {
-	// 带 token 就按认证模式跑：Authorization 是网关凭据，
-	// 校验后必须被摘掉，不能当成上游 PAT 透传。
-	if tok != "" {
-		g.requireToken = true
-	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -147,6 +142,7 @@ func TestMissThenHit(t *testing.T) {
 	g, st, cs, up, _ := newGW(t, true)
 	tok := token(t, st)
 
+	g.requireToken = true
 	r1 := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if r1.Code != 200 || r1.Body.String() != "hello" {
 		t.Fatalf("首次: %d %q", r1.Code, r1.Body.String())
@@ -176,6 +172,7 @@ func TestMissNotCountedAsHit(t *testing.T) {
 	g, st, _, _, _ := newGW(t, true)
 	tok := token(t, st)
 
+	g.requireToken = true
 	do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	hit, fill := trafficBytes(t, st)
 	if hit != 0 {
@@ -214,6 +211,7 @@ func TestRevalidate304(t *testing.T) {
 	tok := token(t, st)
 	g.SetRawTTL(0) // 每次都重新验证
 
+	g.requireToken = true
 	do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	r := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if got := r.Header().Get("X-ML-Cache"); got != "HIT-REVAL" {
@@ -232,6 +230,7 @@ func TestUpstreamUpdateRefreshesCache(t *testing.T) {
 	tok := token(t, st)
 	g.SetRawTTL(0)
 
+	g.requireToken = true
 	do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	up.set("hello v2", `"v2"`)
 	r := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
@@ -283,6 +282,7 @@ func TestConcurrentSingleFlight(t *testing.T) {
 func TestRangeFromCache(t *testing.T) {
 	g, st, _, _, _ := newGW(t, true)
 	tok := token(t, st)
+	g.requireToken = true
 	do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", map[string]string{"Range": "bytes=0-1"})
@@ -300,6 +300,7 @@ func TestRangeFromCache(t *testing.T) {
 func TestSSRFBlocked(t *testing.T) {
 	g, st, _, _, _ := newGW(t, false) // 不开回环例外
 	tok := token(t, st)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("指向 127.0.0.1 应 403，得到 %d: %s", rec.Code, rec.Body.String())
@@ -315,6 +316,7 @@ func TestUpstream404(t *testing.T) {
 	up.mu.Lock()
 	up.status = http.StatusNotFound
 	up.mu.Unlock()
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("应透传 404，得到 %d", rec.Code)
@@ -329,6 +331,7 @@ func TestBadPath(t *testing.T) {
 		"http://gw/raw/o/r/main/../../etc/passwd",
 		"http://gw/raw/o//main/a.txt",
 	} {
+		g.requireToken = true
 		if rec := do(g, tok, p, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s 应 400，得到 %d", p, rec.Code)
 		}

@@ -34,6 +34,7 @@ func TestBogusUpstreamDigestNotCached(t *testing.T) {
 	up.digest = "sha-256=:" + base64.StdEncoding.EncodeToString(make([]byte, 32)) + ":"
 	up.mu.Unlock()
 
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code < 500 {
 		t.Fatalf("摘要不符应失败，得到 %d %q", rec.Code, rec.Body.String())
@@ -55,6 +56,7 @@ func TestSelfDeclaredDigestStaysUnverified(t *testing.T) {
 	up.digest = "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
 	up.mu.Unlock()
 
+	g.requireToken = true
 	if rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil); rec.Code != 200 {
 		t.Fatalf("摘要一致应成功，得到 %d", rec.Code)
 	}

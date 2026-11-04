@@ -72,6 +72,7 @@ func TestDiskFailureNotBlamedOnSource(t *testing.T) {
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
 	tok := token(t, st)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	// 盘写不进去也要把字节送到：降级成透传，而不是 502。
 	if rec.Code != http.StatusOK || rec.Body.String() != "mirror-body" {
@@ -114,6 +115,7 @@ func TestUpstreamFailureStillBlamed(t *testing.T) {
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
+	g.requireToken = true
 	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
 	// 换源成功是正常结果；关键是坏源要被记一笔。
 	if rec.Code != http.StatusOK || rec.Body.String() != "origin-body" {

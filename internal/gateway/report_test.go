@@ -53,6 +53,7 @@ func TestTruncatedUpstreamCountedAsFailure(t *testing.T) {
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
 	tok := token(t, st)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	// 小文件走整份缓冲：断在上游、还没写客户端，所以能就地换源。
 	if got := rec.Body.String(); got != "origin-body" {
@@ -151,6 +152,7 @@ func TestCompletedUpstreamCountedAsSuccess(t *testing.T) {
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
 	tok := token(t, st)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusOK || rec.Body.String() != "mirror-body" {
 		t.Fatalf("应 200 mirror-body，实际 %d %q", rec.Code, rec.Body.String())

@@ -180,6 +180,7 @@ func TestLyingSelfDigestRejected(t *testing.T) {
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 
+	g.requireToken = true
 	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code < 500 {
 		t.Fatalf("自报摘要不符应失败，实际 %d", rec.Code)
@@ -218,6 +219,7 @@ func TestNoDigestAnywhereStaysUnverified(t *testing.T) {
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 
+	g.requireToken = true
 	if rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil); rec.Code != http.StatusOK {
 		t.Fatalf("镜像应能供货，实际 %d", rec.Code)
 	}
@@ -256,6 +258,7 @@ func TestMalformedDigestTreatedAsAbsent(t *testing.T) {
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 
+	g.requireToken = true
 	if rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil); rec.Code != http.StatusOK {
 		t.Fatalf("坏摘要头不该导致失败，实际 %d", rec.Code)
 	}

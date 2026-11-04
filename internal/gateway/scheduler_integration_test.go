@@ -73,6 +73,7 @@ func TestSchedulerFailover(t *testing.T) {
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
 	tok := token(t, st)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("应 200，得到 %d: %s", rec.Code, rec.Body.String())
@@ -129,6 +130,7 @@ func TestFailoverRecords429(t *testing.T) {
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
+	g.requireToken = true
 	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("应换源成功，得到 %d", rec.Code)
@@ -174,6 +176,7 @@ func TestRevalidateGoesToOrigin(t *testing.T) {
 	g.now = func() time.Time { return now }
 
 	tok := token(t, st)
+	g.requireToken = true
 	if rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil); rec.Body.String() != "stale-v1" {
 		t.Fatalf("首次应由镜像填充，实际 %q", rec.Body.String())
 	}

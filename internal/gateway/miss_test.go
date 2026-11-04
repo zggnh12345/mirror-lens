@@ -58,6 +58,7 @@ func TestMirrorMissFailsOverWithoutCooling(t *testing.T) {
 	reg := metrics.Enable()
 	defer metrics.Disable()
 
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("镜像 404 后应换源成功，实际 %d", rec.Code)
@@ -89,6 +90,7 @@ func TestMirrorMissFailsOverWithoutCooling(t *testing.T) {
 // 全部源都明确说没有：返回 404，而不是把「镜像池没有」说成别的错误。
 func TestAllSourcesMissReturns404(t *testing.T) {
 	g, _, _, tok, _ := newMissFixture(t, http.StatusNotFound)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("全部未命中应 404，实际 %d: %s", rec.Code, rec.Body.String())
@@ -98,6 +100,7 @@ func TestAllSourcesMissReturns404(t *testing.T) {
 // 404 后面跟着一个暂时性故障：结果不确定，不能伪装成资源不存在。
 func TestMissFollowedByFaultIsNot404(t *testing.T) {
 	g, _, _, tok, _ := newMissFixture(t, http.StatusInternalServerError)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code == http.StatusNotFound {
 		t.Fatalf("混合结果不能报 404，实际 %d", rec.Code)
@@ -131,6 +134,7 @@ func TestAuthDeniedFailsOverWithoutCooling(t *testing.T) {
 	reg := metrics.Enable()
 	defer metrics.Disable()
 
+	g.requireToken = true
 	rec := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("镜像 403 后应换源成功，实际 %d", rec.Code)
@@ -149,6 +153,7 @@ func TestAuthDeniedFailsOverWithoutCooling(t *testing.T) {
 // 所有源都要鉴权：沿用原来的最终响应选择（最后一个错误），不变成 404。
 func TestAllSourcesAuthDeniedReturns403(t *testing.T) {
 	g, _, _, tok, _ := newMissFixture(t, http.StatusForbidden)
+	g.requireToken = true
 	rec := do(g, tok, "http://gw/raw/o/r/main/a.txt", nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("全部 403 应返回 403，实际 %d", rec.Code)
