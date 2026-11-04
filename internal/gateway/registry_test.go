@@ -445,3 +445,25 @@ func TestRegistryRejectsBadPaths(t *testing.T) {
 		}
 	}
 }
+
+// referrers 是 OCI 可选能力：必须回 404 让客户端跳过。
+// 回 400 会让 docker pull 在 blob 全部下完后直接失败。
+func TestRegistryReferrers404(t *testing.T) {
+	f := newRegFixture(t, false)
+	dig := "sha256:" + strings.Repeat("a", 64)
+	for _, p := range []string{
+		"/v2/library/alpine/referrers/" + dig,
+		"/v2/adguard/adguardhome/referrers/" + dig,
+	} {
+		if w := f.do(t, http.MethodGet, p, nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s 应 404，实际 %d: %s", p, w.Code, w.Body.String())
+		}
+	}
+	// repo 名里本身带 referrers 段的正常路径不能误伤
+	if !isReferrersPath("/v2/foo/referrers/bar/referrers/" + dig) {
+		t.Error("嵌套路段的 referrers 未识别")
+	}
+	if isReferrersPath("/v2/foo/referrers/bar/manifests/latest") {
+		t.Error("清单路径被误判成 referrers")
+	}
+}

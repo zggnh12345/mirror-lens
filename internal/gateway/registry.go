@@ -26,6 +26,12 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "404 Docker 加速未开启", http.StatusNotFound)
 		return
 	}
+	// OCI referrers（SBOM/签名索引）我们不做，回 404 客户端会跳过；
+	// 落到下面的 ErrBadPath 会变成 400，整次 pull 直接失败。
+	if isReferrersPath(r.URL.Path) {
+		http.Error(w, "404 referrers not supported", http.StatusNotFound)
+		return
+	}
 	kind, _, _, err := g.regAd.Route(r.URL.Path)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
@@ -61,6 +67,20 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "404", http.StatusNotFound)
 	}
+}
+
+// isReferrersPath 判断 /v2/<repo>/referrers/<digest>。
+// repo 名里本身可能带 referrers 段，所以要求它后面只剩一层。
+func isReferrersPath(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/v2/")
+	if !ok {
+		return false
+	}
+	i := strings.LastIndex(rest, "/referrers/")
+	if i <= 0 {
+		return false
+	}
+	return !strings.Contains(rest[i+len("/referrers/"):], "/")
 }
 
 func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request) {
