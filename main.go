@@ -31,19 +31,6 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-// trustedRelays 把配置里的私有白名单转成网关用的结构。
-func trustedRelays(in []config.TrustedRelay) []gateway.TrustedRelay {
-	out := make([]gateway.TrustedRelay, 0, len(in))
-	for _, t := range in {
-		out = append(out, gateway.TrustedRelay{
-			Name:    t.Name,
-			URL:     t.URL,
-			Timeout: time.Duration(t.TimeoutMS) * time.Millisecond,
-		})
-	}
-	return out
-}
-
 func main() {
 	// 只留四个开关，其余参数在配置文件里（见 config.example.yaml）
 	cfgPath := flag.String("config", "", "配置文件路径（默认找当前目录的 config.yaml）")
@@ -155,7 +142,6 @@ func main() {
 			TailVerify: !cfg.Parallel.DisableTailVerify,
 		},
 		Private: gateway.PrivateOptions{
-			Trusted:     trustedRelays(cfg.Private.Trusted),
 			BreakAfter:  cfg.Private.BreakAfter,
 			BreakFor:    time.Duration(cfg.Private.BreakSeconds) * time.Second,
 			FallbackSem: cfg.Private.FallbackConcurrency,

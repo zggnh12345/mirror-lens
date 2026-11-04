@@ -70,6 +70,7 @@ type Gateway struct {
 	requireToken  bool                              // 代理路径是否强制 Access Token（false = 匿名放行）
 	cdn           CDNOptions                        // 边缘缓存策略（阶段 8）
 	priv          PrivateOptions                    // 私有请求的中转与回退策略
+	trusted       atomic.Value                      // []TrustedRelay，面板热更新
 	privMu        sync.Mutex
 	privFails     map[string]int
 	privUntil     map[string]time.Time
@@ -172,7 +173,7 @@ func New(st *store.Store, o Options) *Gateway {
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
 		priv:          o.Private,
-		privClient:    &http.Client{},
+		privClient:    newPrivClient(),
 	}
 	if n := o.Private.FallbackSem; n > 0 {
 		gw.privSem = make(chan struct{}, n)

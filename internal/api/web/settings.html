@@ -146,6 +146,16 @@
       <code id="tkPlain"></code>
     </div>
     <div class="tklist" id="tkList"></div>
+
+    <h2 style="margin-top:20px">信任加速站</h2>
+    <p class="desc">私有仓库（带 PAT）的请求只发给这里列出的地址。多个站同时竞速，取最快的一个；全都失败自动回退官方，连续失败会短暂熔断。</p>
+    <div class="saverow" style="margin-top:0;flex-wrap:wrap">
+      <input type="text" id="trName" placeholder="名称" style="flex:0 0 110px">
+      <input type="text" id="trURL" placeholder="https://relay.example.com/{url}" style="flex:1;min-width:180px">
+      <button class="btn primary" id="btnTrusted">加入</button>
+    </div>
+    <div class="hint" id="trMsg"></div>
+    <div class="tklist" id="trList"></div>
   </div>
   </div>
 
@@ -548,6 +558,68 @@ $('#btnLogout').addEventListener('click', async function(){
   try{ await api('/api/logout', {method:'POST'}); }catch(e){}
   location.href = '/login';
 });
+
+/* ---- 信任加速站（私有请求白名单） ---- */
+async function loadTrusted(){
+  var box = $('#trList');
+  try{
+    var d = await api('/api/trusted');
+    var list = d.trusted || [];
+    box.innerHTML = '';
+    if (!list.length){
+      box.innerHTML = '<div class="hint">还没有信任站，私有请求直接走官方。</div>';
+      return;
+    }
+    list.forEach(function(t){
+      var row = document.createElement('div');
+      row.className = 'tkrow';
+      var info = document.createElement('div');
+      info.innerHTML = '<b>' + esc(t.name) + '</b><div class="hint">' + esc(t.url) + '</div>';
+      var ops = document.createElement('div');
+      ops.style.display = 'flex'; ops.style.gap = '6px';
+      var tg = document.createElement('button');
+      tg.className = 'btn';
+      tg.textContent = t.enabled ? '停用' : '启用';
+      tg.addEventListener('click', async function(){
+        try{
+          await api('/api/trusted/' + t.id, {method:'PATCH', body: JSON.stringify({enabled: !t.enabled})});
+          loadTrusted();
+        }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+      });
+      var del = document.createElement('button');
+      del.className = 'btn danger';
+      del.textContent = '移除';
+      del.addEventListener('click', async function(){
+        if (!confirm('从白名单移除「' + t.name + '」？')) return;
+        try{
+          await api('/api/trusted/' + t.id, {method:'DELETE'});
+          toast('已移除');
+          loadTrusted();
+        }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+      });
+      ops.appendChild(tg); ops.appendChild(del);
+      row.appendChild(info); row.appendChild(ops);
+      box.appendChild(row);
+    });
+  }catch(e){
+    box.innerHTML = '<div class="hint bad">' + esc(e.message) + '</div>';
+  }
+}
+
+$('#btnTrusted').addEventListener('click', async function(){
+  var name = $('#trName').value.trim();
+  var url = $('#trURL').value.trim();
+  if (!url){ say($('#trMsg'), '地址不能为空', 'bad'); return; }
+  try{
+    await api('/api/trusted', {method:'POST', body: JSON.stringify({name: name, url: url})});
+    $('#trName').value = ''; $('#trURL').value = '';
+    say($('#trMsg'), '已加入，立刻生效', 'ok');
+    toast('已加入白名单');
+    loadTrusted();
+  }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+});
+
+loadTrusted();
 </script>
 </body>
 </html>

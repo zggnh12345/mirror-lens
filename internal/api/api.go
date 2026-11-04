@@ -72,6 +72,9 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	}
 	if gw != nil {
 		s.gc = gw.GC()
+		if err := s.syncTrusted(); err != nil {
+			log.Printf("api: 载入信任中转白名单失败: %v", err)
+		}
 	}
 	sub, _ := fs.Sub(webFS, "web")
 	mux := http.NewServeMux()
@@ -199,6 +202,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/health", guard(s.health))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
+	mux.HandleFunc("/api/trusted", guard(csrf(s.trusted)))
+	mux.HandleFunc("/api/trusted/", guard(csrf(s.trustedItem)))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))
 	mux.HandleFunc("/api/group-members", guard(csrf(s.groupMembers)))

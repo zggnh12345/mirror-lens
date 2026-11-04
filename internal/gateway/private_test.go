@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
@@ -14,7 +15,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-func privGateway(t *testing.T, priv PrivateOptions) *Gateway {
+func privGateway(t *testing.T, priv PrivateOptions, trusted ...TrustedRelay) *Gateway {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "t.db"))
@@ -26,11 +27,15 @@ func privGateway(t *testing.T, priv PrivateOptions) *Gateway {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(st, Options{
+	g := New(st, Options{
 		Cache:   cs,
 		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
 		Private: priv,
 	})
+	if len(trusted) > 0 {
+		g.SetTrusted(trusted)
+	}
+	return g
 }
 
 func privPlan(t *testing.T, raw string) *adapter.Plan {
@@ -61,9 +66,7 @@ func TestTrustedRelayGetsPAT(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := privGateway(t, PrivateOptions{
-		Trusted: []TrustedRelay{{Name: "my-relay", URL: srv.URL + "/{url}"}},
-	})
+	g := privGateway(t, PrivateOptions{}, TrustedRelay{Name: "my-relay", URL: srv.URL + "/{url}"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "http://gw/gh/o/r/releases/download/v1/private.bin", nil)
 	if !g.tryTrusted(rec, req, privPlan(t, "https://github.com/o/r/releases/download/v1/private.bin")) {
@@ -89,9 +92,7 @@ func TestTrustedFailFallsBack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := privGateway(t, PrivateOptions{
-		Trusted: []TrustedRelay{{Name: "my-relay", URL: srv.URL + "/{url}"}},
-	})
+	g := privGateway(t, PrivateOptions{}, TrustedRelay{Name: "my-relay", URL: srv.URL + "/{url}"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "http://gw/gh/o/r/releases/download/v1/private.bin", nil)
 	if g.tryTrusted(rec, req, privPlan(t, "https://github.com/o/r/releases/download/v1/private.bin")) {
@@ -112,9 +113,7 @@ func TestTrustedUnauthorizedReturnsDirectly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := privGateway(t, PrivateOptions{
-		Trusted: []TrustedRelay{{Name: "my-relay", URL: srv.URL + "/{url}"}},
-	})
+	g := privGateway(t, PrivateOptions{}, TrustedRelay{Name: "my-relay", URL: srv.URL + "/{url}"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "http://gw/gh/o/r/releases/download/v1/private.bin", nil)
 	if !g.tryTrusted(rec, req, privPlan(t, "https://github.com/o/r/releases/download/v1/private.bin")) {
@@ -134,10 +133,7 @@ func TestTrustedBreaksAfterFailures(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := privGateway(t, PrivateOptions{
-		Trusted:    []TrustedRelay{{Name: "my-relay", URL: srv.URL + "/{url}"}},
-		BreakAfter: 2,
-	})
+	g := privGateway(t, PrivateOptions{BreakAfter: 2}, TrustedRelay{Name: "my-relay", URL: srv.URL + "/{url}"})
 	plan := privPlan(t, "https://github.com/o/r/releases/download/v1/private.bin")
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
@@ -162,9 +158,7 @@ func TestTrustedIgnoresPublicPlan(t *testing.T) {
 		atomic.AddInt32(&hits, 1)
 	}))
 	defer srv.Close()
-	g := privGateway(t, PrivateOptions{
-		Trusted: []TrustedRelay{{Name: "my-relay", URL: srv.URL + "/{url}"}},
-	})
+	g := privGateway(t, PrivateOptions{}, TrustedRelay{Name: "my-relay", URL: srv.URL + "/{url}"})
 	p := privPlan(t, "https://github.com/o/r/releases/download/v1/x.bin")
 	p.OfficialOnly = false
 	rec := httptest.NewRecorder()
@@ -174,5 +168,35 @@ func TestTrustedIgnoresPublicPlan(t *testing.T) {
 	}
 	if atomic.LoadInt32(&hits) != 0 {
 		t.Fatal("不应向中转发公开流量")
+	}
+}
+
+// 多个白名单站同时竞速：慢站不拖住快站，只有赢家被使用。
+func TestTrustedRacesRelays(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		w.Write([]byte("slow"))
+	}))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("fast"))
+	}))
+	defer fast.Close()
+
+	g := privGateway(t, PrivateOptions{},
+		TrustedRelay{Name: "slow", URL: slow.URL + "/{url}"},
+		TrustedRelay{Name: "fast", URL: fast.URL + "/{url}"},
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "http://gw/gh/o/r/releases/download/v1/x.bin", nil)
+	start := time.Now()
+	if !g.tryTrusted(rec, req, privPlan(t, "https://github.com/o/r/releases/download/v1/x.bin")) {
+		t.Fatal("至少一个站能成，应返回成功")
+	}
+	if d := time.Since(start); d > 300*time.Millisecond {
+		t.Fatalf("应等最快的站而不是最慢的，耗时 %v", d)
+	}
+	if rec.Body.String() != "fast" || rec.Header().Get("X-ML-Relay") != "fast" {
+		t.Fatalf("应由快的站获胜，实际 relay=%s body=%q", rec.Header().Get("X-ML-Relay"), rec.Body.String())
 	}
 }
