@@ -577,11 +577,6 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 	hedged := g.hedge.Enabled && len(targets) > 1 && !targets[0].fb && len(plan.Fallbacks) == 0
 	for i := 0; i < len(targets); i++ {
 		t := targets[i]
-		if t.fb && plan.OnFallback != nil {
-			// 主站点都失败了才走到这里：记住这个镜像其实在别处
-			// （记逻辑站点 ghcr.io，不是加速源 host，否则下次拼不出正确路径）。
-			plan.OnFallback(t.fbHost)
-		}
 		start := time.Now()
 		var (
 			e      *store.CacheEntry
@@ -616,6 +611,12 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 		act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, err)
 		switch act {
 		case settleDone:
+			// 只有真从这个站点拿到东西才记住它。之前是「开始试就记」，
+			// 主链成功、备链被取消也会写，于是第一次请求就把镜像锁死在
+			// ghcr.io，后续全量 404/401（library/golang 实测如此）。
+			if t.fb && plan.OnFallback != nil {
+				plan.OnFallback(t.fbHost)
+			}
 			return entry, nm, nil
 		case settleAbort:
 			return nil, false, lerr

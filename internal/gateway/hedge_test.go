@@ -215,3 +215,32 @@ func TestHedgeClientCancel(t *testing.T) {
 		t.Fatalf("取消后应立刻返回，实际 %v", d)
 	}
 }
+
+// 主链赢的时候不能把镜像记到备用站点上。fetchRace 是并行起两条链的，
+// 旧代码在备链进入 fetchSeq 的瞬间就调 OnFallback，于是第一次请求
+// （主链成功、备链随后被取消）就把 library/golang 永久记成 ghcr.io，
+// 之后每次直接回 ghcr，全部 404/401 —— 线上实测的 502 就是这么来的。
+func TestRaceMainWinDoesNotRememberFallback(t *testing.T) {
+	g, _, _, _, _ := newGW(t, true)
+	g.hedge = HedgeOptions{Enabled: false}
+	fast := httptest.NewServer(&fakeUpstream{body: "hello", etag: `"v1"`})
+	defer fast.Close()
+	slow := httptest.NewServer(&fakeUpstream{body: "hello", etag: `"v1"`, delay: 400 * time.Millisecond})
+	defer slow.Close()
+
+	var called atomic.Int32
+	plan := &adapter.Plan{
+		CacheKey:  "docker:manifest:registry-1.docker.io/library/golang:1.23-alpine",
+		Cacheable: true,
+		OnFallback: func(h string) { called.Add(1) },
+	}
+	su, _ := url.Parse(slow.URL + "/file")
+	fb := []fetchTarget{{u: su, fb: true, fbHost: "ghcr.io"}}
+	if _, _, err := g.fetchRace(context.Background(), plan, hedgeTargets(fast), fb); err != nil {
+		t.Fatalf("fetchRace: %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if n := called.Load(); n != 0 {
+		t.Fatalf("主链成功，却记了 %d 次 fallback 站点", n)
+	}
+}

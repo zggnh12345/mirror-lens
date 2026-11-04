@@ -611,11 +611,6 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	)
 	for i, t := range targets {
 		tt := t
-		if t.fb && plan.OnFallback != nil {
-			// 主站点都失败了才走到这里：记住逻辑站点（ghcr.io），
-			// 不是加速源 host，否则下次拼不出正确路径。
-			plan.OnFallback(t.fbHost)
-		}
 		start := time.Now()
 		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)
 		if rerr != nil {
@@ -656,6 +651,12 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 		if t.c != nil {
 			src = t.c.Name
 			plan.Source = src
+		}
+		// 成功拿到可用响应才记住这个站点。之前写成「开始试就记」，
+		// 主链成功、备链被取消时也会写，一次请求就把镜像锁死在
+		// ghcr.io，后续全部 404/401。
+		if tt.fb && plan.OnFallback != nil {
+			plan.OnFallback(tt.fbHost)
 		}
 		chosen, chosenT = &tt, start
 		break
