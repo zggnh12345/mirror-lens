@@ -645,6 +645,9 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	started := 0
 	launch := func(i int) {
 		started++
+		if i > 0 {
+			metrics.HedgeTrigger()
+		}
 		go func() {
 			st := time.Now()
 			up, err := g.openUpstream(hctx, plan, prev, targets[i].u)
@@ -671,6 +674,12 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	var graceC <-chan time.Time
 	var held *hedgeRes
 	var lastErr error
+	win := -1
+	defer func() {
+		if win >= 0 {
+			metrics.HedgeWin(win + 1)
+		}
+	}()
 
 	drop := func(r hedgeRes) {
 		if r.up != nil {
@@ -701,6 +710,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 				if held != nil {
 					drop(*held)
 				}
+				win = r.idx
 				return r.up, r.idx, started, nil
 			case http.StatusOK:
 				if prev != nil && started > 1 && held == nil {
@@ -716,8 +726,10 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 					// 宽限期内首选源也回了 200：两个都是完整响应，
 					// 用排名靠前的那个，后到的丢掉。
 					drop(r)
+					win = held.idx
 					return held.up, held.idx, started, nil
 				}
+				win = r.idx
 				return r.up, r.idx, started, nil
 			default:
 				code := r.up.resp.StatusCode
@@ -750,6 +762,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 			graceC = nil
 			h := held
 			held = nil
+			win = h.idx
 			return h.up, h.idx, started, nil
 		case <-ctx.Done():
 			if held != nil {
@@ -759,6 +772,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 		}
 	}
 	if held != nil {
+		win = held.idx
 		return held.up, held.idx, started, nil
 	}
 	if lastErr == nil {

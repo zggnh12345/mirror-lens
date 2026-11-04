@@ -77,15 +77,20 @@ type Registry struct {
 	cache map[cacheKey]uint64
 	tp    map[string]*hist
 
-	srcReq   map[srcKey]uint64
-	srcResp  map[string]uint64 // 收到真实响应的次数（429 率分母）
-	src429   map[string]uint64
-	srcMiss  map[srcMissKey]uint64
-	srcDur   map[srcDurKey]*hist
-	srcTTFB  map[srcDurKey]*hist
-	inflight map[int64]int
-	srclimit map[int64]int
-	limited  map[string]uint64
+	srcReq  map[srcKey]uint64
+	srcResp map[string]uint64 // 收到真实响应的次数（429 率分母）
+	src429  map[string]uint64
+	srcMiss map[srcMissKey]uint64
+
+	// 响应头对冲：触发次数、按排名统计的胜出次数、额外发出的上游请求。
+	hedgeTrigger uint64
+	hedgeWins    [2]uint64
+	hedgeExtra   uint64
+	srcDur       map[srcDurKey]*hist
+	srcTTFB      map[srcDurKey]*hist
+	inflight     map[int64]int
+	srclimit     map[int64]int
+	limited      map[string]uint64
 
 	// 快照 gauge 由 janitor 刷新：抓取时重扫整盘，百万文件会卡死。
 	haveCache   bool
@@ -250,6 +255,32 @@ type srcMissKey struct {
 
 // SourceMiss 记一次源上没有该资源。镜像少一个文件不代表源站坏了，
 // 故不进健康分、不进避退，单独计数。
+// HedgeTrigger 记录一次对冲触发（也就是多打出了一个上游请求）。
+func HedgeTrigger() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.hedgeTrigger++
+	r.hedgeExtra++
+	r.mu.Unlock()
+}
+
+// HedgeWin 记录胜出者的候选排名（1 = 首选源，2 = 备用源）。
+func HedgeWin(rank int) {
+	if rank < 1 || rank > 2 {
+		return
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.hedgeWins[rank-1]++
+	r.mu.Unlock()
+}
+
 func SourceMiss(kind string, code int) {
 	if code != http.StatusNotFound && code != http.StatusGone {
 		return
@@ -613,6 +644,18 @@ func (r *Registry) render() []byte {
 		for _, k := range sortedMissKeys(r.srcMiss) {
 			fmt.Fprintf(&b, "%ssource_miss_total{kind=%q,code=%q} %d\n", prefix, k.kind, strconv.Itoa(k.code), r.srcMiss[k])
 		}
+	}
+	if r.hedgeTrigger > 0 {
+		b.WriteString("# HELP " + prefix + "hedge_triggered_total 触发响应头对冲的次数\n")
+		b.WriteString("# TYPE " + prefix + "hedge_triggered_total counter\n")
+		fmt.Fprintf(&b, "%shedge_triggered_total %d\n", prefix, r.hedgeTrigger)
+		b.WriteString("# HELP " + prefix + "hedge_extra_requests_total 对冲额外发出的上游请求数\n")
+		b.WriteString("# TYPE " + prefix + "hedge_extra_requests_total counter\n")
+		fmt.Fprintf(&b, "%shedge_extra_requests_total %d\n", prefix, r.hedgeExtra)
+		b.WriteString("# HELP " + prefix + "hedge_wins_total 对冲中按排名胜出的次数\n")
+		b.WriteString("# TYPE " + prefix + "hedge_wins_total counter\n")
+		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"1\"} %d\n", prefix, r.hedgeWins[0])
+		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"2\"} %d\n", prefix, r.hedgeWins[1])
 	}
 	if len(r.srcResp) > 0 {
 		b.WriteString("# HELP " + prefix + "source_http_responses_total 收到真实 HTTP 响应的次数（429 率的分母）\n")
