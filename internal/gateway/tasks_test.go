@@ -95,3 +95,23 @@ func TestTaskCarriesParallelInfo(t *testing.T) {
 		}
 	}
 }
+
+// 单源传输也要报出「谁在供数」：面板按 bytes>0 过滤源标签，
+// 回源/单流从不分账的话，界面上只剩「单源」两个字。
+func TestSingleSourceTaskReportsSource(t *testing.T) {
+	r := newTaskReg()
+	task := r.start("raw", "one-china.srs", "stream", 4<<20, []string{"镜像A"})
+	task.add(1 << 20)
+
+	snap := r.snapshot()
+	if len(snap.Active) != 1 {
+		t.Fatalf("应有 1 条活跃任务，得到 %d", len(snap.Active))
+	}
+	a := snap.Active[0]
+	if len(a.Sources) != 1 {
+		t.Fatalf("应报出 1 台源，得到 %+v", a.Sources)
+	}
+	if a.Sources[0].Name != "镜像A" || a.Sources[0].Bytes != 1<<20 {
+		t.Fatalf("源名或字节不对: %+v", a.Sources[0])
+	}
+}

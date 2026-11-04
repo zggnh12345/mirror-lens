@@ -149,6 +149,11 @@ func (t *liveTask) add(n int64) {
 		return
 	}
 	cur := t.done.Add(n)
+	// 单源传输没有按源分账的钩子，把字节记到唯一那台源上；
+	// 否则 shares[0] 恒为 0，面板按 bytes>0 过滤后就只剩「单源」两个字。
+	if len(t.shares) == 1 {
+		t.shares[0].Add(n)
+	}
 	if t.reg != nil {
 		t.reg.addThrough(n)
 	}
