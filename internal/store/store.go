@@ -413,6 +413,9 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 
 const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id`
 
+const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
+
+
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
@@ -438,23 +441,64 @@ func (s *Store) ListSources() ([]Source, error) {
 		return nil, err
 	}
 	since := time.Now().Add(-24 * time.Hour).Unix()
+	// 每个源两种类型各查一次 LastCheck + uptime 就是 372 条 SQL（93 源 × 2 × 2），
+	// 单连接串行时整轮接近 100ms，而面板每 15 秒就要拉一次。
+	// 这里把「最近一条」prepare 成两条语句复用，uptime 合成一条聚合。
+	type key struct {
+		id   int64
+		kind string
+	}
+	lastT2, err := s.db.Prepare(`SELECT ` + checkCols + ` FROM checks
+		WHERE source_id=? AND kind=? AND tier>=2 ORDER BY ts DESC, id DESC LIMIT 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer lastT2.Close()
+	lastAny, err := s.db.Prepare(`SELECT ` + checkCols + ` FROM checks
+		WHERE source_id=? AND kind=? ORDER BY ts DESC, id DESC LIMIT 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer lastAny.Close()
+
+	uptimes := map[key]float64{}
+	urows, err := s.db.Query(`SELECT source_id,kind,COUNT(*),COALESCE(SUM(ok),0)
+		FROM checks WHERE ts>=? AND tier>=2 GROUP BY source_id,kind`, since)
+	if err != nil {
+		return nil, err
+	}
+	for urows.Next() {
+		var k key
+		var total, ok int64
+		if err := urows.Scan(&k.id, &k.kind, &total, &ok); err == nil && total > 0 {
+			uptimes[k] = float64(ok) / float64(total)
+		}
+	}
+	urows.Close()
+
 	for i := range out {
 		out[i].Last = map[string]*Check{}
 		out[i].Uptime = map[string]float64{}
 		for _, k := range []string{"docker", "github"} {
-			if c, err := s.LastCheck(out[i].ID, k); err == nil && c != nil {
+			// 优先取真实校验（tier>=2）的一条，没有才回退到存活探测，
+			// 与原先 ORDER BY (tier>=2) DESC 的语义一致。
+			c, err := scanCheckRow(lastT2.QueryRow(out[i].ID, k))
+			if err == nil && c == nil {
+				c, err = scanCheckRow(lastAny.QueryRow(out[i].ID, k))
+			}
+			if err == nil && c != nil {
 				out[i].Last[k] = c
 			}
-			out[i].Uptime[k] = s.uptime(out[i].ID, since, k)
+			if v, ok := uptimes[key{out[i].ID, k}]; ok {
+				out[i].Uptime[k] = v
+			} else {
+				out[i].Uptime[k] = -1
+			}
 		}
 	}
 
 	// P95 一次查完再分桶，逐源查会变成 N 条 SQL。
 	// 只算成功样本：失败样本的「延迟」是超时时间，混进去量的是耐心不是速度。
-	type key struct {
-		id   int64
-		kind string
-	}
 	samples := map[key][]int64{}
 	prows, err := s.db.Query(`SELECT source_id,kind,latency_ms FROM checks
 		WHERE ts>=? AND tier>=2 AND ok=1 AND latency_ms>0`, since)
@@ -808,10 +852,15 @@ func (s *Store) AddCheck(c Check) error {
 
 // LastCheck 返回某源某类型最近一次检测，优先 tier>=2 的真实探测。
 func (s *Store) LastCheck(sourceID int64, kind string) (*Check, error) {
+	return scanCheckRow(s.db.QueryRow(`SELECT `+checkCols+` FROM checks
+		WHERE source_id=? AND kind=? ORDER BY (tier>=2) DESC, ts DESC, id DESC LIMIT 1`, sourceID, kind))
+}
+
+// scanCheckRow 把一行检测记录扫进 Check；没有记录时返回 (nil, nil)。
+func scanCheckRow(row *sql.Row) (*Check, error) {
 	var c Check
-	err := s.db.QueryRow(`SELECT id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error
-		FROM checks WHERE source_id=? AND kind=? ORDER BY (tier>=2) DESC, ts DESC LIMIT 1`, sourceID, kind).
-		Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps, &c.Digest, &c.DigestOK, &c.BlobOK, &c.TTFBMS, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error)
+	err := row.Scan(&c.ID, &c.SourceID, &c.Kind, &c.TS, &c.Tier, &c.OK, &c.LatencyMS, &c.SpeedKBps,
+		&c.Digest, &c.DigestOK, &c.BlobOK, &c.TTFBMS, &c.TLSOK, &c.CertDays, &c.HTTPCode, &c.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -875,17 +924,6 @@ func (s *Store) ObserveStreak(sourceID int64, kind string) (pass, fail int) {
 		fail++
 	}
 	return pass, fail
-}
-
-// uptime 返回 since 之后该类型的成功率；无样本返回 -1。
-func (s *Store) uptime(sourceID, since int64, kind string) float64 {
-	var total, ok int
-	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(ok),0) FROM checks WHERE source_id=? AND kind=? AND ts>=? AND tier>=2`, sourceID, kind, since).
-		Scan(&total, &ok)
-	if err != nil || total == 0 {
-		return -1
-	}
-	return float64(ok) / float64(total)
 }
 
 // Series 返回某源最近 limit 条 tier>=2 的检测（两种类型混合），按时间正序。

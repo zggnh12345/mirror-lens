@@ -1036,7 +1036,9 @@ async function loadLive(){
 }
 setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadLive(); }, 2000);
 
-setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')){ load(true); loadMetrics(); loadLive(); } }, 15000);
+// 列表里的源状态最快也要几分钟才变一次，60 秒足够；指标曲线仍按 15 秒采样。
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) load(true); }, 60000);
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadMetrics(); }, 15000);
 document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); } });
 </script>
 </body>

@@ -97,8 +97,8 @@ Docker 和 GitHub 混在一起排，每行两个维度分开标：
 
 | 级别 | 默认间隔 | Docker | GitHub |
 |---|---|---|---|
-| L1 存活 | 3 分钟 | `GET /v2/` + 证书 | `GET` 一个 raw 文件 |
-| L2 可用 | 15 分钟 | 完整 token 流程 + 真 manifest | 校验 raw 文件 SHA-256 |
+| L1 存活 | 15 分钟 | `GET /v2/` + 证书 | `GET` 一个 raw 文件 |
+| L2 可用 | 60 分钟 | 完整 token 流程 + 真 manifest | 校验 raw 文件 SHA-256 |
 | L3 质量 | 6 小时 | 下载 layer 测速 + digest 比对 | 下载真实 release + SHA-256 + 测速 |
 
 判定规则：

@@ -947,8 +947,8 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 var settingKeys = map[string]struct {
 	def, min, max int
 }{
-	"l1_minutes":        {3, 1, 1440},
-	"l2_minutes":        {15, 2, 1440},
+	"l1_minutes":        {15, 1, 1440},
+	"l2_minutes":        {60, 2, 1440},
 	"l3_minutes":        {360, 10, 10080},
 	"session_ttl_hours": {168, 1, 8760},
 	"export_limit":      {6, 1, 20},
