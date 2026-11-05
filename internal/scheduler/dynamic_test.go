@@ -11,7 +11,7 @@ func dynSched(dynamic bool, max int) *Scheduler {
 }
 
 func TestGateBlocksAtLimitAndReleases(t *testing.T) {
-	g := newGate(2, 4)
+	g := newGate(1, 2, 4)
 	ctx := context.Background()
 	r1, err := g.acquire(ctx)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestGateBlocksAtLimitAndReleases(t *testing.T) {
 }
 
 func TestGateAcquireHonorsContext(t *testing.T) {
-	g := newGate(1, 4)
+	g := newGate(1, 1, 4)
 	release, _ := g.acquire(context.Background())
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -59,7 +59,7 @@ func TestGateAcquireHonorsContext(t *testing.T) {
 }
 
 func TestGateSetLimitWakesWaiters(t *testing.T) {
-	g := newGate(1, 4)
+	g := newGate(1, 1, 4)
 	release, _ := g.acquire(context.Background())
 	got := make(chan struct{})
 	go func() {

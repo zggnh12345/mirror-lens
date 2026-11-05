@@ -353,13 +353,13 @@ func (s *Scheduler) gateFor(id int64) *gate {
 		return g
 	}
 	// 从配置上限起步，没样本不做猜测：有证据才退，证明恢复再涨。
-	g := newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
+	g := newGate(id, s.cfg.MaxPerSource, s.cfg.MaxPerSource)
 	s.gates[id] = g
 	// 与 Forget 撞车时两种顺序都不会把闸门留在表里，
 	// 本次请求仍拿到临时闸门继续跑。
 	if s.isGone(id) {
 		delete(s.gates, id)
-		return newGate(s.cfg.MaxPerSource, s.cfg.MaxPerSource)
+		return newGate(id, s.cfg.MaxPerSource, s.cfg.MaxPerSource)
 	}
 	return g
 }

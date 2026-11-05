@@ -17,6 +17,7 @@ import (
 // 不用带缓冲 channel 是因为 cap 建好就固定；这里靠关闭并重建 wait
 // 通道广播唤醒，ctx 取消也能立刻退出。
 type gate struct {
+	id       int64
 	mu       sync.Mutex
 	inflight int
 	limit    int
@@ -24,34 +25,73 @@ type gate struct {
 	wait     chan struct{}
 	// queued 记录因满员而等待的次数，Observe 据此判断还有没有扩容空间。
 	queued int
+	// P0 观测专用：只读累计，不参与任何调度判断。
+	start time.Time
+	since time.Time
+	area  float64 // 并发数对时间的积分（并发·秒）
 }
 
-func newGate(limit, max int) *gate {
+func newGate(id int64, limit, max int) *gate {
 	if limit < 1 {
 		limit = 1
 	}
 	if max < limit {
 		max = limit
 	}
-	return &gate{limit: limit, max: max, wait: make(chan struct{})}
+	now := time.Now()
+	return &gate{id: id, limit: limit, max: max, wait: make(chan struct{}), start: now, since: now}
+}
+
+// settle 把上次结算以来的并发面积累加进 area，调用方持锁。
+func (g *gate) settle() {
+	now := time.Now()
+	if !g.since.IsZero() {
+		g.area += float64(g.inflight) * now.Sub(g.since).Seconds()
+	}
+	g.since = now
+}
+
+// avg 返回自闸门创建以来并发占用的时间加权均值，调用方持锁。
+func (g *gate) avg() float64 {
+	if g.start.IsZero() {
+		return 0
+	}
+	elapsed := time.Since(g.start).Seconds()
+	if elapsed <= 0 {
+		return 0
+	}
+	return (g.area + float64(g.inflight)*time.Since(g.since).Seconds()) / elapsed
 }
 
 func (g *gate) acquire(ctx context.Context) (func(), error) {
+	var waitStart time.Time
 	for {
 		g.mu.Lock()
 		if g.inflight < g.limit {
+			g.settle()
 			g.inflight++
+			avg := g.avg()
 			g.mu.Unlock()
+			if !waitStart.IsZero() {
+				metrics.SourceGateWait(g.id, time.Since(waitStart))
+			}
+			metrics.SourceInflightAvg(g.id, avg)
 			var once sync.Once
 			return func() {
 				once.Do(func() {
 					g.mu.Lock()
+					g.settle()
 					g.inflight--
 					close(g.wait)
 					g.wait = make(chan struct{})
+					avg := g.avg()
 					g.mu.Unlock()
+					metrics.SourceInflightAvg(g.id, avg)
 				})
 			}, nil
+		}
+		if waitStart.IsZero() {
+			waitStart = time.Now()
 		}
 		g.queued++
 		ch := g.wait

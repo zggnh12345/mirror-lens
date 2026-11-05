@@ -9,7 +9,7 @@ import (
 // 排队者取消（客户端断开）后，queued 必须还回去：
 // 只加不减会让调度一直以为还有人在排队，从而误判该扩容。
 func TestGateQueuedRollsBackOnCancel(t *testing.T) {
-	g := newGate(1, 4)
+	g := newGate(1, 1, 4)
 	rel, err := g.acquire(context.Background())
 	if err != nil {
 		t.Fatal(err)

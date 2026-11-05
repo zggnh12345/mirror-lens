@@ -90,7 +90,12 @@ type Registry struct {
 	srcTTFB      map[srcDurKey]*hist
 	inflight     map[int64]int
 	srclimit     map[int64]int
-	limited      map[string]uint64
+	// P0 观测：闸门排队时长、并发占用的时间加权均值。
+	gateWait    map[int64]*hist
+	inflightAvg map[int64]float64
+	// forgotten 记住已删除的源：在途请求的迟到回调不能再把序列写回来。
+	forgotten map[int64]bool
+	limited   map[string]uint64
 
 	// 快照 gauge 由 janitor 刷新：抓取时重扫整盘，百万文件会卡死。
 	haveCache   bool
@@ -118,29 +123,32 @@ type Registry struct {
 // New 返回空注册表。
 func New() *Registry {
 	return &Registry{
-		httpReq:    map[httpKey]uint64{},
-		httpDur:    map[string]*hist{},
-		httpBytes:  map[string]uint64{},
-		cache:      map[cacheKey]uint64{},
-		tp:         map[string]*hist{},
-		srcReq:     map[srcKey]uint64{},
-		srcResp:    map[string]uint64{},
-		src429:     map[string]uint64{},
-		srcMiss:    map[srcMissKey]uint64{},
-		srcDur:     map[srcDurKey]*hist{},
-		srcTTFB:    map[srcDurKey]*hist{},
-		inflight:   map[int64]int{},
-		srclimit:   map[int64]int{},
-		limited:    map[string]uint64{},
-		sources:    map[SourceStat]uint64{},
-		hitHits:    map[string]*atomic.Uint64{},
-		hitTotal:   map[string]*atomic.Uint64{},
-		hitRatio:   map[string]float64{},
-		lastHits:   map[string]uint64{},
-		lastTotal:  map[string]uint64{},
-		sceneTotal: map[string]*atomic.Uint64{},
-		sceneDelta: map[string]uint64{},
-		lastScene:  map[string]uint64{},
+		httpReq:     map[httpKey]uint64{},
+		httpDur:     map[string]*hist{},
+		httpBytes:   map[string]uint64{},
+		cache:       map[cacheKey]uint64{},
+		tp:          map[string]*hist{},
+		srcReq:      map[srcKey]uint64{},
+		srcResp:     map[string]uint64{},
+		src429:      map[string]uint64{},
+		srcMiss:     map[srcMissKey]uint64{},
+		srcDur:      map[srcDurKey]*hist{},
+		srcTTFB:     map[srcDurKey]*hist{},
+		inflight:    map[int64]int{},
+		srclimit:    map[int64]int{},
+		gateWait:    map[int64]*hist{},
+		inflightAvg: map[int64]float64{},
+		forgotten:   map[int64]bool{},
+		limited:     map[string]uint64{},
+		sources:     map[SourceStat]uint64{},
+		hitHits:     map[string]*atomic.Uint64{},
+		hitTotal:    map[string]*atomic.Uint64{},
+		hitRatio:    map[string]float64{},
+		lastHits:    map[string]uint64{},
+		lastTotal:   map[string]uint64{},
+		sceneTotal:  map[string]*atomic.Uint64{},
+		sceneDelta:  map[string]uint64{},
+		lastScene:   map[string]uint64{},
 	}
 }
 
@@ -320,6 +328,12 @@ func SourceInflight(id int64, delta int) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.forgotten[id] {
+		if delta <= 0 {
+			return // 已删除：迟到的退出不该复活序列
+		}
+		delete(r.forgotten, id) // 同 id 的新请求：源又活了
+	}
 	v := r.inflight[id] + delta
 	if v <= 0 {
 		delete(r.inflight, id)
@@ -339,6 +353,9 @@ func ForgetSource(id int64) {
 	defer r.mu.Unlock()
 	delete(r.inflight, id)
 	delete(r.srclimit, id)
+	delete(r.gateWait, id)
+	delete(r.inflightAvg, id)
+	r.forgotten[id] = true
 }
 
 // SourceLimit 记录某源当前并发上限（动态调度会改）。
@@ -349,7 +366,42 @@ func SourceLimit(id int64, n int) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	delete(r.forgotten, id) // 有新上报说明源存在
 	r.srclimit[id] = n
+}
+
+// SourceGateWait 记一次因该源并发满员而排队等待的时长。
+// 只统计真正等待过并最终拿到名额的请求，ctx 取消不计。
+func SourceGateWait(id int64, d time.Duration) {
+	r := current.Load()
+	if r == nil || id == 0 || d <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forgotten[id] {
+		return
+	}
+	h := r.gateWait[id]
+	if h == nil {
+		h = newHist(durBuckets)
+		r.gateWait[id] = h
+	}
+	h.observe(d.Seconds(), durBuckets)
+}
+
+// SourceInflightAvg 记录该源并发占用数的时间加权平均值。
+func SourceInflightAvg(id int64, avg float64) {
+	r := current.Load()
+	if r == nil || id == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forgotten[id] {
+		return
+	}
+	r.inflightAvg[id] = avg
 }
 
 // RateLimited 记一次入口限流拒绝。
@@ -694,6 +746,30 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "source_inflight gauge\n")
 		for _, id := range ids {
 			fmt.Fprintf(&b, "%ssource_inflight{source_id=%q} %d\n", prefix, strconv.FormatInt(id, 10), r.inflight[id])
+		}
+	}
+	if len(r.gateWait) > 0 {
+		wids := make([]int64, 0, len(r.gateWait))
+		for id := range r.gateWait {
+			wids = append(wids, id)
+		}
+		sort.Slice(wids, func(i, j int) bool { return wids[i] < wids[j] })
+		b.WriteString("# HELP " + prefix + "source_gate_wait_seconds 因该源并发满员而排队等待的时长（秒）\n")
+		b.WriteString("# TYPE " + prefix + "source_gate_wait_seconds histogram\n")
+		for _, id := range wids {
+			writeHistBody(&b, prefix+"source_gate_wait_seconds", "source_id", strconv.FormatInt(id, 10), r.gateWait[id], durBuckets)
+		}
+	}
+	if len(r.inflightAvg) > 0 {
+		aids := make([]int64, 0, len(r.inflightAvg))
+		for id := range r.inflightAvg {
+			aids = append(aids, id)
+		}
+		sort.Slice(aids, func(i, j int) bool { return aids[i] < aids[j] })
+		b.WriteString("# HELP " + prefix + "source_inflight_avg 源并发占用数的时间加权平均值（自启动起）\n")
+		b.WriteString("# TYPE " + prefix + "source_inflight_avg gauge\n")
+		for _, id := range aids {
+			fmt.Fprintf(&b, "%ssource_inflight_avg{source_id=%q} %s\n", prefix, strconv.FormatInt(id, 10), trimFloat(r.inflightAvg[id]))
 		}
 	}
 	if len(r.limited) > 0 {
