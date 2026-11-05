@@ -1005,7 +1005,7 @@ function renderLive(d){
     }).join('');
     const more = srcs.length > 3 ? '<span class="lvmore">+'+(srcs.length-3)+'</span>' : '';
     // 回源 / 下发 / 缓存命中都是真实传输，别都写成「单源」。
-    const modes = {parallel:'分片并行', stream:'单源', fetch:'回源', served:'下发', cache:'缓存命中'};
+    const modes = {parallel:'分片并行', stream:'单源', fetch:'回源', served:'下发', cache:'缓存命中', relay:'中转'};
     let mode = modes[t.mode] || t.mode || '';
     // 缓存键带 gh:/docker: 之类前缀，手机上没必要占宽度。
     const name = (t.target || '').replace(/^[a-z]+:/, '');
@@ -1024,7 +1024,8 @@ function renderLive(d){
     ? '<div class="lvmore-row">另有 '+(act.length-shown.length)+' 个任务在跑</div>' : '';
   document.getElementById('lvRows').innerHTML = rows + extra;
   document.getElementById('lvRecent').innerHTML = rec.slice(0,3).map(function(r){
-    return '<div>'+ (r.ok?'✓':'✗') +' '+esc(r.target)+' · '+fmtB(r.total)+' · '+r.dur_s.toFixed(1)+'s</div>';
+    var src = (r.sources && r.sources.length) ? ' · '+esc(r.sources.join(', ')) : '';
+    return '<div>'+ (r.ok?'✓':'✗') +' '+esc(r.target)+src+' · '+fmtB(r.total)+' · '+r.dur_s.toFixed(1)+'s</div>';
   }).join('');
 }
 async function loadLive(){

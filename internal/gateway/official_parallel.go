@@ -141,6 +141,16 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	h.Set("Content-Length", strconv.FormatInt(total, 10))
 	h.Set("X-ML-Cache", "BYPASS")
 	h.Set("X-ML-Parallel", fmt.Sprintf("%d 段 / 1 源 / %d 并发", n, workers))
+	// 私有分片同样登记成任务：面板要看得到进度、速度和实际回源的域名。
+	task := g.tasks.start(plan.Kind, planLabel(plan), "parallel", total, []string{plan.Upstream.Host})
+	task.setPar(n, workers)
+	defer func() {
+		ok := task != nil && task.done.Load() >= total
+		task.finish(ok)
+	}()
+	if task != nil {
+		w = &taskWriter{ResponseWriter: w, t: task}
+	}
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 	write := func(b []byte) bool {

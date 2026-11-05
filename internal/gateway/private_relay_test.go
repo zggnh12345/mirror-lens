@@ -114,6 +114,18 @@ func TestRelayResumesAfterTruncation(t *testing.T) {
 	if bypass != int64(len(data)) {
 		t.Fatalf("流量账应记 %d 字节，实际 %d", len(data), bypass)
 	}
+	// 面板的「正在加速 / 刚刚完成」要能看到这条私有请求。
+	snap := g.ActiveTasks()
+	if len(snap.Recent) == 0 {
+		t.Fatal("私有请求应登记成任务，否则面板看不到")
+	}
+	r := snap.Recent[0]
+	if r.Mode != "relay" || !r.OK || r.Total != int64(len(data)) {
+		t.Fatalf("任务记录不对: mode=%s ok=%v total=%d", r.Mode, r.OK, r.Total)
+	}
+	if len(r.Sources) != 1 || r.Sources[0] != "自建站" {
+		t.Fatalf("应记录中转名，实际 %v", r.Sources)
+	}
 }
 
 // 中转不认 Range（续传请求仍回 200 全量）：跳过已写部分后继续，不能重复写。

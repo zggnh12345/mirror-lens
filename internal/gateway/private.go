@@ -239,6 +239,17 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 			g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), sent)
 		}
 	}()
+	// 和公开请求一样登记成任务，面板才能看到进度、速度和实际用的中转名。
+	// 只有 200 才算一次下载；401 之类透传不占位置。
+	var task *liveTask
+	if resp.StatusCode == http.StatusOK {
+		task = g.tasks.start(plan.Kind, planLabel(plan), "relay", resp.ContentLength, []string{t.Name})
+	}
+	ok := false
+	defer func() { task.finish(ok) }()
+	if task != nil {
+		w = &taskWriter{ResponseWriter: w, t: task}
+	}
 	h := w.Header()
 	copyHeader(h, resp.Header, "Content-Type", "Content-Length", "Content-Disposition",
 		"Accept-Ranges", "ETag", "Last-Modified")
@@ -252,6 +263,7 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 	total := resp.ContentLength
 	if resp.StatusCode != http.StatusOK || total <= 0 {
 		sent, _ = io.Copy(w, resp.Body)
+		ok = true
 		return
 	}
 
@@ -274,12 +286,16 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 	}
 	if off >= total {
 		sent = off
+		ok = true
 		return
 	}
 
 	log.Printf("信任中转 %s 断在 %d/%d，开始续传", t.Name, off, total)
 	done := g.resumeRelay(ctx, w, t, plan, off, total, flusher)
 	sent = done
+	if done >= total {
+		ok = true
+	}
 	if done < total {
 		log.Printf("信任中转 %s 续传未完成：还差 %d 字节", t.Name, total-done)
 	} else {

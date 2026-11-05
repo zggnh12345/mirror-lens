@@ -53,14 +53,15 @@ type ParInfo struct {
 
 // RecentTask 是刚结束的一条；不落库，只留最近几条。
 type RecentTask struct {
-	ID      int64   `json:"id"`
-	Kind    string  `json:"kind"`
-	Target  string  `json:"target"`
-	Mode    string  `json:"mode"`
-	Total   int64   `json:"total"`
-	OK      bool    `json:"ok"`
-	DurS    float64 `json:"dur_s"`
-	EndedAt int64   `json:"ended_at"`
+	ID      int64    `json:"id"`
+	Kind    string   `json:"kind"`
+	Target  string   `json:"target"`
+	Mode    string   `json:"mode"`
+	Total   int64    `json:"total"`
+	OK      bool     `json:"ok"`
+	DurS    float64  `json:"dur_s"`
+	EndedAt int64    `json:"ended_at"`
+	Sources []string `json:"sources,omitempty"`
 }
 
 // ActiveSnapshot 是 /api/accel/active 的响应。
@@ -224,6 +225,7 @@ func (t *liveTask) finish(ok bool) {
 		OK:      ok,
 		DurS:    time.Since(t.started).Seconds(),
 		EndedAt: time.Now().Unix(),
+		Sources: append([]string(nil), t.names...),
 	}
 	r.recent = append([]RecentTask{rec}, r.recent...)
 	if len(r.recent) > recentKeep {
