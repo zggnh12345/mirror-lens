@@ -4,7 +4,10 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +19,12 @@ import (
 
 // Duration 让配置文件里能写 "5m" / "30s"，也兼容直接写秒数。
 type Duration struct{ time.Duration }
+
+// MarshalYAML 输出可被 UnmarshalYAML 读回的字符串（如 5m0s）。
+// 没有它时 yaml 会把结构体展开成 {duration: ...}，整份写出后无法再解析。
+func (d Duration) MarshalYAML() (interface{}, error) {
+	return d.Duration.String(), nil
+}
 
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	var s string
@@ -264,6 +273,10 @@ func Load(path string, required bool) (*Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	// 拼错的键会被 yaml 静默忽略并回落到默认值，启动时只提示、不阻止。
+	for _, f := range unknownYAMLFields(b) {
+		log.Printf("配置警告: %s 中的 %q 不是已知配置项，已忽略；若是拼写错误请修正", path, f)
+	}
 	return c, nil
 }
 
@@ -338,6 +351,91 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// unknownYAMLFields 列出 Config 结构体里不存在的 YAML 路径，按字典序返回。
+// 只用于启动提示：拼错的键会被 yaml 静默忽略，最后悄悄用默认值。
+func unknownYAMLFields(b []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	known := yamlPaths(reflect.TypeOf(Config{}))
+	var out []string
+	var walk func(*yaml.Node, string)
+	walk = func(n *yaml.Node, prefix string) {
+		if n == nil || n.Kind != yaml.MappingNode {
+			return
+		}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			p := k.Value
+			if prefix != "" {
+				p = prefix + "." + k.Value
+			}
+			if !known[p] {
+				out = append(out, p)
+				continue
+			}
+			walk(v, p)
+		}
+	}
+	walk(doc.Content[0], "")
+	sort.Strings(out)
+	return out
+}
+
+// yamlPaths 用反射展开结构体的 yaml 键，得到完整路径集合。
+// map 的键是动态的，不参与校验；Duration 有自己的反序列化，视为叶子。
+func yamlPaths(t reflect.Type) map[string]bool {
+	out := map[string]bool{}
+	durationType := reflect.TypeOf(Duration{})
+	var walk func(reflect.Type, string)
+	walk = func(t reflect.Type, prefix string) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if t == durationType || t.Kind() == reflect.Map || t.Kind() != reflect.Struct {
+			return
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" { // 未导出字段
+				continue
+			}
+			tag := f.Tag.Get("yaml")
+			if tag == "-" {
+				continue
+			}
+			parts := strings.Split(tag, ",")
+			name := parts[0]
+			inline := false
+			for _, opt := range parts[1:] {
+				if opt == "inline" {
+					inline = true
+				}
+			}
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if inline || (name == "" && f.Anonymous) {
+				walk(ft, prefix)
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			p := name
+			if prefix != "" {
+				p = prefix + "." + name
+			}
+			out[p] = true
+			walk(ft, p)
+		}
+	}
+	walk(t, "")
+	return out
 }
 
 // CacheDir 返回最终缓存目录。

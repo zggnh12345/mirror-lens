@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -375,45 +378,164 @@ func applyConfigValues(c *config.Config, values map[string]string) (changed []st
 	return changed, "", nil
 }
 
-// writeConfigFile 把 values 写回 YAML。节点级更新保留原结构与注释，
-// 只改提交的键；文件不存在则整份写出。
+// cfgFieldError 标记“某个字段校验失败”，handler 据此回 400 + field。
+type cfgFieldError struct {
+	field string
+	err   error
+}
+
+func (e *cfgFieldError) Error() string { return e.err.Error() }
+func (e *cfgFieldError) Unwrap() error { return e.err }
+
+// writeConfigFile 把 values 写回 YAML，供既有调用与测试使用。
+// 事务语义见 writeConfigTx；这里不带锁，锁在 Server.saveConfig。
 func writeConfigFile(path string, values map[string]string) error {
-	var root yaml.Node
-	exists := false
-	if b, err := os.ReadFile(path); err == nil {
-		exists = true
-		if err := yaml.Unmarshal(b, &root); err != nil {
-			return fmt.Errorf("读取现有配置失败：%w", err)
-		}
-	}
-	if !exists || root.Kind == 0 {
-		// 无文件或解析不出结构：用默认 cfg 整份写出。
-		def := config.Default()
-		// 只把 values 应用到默认副本，避免把运行态全量写入。
-		if _, _, err := applyConfigValues(def, values); err != nil {
-			return err
-		}
-		out, err := yaml.Marshal(def)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(path, out, 0o644)
-	}
-	for k, v := range values {
-		segs := strings.Split(k, ".")
-		f := findField(k)
-		if f == nil {
-			continue
-		}
-		if err := setYAMLNode(&root, segs, v, f.Kind); err != nil {
-			return fmt.Errorf("写 %s 失败：%w", k, err)
-		}
-	}
-	out, err := yaml.Marshal(&root)
+	_, _, _, err := writeConfigTx(path, values)
+	return err
+}
+
+// writeConfigTx 是配置写入的完整事务（不含互斥，锁由调用方持有）：
+// 读盘 → 解析/校验基准 → 改副本 → 校验 → 写 Node → 读回校验 → 原子替换。
+//
+// 保护规则：
+//   - 文件不存在：允许用默认值初始化（首次启动）。
+//   - 文件存在（包括 0 字节）但解析/校验失败：拒绝写入，原文件字节不动。
+//     "存在但为空"不能当成"不存在"，否则一次写坏就会让面板用默认值覆盖现场。
+//
+// 写盘始终走同目录临时文件 + fsync + rename + 目录 fsync，
+// 并且序列化保留 yaml.Node，避免丢注释和未在面板暴露的字段。
+func writeConfigTx(path string, values map[string]string) (*config.Config, []string, bool, error) {
+	base, root, full, err := readConfigForUpdate(path)
 	if err != nil {
-		return err
+		return nil, nil, false, err
 	}
-	return os.WriteFile(path, out, 0o644)
+	work := cloneConfig(base)
+	changed, field, err := applyConfigValues(work, values)
+	if err != nil {
+		return nil, nil, false, &cfgFieldError{field: field, err: err}
+	}
+
+	var out []byte
+	if full {
+		out, err = yaml.Marshal(work)
+	} else {
+		for k, v := range values {
+			f := findField(k)
+			if f == nil {
+				continue
+			}
+			if err := setYAMLNode(root, strings.Split(k, "."), v, f.Kind); err != nil {
+				return nil, nil, false, fmt.Errorf("写 %s 失败：%w", k, err)
+			}
+		}
+		out, err = yaml.Marshal(root)
+	}
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("序列化配置失败：%w", err)
+	}
+
+	// 落盘前先确认这份字节能被读回并通过校验，避免写出自相矛盾的配置。
+	check := config.Default()
+	if err := yaml.Unmarshal(out, check); err != nil {
+		return nil, nil, false, fmt.Errorf("生成的配置无法解析：%w", err)
+	}
+	if err := check.Validate(); err != nil {
+		return nil, nil, false, fmt.Errorf("生成的配置校验失败：%w", err)
+	}
+
+	committed, err := writeFileAtomic(path, out)
+	if err != nil && !committed {
+		return nil, nil, false, err
+	}
+	// committed=true 且 err!=nil：文件已替换、仅持久化未确认，仍需发布运行态。
+	return work, changed, committed, err
+}
+
+// readConfigForUpdate 读取当前磁盘状态。full=true 表示没有可复用的
+// Node 结构（文件不存在或为空），需要整份写出。
+func readConfigForUpdate(path string) (*config.Config, *yaml.Node, bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return config.Default(), nil, true, nil
+		}
+		return nil, nil, false, fmt.Errorf("读取配置失败：%w", err)
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		// 空文件不能当成"不存在"：它可能是写坏的产物，直接拒绝，避免用默认值覆盖现场。
+		return nil, nil, false, fmt.Errorf("配置文件为空，已拒绝写入以保护原文件；请手工写入有效配置或删除该文件")
+	}
+	base := config.Default()
+	if err := yaml.Unmarshal(b, base); err != nil {
+		return nil, nil, false, fmt.Errorf("配置文件解析失败，已拒绝写入以保护原文件：%w", err)
+	}
+	if err := base.Validate(); err != nil {
+		return nil, nil, false, fmt.Errorf("配置文件校验失败，已拒绝写入以保护原文件：%w", err)
+	}
+	root := &yaml.Node{}
+	if err := yaml.Unmarshal(b, root); err != nil {
+		return nil, nil, false, fmt.Errorf("配置文件解析失败，已拒绝写入以保护原文件：%w", err)
+	}
+	return base, root, false, nil
+}
+
+// cloneConfig 复制配置；slice 需要单独复制，避免工作副本与原对象共享底层数组。
+func cloneConfig(c *config.Config) *config.Config {
+	out := *c
+	if c.Limits.TrustedProxies != nil {
+		out.Limits.TrustedProxies = append([]string(nil), c.Limits.TrustedProxies...)
+	}
+	return &out
+}
+
+// renameFile 是测试可替换的钩子，用于模拟 rename 失败。
+var renameFile = os.Rename
+
+// writeFileAtomic 用同目录临时文件做原子替换，并在 rename 后同步父目录。
+// 返回值 committed 表示 rename 是否已经发生：一旦为 true，磁盘上的配置
+// 已切换，即使后续目录同步失败也必须发布运行态，否则文件与内存不一致。
+func writeFileAtomic(path string, data []byte) (bool, error) {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return false, fmt.Errorf("创建临时文件失败：%w", err)
+	}
+	tmp := f.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = f.Close()
+		}
+		_ = os.Remove(tmp)
+	}()
+
+	// CreateTemp 默认 0600，这里显式设置，避免受 umask 影响。
+	if err := f.Chmod(0o600); err != nil {
+		return false, fmt.Errorf("设置临时文件权限失败：%w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return false, fmt.Errorf("写入临时文件失败：%w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return false, fmt.Errorf("同步临时文件失败：%w", err)
+	}
+	if err := f.Close(); err != nil {
+		return false, fmt.Errorf("关闭临时文件失败：%w", err)
+	}
+	if err := renameFile(tmp, path); err != nil {
+		return false, fmt.Errorf("替换配置文件失败：%w", err)
+	}
+	renamed = true
+
+	d, err := os.Open(dir)
+	if err != nil {
+		return true, fmt.Errorf("配置已替换，但目录无法打开，持久化未确认：%w", err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return true, fmt.Errorf("配置已替换，但目录同步失败，持久化未确认：%w", err)
+	}
+	return true, nil
 }
 
 func findField(key string) *cfgField {
@@ -526,24 +648,63 @@ func setSeqLeaf(parent *yaml.Node, key, value string) error {
 	return nil
 }
 
-// configHandler 处理 GET 读取、PUT 校验 + 写盘 + 热更日志。
+// saveConfig 在写锁内完成「读盘 → 校验 → 原子落盘 → 发布运行态」。
+// 返回 warn 表示配置已保存，但某项附属动作（目录同步、日志热更）失败。
+func (s *Server) saveConfig(values map[string]string) ([]string, string, error) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
+	if s.cfgPath == "" {
+		return nil, "", fmt.Errorf("未指定配置文件路径，无法保存（用 -config 启动才会落盘）")
+	}
+	work, changed, committed, err := writeConfigTx(s.cfgPath, values)
+	if err != nil && !committed {
+		return nil, "", err
+	}
+	// 到这里文件已替换（或本就不存在/为空），发布运行态；发布后 work 只读。
+	s.cfg.Store(work)
+
+	var warn string
+	if err != nil {
+		warn = err.Error()
+	}
+	if _, ok := values["logging.level"]; ok {
+		if e := logging.Setup(work.Logging); e != nil {
+			if warn != "" {
+				warn += "；"
+			}
+			warn += "配置已保存，但日志级别热更失败：" + e.Error()
+		}
+	}
+	return changed, warn, nil
+}
+
+// configHandler 处理 GET 读取、PUT 校验 + 事务写盘 + 热更日志。
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
-	if s.cfg == nil {
+	cfg := s.cfg.Load()
+	if cfg == nil {
 		writeJSON(w, 500, map[string]string{"error": "服务端未加载配置文件"})
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, 200, configView(s.cfg, s.cfgPath))
+		writeJSON(w, 200, configView(cfg, s.cfgPath))
 		return
 	}
 	if r.Method != http.MethodPut {
 		writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		return
 	}
+	// 配置提交只是一组字符串键值，1 MiB 足够；超限回 413，不混成 JSON 格式错。
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var body struct {
 		Values map[string]string `json:"values"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, 413, map[string]string{"error": "请求体超过 1 MiB 限制"})
+			return
+		}
 		writeJSON(w, 400, map[string]string{"error": "请求体不是合法 JSON"})
 		return
 	}
@@ -551,42 +712,39 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "没有提交任何改动"})
 		return
 	}
-	// 在副本上套用，校验通过才落盘，避免半截配置。
-	work := *s.cfg
-	changed, field, err := applyConfigValues(&work, body.Values)
+
+	changed, warn, err := s.saveConfig(body.Values)
 	if err != nil {
-		writeJSON(w, 400, map[string]string{"error": err.Error(), "field": field})
-		return
-	}
-	if s.cfgPath == "" {
-		writeJSON(w, 400, map[string]string{"error": "未指定配置文件路径，无法保存（用 -config 启动才会落盘）"})
-		return
-	}
-	if err := writeConfigFile(s.cfgPath, body.Values); err != nil {
+		var fe *cfgFieldError
+		if errors.As(err, &fe) {
+			writeJSON(w, 400, map[string]string{"error": err.Error(), "field": fe.field})
+			return
+		}
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	*s.cfg = work
+
 	keys := make([]string, 0, len(body.Values))
 	for k := range body.Values {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	s.audit(r, "config", "", strings.Join(keys, " "), true)
-	// 日志级别即时热更
-	if _, ok := body.Values["logging.level"]; ok {
-		if err := logging.Setup(s.cfg.Logging); err != nil {
-			writeJSON(w, 200, map[string]any{"ok": true, "applied": changed, "warn": "配置已保存，但日志级别热更失败：" + err.Error()})
-			return
-		}
+
+	resp := map[string]any{"ok": true, "applied": changed}
+	if warn != "" {
+		resp["warn"] = warn
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "applied": changed})
+	writeJSON(w, 200, resp)
 }
 
 // WithConfig 让 Server 持有可编辑的 cfg 副本与配置路径。
+// 存副本而不是外部指针：发布后的配置对象必须只读，避免调用方后续修改。
 func WithConfig(c *config.Config, path string) Option {
 	return func(s *Server) {
-		s.cfg = c
+		if c != nil {
+			s.cfg.Store(cloneConfig(c))
+		}
 		s.cfgPath = path
 	}
 }

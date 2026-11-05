@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
@@ -49,8 +51,9 @@ type Server struct {
 	metricsOn    bool
 	metricsToken bool
 
-	cfg     *config.Config // 可编辑的配置副本（设置页用）
-	cfgPath string         // 配置文件路径；空则改动只存内存
+	cfg     atomic.Pointer[config.Config] // 可编辑的配置副本（设置页用）；发布后只读
+	cfgMu   sync.Mutex                    // 串行化配置读取-修改-写盘-发布
+	cfgPath string                        // 配置文件路径；空则改动只存内存
 }
 
 // Option 是 New 的可选开关，避免改所有调用点签名。
