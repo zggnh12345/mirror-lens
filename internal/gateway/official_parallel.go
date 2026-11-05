@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 )
@@ -71,18 +72,6 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 		workers = n
 	}
 
-	h := w.Header()
-	if ctype != "" {
-		h.Set("Content-Type", ctype)
-	}
-	copyHeader(h, resp.Header, "Content-Disposition", "Content-Language")
-	h.Set("Accept-Ranges", "bytes")
-	h.Set("Content-Length", strconv.FormatInt(total, 10))
-	h.Set("X-ML-Cache", "BYPASS")
-	h.Set("X-ML-Parallel", fmt.Sprintf("%d 段 / 1 源 / %d 并发", n, workers))
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
 	type segResult struct {
 		b   []byte
 		err error
@@ -96,7 +85,11 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// cancel 必须先于 Wait：否则 worker 卡在 sem 上等名额，永远等不到取消。
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
 
 	for k := 0; k < workers; k++ {
 		wg.Add(1)
@@ -129,31 +122,121 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 		}()
 	}
 
-	defer wg.Wait()
-	g.parFills.Add(1)
-	g.parBytes.Add(total)
-	for i := 0; i < n; i++ {
-		s := <-segs[i]
-		<-sem
-		if s.err != nil {
-			// 已经发出去一部分，没法回头，只能断开让客户端重试。
-			log.Printf("官方并行：第 %d/%d 段失败，断开: %v", i+1, n, s.err)
-			return true
-		}
-		if _, werr := w.Write(s.b); werr != nil {
-			return true
+	// 先拿到第一段再发响应头：这一段失败时一个字节都没写出去，可以无损退回
+	// 单流；后面的段万一失败，就从断点用单流补齐——声明了 Content-Length 就
+	// 必须凑够，半路把客户端掐断会变成 curl 18 / http2 RST。
+	first := <-segs[0]
+	<-sem
+	if first.err != nil {
+		g.decline(fmt.Sprintf("私有文件首段失败，退回单流: %v", first.err))
+		return false
+	}
+
+	h := w.Header()
+	if ctype != "" {
+		h.Set("Content-Type", ctype)
+	}
+	copyHeader(h, resp.Header, "Content-Disposition", "Content-Language")
+	h.Set("Accept-Ranges", "bytes")
+	h.Set("Content-Length", strconv.FormatInt(total, 10))
+	h.Set("X-ML-Cache", "BYPASS")
+	h.Set("X-ML-Parallel", fmt.Sprintf("%d 段 / 1 源 / %d 并发", n, workers))
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	write := func(b []byte) bool {
+		if _, err := w.Write(b); err != nil {
+			return false
 		}
 		if flusher != nil {
 			flusher.Flush()
+		}
+		return true
+	}
+
+	g.parFills.Add(1)
+	g.parBytes.Add(total)
+	if !write(first.b) {
+		return true
+	}
+	for i := 1; i < n; i++ {
+		s := <-segs[i]
+		<-sem
+		if s.err != nil {
+			off := int64(i) * chunk
+			log.Printf("官方并行：第 %d/%d 段失败，转单流补齐剩余 %d 字节: %v", i+1, n, total-off, s.err)
+			cancel()
+			// 用不带取消的 ctx：其余分片 worker 已经停了，补齐不能再被它们带走。
+			if err := g.copyFrom(context.WithoutCancel(r.Context()), w, plan, off, total, flusher); err != nil {
+				log.Printf("官方并行：单流补齐未完成（已发到 %d/%d）: %v", off, total, err)
+			}
+			return true
+		}
+		if !write(s.b) {
+			return true
 		}
 	}
 	return true
 }
 
-// fetchSeg 取一段到内存；失败重试一次（同一个源，换连接重来）。
+// copyFrom 从 off 开始用单连接把剩余字节补齐（分段失败后的兜底）。
+// 中途再断就按已写进度续，最多试 3 次。
+func (g *Gateway) copyFrom(ctx context.Context, w io.Writer, plan *adapter.Plan, off, total int64, flusher http.Flusher) error {
+	backoff := 300 * time.Millisecond
+	for attempt := 0; attempt < 3 && off < total; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backoff *= 2
+		}
+		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, total-1)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != http.StatusPartialContent {
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			continue
+		}
+		buf := make([]byte, 256<<10)
+		for off < total {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					resp.Body.Close()
+					return werr
+				}
+				off += int64(n)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				break
+			}
+		}
+		resp.Body.Close()
+	}
+	if off < total {
+		return fmt.Errorf("还差 %d 字节", total-off)
+	}
+	return nil
+}
+
+// fetchSeg 取一段到内存；失败按指数退避重试（同一个源，换连接重来）。
+// 官方对并发 Range 偶发截断/重置，只试一次很容易把整条流打断。
 func (g *Gateway) fetchSeg(ctx context.Context, plan *adapter.Plan, off, ln int64) ([]byte, error) {
 	var last error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, off+ln-1)
 		if err != nil {
 			last = err
