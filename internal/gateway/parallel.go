@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -722,6 +723,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			if c := srcs[a.idx].t.c; c != nil {
 				// 分片是带宽控制器最准的样本：字节数和耗时都真实。
 				g.sched.Observe(c.ID, n, time.Since(t0), true, resp.StatusCode)
+				metrics.SourceBytes(c.ID, plan.Kind, n)
 			}
 			task.addSource(a.idx, n, true)
 		}

@@ -46,6 +46,14 @@ type srcDurKey struct {
 	mode string
 }
 
+type srcBytesKey struct {
+	id   int64
+	kind string
+}
+
+// 候选源数量分布：1 表示没有备用源，超过 8 说明候选池很宽。
+var candBuckets = []float64{1, 2, 3, 5, 8, 12, 20}
+
 type hist struct {
 	counts []uint64
 	sum    float64
@@ -93,6 +101,9 @@ type Registry struct {
 	// P0 观测：闸门排队时长、并发占用的时间加权均值。
 	gateWait    map[int64]*hist
 	inflightAvg map[int64]float64
+	// 每源实际写出的字节数，按协议分。
+	srcBytes map[srcBytesKey]uint64
+	cand     *hist
 	// forgotten 记住已删除的源：在途请求的迟到回调不能再把序列写回来。
 	forgotten map[int64]bool
 	limited   map[string]uint64
@@ -138,6 +149,8 @@ func New() *Registry {
 		srclimit:    map[int64]int{},
 		gateWait:    map[int64]*hist{},
 		inflightAvg: map[int64]float64{},
+		srcBytes:    map[srcBytesKey]uint64{},
+		cand:        newHist(candBuckets),
 		forgotten:   map[int64]bool{},
 		limited:     map[string]uint64{},
 		sources:     map[SourceStat]uint64{},
@@ -355,6 +368,11 @@ func ForgetSource(id int64) {
 	delete(r.srclimit, id)
 	delete(r.gateWait, id)
 	delete(r.inflightAvg, id)
+	for k := range r.srcBytes {
+		if k.id == id {
+			delete(r.srcBytes, k)
+		}
+	}
 	r.forgotten[id] = true
 }
 
@@ -388,6 +406,31 @@ func SourceGateWait(id int64, d time.Duration) {
 		r.gateWait[id] = h
 	}
 	h.observe(d.Seconds(), durBuckets)
+}
+
+// SourceBytes 记该源实际写出的字节数。
+func SourceBytes(id int64, kind string, n int64) {
+	r := current.Load()
+	if r == nil || id == 0 || n <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forgotten[id] {
+		return
+	}
+	r.srcBytes[srcBytesKey{id, kind}] += uint64(n)
+}
+
+// SourceCandidates 记一次选源拿到的候选数量。
+func SourceCandidates(n int) {
+	r := current.Load()
+	if r == nil || n < 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cand.observe(float64(n), candBuckets)
 }
 
 // SourceInflightAvg 记录该源并发占用数的时间加权平均值。
@@ -759,6 +802,37 @@ func (r *Registry) render() []byte {
 		for _, id := range wids {
 			writeHistBody(&b, prefix+"source_gate_wait_seconds", "source_id", strconv.FormatInt(id, 10), r.gateWait[id], durBuckets)
 		}
+	}
+	if len(r.srcBytes) > 0 {
+		keys := make([]srcBytesKey, 0, len(r.srcBytes))
+		for k := range r.srcBytes {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].id != keys[j].id {
+				return keys[i].id < keys[j].id
+			}
+			return keys[i].kind < keys[j].kind
+		})
+		b.WriteString("# HELP " + prefix + "source_bytes_total 各源实际写出的字节数（按协议）\n")
+		b.WriteString("# TYPE " + prefix + "source_bytes_total counter\n")
+		for _, k := range keys {
+			fmt.Fprintf(&b, "%ssource_bytes_total{source_id=%q,kind=%q} %d\n", prefix,
+				strconv.FormatInt(k.id, 10), k.kind, r.srcBytes[k])
+		}
+	}
+	if r.cand != nil && r.cand.n > 0 {
+		b.WriteString("# HELP " + prefix + "source_candidate_count 每次选源拿到的候选源数量分布\n")
+		b.WriteString("# TYPE " + prefix + "source_candidate_count histogram\n")
+		var cum uint64
+		for i, le := range candBuckets {
+			cum += r.cand.counts[i]
+			fmt.Fprintf(&b, "%ssource_candidate_count_bucket{le=%q} %d\n", prefix, trimFloat(le), cum)
+		}
+		cum += r.cand.counts[len(candBuckets)]
+		fmt.Fprintf(&b, "%ssource_candidate_count_bucket{le=\"+Inf\"} %d\n", prefix, cum)
+		fmt.Fprintf(&b, "%ssource_candidate_count_sum %s\n", prefix, trimFloat(r.cand.sum))
+		fmt.Fprintf(&b, "%ssource_candidate_count_count %d\n", prefix, r.cand.n)
 	}
 	if len(r.inflightAvg) > 0 {
 		aids := make([]int64, 0, len(r.inflightAvg))

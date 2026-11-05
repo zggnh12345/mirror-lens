@@ -481,7 +481,9 @@ func (g *Gateway) parallelTargets(plan *adapter.Plan) []fetchTarget {
 		n = 8
 	}
 	var head []fetchTarget
-	for _, c := range g.sched.CandidatesN(plan.Kind, n) {
+	cands := g.sched.CandidatesN(plan.Kind, n)
+	metrics.SourceCandidates(len(cands))
+	for _, c := range cands {
 		cc := c
 		u, ok := g.sched.Rewrite(plan.Kind, plan.Upstream, cc)
 		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
@@ -630,6 +632,7 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 			if e != nil {
 				// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
 				g.sched.Observe(t.c.ID, e.Size, time.Since(start), true, code)
+				metrics.SourceBytes(t.c.ID, plan.Kind, e.Size)
 			}
 			plan.Source = t.c.Name
 		}
