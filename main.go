@@ -53,6 +53,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("读配置: %v", err)
 	}
+	// 文件不存在时直接落一份完整模板：默认值都写出来，照着改就行。
+	// 放在环境变量/命令行覆盖之前，模板里是纯默认值，不会被部署参数固化。
+	if wrote, werr := config.WriteTemplate(path, cfg); werr != nil {
+		log.Printf("生成配置模板失败: %v", werr)
+	} else if wrote {
+		log.Printf("已生成完整配置模板: %s（改完需重启生效）", path)
+	}
 	// 三层优先级：配置文件 < 环境变量 < 命令行。顺序就是优先级，
 	// 反过来写（先 flag 再 env）会让环境变量悄悄盖掉显式参数。
 	applyOverrides(cfg,

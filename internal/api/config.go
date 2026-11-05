@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -419,14 +418,9 @@ func writeConfigTx(path string, values map[string]string) (*config.Config, []str
 	if full {
 		out, err = yaml.Marshal(work)
 	} else {
-		for k, v := range values {
-			f := findField(k)
-			if f == nil {
-				continue
-			}
-			if err := setYAMLNode(root, strings.Split(k, "."), v, f.Kind); err != nil {
-				return nil, nil, false, fmt.Errorf("写 %s 失败：%w", k, err)
-			}
+		// 整份同步：所有已知键按当前生效值写回，未知键与注释保留。
+		if err := syncConfigNode(root, work); err != nil {
+			return nil, nil, false, fmt.Errorf("更新配置节点失败：%w", err)
 		}
 		out, err = yaml.Marshal(root)
 	}
@@ -488,54 +482,58 @@ func cloneConfig(c *config.Config) *config.Config {
 	return &out
 }
 
-// renameFile 是测试可替换的钩子，用于模拟 rename 失败。
-var renameFile = os.Rename
-
-// writeFileAtomic 用同目录临时文件做原子替换，并在 rename 后同步父目录。
-// 返回值 committed 表示 rename 是否已经发生：一旦为 true，磁盘上的配置
-// 已切换，即使后续目录同步失败也必须发布运行态，否则文件与内存不一致。
+// writeFileAtomic 交给 config.SaveFile（同目录临时文件 + 0600 + fsync +
+// rename + 目录 fsync），保留 committed 语义供调用方判断是否已切换。
 func writeFileAtomic(path string, data []byte) (bool, error) {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".config-*.tmp")
-	if err != nil {
-		return false, fmt.Errorf("创建临时文件失败：%w", err)
+	return config.SaveFile(path, data)
+}
+
+// syncConfigNode 把 cfg 的全部已知键同步进 root：已有键原地改值（注释保留），
+// 结构变化递归合并，缺少的键追加，未知键保持不动。
+func syncConfigNode(root *yaml.Node, cfg *config.Config) error {
+	doc := &yaml.Node{}
+	if err := doc.Encode(cfg); err != nil {
+		return err
 	}
-	tmp := f.Name()
-	renamed := false
-	defer func() {
-		if !renamed {
-			_ = f.Close()
+	if len(doc.Content) == 0 {
+		return fmt.Errorf("空配置节点")
+	}
+	src := doc
+	if doc.Kind == yaml.DocumentNode {
+		src = doc.Content[0]
+	}
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		mergeMapping(root.Content[0], src)
+		return nil
+	}
+	*root = *doc
+	return nil
+}
+
+// mergeMapping 递归合并两个 mapping：src 的键覆盖 dst，dst 独有的键保留。
+func mergeMapping(dst, src *yaml.Node) {
+	if dst.Kind != yaml.MappingNode || src.Kind != yaml.MappingNode {
+		return
+	}
+	index := make(map[string]*yaml.Node, len(dst.Content)/2)
+	for i := 0; i+1 < len(dst.Content); i += 2 {
+		index[dst.Content[i].Value] = dst.Content[i+1]
+	}
+	for i := 0; i+1 < len(src.Content); i += 2 {
+		k, v := src.Content[i], src.Content[i+1]
+		old, ok := index[k.Value]
+		if !ok {
+			dst.Content = append(dst.Content, k, v)
+			continue
 		}
-		_ = os.Remove(tmp)
-	}()
-
-	// CreateTemp 默认 0600，这里显式设置，避免受 umask 影响。
-	if err := f.Chmod(0o600); err != nil {
-		return false, fmt.Errorf("设置临时文件权限失败：%w", err)
+		if old.Kind == yaml.MappingNode && v.Kind == yaml.MappingNode {
+			mergeMapping(old, v)
+			continue
+		}
+		// 换值前把原节点的注释搬过去。
+		v.HeadComment, v.LineComment, v.FootComment = old.HeadComment, old.LineComment, old.FootComment
+		*old = *v
 	}
-	if _, err := f.Write(data); err != nil {
-		return false, fmt.Errorf("写入临时文件失败：%w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return false, fmt.Errorf("同步临时文件失败：%w", err)
-	}
-	if err := f.Close(); err != nil {
-		return false, fmt.Errorf("关闭临时文件失败：%w", err)
-	}
-	if err := renameFile(tmp, path); err != nil {
-		return false, fmt.Errorf("替换配置文件失败：%w", err)
-	}
-	renamed = true
-
-	d, err := os.Open(dir)
-	if err != nil {
-		return true, fmt.Errorf("配置已替换，但目录无法打开，持久化未确认：%w", err)
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return true, fmt.Errorf("配置已替换，但目录同步失败，持久化未确认：%w", err)
-	}
-	return true, nil
 }
 
 func findField(key string) *cfgField {
@@ -544,107 +542,6 @@ func findField(key string) *cfgField {
 			return &cfgSchema[i]
 		}
 	}
-	return nil
-}
-
-// setYAMLNode 定位 path 并设置标量；缺的 mapping 键自动建，list 整段重建。
-func setYAMLNode(root *yaml.Node, path []string, value, kind string) error {
-	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
-		root = root.Content[0]
-	}
-	cur := root
-	for i, seg := range path {
-		if i == len(path)-1 {
-			if kind == "list" {
-				return setSeqLeaf(cur, seg, value)
-			}
-			return setScalarLeaf(cur, seg, value, kind)
-		}
-		child, err := ensureMapKey(cur, seg)
-		if err != nil {
-			return err
-		}
-		cur = child
-	}
-	return nil
-}
-
-func ensureMapKey(parent *yaml.Node, key string) (*yaml.Node, error) {
-	if parent.Kind != yaml.MappingNode {
-		// 原值是标量，重建为 mapping
-		parent.Kind = yaml.MappingNode
-		parent.Tag = "!!map"
-		parent.Content = nil
-	}
-	for i := 0; i+1 < len(parent.Content); i += 2 {
-		if parent.Content[i].Value == key {
-			if parent.Content[i+1].Kind != yaml.MappingNode {
-				parent.Content[i+1].Kind = yaml.MappingNode
-				parent.Content[i+1].Tag = "!!map"
-				parent.Content[i+1].Content = nil
-			}
-			return parent.Content[i+1], nil
-		}
-	}
-	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-	v := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	parent.Content = append(parent.Content, k, v)
-	return v, nil
-}
-
-func setScalarLeaf(parent *yaml.Node, key, value, kind string) error {
-	if parent.Kind != yaml.MappingNode {
-		parent.Kind = yaml.MappingNode
-		parent.Tag = "!!map"
-		parent.Content = nil
-	}
-	var tag string
-	switch kind {
-	case "int":
-		tag = "!!int"
-	case "float":
-		tag = "!!float"
-	case "bool":
-		tag = "!!bool"
-	default:
-		tag = "!!str"
-	}
-	for i := 0; i+1 < len(parent.Content); i += 2 {
-		if parent.Content[i].Value == key {
-			parent.Content[i+1].Kind = yaml.ScalarNode
-			parent.Content[i+1].Tag = tag
-			parent.Content[i+1].Value = value
-			return nil
-		}
-	}
-	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
-	parent.Content = append(parent.Content, k, v)
-	return nil
-}
-
-func setSeqLeaf(parent *yaml.Node, key, value string) error {
-	if parent.Kind != yaml.MappingNode {
-		parent.Kind = yaml.MappingNode
-		parent.Tag = "!!map"
-		parent.Content = nil
-	}
-	var items []*yaml.Node
-	for _, line := range strings.Split(value, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			items = append(items, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: line})
-		}
-	}
-	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: items}
-	for i := 0; i+1 < len(parent.Content); i += 2 {
-		if parent.Content[i].Value == key {
-			parent.Content[i+1] = seq
-			return nil
-		}
-	}
-	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-	parent.Content = append(parent.Content, k, seq)
 	return nil
 }
 

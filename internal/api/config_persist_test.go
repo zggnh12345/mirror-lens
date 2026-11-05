@@ -181,9 +181,8 @@ func TestSaveConfigRenameFailureKeepsOldState(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	liveBefore := s.cfg.Load().Cache.MaxGB
 
-	old := renameFile
-	renameFile = func(a, b string) error { return fmt.Errorf("injected rename failure") }
-	defer func() { renameFile = old }()
+	restore := config.SetRenameFunc(func(a, b string) error { return fmt.Errorf("injected rename failure") })
+	defer restore()
 
 	if _, _, err := s.saveConfig(map[string]string{"cache.max_gb": "102"}); err == nil {
 		t.Fatal("rename 失败应返回错误")
@@ -226,5 +225,37 @@ func TestConfigPutBodyTooLarge(t *testing.T) {
 	s.configHandler(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("状态码应为 413，实际 %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// 面板保存后文件应包含全部生效参数，而不是只写改动的那一项。
+func TestSaveConfigWritesFullConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("cache:\n  max_gb: 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newCfgServer(t, path)
+
+	if _, _, err := s.saveConfig(map[string]string{"cache.max_gb": "20"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"addr:", "hedge:", "parallel:", "limits:", "logging:"} {
+		if !strings.Contains(string(b), key) {
+			t.Fatalf("保存后缺少 %q：\n%s", key, b)
+		}
+	}
+	var got config.Config
+	if err := yaml.Unmarshal(b, &got); err != nil {
+		t.Fatalf("保存后的文件无法解析: %v", err)
+	}
+	if got.Cache.MaxGB != 20 {
+		t.Fatalf("max_gb=%d，期望 20", got.Cache.MaxGB)
+	}
+	if got.Addr != config.Default().Addr {
+		t.Fatalf("addr=%q，期望默认值", got.Addr)
 	}
 }
