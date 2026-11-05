@@ -143,7 +143,7 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 	}
 
 	var denied *http.Response
-	var deniedName string
+	var deniedT TrustedRelay
 	for i := 0; i < len(alive); i++ {
 		res := <-ch
 		if res.err != nil {
@@ -154,7 +154,7 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 		case res.resp.StatusCode == http.StatusUnauthorized || res.resp.StatusCode == http.StatusForbidden:
 			// 凭据本身有问题：所有站结论一样。先留着，看有没有能成功的。
 			if denied == nil {
-				denied, deniedName = res.resp, res.t.Name
+				denied, deniedT = res.resp, res.t
 			} else {
 				res.resp.Body.Close()
 			}
@@ -176,14 +176,14 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 					}
 				}(left)
 			}
-			g.serveRelay(w, res.resp, res.t.Name)
+			g.serveRelay(r.Context(), w, res.resp, res.t, plan)
 			return true
 		}
 	}
 
 	if denied != nil {
-		g.privOK(deniedName)
-		g.serveRelay(w, denied, deniedName)
+		g.privOK(deniedT.Name)
+		g.serveRelay(r.Context(), w, denied, deniedT, plan)
 		return true
 	}
 	return false
@@ -226,16 +226,120 @@ func newPrivClient() *http.Client {
 	}}
 }
 
-func (g *Gateway) serveRelay(w http.ResponseWriter, resp *http.Response, name string) {
+// serveRelay 转发白名单中转的响应。中转半路断开时按已写进度用 Range 续传：
+// 响应头已经把 Content-Length 报给客户端了，凑不满只能 RST，客户端看到的就是
+// curl 18 / HTTP2 stream reset。
+func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *http.Response, t TrustedRelay, plan *adapter.Plan) {
 	defer resp.Body.Close()
 	h := w.Header()
 	copyHeader(h, resp.Header, "Content-Type", "Content-Length", "Content-Disposition",
 		"Accept-Ranges", "ETag", "Last-Modified")
 	h.Set("X-ML-Cache", "BYPASS")
-	h.Set("X-ML-Relay", name)
+	h.Set("X-ML-Relay", t.Name)
 	w.WriteHeader(resp.StatusCode)
-	if flusher, ok := w.(http.Flusher); ok {
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
 		flusher.Flush()
 	}
-	io.Copy(w, resp.Body)
+	total := resp.ContentLength
+	if resp.StatusCode != http.StatusOK || total <= 0 {
+		io.Copy(w, resp.Body)
+		return
+	}
+
+	buf := make([]byte, 256<<10)
+	var off int64
+	for off < total {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			off += int64(n)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	if off >= total {
+		return
+	}
+
+	log.Printf("信任中转 %s 断在 %d/%d，开始续传", t.Name, off, total)
+	done := g.resumeRelay(ctx, w, t, plan, off, total, flusher)
+	if done < total {
+		log.Printf("信任中转 %s 续传未完成：还差 %d 字节", t.Name, total-done)
+	} else {
+		log.Printf("信任中转 %s 续传补齐 %d 字节，完成", t.Name, done-off)
+	}
+}
+
+// resumeRelay 从 off 开始向同一个中转要 Range，最多重试 3 次。
+// 中转若不认 Range（回 200 全量），跳过已写部分继续。
+func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRelay, plan *adapter.Plan, off, total int64, flusher http.Flusher) int64 {
+	ctx := context.WithoutCancel(parent)
+	fails := 0
+	for off < total && fails < 3 {
+		target, err := relayURL(t.URL, plan.Upstream.String())
+		if err != nil {
+			return off
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return off
+		}
+		for k, vs := range plan.Header {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", off))
+		resp, err := g.privClient.Do(req)
+		if err != nil {
+			fails++
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			if _, err := io.CopyN(io.Discard, resp.Body, off); err != nil {
+				resp.Body.Close()
+				fails++
+				continue
+			}
+		} else if resp.StatusCode != http.StatusPartialContent {
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			fails++
+			continue
+		}
+		buf := make([]byte, 256<<10)
+		progressed := false
+		for off < total {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					resp.Body.Close()
+					return off
+				}
+				off += int64(n)
+				progressed = true
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				break
+			}
+		}
+		resp.Body.Close()
+		// 一次没推进就别原地重试，交给 fails 计数退出。
+		if progressed {
+			fails = 0
+		} else {
+			fails++
+		}
+	}
+	return off
 }
