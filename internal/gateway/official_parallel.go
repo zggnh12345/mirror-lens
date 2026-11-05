@@ -71,6 +71,12 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	if workers > n {
 		workers = n
 	}
+	// 内存窗口 = 在途段数 × 段大小。段大小会随文件增大而翻倍，
+	// 这里给窗口一个硬上限，超了就退回单流，别让一个大文件吃掉几百 MB。
+	if int64(workers)*chunk > 256<<20 {
+		g.decline(fmt.Sprintf("私有分片窗口 %d MB 超预算，改单流", (int64(workers)*chunk)>>20))
+		return false
+	}
 
 	type segResult struct {
 		b   []byte

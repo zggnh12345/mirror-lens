@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -103,9 +105,9 @@ func relayURL(tmpl, raw string) (string, error) {
 	return strings.TrimRight(tmpl, "/") + "/" + raw, nil
 }
 
-// tryTrusted 让白名单里所有活着的站同时发请求，第一个交出可用响应头的
+// tryTrusted 让白名单里所有活着的站同时发请求，第一个交出 200 响应头的
 // 胜出，其余立刻取消——和公开路径的多源竞速是同一套语义，不排队。
-// 一个都没成功就返回 false，由调用方回退「官方多路并行」。
+// 每站一个独立 context：胜出时只取消输家，胜者正文读取不受影响。
 func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) bool {
 	list := g.trustedList()
 	if len(list) == 0 || !plan.OfficialOnly || r.Header.Get("Range") != "" {
@@ -121,54 +123,65 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 		return false
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
 	type result struct {
+		idx  int
 		t    TrustedRelay
 		resp *http.Response
 		err  error
 	}
+	cancels := make([]context.CancelFunc, len(alive))
 	ch := make(chan result, len(alive))
-	for _, t := range alive {
-		go func(t TrustedRelay) {
+	var wg sync.WaitGroup
+	for i, t := range alive {
+		ctx, cancel := context.WithCancel(r.Context())
+		cancels[i] = cancel
+		wg.Add(1)
+		go func(i int, t TrustedRelay, ctx context.Context) {
+			defer wg.Done()
 			resp, err := g.doTrusted(ctx, plan, t)
-			select {
-			case ch <- result{t: t, resp: resp, err: err}:
-			case <-ctx.Done():
-				if resp != nil {
-					resp.Body.Close()
-				}
+			if err != nil && resp != nil {
+				// 没交付出去就失败：body 归本 goroutine 关闭。
+				resp.Body.Close()
+				resp = nil
 			}
-		}(t)
+			// 通道容量等于中转数，交付不会阻塞，也不存在「交付失败」，
+			// 所以交出去的 body 一律由读的一方负责关闭。
+			ch <- result{idx: i, t: t, resp: resp, err: err}
+		}(i, t, ctx)
 	}
+	// 收尾放后台：不挡主路径，也不代替输家取消。
+	go func() { wg.Wait() }()
 
 	var denied *http.Response
+	var deniedIdx int
 	var deniedT TrustedRelay
+	stopOthers := func(keep int) {
+		for j, c := range cancels {
+			if j != keep {
+				c()
+			}
+		}
+	}
 	for i := 0; i < len(alive); i++ {
 		res := <-ch
 		if res.err != nil {
 			g.privFail(res.t.Name, res.err.Error())
 			continue
 		}
+		code := res.resp.StatusCode
 		switch {
-		case res.resp.StatusCode == http.StatusUnauthorized || res.resp.StatusCode == http.StatusForbidden:
+		case code == http.StatusUnauthorized || code == http.StatusForbidden:
 			// 凭据本身有问题：所有站结论一样。先留着，看有没有能成功的。
 			if denied == nil {
-				denied, deniedT = res.resp, res.t
+				denied, deniedIdx, deniedT = res.resp, res.idx, res.t
 			} else {
 				res.resp.Body.Close()
 			}
-		case res.resp.StatusCode >= 500 || res.resp.StatusCode == http.StatusNotFound:
-			g.privFail(res.t.Name, fmt.Sprintf("HTTP %d", res.resp.StatusCode))
-			res.resp.Body.Close()
-		default:
+		case code == http.StatusOK:
 			g.privOK(res.t.Name)
-			cancel()
-			// 没赢的那些请求要关掉 body，否则连接一直挂着；放后台做，
-			// 不挡当前响应。
-			left := len(alive) - i - 1
-			if left > 0 {
+			stopOthers(res.idx)
+			// 剩下的结果读完就关；它们已被取消，很快返回。
+			if left := len(alive) - i - 1; left > 0 {
 				go func(n int) {
 					for j := 0; j < n; j++ {
 						if rr := <-ch; rr.resp != nil {
@@ -177,12 +190,20 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 					}
 				}(left)
 			}
+			// 胜者的 cancel 由调用方持有，正文读写结束后才释放。
+			defer cancels[res.idx]()
 			g.serveRelay(r.Context(), w, res.resp, res.t, plan)
 			return true
+		default:
+			// 429 / 408 / 5xx / 404 / 204 / 3xx … 一律不算下载成功。
+			g.privFail(res.t.Name, fmt.Sprintf("HTTP %d", code))
+			res.resp.Body.Close()
 		}
 	}
 
 	if denied != nil {
+		stopOthers(deniedIdx)
+		defer cancels[deniedIdx]()
 		g.privOK(deniedT.Name)
 		g.serveRelay(r.Context(), w, denied, deniedT, plan)
 		return true
@@ -261,17 +282,28 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 		flusher.Flush()
 	}
 	total := resp.ContentLength
-	if resp.StatusCode != http.StatusOK || total <= 0 {
+	if resp.StatusCode != http.StatusOK {
 		sent, _ = io.Copy(w, resp.Body)
-		ok = true
+		return
+	}
+	if total <= 0 {
+		// 长度未知：只有正常读到 EOF 才算完整，读错误不能当成功。
+		n, err := io.Copy(w, resp.Body)
+		sent = n
+		ok = err == nil && ctx.Err() == nil
 		return
 	}
 
+	etag := strongETag(resp.Header)
 	buf := make([]byte, 256<<10)
 	var off int64
 	for off < total {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
+			// 异常中转多发也不许越过声明长度。
+			if off+int64(n) > total {
+				n = int(total - off)
+			}
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return
 			}
@@ -284,31 +316,36 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 			break
 		}
 	}
+	sent = off
 	if off >= total {
-		sent = off
 		ok = true
 		return
 	}
 
+	// 没有强 ETag 就没有任何办法证明续传前后是同一份内容；宁可不拼。
+	if etag == "" {
+		log.Printf("信任中转 %s 断在 %d/%d，响应无强 ETag，放弃续传", t.Name, off, total)
+		return
+	}
 	log.Printf("信任中转 %s 断在 %d/%d，开始续传", t.Name, off, total)
-	done := g.resumeRelay(ctx, w, t, plan, off, total, flusher)
+	done := g.resumeRelay(ctx, w, t, plan, off, total, etag, flusher)
 	sent = done
 	if done >= total {
 		ok = true
-	}
-	if done < total {
-		log.Printf("信任中转 %s 续传未完成：还差 %d 字节", t.Name, total-done)
-	} else {
 		log.Printf("信任中转 %s 续传补齐 %d 字节，完成", t.Name, done-off)
+	} else {
+		log.Printf("信任中转 %s 续传未完成：还差 %d 字节", t.Name, total-done)
 	}
 }
 
-// resumeRelay 从 off 开始向同一个中转要 Range，最多重试 3 次。
-// 中转若不认 Range（回 200 全量），跳过已写部分继续。
-func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRelay, plan *adapter.Plan, off, total int64, flusher http.Flusher) int64 {
-	ctx := context.WithoutCancel(parent)
+// resumeRelay 从 off 开始向同一个中转要 Range。只接受 206，并且必须能证明
+// 续的是同一份字节：Content-Range 的起点/终点/总长要对，ETag 要没变。
+// 整个续传共享 15 分钟总预算，且跟随客户端取消。
+func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRelay, plan *adapter.Plan, off, total int64, etag string, flusher http.Flusher) int64 {
+	ctx, cancel := context.WithTimeout(parent, 15*time.Minute)
+	defer cancel()
 	fails := 0
-	for off < total && fails < 3 {
+	for off < total && fails < 3 && ctx.Err() == nil {
 		target, err := relayURL(t.URL, plan.Upstream.String())
 		if err != nil {
 			return off
@@ -323,34 +360,45 @@ func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRela
 			}
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", off))
+		req.Header.Set("If-Range", etag)
 		resp, err := g.privClient.Do(req)
 		if err != nil {
-			fails++
-			continue
-		}
-		if resp.StatusCode == http.StatusOK {
-			if _, err := io.CopyN(io.Discard, resp.Body, off); err != nil {
-				resp.Body.Close()
-				fails++
-				continue
+			if ctx.Err() != nil {
+				return off
 			}
-		} else if resp.StatusCode != http.StatusPartialContent {
-			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
 			fails++
 			continue
 		}
+		if resp.StatusCode != http.StatusPartialContent {
+			// 200 = 中转忽略了 Range，不能拿来当续传；其余状态同样不接受。
+			resp.Body.Close()
+			return off
+		}
+		st, en, tot, okRange := parseFullCR(resp.Header.Get("Content-Range"))
+		if !okRange || st != off || tot != total {
+			resp.Body.Close()
+			return off
+		}
+		if e := resp.Header.Get("ETag"); e != "" && e != etag {
+			// 版本变了，拼接就是脏数据。
+			resp.Body.Close()
+			return off
+		}
+		want := en - st + 1
 		buf := make([]byte, 256<<10)
-		progressed := false
-		for off < total {
+		var got int64
+		for got < want {
 			n, rerr := resp.Body.Read(buf)
 			if n > 0 {
+				if got+int64(n) > want {
+					n = int(want - got)
+				}
 				if _, werr := w.Write(buf[:n]); werr != nil {
 					resp.Body.Close()
 					return off
 				}
+				got += int64(n)
 				off += int64(n)
-				progressed = true
 				if flusher != nil {
 					flusher.Flush()
 				}
@@ -360,12 +408,43 @@ func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRela
 			}
 		}
 		resp.Body.Close()
-		// 一次没推进就别原地重试，交给 fails 计数退出。
-		if progressed {
+		// 段没读满：已写出的字节仍是同一实体（ETag / Content-Range 已校验），
+		// 保留并按新的 off 继续；只有一点没推进才算一次失败。
+		if got > 0 {
 			fails = 0
 		} else {
 			fails++
 		}
 	}
 	return off
+}
+
+// strongETag 只认强校验器：W/ 开头的是弱 ETag，不能证明字节一致。
+func strongETag(h http.Header) string {
+	v := h.Get("ETag")
+	if v == "" || strings.HasPrefix(v, "W/") || !strings.HasPrefix(v, `"`) {
+		return ""
+	}
+	return v
+}
+
+// parseFullCR 严格解析 "bytes 100-199/2000"：起点、终点、总长缺一不可，
+// 且必须自洽。续传只认这个结果，解析不出来就不拼。
+func parseFullCR(v string) (start, end, total int64, ok bool) {
+	if !strings.HasPrefix(v, "bytes ") {
+		return 0, 0, 0, false
+	}
+	v = strings.TrimSpace(strings.TrimPrefix(v, "bytes "))
+	slash := strings.IndexByte(v, '/')
+	dash := strings.IndexByte(v, '-')
+	if slash < 0 || dash < 0 || dash > slash {
+		return 0, 0, 0, false
+	}
+	start, e1 := strconv.ParseInt(v[:dash], 10, 64)
+	end, e2 := strconv.ParseInt(v[dash+1:slash], 10, 64)
+	total, e3 := strconv.ParseInt(v[slash+1:], 10, 64)
+	if e1 != nil || e2 != nil || e3 != nil || total <= 0 || start < 0 || end < start || end >= total {
+		return 0, 0, 0, false
+	}
+	return start, end, total, true
 }

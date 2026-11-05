@@ -74,12 +74,17 @@ func TestRelayResumesAfterTruncation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Range") != "" {
 			from := rangeStart(r.Header.Get("Range"))
+			if r.Header.Get("If-Range") != `"v1"` {
+				t.Errorf("续传应带 If-Range，实际 %q", r.Header.Get("If-Range"))
+			}
+			w.Header().Set("ETag", `"v1"`)
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
 			w.WriteHeader(http.StatusPartialContent)
 			w.Write(data[from:])
 			return
 		}
 		n := atomic.AddInt32(&hits, 1)
+		w.Header().Set("ETag", `"v1"`)
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.WriteHeader(http.StatusOK)
 		if n == 1 {
@@ -128,16 +133,19 @@ func TestRelayResumesAfterTruncation(t *testing.T) {
 	}
 }
 
-// 中转不认 Range（续传请求仍回 200 全量）：跳过已写部分后继续，不能重复写。
-func TestRelayResumeWithoutRangeSupport(t *testing.T) {
+// 中转不认 Range（续传请求仍回 200 全量）：200 不能当续传，必须拒绝拼接，
+// 否则会把全量字节接在已写部分后面，内容直接错位。
+func TestRelayRejects200AsResume(t *testing.T) {
 	data := relayData(512 << 10)
+	first := len(data) / 3
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&hits, 1)
+		w.Header().Set("ETag", `"v1"`)
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.WriteHeader(http.StatusOK)
 		if n == 1 {
-			w.Write(data[:len(data)/3])
+			w.Write(data[:first])
 			w.(http.Flusher).Flush()
 			return
 		}
@@ -147,8 +155,11 @@ func TestRelayResumeWithoutRangeSupport(t *testing.T) {
 
 	g, plan := relayGateway(t, srv.URL)
 	rec := relayRun(t, g, plan)
-	if !bytes.Equal(rec.Body.Bytes(), data) {
-		t.Fatalf("应输出完整文件，实际 %d 字节（Content-Length=%d）", rec.Body.Len(), len(data))
+	if rec.Body.Len() != first {
+		t.Fatalf("200 不该被当成续传，应只输出首段 %d 字节，实际 %d", first, rec.Body.Len())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), data[:first]) {
+		t.Fatal("首段内容被污染")
 	}
 }
 
@@ -160,9 +171,11 @@ func TestRelayResumeSurvivesRepeatedBreaks(t *testing.T) {
 		from := 0
 		if r.Header.Get("Range") != "" {
 			from = rangeStart(r.Header.Get("Range"))
+			w.Header().Set("ETag", `"v1"`)
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
 			w.WriteHeader(http.StatusPartialContent)
 		} else {
+			w.Header().Set("ETag", `"v1"`)
 			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 			w.WriteHeader(http.StatusOK)
 		}
