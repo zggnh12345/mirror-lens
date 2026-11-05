@@ -13,7 +13,12 @@ const templateHeader = "# mirror-lens 配置：这里写的每个键都会生效
 	"# 留空的字符串表示按 data 目录自动推导或使用内置默认值。\n"
 
 func marshalConfig(c *Config) ([]byte, error) {
-	out, err := yaml.Marshal(c)
+	var n yaml.Node
+	if err := n.Encode(c); err != nil {
+		return nil, fmt.Errorf("序列化配置失败：%w", err)
+	}
+	Annotate(&n)
+	out, err := yaml.Marshal(&n)
 	if err != nil {
 		return nil, fmt.Errorf("序列化配置失败：%w", err)
 	}

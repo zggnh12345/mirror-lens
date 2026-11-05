@@ -504,9 +504,11 @@ func syncConfigNode(root *yaml.Node, cfg *config.Config) error {
 	}
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		mergeMapping(root.Content[0], src)
+		config.Annotate(root)
 		return nil
 	}
 	*root = *doc
+	config.Annotate(root)
 	return nil
 }
 
