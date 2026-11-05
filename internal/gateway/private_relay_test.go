@@ -100,6 +100,20 @@ func TestRelayResumesAfterTruncation(t *testing.T) {
 	if !bytes.Equal(rec.Body.Bytes(), data) {
 		t.Fatal("续传后内容错位")
 	}
+	// 中转转发要进流量账，否则面板上看不到这笔。
+	rows, err := g.st.TrafficByDay(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bypass int64
+	for _, row := range rows {
+		if row.Traffic == store.TrafficBypass {
+			bypass += row.Bytes
+		}
+	}
+	if bypass != int64(len(data)) {
+		t.Fatalf("流量账应记 %d 字节，实际 %d", len(data), bypass)
+	}
 }
 
 // 中转不认 Range（续传请求仍回 200 全量）：跳过已写部分后继续，不能重复写。

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
 // TrustedRelay 是显式信任的自建加速端。它能看到 PAT，所以只允许
@@ -231,6 +232,13 @@ func newPrivClient() *http.Client {
 // curl 18 / HTTP2 stream reset。
 func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *http.Response, t TrustedRelay, plan *adapter.Plan) {
 	defer resp.Body.Close()
+	var sent int64
+	// 中转转发也是实打实出网了，记进流量账；不然面板上这块是空白。
+	defer func() {
+		if sent > 0 {
+			g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), sent)
+		}
+	}()
 	h := w.Header()
 	copyHeader(h, resp.Header, "Content-Type", "Content-Length", "Content-Disposition",
 		"Accept-Ranges", "ETag", "Last-Modified")
@@ -243,7 +251,7 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 	}
 	total := resp.ContentLength
 	if resp.StatusCode != http.StatusOK || total <= 0 {
-		io.Copy(w, resp.Body)
+		sent, _ = io.Copy(w, resp.Body)
 		return
 	}
 
@@ -265,11 +273,13 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 		}
 	}
 	if off >= total {
+		sent = off
 		return
 	}
 
 	log.Printf("信任中转 %s 断在 %d/%d，开始续传", t.Name, off, total)
 	done := g.resumeRelay(ctx, w, t, plan, off, total, flusher)
+	sent = done
 	if done < total {
 		log.Printf("信任中转 %s 续传未完成：还差 %d 字节", t.Name, total-done)
 	} else {
