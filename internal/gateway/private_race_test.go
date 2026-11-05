@@ -327,3 +327,40 @@ func TestRelayClientCancelStopsUpstream(t *testing.T) {
 		t.Fatal("客户端断开后上游仍在下载")
 	}
 }
+
+// 首段有强 ETag，续传响应却不带：服务器没有证明是同一实体，拒绝拼接。
+func TestRelayResumeMissingETagRejected(t *testing.T) {
+	data := relayData(1 << 20)
+	first := 256 << 10
+	srv := relayTruncServer(t, data, first, func(w http.ResponseWriter, r *http.Request, from int) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(data[from:])
+	})
+	defer srv.Close()
+	g, plan := relayGatewayMulti(t, []string{srv.URL})
+	rec := relayRun(t, g, plan)
+	if rec.Body.Len() != first {
+		t.Fatalf("续传缺 ETag 应拒绝拼接，只留首段 %d 字节，实际 %d", first, rec.Body.Len())
+	}
+}
+
+// 206 的 Content-Length 与 Content-Range 区间不一致：响应本身是坏的。
+func TestRelayResumeContentLengthMismatch(t *testing.T) {
+	data := relayData(1 << 20)
+	first := 256 << 10
+	srv := relayTruncServer(t, data, first, func(w http.ResponseWriter, r *http.Request, from int) {
+		want := len(data) - from
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
+		w.Header().Set("Content-Length", strconv.Itoa(want+4096))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(data[from:])
+	})
+	defer srv.Close()
+	g, plan := relayGatewayMulti(t, []string{srv.URL})
+	rec := relayRun(t, g, plan)
+	if rec.Body.Len() != first {
+		t.Fatalf("Content-Length 与区间不符应拒绝，只留首段 %d 字节，实际 %d", first, rec.Body.Len())
+	}
+}

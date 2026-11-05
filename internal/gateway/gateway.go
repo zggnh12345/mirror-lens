@@ -178,7 +178,42 @@ func New(st *store.Store, o Options) *Gateway {
 	if n := o.Private.FallbackSem; n > 0 {
 		gw.privSem = make(chan struct{}, n)
 	}
+	gw.logPrivateBudget()
 	return gw
+}
+
+// logPrivateBudget 启动时把私有分片的最坏内存窗口算一遍。
+// 窗口 = 并发文件数 × worker 数 × 段大小；段大小会随文件变大翻倍
+// （段数收敛到 256），所以按配置的最大文件算出上界。这里只告警，
+// 不拒绝启动——数值是估算，不含读缓冲和 Transport 开销。
+func (g *Gateway) logPrivateBudget() {
+	if !g.par.Enabled || g.par.Workers <= 0 || g.par.ChunkSize <= 0 {
+		return
+	}
+	nPar := cap(g.privSem)
+	if nPar == 0 {
+		nPar = 1
+	}
+	chunk := g.par.ChunkSize
+	if g.maxSize > 0 {
+		if c := g.maxSize / 256; c > chunk {
+			chunk = c
+		}
+		if c := g.maxSize / 2; c < chunk {
+			chunk = c
+		}
+	}
+	if chunk <= 0 {
+		return
+	}
+	worst := int64(nPar) * int64(g.par.Workers) * chunk
+	slog.Info("私有分片内存窗口",
+		"并发文件", nPar, "worker", g.par.Workers,
+		"段大小MB", chunk>>20, "最坏MB", worst>>20)
+	if worst > 1<<30 {
+		slog.Warn("私有分片最坏窗口超 1 GB，建议降低 parallel.workers 或 private.fallback_sem",
+			"最坏MB", worst>>20)
+	}
 }
 
 // GC 暴露给 API 层做手动清理，保证和淘汰走同一套删除逻辑。

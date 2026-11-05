@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -131,13 +130,10 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 	}
 	cancels := make([]context.CancelFunc, len(alive))
 	ch := make(chan result, len(alive))
-	var wg sync.WaitGroup
 	for i, t := range alive {
 		ctx, cancel := context.WithCancel(r.Context())
 		cancels[i] = cancel
-		wg.Add(1)
 		go func(i int, t TrustedRelay, ctx context.Context) {
-			defer wg.Done()
 			resp, err := g.doTrusted(ctx, plan, t)
 			if err != nil && resp != nil {
 				// 没交付出去就失败：body 归本 goroutine 关闭。
@@ -145,12 +141,11 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 				resp = nil
 			}
 			// 通道容量等于中转数，交付不会阻塞，也不存在「交付失败」，
-			// 所以交出去的 body 一律由读的一方负责关闭。
+			// 所以交出去的 body 一律由读的一方负责关闭。每个 goroutine
+			// 因此只发一次就退出，不需要 WaitGroup 兜底。
 			ch <- result{idx: i, t: t, resp: resp, err: err}
 		}(i, t, ctx)
 	}
-	// 收尾放后台：不挡主路径，也不代替输家取消。
-	go func() { wg.Wait() }()
 
 	var denied *http.Response
 	var deniedIdx int
@@ -339,7 +334,9 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 }
 
 // resumeRelay 从 off 开始向同一个中转要 Range。只接受 206，并且必须能证明
-// 续的是同一份字节：Content-Range 的起点/终点/总长要对，ETag 要没变。
+// 续的是同一份字节：Content-Range 的起止/总长要对、Content-Length 要与区间
+// 一致、强 ETag 要原样返回。中转可以只给一段（en < total-1），读完这段再按
+// 新偏移请求下一段；每次请求都重新做上面这套校验。
 // 整个续传共享 15 分钟总预算，且跟随客户端取消。
 func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRelay, plan *adapter.Plan, off, total int64, etag string, flusher http.Flusher) int64 {
 	ctx, cancel := context.WithTimeout(parent, 15*time.Minute)
@@ -375,16 +372,23 @@ func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRela
 			return off
 		}
 		st, en, tot, okRange := parseFullCR(resp.Header.Get("Content-Range"))
-		if !okRange || st != off || tot != total {
+		if !okRange || st != off || tot != total || en >= total {
 			resp.Body.Close()
 			return off
 		}
-		if e := resp.Header.Get("ETag"); e != "" && e != etag {
-			// 版本变了，拼接就是脏数据。
+		// 首段响应用的是强 ETag，这里必须原样返回同一个：缺失、弱 ETag、
+		// 变成了别的版本都拒绝。If-Range 只是请求，不能当服务器已证明。
+		if resp.Header.Get("ETag") != etag {
 			resp.Body.Close()
 			return off
 		}
 		want := en - st + 1
+		// 声明了长度就必须与 Content-Range 区间一致，否则这个 206 本身
+		// 是坏的，不能拿它的字节去拼。
+		if resp.ContentLength >= 0 && resp.ContentLength != want {
+			resp.Body.Close()
+			return off
+		}
 		buf := make([]byte, 256<<10)
 		var got int64
 		for got < want {
