@@ -35,7 +35,7 @@ import (
 )
 
 // Version 面板与 /api/me 显示的版本号。
-const Version = "2.6.3"
+const Version = "2.6.4"
 
 //go:embed web
 var webFS embed.FS

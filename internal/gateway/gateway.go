@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.3"
+const Version = "2.6.4"
 
 type Gateway struct {
 	st      *store.Store
@@ -452,6 +452,7 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 		return append(out, fbs...)
 	}
 	cands := g.sched.Candidates(plan.Kind)
+	metrics.SourceCandidates(len(cands))
 	var head []fetchTarget
 	for _, c := range cands {
 		cc := c
