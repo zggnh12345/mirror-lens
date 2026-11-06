@@ -124,6 +124,10 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	var next atomic.Int64
 	next.Store(1)
 	busy := make([]atomic.Int32, len(srcs))
+	// 第 0 段由主协程从 resp0 直读，也要占源 0 的并发名额；
+	// 否则 workers 会把正在供数的源当成空闲源继续派活。
+	busy[0].Add(1)
+	defer busy[0].Add(-1)
 	pick := func() int {
 		best, bestBusy, bestFail := -1, int32(1<<30), int32(1<<30)
 		for j := range srcs {

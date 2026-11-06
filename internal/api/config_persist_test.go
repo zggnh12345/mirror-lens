@@ -46,13 +46,13 @@ func TestSaveConfigConcurrentNoLostUpdate(t *testing.T) {
 		wg.Add(2)
 		go func(n int) {
 			defer wg.Done()
-			if _, _, err := s.saveConfig(map[string]string{"cache.max_gb": fmt.Sprint(100 + n)}); err != nil {
+			if _, _, err := s.saveConfig(map[string]string{"cache.max_gb": fmt.Sprint(200 + n)}); err != nil {
 				errs <- err
 			}
 		}(i)
 		go func(n int) {
 			defer wg.Done()
-			if _, _, err := s.saveConfig(map[string]string{"raw.ttl": fmt.Sprintf("%dm", 30+n)}); err != nil {
+			if _, _, err := s.saveConfig(map[string]string{"raw.ttl": fmt.Sprintf("%dm", 45+n)}); err != nil {
 				errs <- err
 			}
 		}(i)
@@ -72,11 +72,13 @@ func TestSaveConfigConcurrentNoLostUpdate(t *testing.T) {
 		t.Fatalf("落盘配置无法解析: %v", err)
 	}
 	def := config.Default()
-	if got.Cache.MaxGB == def.Cache.MaxGB {
-		t.Fatalf("cache.max_gb 被并发写丢掉了: %d", got.Cache.MaxGB)
+	// 写入值必须全部避开默认值：n=0 那轮曾与默认值重合，
+	// 最后落定若是它，会被误报成 lost update。
+	if got.Cache.MaxGB == def.Cache.MaxGB || got.Cache.MaxGB < 200 || got.Cache.MaxGB > 209 {
+		t.Fatalf("cache.max_gb 不是任何一次合法写入: %d", got.Cache.MaxGB)
 	}
-	if got.Raw.TTL.Duration == def.Raw.TTL.Duration {
-		t.Fatalf("raw.ttl 被并发写丢掉了: %v", got.Raw.TTL.Duration)
+	if got.Raw.TTL.Duration == def.Raw.TTL.Duration || got.Raw.TTL.Duration < 45*60e9 || got.Raw.TTL.Duration > 54*60e9 {
+		t.Fatalf("raw.ttl 不是任何一次合法写入: %v", got.Raw.TTL.Duration)
 	}
 	live := s.cfg.Load()
 	if live.Cache.MaxGB != got.Cache.MaxGB || live.Raw.TTL.Duration != got.Raw.TTL.Duration {

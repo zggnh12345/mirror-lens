@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.12"
+const Version = "2.6.13"
 
 type Gateway struct {
 	st      *store.Store
@@ -66,11 +66,12 @@ type Gateway struct {
 	verifyFail    atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
 	par           ParOptions
 	hedge         HedgeOptions
-	parTargets    func(*adapter.Plan) []fetchTarget // 测试注入用，nil 时走 targets()
-	requireToken  bool                              // 代理路径是否强制 Access Token（false = 匿名放行）
-	cdn           CDNOptions                        // 边缘缓存策略（阶段 8）
-	priv          PrivateOptions                    // 私有请求的中转与回退策略
-	trusted       atomic.Value                      // []TrustedRelay，面板热更新
+	parTargets    func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
+	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
+	requireToken  bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）
+	cdn           CDNOptions                                 // 边缘缓存策略（阶段 8）
+	priv          PrivateOptions                             // 私有请求的中转与回退策略
+	trusted       atomic.Value                               // []TrustedRelay，面板热更新
 	privMu        sync.Mutex
 	privFails     map[string]int
 	privUntil     map[string]time.Time

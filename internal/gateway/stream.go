@@ -472,6 +472,11 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	var part *os.File
 	sent := int64(0)    // 已经发给客户端的字节
 	written := int64(0) // 这次真正写进 .part 的字节
+	// 换源只靠摘要兜底时置位：这份 .part 的版本无法自证，不能留着续传。
+	unverified := false
+	savePartial := func() {
+		g.savePartialOrDrop(plan, resp, total, have+written, part, unverified)
+	}
 
 	// 先把旧前缀补给客户端并接着算哈希：这步与 cacheable 无关，
 	// 不落盘也要补齐客户端那半份。
@@ -505,7 +510,6 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		}
 	}
 
-	buf := make([]byte, 64<<10)
 	copyStart := time.Now()
 	sentBase := sent
 	sw := newStreamWatch(g.par)
@@ -518,12 +522,12 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// 返回 errOverrun 表示上游多给了字节（继续收尾判失败），其它错误直接结束。
 	writeChunk := func(b []byte) error {
 		if _, werr := out.Write(b); werr != nil {
-			g.keepPartial(plan, resp, total, have+written, part)
+			savePartial()
 			return werr
 		}
 		if part != nil {
 			if _, werr := part.Write(b); werr != nil {
-				g.keepPartial(plan, resp, total, have+written, part)
+				savePartial()
 				return werr
 			}
 			hasher.Write(b)
@@ -548,72 +552,172 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		return nil
 	}
 
-	for {
-		n, rerr := resp.Body.Read(buf)
-		if n > 0 {
-			werr := writeChunk(buf[:n])
-			if werr != nil && !errors.Is(werr, errOverrun) {
+	// finished 表示当前连接已不需要再读（接管、换源失败或客户端走了）。
+	finished := false
+	// restartReader 在读循环初始化后赋值；换源成功时换成新连接继续读。
+	var restartReader func()
+	// onSlow 处理一次判慢：先试换源，换不了再试中途并行。
+	onSlow := func() {
+		nresp, ntgt, first, verified, serr := g.trySwitch(r.Context(), plan, tgt, resp.Header, sent, total, tried)
+		if serr != nil {
+			sw.setGiveUp()
+			g.noteLive(tgt, plan.Kind, sw)
+			log.Printf("单流判慢：%v", serr)
+			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp); taken {
+				tgt = nil // 记账分散到各台源，这里不再重复记当前源
+				if ok {
+					outcome = outcomeOK
+				}
+				finished = true
 				return
 			}
-			keep := werr == nil
-			sw.add(int64(n))
-			if keep && sw.slow(sent, total) {
-				// 判慢：先向下一台有快样本的星标要数据，拿到首块再关旧连接。
-				nresp, ntgt, first, serr := g.trySwitch(r.Context(), plan, tgt, sent, tried)
-				if serr != nil {
-					sw.setGiveUp()
-					g.noteLive(tgt, plan.Kind, sw)
-					log.Printf("单流判慢：%v", serr)
-					// 没有更快的星标可换时，试试从当前位置接入分片；
-					// 已接手的话整份收尾（含落盘）都由 midFill 负责。
-					if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp); taken {
-						tgt = nil // 记账分散到各台源，这里不再重复记当前源
-						if ok {
-							outcome = outcomeOK
-						}
-						return
-					}
-					log.Printf("中途并行没接上，继续当前连接")
-				} else {
-					g.noteLive(tgt, plan.Kind, sw)
-					resp.Body.Close()
-					resp = nresp
-					tgt = ntgt
-					sw.afterSwitch()
-					if resp.StatusCode == http.StatusOK {
-						// 新源不支持 Range，从 0 开始：first 属于前缀，连同剩下的前缀一起读掉。
-						if skip := sent - int64(len(first)); skip > 0 {
-							if derr := discardN(resp.Body, skip); derr != nil {
-								g.keepPartial(plan, resp, total, have+written, part)
-								return
-							}
-						}
-					} else if len(first) > 0 {
-						if ferr := writeChunk(first); ferr != nil {
-							if !errors.Is(ferr, errOverrun) {
-								return
-							}
-							keep = false
-						}
-						sw.add(int64(len(first)))
-					}
-				}
-			}
-			if !keep {
-				break
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			// 客户端自己走了（取消）不算源的错；否则就是「头到了、身子断了」。
-			if r.Context().Err() == nil {
-				outcome = outcomeFail
-			}
-			g.keepPartial(plan, resp, total, have+written, part)
+			log.Printf("中途并行没接上，继续当前连接")
 			return
 		}
+		g.noteLive(tgt, plan.Kind, sw)
+		resp.Body.Close()
+		resp = nresp
+		tgt = ntgt
+		if ntgt.c != nil {
+			// 续传元数据必须绑定真正在供数的源，不能停在初始地址。
+			plan.Upstream = ntgt.u
+			plan.Source = ntgt.c.Name
+		}
+		if !verified {
+			// 靠 ExpectSHA 兜底换来的前缀无法证明版本，断流时不留 partial。
+			unverified = true
+		}
+		sw.afterSwitch()
+		// 换源后的吞吐只算新源这一段，别把旧源的慢速混进来。
+		sentBase = sent
+		copyStart = time.Now()
+		if resp.StatusCode == http.StatusOK {
+			// 新源不支持 Range，从 0 开始：first 属于前缀，连同剩下的前缀一起读掉。
+			if skip := sent - int64(len(first)); skip > 0 {
+				if derr := discardN(resp.Body, skip); derr != nil {
+					savePartial()
+					finished = true
+					return
+				}
+			}
+		} else if len(first) > 0 {
+			if ferr := writeChunk(first); ferr != nil {
+				if !errors.Is(ferr, errOverrun) {
+					finished = true
+					return
+				}
+			}
+			sw.add(int64(len(first)))
+		}
+		restartReader()
+	}
+
+	// 读上游放到独立 goroutine：主循环用 ticker 推进测速窗口，
+	// 这样源站卡住时窗口照样前进，判慢不会因为「没有 add 调用」而失效。
+	type upChunk struct {
+		b   []byte
+		err error
+	}
+	var (
+		up   chan upChunk
+		stop chan struct{}
+	)
+	restartReader = func() {
+		if stop != nil {
+			close(stop)
+		}
+		// 必须按值捕获：stop 会被下一次换源覆盖，闭包读变量会监听错通道。
+		st := make(chan struct{})
+		stop = st
+		ch := make(chan upChunk, 4)
+		up = ch
+		go func(stop <-chan struct{}) {
+			defer close(ch)
+			b := make([]byte, 64<<10)
+			for {
+				n, err := resp.Body.Read(b)
+				if n > 0 {
+					c := make([]byte, n)
+					copy(c, b[:n])
+					select {
+					case ch <- upChunk{b: c}:
+					case <-stop:
+						return
+					}
+				}
+				if err != nil {
+					select {
+					case ch <- upChunk{err: err}:
+					case <-stop:
+					}
+					return
+				}
+			}
+		}(st)
+	}
+	restartReader()
+	defer func() {
+		if stop != nil {
+			close(stop)
+		}
+	}()
+
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+
+	for !finished {
+		select {
+		case ck, ok := <-up:
+			if !ok {
+				up = nil
+				finished = true
+				break
+			}
+			if len(ck.b) > 0 {
+				tw := time.Now()
+				werr := writeChunk(ck.b)
+				// 写客户端/落盘的阻塞不是源站慢，从测速窗口里扣掉。
+				sw.addWrite(time.Since(tw))
+				if werr != nil && !errors.Is(werr, errOverrun) {
+					return
+				}
+				keep := werr == nil
+				sw.add(int64(len(ck.b)))
+				if keep && sw.slow(sent, total) {
+					onSlow()
+					if finished {
+						break
+					}
+				}
+				if !keep {
+					finished = true
+					break
+				}
+			}
+			if ck.err != nil {
+				if errors.Is(ck.err, io.EOF) {
+					finished = true
+					break
+				}
+				// 客户端自己走了（取消）不算源的错；否则就是「头到了、身子断了」。
+				if r.Context().Err() == nil {
+					outcome = outcomeFail
+				}
+				savePartial()
+				return
+			}
+		case <-tick.C:
+			sw.tick()
+			if sw.slow(sent, total) {
+				onSlow()
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+	if finished && tgt == nil {
+		// 中途并行已接管，收尾由它负责。
+		return
 	}
 
 	// 完整下完才记：这是单流独占带宽下的持续吞吐，比探测那 4MB 准。
@@ -692,6 +796,17 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 // 免得旧版本前半段拼到新版本上。
 // 续传点只认盘上真实字节（persisted）：长度对不上就丢，
 // 否则下次会从不存在的位置拼起，得到中间缺一段的文件。
+// savePartialOrDrop 决定这次断流能不能留下续传点。
+// unverified 表示当前前缀来自「没有可比验证器、只能靠摘要兜底」的换源，
+// 版本无法自证：宁可丢掉，也不能让下一次续传拿到错误前缀。
+func (g *Gateway) savePartialOrDrop(plan *adapter.Plan, resp *http.Response, total, persisted int64, part *os.File, unverified bool) {
+	if unverified {
+		g.cache.DropPartial(plan.CacheKey)
+		return
+	}
+	g.keepPartial(plan, resp, total, persisted, part)
+}
+
 func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, persisted int64, part *os.File) {
 	partPath, metaPath := g.cache.PartialPaths(plan.CacheKey)
 	if part != nil {
