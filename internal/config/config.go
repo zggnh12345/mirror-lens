@@ -125,6 +125,11 @@ type Parallel struct {
 	// RangeTTL 是「该源不支持 Range」这条结论的缓存时长。过期后重新预检，
 	// 免得把后来修好 Range 的源永久挡在分片之外。0 表示每次都探。
 	RangeTTL Duration `yaml:"range_ttl"`
+	// DegradeMBps 是降级判据：星标源最近 3 次真实单流都低于这个速度（MB/s）
+	// 才临时改走并行。没有真实样本时一律信星标源。
+	DegradeMBps int64 `yaml:"degrade_mbps"`
+	// DegradeHoldMin 是降级后的冷却分钟数：并行跑这么久再放一次单流试探。
+	DegradeHoldMin int `yaml:"degrade_hold_min"`
 }
 
 // Private 是带凭据（PAT）的私有请求的加速策略：凭据只发给显式信任的
@@ -242,6 +247,10 @@ func Default() *Config {
 			// 8 并发反而把每连接压到 0.2-0.4MB/s，总速不如 4。
 			Workers:  4,
 			RangeTTL: Duration{6 * time.Hour},
+			// 低于 4MB/s 才算「慢」：常见镜像站单流能到 10-30MB/s，
+			// 4 以下并行才有明显收益，再高容易误判。
+			DegradeMBps:    4,
+			DegradeHoldMin: 30,
 		},
 		Private: Private{
 			BreakAfter:          3,

@@ -84,6 +84,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	// 星标源被分片预检剔除时宁可单流：用户手动置顶的源通常快一个数量级
 	// （实测春川单流 50MB/s，sparkcr 并行 2.8MB/s），并行看着热闹实际更慢。
+	// 多台星标源时：只要有一台快就单流；全部持续慢才考虑降级。
+	var slow []*scheduler.Candidate
 	for _, t := range targets {
 		if t.c == nil || !t.c.Preferred {
 			continue
@@ -95,15 +97,30 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 				break
 			}
 		}
-		if !found {
-			// 固定「一律单流」在星标源本身掉速时会误判，这里比一下两条路的
-			// 预计用时：只有并行明显更快才放弃星标源。
-			if !g.parWorthIt(total, t.c, srcs) {
-				g.decline("星标源不支持分片，回落单流优先用它")
-				return false
-			}
-			log.Printf("并行填充：星标源 %s 不支持分片，但其余源合计预计更快，改走并行", t.c.Name)
+		if found {
+			continue
 		}
+		// 不做速度预测：只有最近 3 次真实单流下载都很慢时才降级，
+		// 否则固定单流。预测要靠探测数据，量到的是冷启动，容易误判。
+		if !g.starTooSlow(plan, t.c) {
+			g.decline("星标源不支持分片，回落单流优先用它")
+			return false
+		}
+		slow = append(slow, t.c)
+	}
+	if len(slow) > 0 {
+		ok := false
+		for _, c := range slow {
+			if g.allowParallelNow(c.ID) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			g.decline("星标源不支持分片，回落单流优先用它")
+			return false
+		}
+		log.Printf("并行填充：星标源最近 3 次单流都低于 4MB/s，临时改走并行")
 	}
 	if total > g.limitFor(plan) {
 		g.decline(fmt.Sprintf("文件 %d 字节超过单文件上限 %d", total, g.limitFor(plan)))
@@ -638,33 +655,53 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 	return parProbe{src: parSource{t: t, name: parName(t), ctype: ctype}, total: tot, ok: true}
 }
 
-// parWorthIt 判断「放弃星标源改走并行」值不值：单流按星标源最近速度估，
-// 并行按其余源速度之和打 0.75 折扣估，并行至少快 20% 才切换，免得来回抖。
-func (g *Gateway) parWorthIt(size int64, pref *scheduler.Candidate, srcs []parSource) bool {
-	const (
-		defSpeed = 5000.0 // KB/s，没有速度样本时的保守值
-		gain     = 1.2
-		eff      = 0.75
-	)
-	if size < 32<<20 {
-		return false // 小文件并行开销占比太高，不值得
+// starTooSlow 判断星标源是否持续慢：最近 3 次真实单流下载都低于 4MB/s。
+// 样本不够就返回 false —— 没有真实数据时一律信星标源走单流。
+func (g *Gateway) starTooSlow(plan *adapter.Plan, c *scheduler.Candidate) bool {
+	if g.st == nil {
+		return false
 	}
-	vp := float64(pref.SpeedKBps)
-	if vp <= 0 {
-		vp = defSpeed
+	v := g.st.RecentProxySpeeds(c.ID, plan.Kind, 3)
+	if len(v) < 3 {
+		return false
 	}
-	var sum float64
-	for _, s := range srcs {
-		if s.t.c == nil || s.t.c.ID == pref.ID {
-			continue
+	limit := g.par.DegradeMBps * 1024
+	if limit <= 0 {
+		limit = 4 * 1024
+	}
+	for _, s := range v {
+		if s >= limit {
+			return false
 		}
-		v := float64(s.t.c.SpeedKBps)
-		if v <= 0 {
-			v = defSpeed
-		}
-		sum += v
 	}
-	return sum*eff >= vp*gain
+	return true
+}
+
+// allowParallelNow 控制降级后的冷却：切到并行后至少跑 30 分钟，
+// 之后放一次单流试探；试探还慢就再并行一个周期。
+func (g *Gateway) allowParallelNow(id int64) bool {
+	now := time.Now()
+	g.degradeMu.Lock()
+	defer g.degradeMu.Unlock()
+	since, ok := g.degradeAt[id]
+	if !ok {
+		g.degradeAt[id] = now
+		return true
+	}
+	hold := g.par.DegradeHold
+	if hold <= 0 {
+		hold = 30 * time.Minute
+	}
+	if now.Sub(since) < hold {
+		return true
+	}
+	if p, ok := g.probeAt[id]; ok && now.Sub(p) < hold {
+		return true
+	}
+	// 冷却到了，放一次单流试探，等下个周期再用新样本判断。
+	g.probeAt[id] = now
+	delete(g.degradeAt, id)
+	return false
 }
 
 // rangeKnownOff 判断这台源上次是否已判定不支持 Range，且结论还没过期。

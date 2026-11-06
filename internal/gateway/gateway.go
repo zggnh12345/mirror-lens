@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.10"
+const Version = "2.6.11"
 
 type Gateway struct {
 	st      *store.Store
@@ -79,7 +79,10 @@ type Gateway struct {
 	parFills      atomic.Int64  // 真正走了并行分片的次数
 	parBytes      atomic.Int64  // 并行分片下下来的字节
 	parFalls      atomic.Int64  // 试过但退回单流（不支持 Range、源不够等）
-	tasks         *taskReg      // 面板活跃任务表（内存）
+	tasks         *taskReg
+	degradeMu     sync.Mutex
+	degradeAt     map[int64]time.Time
+	probeAt       map[int64]time.Time // 面板活跃任务表（内存）
 }
 
 type ParOptions struct {
@@ -91,6 +94,10 @@ type ParOptions struct {
 	TailVerify bool
 	// RangeTTL 是「源不支持 Range」结论的缓存时长，0 表示每次预检都探。
 	RangeTTL time.Duration
+	// DegradeMBps / DegradeHold 控制星标源降级：最近 3 次真实单流都低于
+	// DegradeMBps（MB/s）才改走并行，并行 DegradeHold 后放一次单流重探。
+	DegradeMBps int64
+	DegradeHold time.Duration
 }
 
 // CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，
@@ -172,6 +179,8 @@ func New(st *store.Store, o Options) *Gateway {
 		par:           o.Parallel,
 		hedge:         o.Hedge,
 		tasks:         newTaskReg(),
+		degradeAt:     map[int64]time.Time{},
+		probeAt:       map[int64]time.Time{},
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
 		priv:          o.Private,
@@ -1054,7 +1063,7 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 	// 记真实回源吞吐：这是单流独占带宽下量到的持续速度，
 	// 比探测那 4MB 准得多。小文件慢启动占比高，不记。
-	if t.c != nil && g.st != nil && n >= 16<<20 {
+	if t.c != nil && g.st != nil && n >= 64<<20 {
 		if el := time.Since(start).Milliseconds(); el > 0 {
 			_ = g.st.AddProxySpeed(t.c.ID, plan.Kind, n, el)
 		}

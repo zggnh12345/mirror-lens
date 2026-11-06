@@ -294,31 +294,53 @@ func TestParallelYieldsToPreferredSource(t *testing.T) {
 }
 
 // 星标源掉速时，其余源合计明显更快就该改走并行；星标源够快时保持单流。
-func TestParWorthIt(t *testing.T) {
-	g := &Gateway{}
-	mk := func(id, v int64) parSource {
-		return parSource{t: fetchTarget{c: &scheduler.Candidate{ID: id, SpeedKBps: v}}}
+func TestStarTooSlowAndCooldown(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "pd.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	pref := &scheduler.Candidate{ID: 1, SpeedKBps: 25600} // 25MB/s
-	slow := []parSource{mk(2, 4000), mk(3, 4000)}
-	if g.parWorthIt(64<<20, pref, slow) {
-		t.Fatal("星标源 25MB/s 时不该为了 8MB/s 的并行放弃它")
+	defer st.Close()
+	id, err := st.AddSource(store.Source{
+		Name: "p", BaseURL: "https://p.example", Status: "usable", Enabled: true,
+		DockerCap: 1, GithubCap: 1, GitCap: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	g := &Gateway{st: st, degradeAt: map[int64]time.Time{}, probeAt: map[int64]time.Time{}}
+	plan := &adapter.Plan{Kind: "docker"}
+	c := &scheduler.Candidate{ID: id}
 
-	prefSlow := &scheduler.Candidate{ID: 1, SpeedKBps: 2000} // 2MB/s
-	fast := []parSource{mk(2, 20000), mk(3, 10000)}
-	if !g.parWorthIt(64<<20, prefSlow, fast) {
-		t.Fatal("星标源只有 2MB/s、其余源合计 30MB/s 时应改走并行")
+	if g.starTooSlow(plan, c) {
+		t.Fatal("没有真实样本时不该判慢")
 	}
-
-	if g.parWorthIt(10<<20, prefSlow, fast) {
-		t.Fatal("10MB 的小文件不该并行")
+	for i := 0; i < 3; i++ {
+		// 100MiB / 50s = 2MB/s
+		if err := st.AddProxySpeed(id, "docker", 100<<20, 50000); err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	// 官方源（c==nil）不算供数能力
-	official := []parSource{{t: fetchTarget{u: mustURL(t, "http://example.com")}}}
-	if g.parWorthIt(64<<20, prefSlow, official) {
-		t.Fatal("只剩官方源时不该放弃星标源")
+	if !g.starTooSlow(plan, c) {
+		t.Fatal("最近 3 次都是 2MB/s，应判慢")
+	}
+	if !g.allowParallelNow(id) || !g.allowParallelNow(id) {
+		t.Fatal("判慢后应允许并行，且冷却期内继续并行")
+	}
+	g.degradeMu.Lock()
+	g.degradeAt[id] = time.Now().Add(-40 * time.Minute)
+	g.degradeMu.Unlock()
+	if g.allowParallelNow(id) {
+		t.Fatal("冷却到期应放一次单流试探")
+	}
+	if !g.allowParallelNow(id) {
+		t.Fatal("试探后 30 分钟内应回到并行")
+	}
+	time.Sleep(1100 * time.Millisecond)                                   // 让新样本的 ts 严格更新
+	if err := st.AddProxySpeed(id, "docker", 100<<20, 5000); err != nil { // 20MB/s
+		t.Fatal(err)
+	}
+	if g.starTooSlow(plan, c) {
+		t.Fatal("最近一次 20MB/s 就不该再判慢")
 	}
 }
 

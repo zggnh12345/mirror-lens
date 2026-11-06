@@ -53,6 +53,8 @@ var fieldDocs = map[string]string{
 	"parallel.range_ttl":           "「该源不支持 Range」结论的缓存时长，过期重测（默认 6h）",
 	"parallel.chunk_mb":            "每个分片的请求大小（MiB）",
 	"parallel.workers":             "单个文件的并行分片数",
+	"parallel.degrade_mbps":        "星标源最近 3 次真实单流都低于该速度（MB/s）才改走并行",
+	"parallel.degrade_hold_min":    "降级后并行持续多少分钟，再放一次单流重探",
 	"parallel.disable_tail_verify": "跳过尾部哈希校验，仅调试用，生产不要开",
 	"private.break_after":          "信任源连续失败多少次后熔断",
 	"private.break_seconds":        "熔断持续秒数，到期后放一个请求试探",

@@ -186,11 +186,30 @@ func (s *Store) AddProxySpeed(sourceID int64, kind string, bytes, ms int64) erro
 	return err
 }
 
+// RecentProxySpeeds 返回最近 n 条真实单流下载速度（KB/s），新的在前。
+func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
+	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
+		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
+		ORDER BY ts DESC LIMIT ?`, id, kind, 64<<20, n)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var b, ms int64
+		if rows.Scan(&b, &ms) == nil && ms > 0 {
+			out = append(out, b/ms)
+		}
+	}
+	return out
+}
+
 // proxySpeed 用最近的真实回源吞吐估这台源能跑多快（KB/s），没样本返回 0。
 func (s *Store) proxySpeed(id int64, kind string) int64 {
 	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
 		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT 20`, id, kind, 16<<20)
+		ORDER BY ts DESC LIMIT 20`, id, kind, 64<<20)
 	if err != nil {
 		return 0
 	}

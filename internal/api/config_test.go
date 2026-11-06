@@ -19,6 +19,26 @@ func TestConfigViewGroupsAndFields(t *testing.T) {
 	if v["config_path"] != "/etc/mirror-lens/config.yaml" {
 		t.Fatalf("config_path 没带上: %v", v["config_path"])
 	}
+	// 星标源降级的两个参数要能在设置页里改
+	wantKeys := map[string]string{"parallel.degrade_mbps": "4", "parallel.degrade_hold_min": "30"}
+	for _, s := range secs {
+		if s["title"] != "分片并行" {
+			continue
+		}
+		for _, f := range s["fields"].([]map[string]any) {
+			k, _ := f["key"].(string)
+			if w, ok := wantKeys[k]; ok {
+				if f["value"] != w {
+					t.Fatalf("%s 默认值不对，期望 %s 实际 %v", k, w, f["value"])
+				}
+				delete(wantKeys, k)
+			}
+		}
+	}
+	if len(wantKeys) > 0 {
+		t.Fatalf("设置页缺少字段: %v", wantKeys)
+	}
+
 	// 「缓存」分组里的 max_gb 默认 0
 	var found bool
 	for _, s := range secs {

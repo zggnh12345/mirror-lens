@@ -150,6 +150,12 @@ var cfgSchema = []cfgField{
 		Get: func(c *config.Config) string { return i64(c.Parallel.ChunkMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.ChunkMB, v, 1, 1<<20, true, false) }},
 	{Section: "分片并行", Key: "parallel.workers", Label: "同时下载片数", Kind: "int", Min: 2, Max: 16, HasMin: true, HasMax: true, Restart: true,
 		Get: func(c *config.Config) string { return i32(c.Parallel.Workers) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Parallel.Workers, v, 2, 16, true, true) }},
+	{Section: "分片并行", Key: "parallel.degrade_mbps", Label: "星标源降级阈值", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
+		Hint: "星标源最近 3 次真实单流都低于此值才改走并行", Get: func(c *config.Config) string { return i64(c.Parallel.DegradeMBps) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.DegradeMBps, v, 1, 1024, true, true) }},
+	{Section: "分片并行", Key: "parallel.degrade_hold_min", Label: "降级后并行时长", Kind: "int", Unit: "分钟", Min: 1, Max: 1440, HasMin: true, HasMax: true, Restart: true,
+		Hint: "并行这么久后放一次单流重新探测", Get: func(c *config.Config) string { return i32(c.Parallel.DegradeHoldMin) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Parallel.DegradeHoldMin, v, 1, 1440, true, true)
+		}},
 
 	// 探测
 	{Section: "探测", Key: "probe.allow_private", Label: "允许探测内网源", Kind: "bool", Restart: true,
