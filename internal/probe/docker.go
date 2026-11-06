@@ -240,8 +240,15 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 	return res
 }
 
-// blobCap 是一次探测愿意为校验多付的流量。
-const blobCap = 4 << 20
+// blobCap 是一次探测愿意为校验多付的流量，可在启动时按配置调整。
+var blobCap int64 = 4 << 20
+
+// SetSampleCap 改探测采样上限（字节）。调用发生在启动阶段，运行中不再改。
+func SetSampleCap(n int64) {
+	if n > 0 {
+		blobCap = n
+	}
+}
 
 // pickVerifyLayer 挑一个能整份下完的层。只有整份字节都算过哈希，「摘要一致」
 // 这句话才成立；层都太大时退回第一层，只测速，不宣称校验。
@@ -322,7 +329,7 @@ func fetchManifest(ctx context.Context, c *http.Client, base, tok, path string) 
 		return nil, "", false, 0, "", err
 	}
 	defer resp.Body.Close()
-	raw, err := readCapped(resp.Body, 4<<20)
+	raw, err := readCapped(resp.Body, blobCap)
 	if err != nil {
 		return nil, "", false, resp.StatusCode, "", err
 	}

@@ -901,7 +901,7 @@ func TestParPreflightCapsSlowOfficial(t *testing.T) {
 	targets := []fetchTarget{{u: plan.Upstream}, {u: mu, c: cand}}
 
 	start := time.Now()
-	srcs, total := g.parPreflight(context.Background(), plan, targets)
+	srcs, total := g.parPreflight(context.Background(), plan, targets, 0)
 	if el := time.Since(start); el > 2*time.Second {
 		t.Fatalf("预检被官方源拖住 %v", el)
 	}

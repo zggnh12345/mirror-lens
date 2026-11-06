@@ -68,7 +68,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 
 	ctx := r.Context()
-	srcs, total := g.parPreflight(ctx, plan, targets)
+	srcs, total := g.parPreflight(ctx, plan, targets, 0)
 	// 官方源只用来确认总长，不参与供数：国内直连 ghcr.io / docker.io 常常
 	// 只有几十 KB/s、甚至间歇性不通，而第 0 段是直通客户端的。官方排在
 	// 第一位时整条流会卡死在开头（线上实测 22 KB/s、38 秒只走 1.2 MB）。
@@ -530,7 +530,7 @@ func preflightStatusIsSourceFailure(status int) bool {
 // 官方源被墙时曾经把首包拖满 20s 的连接超时。
 var parProbeTimeout = 5 * time.Second
 
-func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets []fetchTarget) ([]parSource, int64) {
+func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets []fetchTarget, timeout time.Duration) ([]parSource, int64) {
 	ordered := make([]fetchTarget, 0, len(targets))
 	for _, t := range targets {
 		if t.u.String() == plan.Upstream.String() {
@@ -554,7 +554,10 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 
 	// 预检必须有时长上限：官方源不可达时它会一直等满 ResponseHeaderTimeout
 	// （20s），而响应头要等预检结束才写，用户看到的就是「点了没反应」。
-	ctx, cancel := context.WithTimeout(ctx, parProbeTimeout)
+	if timeout <= 0 {
+		timeout = parProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out := make([]parProbe, n)
 	var wg sync.WaitGroup
@@ -661,13 +664,24 @@ func (g *Gateway) starTooSlow(plan *adapter.Plan, c *scheduler.Candidate) bool {
 	if g.st == nil {
 		return false
 	}
-	v := g.st.RecentProxySpeeds(c.ID, plan.Kind, 3)
-	if len(v) < 3 {
-		return false
-	}
 	limit := g.par.DegradeMBps * 1024
 	if limit <= 0 {
 		limit = 4 * 1024
+	}
+	v := g.st.RecentProxySpeeds(c.ID, plan.Kind, 3)
+	if len(v) < 3 {
+		// 整份样本还没攒够时，用下载过程中的窗口测速兜底：
+		// 最近 10 分钟连着 3 次窗口都慢，也算这台源现在慢。
+		live := g.st.RecentLiveSpeeds(c.ID, plan.Kind, time.Now().Add(-10*time.Minute).Unix(), 3)
+		if len(live) < 3 {
+			return false
+		}
+		for _, s := range live {
+			if s >= limit {
+				return false
+			}
+		}
+		return true
 	}
 	for _, s := range v {
 		if s >= limit {

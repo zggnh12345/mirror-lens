@@ -130,6 +130,19 @@ type Parallel struct {
 	DegradeMBps int64 `yaml:"degrade_mbps"`
 	// DegradeHoldMin 是降级后的冷却分钟数：并行跑这么久再放一次单流试探。
 	DegradeHoldMin int `yaml:"degrade_hold_min"`
+
+	// 单流下载中的实时判速与换源。
+	// WatchMBps/WatchSec：窗口内平均低于 WatchMBps 判为慢。
+	// SwitchMinMBps：备选星标要有这么快的历史样本才值得换（否则直接并行）。
+	// SwitchMinFileMiB：小于此尺寸不参与换源，重下不划算。
+	// SwitchMaxSentMiB：已发给客户端的字节超过此值不再换源（空档代价太高）。
+	WatchMBps        int64 `yaml:"watch_mbps"`
+	WatchSec         int   `yaml:"watch_sec"`
+	SwitchMinMBps    int64 `yaml:"switch_min_mbps"`
+	SwitchMinFileMiB int64 `yaml:"switch_min_file_mib"`
+	SwitchMaxSentMiB int64 `yaml:"switch_max_sent_mib"`
+	SwitchMax        int   `yaml:"switch_max"`
+	SwitchGapSec     int   `yaml:"switch_gap_sec"`
 }
 
 // Private 是带凭据（PAT）的私有请求的加速策略：凭据只发给显式信任的
@@ -201,6 +214,12 @@ type Metrics struct {
 // Probe 探测开关。探测会请求用户填的地址，默认只允许公网，防 SSRF。
 type Probe struct {
 	AllowPrivate bool `yaml:"allow_private"`
+	// 探测节奏：多久跑一轮、并发几台、单源超时、每轮采样多少数据。
+	// 采样越大判速越准，但每台源每轮都要背这部分流量。
+	IntervalSec int `yaml:"interval_sec"`
+	Concurrency int `yaml:"concurrency"`
+	TimeoutSec  int `yaml:"timeout_sec"`
+	SampleMiB   int `yaml:"sample_mib"`
 }
 
 // Default 是没有配置文件时的默认值。
@@ -251,14 +270,24 @@ func Default() *Config {
 			// 4 以下并行才有明显收益，再高容易误判。
 			DegradeMBps:    4,
 			DegradeHoldMin: 30,
+			// 单流实时判速：10 秒窗口低于 3MB/s 视为慢。
+			// 小文件重下不划算，60MiB 起才考虑换源。
+			WatchMBps:        3,
+			WatchSec:         10,
+			SwitchMinMBps:    8,
+			SwitchMinFileMiB: 60,
+			SwitchMaxSentMiB: 48,
+			SwitchMax:        2,
+			SwitchGapSec:     30,
 		},
 		Private: Private{
 			BreakAfter:          3,
 			BreakSeconds:        60,
 			FallbackConcurrency: 2,
 		},
-		Hedge:   Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
-		Probe:   Probe{AllowPrivate: false},
+		Hedge: Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
+		Probe: Probe{AllowPrivate: false,
+			IntervalSec: 30, Concurrency: 8, TimeoutSec: 45, SampleMiB: 4},
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),
 		Metrics: Metrics{Enabled: true},

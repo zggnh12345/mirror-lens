@@ -157,9 +157,54 @@ var cfgSchema = []cfgField{
 			return setIntI(&c.Parallel.DegradeHoldMin, v, 1, 1440, true, true)
 		}},
 
+	{Section: "分片并行", Key: "parallel.watch_mbps", Label: "单流判慢阈值", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
+		Hint: "每秒采样，watch_sec 秒窗口平均低于此值判为慢", Get: func(c *config.Config) string { return i64(c.Parallel.WatchMBps) }, Set: func(c *config.Config, v string) error {
+			return setInt(&c.Parallel.WatchMBps, v, 1, 1024, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.watch_sec", Label: "判速窗口", Kind: "int", Unit: "秒", Min: 5, Max: 120, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Parallel.WatchSec) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Parallel.WatchSec, v, 5, 120, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.switch_min_mbps", Label: "换源速度门槛", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
+		Hint: "备选星标要有这么快的历史样本才值得换，否则直接并行", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinMBps) }, Set: func(c *config.Config, v string) error {
+			return setInt(&c.Parallel.SwitchMinMBps, v, 1, 1024, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.switch_min_file_mib", Label: "换源最小文件", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinFileMiB) }, Set: func(c *config.Config, v string) error {
+			return setInt(&c.Parallel.SwitchMinFileMiB, v, 1, 102400, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.switch_max_sent_mib", Label: "换源已发上限", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
+		Hint: "已发给客户端的字节超过此值就不再换源", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMaxSentMiB) }, Set: func(c *config.Config, v string) error {
+			return setInt(&c.Parallel.SwitchMaxSentMiB, v, 1, 102400, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.switch_max", Label: "最多换源次数", Kind: "int", Min: 0, Max: 10, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Parallel.SwitchMax) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Parallel.SwitchMax, v, 0, 10, true, true)
+		}},
+	{Section: "分片并行", Key: "parallel.switch_gap_sec", Label: "换源最小间隔", Kind: "int", Unit: "秒", Min: 0, Max: 600, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Parallel.SwitchGapSec) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Parallel.SwitchGapSec, v, 0, 600, true, true)
+		}},
+
 	// 探测
 	{Section: "探测", Key: "probe.allow_private", Label: "允许探测内网源", Kind: "bool", Restart: true,
 		Hint: "源架在局域网时才开；开启等于关掉 SSRF 防护", Get: func(c *config.Config) string { return b2s(c.Probe.AllowPrivate) }, Set: func(c *config.Config, v string) error { c.Probe.AllowPrivate = parseBool(v); return nil }},
+	{Section: "探测", Key: "probe.interval_sec", Label: "探测轮询间隔", Kind: "int", Unit: "秒", Min: 5, Max: 86400, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Probe.IntervalSec) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Probe.IntervalSec, v, 5, 86400, true, true)
+		}},
+	{Section: "探测", Key: "probe.concurrency", Label: "探测并发", Kind: "int", Min: 1, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Probe.Concurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Probe.Concurrency, v, 1, 64, true, true)
+		}},
+	{Section: "探测", Key: "probe.timeout_sec", Label: "单源探测超时", Kind: "int", Unit: "秒", Min: 5, Max: 600, HasMin: true, HasMax: true, Restart: true,
+		Get: func(c *config.Config) string { return i32(c.Probe.TimeoutSec) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Probe.TimeoutSec, v, 5, 600, true, true)
+		}},
+	{Section: "探测", Key: "probe.sample_mib", Label: "探测采样大小", Kind: "int", Unit: "MB", Min: 1, Max: 256, HasMin: true, HasMax: true, Restart: true,
+		Hint: "每轮读多少数据算速度，越大越准，流量也越大", Get: func(c *config.Config) string { return i32(c.Probe.SampleMiB) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Probe.SampleMiB, v, 1, 256, true, true)
+		}},
 
 	// 访问控制
 	{Section: "访问控制", Key: "auth.require_token", Label: "代理路径需 Token", Kind: "bool", Restart: true,

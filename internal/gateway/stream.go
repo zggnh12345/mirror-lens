@@ -349,8 +349,21 @@ func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time
 	}
 }
 
+// noteLive 把本次窗口的真实速度记进 live_speed，供下一次选源参考。
+// 只在下滑时记，且窗口至少 3 秒，避免把冷启动当成源慢。
+func (g *Gateway) noteLive(t *fetchTarget, kind string, w *streamWatch) {
+	if g.st == nil || t == nil || t.c == nil {
+		return
+	}
+	kb, sec := w.sample()
+	if sec < 3 || kb <= 0 {
+		return
+	}
+	_ = g.st.AddLiveSpeed(t.c.ID, kind, kb*int64(sec)*1000, sec)
+}
+
 func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, resp *http.Response, pm *cache.PartialMeta, tgt *fetchTarget, ttfb time.Duration) {
-	defer resp.Body.Close()
+	defer func() { resp.Body.Close() }()
 	t0 := time.Now()
 
 	outcome := outcomeNeutral
@@ -495,44 +508,99 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	buf := make([]byte, 64<<10)
 	copyStart := time.Now()
 	sentBase := sent
+	sw := newStreamWatch(g.par)
+	tried := map[int64]bool{}
+	if tgt != nil && tgt.c != nil {
+		tried[tgt.c.ID] = true
+	}
+
+	// writeChunk 把一段上游字节写到客户端和 partial。
+	// 返回 errOverrun 表示上游多给了字节（继续收尾判失败），其它错误直接结束。
+	writeChunk := func(b []byte) error {
+		if _, werr := out.Write(b); werr != nil {
+			g.keepPartial(plan, resp, total, have+written, part)
+			return werr
+		}
+		if part != nil {
+			if _, werr := part.Write(b); werr != nil {
+				g.keepPartial(plan, resp, total, have+written, part)
+				return werr
+			}
+			hasher.Write(b)
+			written += int64(len(b))
+		}
+		sent += int64(len(b))
+		if total >= 0 && sent > total {
+			// 上游多给了字节：这份内容已经不可信，停在这里，交给收尾判失败。
+			return errOverrun
+		}
+		if part != nil && sent > limit {
+			// 超过单文件缓存上限：转透传，不再落盘。
+			part.Close()
+			part = nil
+			hasher = sha256.New()
+			written = 0
+			log.Printf("超过单文件上限，转透传: %s", plan.Upstream)
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	}
+
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := out.Write(buf[:n]); werr != nil {
-				// 客户端走了：把已下部分留给下一次续传
-				g.keepPartial(plan, resp, total, have+written, part)
+			werr := writeChunk(buf[:n])
+			if werr != nil && !errors.Is(werr, errOverrun) {
 				return
 			}
-			if part != nil {
-				if _, werr := part.Write(buf[:n]); werr != nil {
-					part.Close()
-					part = nil
-					g.cache.DropPartial(plan.CacheKey)
-					log.Printf("写缓存失败，剩下的转透传: %v", werr)
+			keep := werr == nil
+			sw.add(int64(n))
+			if keep && sw.slow(sent, total) {
+				// 判慢：先向下一台有快样本的星标要数据，拿到首块再关旧连接。
+				nresp, ntgt, first, serr := g.trySwitch(r.Context(), plan, tgt, sent, tried)
+				if serr != nil {
+					sw.setGiveUp()
+					g.noteLive(tgt, plan.Kind, sw)
+					log.Printf("单流判慢：%v", serr)
+					// 没有更快的星标可换时，试试从当前位置接入分片；
+					// 已接手的话整份收尾（含落盘）都由 midFill 负责。
+					if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp); taken {
+						tgt = nil // 记账分散到各台源，这里不再重复记当前源
+						if ok {
+							outcome = outcomeOK
+						}
+						return
+					}
+					log.Printf("中途并行没接上，继续当前连接")
 				} else {
-					hasher.Write(buf[:n])
-					written += int64(n)
+					g.noteLive(tgt, plan.Kind, sw)
+					resp.Body.Close()
+					resp = nresp
+					tgt = ntgt
+					sw.afterSwitch()
+					if resp.StatusCode == http.StatusOK {
+						// 新源不支持 Range，从 0 开始：first 属于前缀，连同剩下的前缀一起读掉。
+						if skip := sent - int64(len(first)); skip > 0 {
+							if derr := discardN(resp.Body, skip); derr != nil {
+								g.keepPartial(plan, resp, total, have+written, part)
+								return
+							}
+						}
+					} else if len(first) > 0 {
+						if ferr := writeChunk(first); ferr != nil {
+							if !errors.Is(ferr, errOverrun) {
+								return
+							}
+							keep = false
+						}
+						sw.add(int64(len(first)))
+					}
 				}
 			}
-			sent += int64(n)
-			if total >= 0 && sent > total {
-				if part != nil {
-					part.Close()
-					part = nil
-				}
-				g.cache.DropPartial(plan.CacheKey)
-				log.Printf("上游超出声明的长度，丢弃缓存: %s", plan.Upstream)
-				outcome = outcomeFail
-				return
-			}
-			if part != nil && sent > limit {
-				part.Close()
-				part = nil
-				g.cache.DropPartial(plan.CacheKey)
-				log.Printf("超过单文件上限，转透传: %s", plan.Upstream)
-			}
-			if flusher != nil {
-				flusher.Flush()
+			if !keep {
+				break
 			}
 		}
 		if rerr == io.EOF {

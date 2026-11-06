@@ -142,14 +142,21 @@ func main() {
 		RequireToken:      cfg.Auth.RequireToken,
 		CDN:               gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
-			Enabled:     cfg.Parallel.Enabled,
-			MinSize:     cfg.Parallel.MinSizeMB << 20,
-			RangeTTL:    cfg.Parallel.RangeTTL.Duration,
-			DegradeMBps: cfg.Parallel.DegradeMBps,
-			DegradeHold: time.Duration(cfg.Parallel.DegradeHoldMin) * time.Minute,
-			ChunkSize:   cfg.Parallel.ChunkMB << 20,
-			Workers:     cfg.Parallel.Workers,
-			TailVerify:  !cfg.Parallel.DisableTailVerify,
+			Enabled:          cfg.Parallel.Enabled,
+			MinSize:          cfg.Parallel.MinSizeMB << 20,
+			RangeTTL:         cfg.Parallel.RangeTTL.Duration,
+			DegradeMBps:      cfg.Parallel.DegradeMBps,
+			DegradeHold:      time.Duration(cfg.Parallel.DegradeHoldMin) * time.Minute,
+			WatchMBps:        cfg.Parallel.WatchMBps,
+			WatchWindow:      time.Duration(cfg.Parallel.WatchSec) * time.Second,
+			SwitchMinMBps:    cfg.Parallel.SwitchMinMBps,
+			SwitchMinFileMiB: cfg.Parallel.SwitchMinFileMiB,
+			SwitchMaxSentMiB: cfg.Parallel.SwitchMaxSentMiB,
+			SwitchMax:        cfg.Parallel.SwitchMax,
+			SwitchGap:        time.Duration(cfg.Parallel.SwitchGapSec) * time.Second,
+			ChunkSize:        cfg.Parallel.ChunkMB << 20,
+			Workers:          cfg.Parallel.Workers,
+			TailVerify:       !cfg.Parallel.DisableTailVerify,
 		},
 		Private: gateway.PrivateOptions{
 			BreakAfter:  cfg.Private.BreakAfter,
@@ -181,10 +188,14 @@ func main() {
 		gw.SetScheduler(sched)
 		log.Printf("多源调度已开：每个协议最多试 %d 个源", cfg.Sources.MaxCandidates)
 	}
+	probe.SetSampleCap(int64(cfg.Probe.SampleMiB) << 20)
 	eng := runner.New(st, runner.Options{
 		ArchiveAfter:  time.Duration(cfg.Sources.ArchiveDays) * 24 * time.Hour,
 		CleanupAfter:  time.Duration(cfg.Sources.CleanupDays) * 24 * time.Hour,
 		RecoveryEvery: time.Duration(cfg.Sources.RecoveryMinutes) * time.Minute,
+		Interval:      time.Duration(cfg.Probe.IntervalSec) * time.Second,
+		Concurrency:   cfg.Probe.Concurrency,
+		Timeout:       time.Duration(cfg.Probe.TimeoutSec) * time.Second,
 	})
 	if sched != nil {
 		// 源状态变化时立刻作废候选缓存。

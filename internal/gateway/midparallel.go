@@ -1,0 +1,303 @@
+package gateway
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/scheduler"
+	"github.com/zggnh12345/mirror-lens/internal/store"
+)
+
+// midChunks 把「还差 rest 字节」切成每段 chunk 的段表。
+// 末尾不足一段的按实际长度算，返回段数。
+func midChunks(rest, chunk int64) int {
+	if chunk <= 0 || rest <= 0 {
+		return 0
+	}
+	return int((rest + chunk - 1) / chunk)
+}
+
+// midFill 在单流已经发出去 sent 字节之后接入分片：从 sent 起用多台源
+// 并行填剩余部分，边填边按顺序续给客户端，整份校验通过才入缓存。
+//
+// 返回 true 表示已经接手：无论后面成功还是失败，调用方都不该再动这条响应；
+// 返回 false 表示还没写新字节，调用方可以继续原来的单流连接。
+func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
+	sent, total int64, flusher http.Flusher, old *http.Response) (taken, ok bool) {
+	// 没有 .part 就没法拼装（超大文件已转透传），客户端自带 Range 也不掺和。
+	if part == nil || total <= 0 || sent <= 0 || sent >= total {
+		log.Printf("中途并行跳过：part=%v sent=%d total=%d", part != nil, sent, total)
+		return false, false
+	}
+	if !g.par.Enabled || g.par.Workers < 2 || g.par.ChunkSize <= 0 {
+		log.Printf("中途并行跳过：分片未启用 workers=%d chunk=%d", g.par.Workers, g.par.ChunkSize)
+		return false, false
+	}
+	if plan.ExpectSHA == "" || !plan.Stream || !plan.Cacheable || g.lowDisk() {
+		log.Printf("中途并行跳过：sha=%q stream=%v cacheable=%v lowdisk=%v",
+			plan.ExpectSHA, plan.Stream, plan.Cacheable, g.lowDisk())
+		return false, false
+	}
+	// 中途接入的前提是「已知整份长度」：不然段表落不了地。
+	if plan.Upstream == nil {
+		return false, false
+	}
+
+	if old == nil || old.Request == nil {
+		return false, false
+	}
+	ctx := old.Request.Context()
+	targets := g.parallelTargetsN(plan, 20)
+	if g.parTargets != nil {
+		targets = g.parTargets(plan)
+	}
+	if len(targets) < 1 {
+		log.Printf("中途并行跳过：没有候选源")
+		return false, false
+	}
+	srcs, tot := g.parPreflight(ctx, plan, targets, 6*time.Second)
+	// 总长必须和正在发的这份一致，否则拼起来必错。
+	// 只剩一台也能接：对同一台开多连接分段，比单流干等强。
+	if len(srcs) < 1 || (tot > 0 && tot != total) {
+		log.Printf("中途并行：没有能分片的源（%d 台），继续单流", len(srcs))
+		return false, false
+	}
+	if len(srcs) == 1 {
+		log.Printf("中途并行：只有 %s 支持分片，单源多连接", srcs[0].name)
+	}
+	preferMirrors(srcs, plan.Upstream.String())
+
+	rest := total - sent
+	chunk := g.par.ChunkSize
+	if chunk > rest/2 {
+		chunk = rest / 2
+	}
+	if chunk < 256<<10 {
+		chunk = 256 << 10
+	}
+	n := midChunks(rest, chunk)
+	for n > 256 {
+		chunk *= 2
+		n = midChunks(rest, chunk)
+	}
+	if n <= 0 {
+		return false, false
+	}
+
+	// 第 0 段直接从 sent 开始：拿到首块才算接手，之前失败都还能回单流。
+	firstLen := chunk
+	if n == 1 {
+		firstLen = rest
+	}
+	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, sent, sent+firstLen-1)
+	if err != nil {
+		return false, false
+	}
+	if start, tot2, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
+		perr != nil || start != sent || tot2 != total {
+		resp0.Body.Close()
+		return false, false
+	}
+	defer resp0.Body.Close()
+
+	start := time.Now()
+	stats := make([]parStat, len(srcs))
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// 先派后面的段，第 0 段留给自己直通客户端。
+	dones := make([]chan struct{}, n)
+	for i := range dones {
+		dones[i] = make(chan struct{})
+	}
+	var next atomic.Int64
+	next.Store(1)
+	busy := make([]atomic.Int32, len(srcs))
+	pick := func() int {
+		best, bestBusy, bestFail := -1, int32(1<<30), int32(1<<30)
+		for j := range srcs {
+			if j > 0 && srcs[j].t.u.String() == plan.Upstream.String() {
+				continue
+			}
+			bz, fl := busy[j].Load(), atomic.LoadInt32(&stats[j].fail)
+			if best < 0 || bz < bestBusy || (bz == bestBusy && fl < bestFail) {
+				best, bestBusy, bestFail = j, bz, fl
+			}
+		}
+		if best < 0 {
+			return 0
+		}
+		return best
+	}
+	abort := func() {
+		cancel()
+		wg.Wait()
+		part.Close()
+		g.cache.DropPartial(plan.CacheKey)
+	}
+	var done atomic.Bool
+	defer func() {
+		if done.Load() {
+			return
+		}
+		// 走到这里说明中途失败：连接已经写了新字节，只能断开。
+		abort()
+	}()
+	for wk := 0; wk < g.par.Workers; wk++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n || ctx.Err() != nil {
+					return
+				}
+				off := sent + int64(i)*chunk
+				length := chunk
+				if off+length > total {
+					length = total - off
+				}
+				si := pick()
+				busy[si].Add(1)
+				err := g.parChunk(ctx, plan, srcs[si], srcs, si, off, length, total, part, stats, nil)
+				busy[si].Add(-1)
+				if err != nil {
+					cancel() // 一段补不齐，整份就别再白下载了
+					return
+				}
+				close(dones[i])
+			}
+		}()
+	}
+
+	log.Printf("中途并行：从 %d 字节处接入，%d 段 × %d 源（%s）", sent, n, len(srcs), parNames(srcs))
+
+	// 第 0 段：边写客户端边落到 part 的 sent 偏移。
+	pw := io.NewOffsetWriter(part, sent)
+	var got int64
+	buf := make([]byte, 64<<10)
+	for got < firstLen {
+		nr, rerr := resp0.Body.Read(buf)
+		if nr > 0 {
+			wn := int64(nr)
+			if avail := firstLen - got; avail < wn {
+				wn = avail
+			}
+			if _, werr := out.Write(buf[:wn]); werr != nil {
+				return true, false // 客户端走了
+			}
+			if _, werr := pw.Write(buf[:wn]); werr != nil {
+				return true, false
+			}
+			got += wn
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return true, false
+		}
+	}
+	if got != firstLen {
+		atomic.AddInt32(&stats[0].fail, 1)
+		return true, false
+	}
+	atomic.AddInt32(&stats[0].ok, 1)
+
+	// 其余段严格按顺序续给客户端：每段下完就立刻发，段和段之间不抢跑。
+	for i := 1; i < n; i++ {
+		select {
+		case <-dones[i]:
+		case <-ctx.Done():
+			return true, false
+		}
+		off := sent + int64(i)*chunk
+		length := chunk
+		if off+length > total {
+			length = total - off
+		}
+		if _, werr := io.CopyN(out, io.NewSectionReader(part, off, length), length); werr != nil {
+			return true, false
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return true, false
+	}
+
+	// 整份回读校验：前缀是单流写的，后半是分片写的，只有整份哈希能兜住。
+	if _, err := part.Seek(0, io.SeekStart); err != nil {
+		return true, false
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, part); err != nil {
+		return true, false
+	}
+	sha := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(sha, plan.ExpectSHA) {
+		g.verifyFail.Add(1)
+		log.Printf("中途并行：整份校验失败，不入缓存：期望 %s 实得 %s", plan.ExpectSHA, sha)
+		return true, false
+	}
+
+	part.Close()
+	done.Store(true)
+	partPath, _ := g.cache.PartialPaths(plan.CacheKey)
+	unlock := g.cache.LockBlob(sha)
+	if _, err := g.cache.Commit(partPath, sha); err != nil {
+		unlock()
+		g.cache.DropPartial(plan.CacheKey)
+		log.Printf("中途并行：落盘失败: %v", err)
+		return true, false
+	}
+	e := store.CacheEntry{
+		Key:          plan.CacheKey,
+		SHA256:       sha,
+		Size:         total,
+		ContentType:  srcs[0].ctype,
+		ETag:         old.Header.Get("ETag"),
+		LastModified: old.Header.Get("Last-Modified"),
+		Upstream:     plan.Upstream.String(),
+		CreatedAt:    g.now().Unix(),
+		TTL:          int64(plan.TTL.Seconds()),
+		Verify:       store.VerifyVerified,
+	}
+	err = g.st.CachePut(e)
+	unlock()
+	if err != nil {
+		log.Printf("中途并行：写索引失败 %s: %v", plan.CacheKey, err)
+	}
+	g.cache.DropPartial(plan.CacheKey)
+	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)
+
+	for i := range srcs {
+		switch {
+		case atomic.LoadInt32(&stats[i].fail) > 0:
+			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start),
+				scheduler.Hint{Code: int(atomic.LoadInt32(&stats[i].code)), Mode: "midparallel"})
+		case atomic.LoadInt32(&stats[i].ok) > 0:
+			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start),
+				scheduler.Hint{Code: http.StatusPartialContent, Mode: "midparallel"})
+		}
+	}
+	log.Printf("中途并行完成：%s %d 字节（%d 起），%d 段 × %d 源，用时 %s",
+		plan.CacheKey, total, sent, n, len(srcs), time.Since(start).Round(time.Millisecond))
+	return true, true
+}

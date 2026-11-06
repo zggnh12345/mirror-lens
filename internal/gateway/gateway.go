@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.11"
+const Version = "2.6.12"
 
 type Gateway struct {
 	st      *store.Store
@@ -98,6 +98,17 @@ type ParOptions struct {
 	// DegradeMBps（MB/s）才改走并行，并行 DegradeHold 后放一次单流重探。
 	DegradeMBps int64
 	DegradeHold time.Duration
+
+	// 单流实时判速与换源。窗口内平均低于 WatchMBps 判慢；
+	// 备选源要有 SwitchMinMBps 的历史样本才值得换；已发超过
+	// SwitchMaxSentMiB 不再换；SwitchMax/SwitchGap 限制次数与间隔。
+	WatchMBps        int64
+	WatchWindow      time.Duration
+	SwitchMinMBps    int64
+	SwitchMinFileMiB int64
+	SwitchMaxSentMiB int64
+	SwitchMax        int
+	SwitchGap        time.Duration
 }
 
 // CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，
@@ -480,17 +491,26 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 // 分片越多越吃带宽，按 Worker 数取源（最多 8 台），不把
 // max_candidates 当成取数上限。
 func (g *Gateway) parallelTargets(plan *adapter.Plan) []fetchTarget {
+	return g.parallelTargetsN(plan, 0)
+}
+
+// parallelTargetsN 与 parallelTargets 相同，但 want>0 时可多要几台候选：
+// 中途接入时单流已经慢，多探几台才有机会凑到两台能分片的源。
+func (g *Gateway) parallelTargetsN(plan *adapter.Plan, want int) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
 	fbs := g.fallbackTargets(plan, nil)
 	if plan.OfficialOnly || !g.sched.Enabled() {
 		return append(out, fbs...)
 	}
 	n := g.par.Workers
+	if want > 0 {
+		n = want
+	}
 	if n < 4 {
 		n = 4
 	}
-	if n > 8 {
-		n = 8
+	if n > 24 {
+		n = 24
 	}
 	var head []fetchTarget
 	cands := g.sched.CandidatesN(plan.Kind, n)

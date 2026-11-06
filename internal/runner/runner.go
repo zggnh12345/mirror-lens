@@ -27,6 +27,12 @@ type Options struct {
 	CleanupAfter time.Duration
 	// RecoveryEvery：dead/blocked 源最多多久探测一次（恢复探测）。
 	RecoveryEvery time.Duration
+	// Interval：调度循环的检查粒度，也就是探测节奏的最小步长。
+	Interval time.Duration
+	// Concurrency：同时探测的源数量。
+	Concurrency int
+	// Timeout：单个源一次探测的超时。
+	Timeout time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -35,6 +41,15 @@ func (o Options) withDefaults() Options {
 	}
 	if o.RecoveryEvery <= 0 {
 		o.RecoveryEvery = time.Hour
+	}
+	if o.Interval <= 0 {
+		o.Interval = 30 * time.Second
+	}
+	if o.Concurrency <= 0 {
+		o.Concurrency = 8
+	}
+	if o.Timeout <= 0 {
+		o.Timeout = 45 * time.Second
 	}
 	return o
 }
@@ -167,7 +182,7 @@ func (e *Engine) Run(tier int) {
 		res probe.Result
 	}
 	results := make([]pair, len(jobs))
-	sem := make(chan struct{}, 8)
+	sem := make(chan struct{}, e.opt.Concurrency)
 	var wg sync.WaitGroup
 	for i := range jobs {
 		wg.Add(1)
@@ -175,7 +190,7 @@ func (e *Engine) Run(tier int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), e.opt.Timeout)
 			defer cancel()
 			j := jobs[i]
 			var r probe.Result
@@ -286,7 +301,7 @@ func (e *Engine) RunSource(id int64) {
 		wg.Add(1)
 		go func(kind string) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), e.opt.Timeout)
 			defer cancel()
 			var r probe.Result
 			switch kind {
@@ -613,7 +628,7 @@ func (e *Engine) Loop(ctx context.Context) {
 		e.Run(3)
 	}()
 
-	tick := time.NewTicker(30 * time.Second)
+	tick := time.NewTicker(e.opt.Interval)
 	defer tick.Stop()
 	lastPrune := time.Now()
 	lastMaint := time.Now()

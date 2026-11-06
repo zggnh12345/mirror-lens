@@ -186,6 +186,36 @@ func (s *Store) AddProxySpeed(sourceID int64, kind string, bytes, ms int64) erro
 	return err
 }
 
+// AddLiveSpeed 记一次下载过程中的窗口测速（KB/s = bytes/(window_s*1000)）。
+func (s *Store) AddLiveSpeed(sourceID int64, kind string, bytes int64, windowSec int) error {
+	if sourceID <= 0 || bytes <= 0 || windowSec <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO live_speed(source_id, kind, ts, bytes, window_s) VALUES(?,?,?,?,?)`,
+		sourceID, kind, time.Now().Unix(), bytes, windowSec)
+	return err
+}
+
+// RecentLiveSpeeds 返回 since 之后最近 n 条窗口测速（KB/s），新的在前。
+func (s *Store) RecentLiveSpeeds(id int64, kind string, since int64, n int) []int64 {
+	rows, err := s.db.Query(`SELECT bytes, window_s FROM live_speed
+		WHERE source_id = ? AND kind = ? AND ts >= ? AND window_s > 0
+		ORDER BY ts DESC LIMIT ?`, id, kind, since, n)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var b int64
+		var w int
+		if rows.Scan(&b, &w) == nil && w > 0 {
+			out = append(out, b/int64(w*1000))
+		}
+	}
+	return out
+}
+
 // RecentProxySpeeds 返回最近 n 条真实单流下载速度（KB/s），新的在前。
 func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed

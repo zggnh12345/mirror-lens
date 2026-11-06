@@ -240,6 +240,18 @@ CREATE TABLE IF NOT EXISTS proxy_speed (
   ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_proxy_speed_src ON proxy_speed(source_id, ts DESC);
+
+-- live_speed 是单流下载过程中的窗口测速：只代表某 10 秒的真实吞吐，
+-- 不能和 proxy_speed 的「整份下载」混在一起算。
+CREATE TABLE IF NOT EXISTS live_speed (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+	kind TEXT NOT NULL DEFAULT '',
+	ts INTEGER NOT NULL,
+	bytes INTEGER NOT NULL,
+	window_s INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_speed_src ON live_speed(source_id, ts DESC);
 CREATE TABLE IF NOT EXISTS source_health (
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   family TEXT NOT NULL,

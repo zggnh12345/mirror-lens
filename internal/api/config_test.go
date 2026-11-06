@@ -20,7 +20,13 @@ func TestConfigViewGroupsAndFields(t *testing.T) {
 		t.Fatalf("config_path 没带上: %v", v["config_path"])
 	}
 	// 星标源降级的两个参数要能在设置页里改
-	wantKeys := map[string]string{"parallel.degrade_mbps": "4", "parallel.degrade_hold_min": "30"}
+	wantKeys := map[string]string{
+		"parallel.degrade_mbps": "4", "parallel.degrade_hold_min": "30",
+		"parallel.watch_mbps": "3", "parallel.watch_sec": "10",
+		"parallel.switch_min_mbps": "8", "parallel.switch_min_file_mib": "60",
+		"parallel.switch_max_sent_mib": "48", "parallel.switch_max": "2",
+		"parallel.switch_gap_sec": "30",
+	}
 	for _, s := range secs {
 		if s["title"] != "分片并行" {
 			continue
@@ -37,6 +43,29 @@ func TestConfigViewGroupsAndFields(t *testing.T) {
 	}
 	if len(wantKeys) > 0 {
 		t.Fatalf("设置页缺少字段: %v", wantKeys)
+	}
+
+	// 探测节奏也要能从设置页改
+	pkeys := map[string]string{
+		"probe.interval_sec": "30", "probe.concurrency": "8",
+		"probe.timeout_sec": "45", "probe.sample_mib": "4",
+	}
+	for _, s := range secs {
+		if s["title"] != "探测" {
+			continue
+		}
+		for _, f := range s["fields"].([]map[string]any) {
+			k, _ := f["key"].(string)
+			if w, ok := pkeys[k]; ok {
+				if f["value"] != w {
+					t.Fatalf("%s 默认值不对，期望 %s 实际 %v", k, w, f["value"])
+				}
+				delete(pkeys, k)
+			}
+		}
+	}
+	if len(pkeys) > 0 {
+		t.Fatalf("设置页缺少探测字段: %v", pkeys)
 	}
 
 	// 「缓存」分组里的 max_gb 默认 0
