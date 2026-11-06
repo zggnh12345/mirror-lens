@@ -338,6 +338,17 @@ const (
 	outcomeFail
 )
 
+// noteSpeed 记一次完整单流下载的真实吞吐。小于 16MiB 不记：
+// 慢启动和握手占比太高，会把源站估慢。
+func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time.Time) {
+	if g.st == nil || t == nil || t.c == nil || bytes < 16<<20 {
+		return
+	}
+	if el := time.Since(start).Milliseconds(); el > 0 {
+		_ = g.st.AddProxySpeed(t.c.ID, kind, bytes, el)
+	}
+}
+
 func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, resp *http.Response, pm *cache.PartialMeta, tgt *fetchTarget, ttfb time.Duration) {
 	defer resp.Body.Close()
 	t0 := time.Now()
@@ -482,6 +493,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	}
 
 	buf := make([]byte, 64<<10)
+	copyStart := time.Now()
+	sentBase := sent
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
@@ -535,6 +548,11 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		}
 	}
 
+	// 完整下完才记：这是单流独占带宽下的持续吞吐，比探测那 4MB 准。
+	// 客户端中途断开不计，避免把「用户网速」记成「源站速度」。
+	if total < 0 || sent == total {
+		g.noteSpeed(tgt, plan.Kind, sent-sentBase, copyStart)
+	}
 	if part == nil {
 		if total >= 0 && sent != total {
 			outcome = outcomeFail
