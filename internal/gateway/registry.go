@@ -26,10 +26,13 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "404 Docker 加速未开启", http.StatusNotFound)
 		return
 	}
-	// OCI referrers（SBOM/签名索引）我们不做，回 404 客户端会跳过；
-	// 落到下面的 ErrBadPath 会变成 400，整次 pull 直接失败。
+	// OCI referrers（SBOM/签名索引）我们不做。回一个合法的空索引而不是 404：
+	// 部分 docker/containerd 版本在 404 时仍会解析正文，body 一空就报
+	// "failed to decode referrers index: unexpected EOF"，整次 pull 失败。
 	if isReferrersPath(r.URL.Path) {
-		http.Error(w, "404 referrers not supported", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`))
 		return
 	}
 	kind, _, _, err := g.regAd.Route(r.URL.Path)

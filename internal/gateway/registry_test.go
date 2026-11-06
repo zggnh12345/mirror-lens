@@ -3,6 +3,7 @@ package gateway
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -446,17 +447,31 @@ func TestRegistryRejectsBadPaths(t *testing.T) {
 	}
 }
 
-// referrers 是 OCI 可选能力：必须回 404 让客户端跳过。
-// 回 400 会让 docker pull 在 blob 全部下完后直接失败。
-func TestRegistryReferrers404(t *testing.T) {
+// referrers 是 OCI 可选能力：回合法空索引让所有客户端都能解析。
+// 回 404 时部分版本仍会解析正文，body 空就报 unexpected EOF，整次 pull 失败。
+func TestRegistryReferrersEmptyIndex(t *testing.T) {
 	f := newRegFixture(t, false)
 	dig := "sha256:" + strings.Repeat("a", 64)
 	for _, p := range []string{
 		"/v2/library/alpine/referrers/" + dig,
 		"/v2/adguard/adguardhome/referrers/" + dig,
 	} {
-		if w := f.do(t, http.MethodGet, p, nil); w.Code != http.StatusNotFound {
-			t.Errorf("%s 应 404，实际 %d: %s", p, w.Code, w.Body.String())
+		w := f.do(t, http.MethodGet, p, nil)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s 应 200，实际 %d: %s", p, w.Code, w.Body.String())
+			continue
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "image.index") {
+			t.Errorf("%s Content-Type 不对: %s", p, ct)
+		}
+		var idx struct {
+			SchemaVersion int               `json:"schemaVersion"`
+			Manifests     []json.RawMessage `json:"manifests"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &idx); err != nil {
+			t.Errorf("%s 不是合法 JSON: %v", p, err)
+		} else if idx.SchemaVersion != 2 || idx.Manifests == nil {
+			t.Errorf("%s 空索引结构不对: %+v", p, idx)
 		}
 	}
 	// repo 名里本身带 referrers 段的正常路径不能误伤

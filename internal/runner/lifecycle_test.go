@@ -31,23 +31,41 @@ func lifecycleSource(t *testing.T, st *store.Store, status string) int64 {
 	return id
 }
 
-// 摘要不一致必须封禁，并写清原因（面板要知道为什么封）。
-func TestApplyBlocksOnDigestMismatch(t *testing.T) {
+// 内容与自身声明不符（真篡改）必须封禁，并写清原因。
+func TestApplyBlocksOnTampered(t *testing.T) {
 	st := lifecycleStore(t)
 	id := lifecycleSource(t, st, "usable")
 	e := New(st)
 
 	s, _ := st.GetSource(id)
 	e.apply(*s, map[string]probe.Result{
-		"docker": {OK: true, DigestOK: 0, Digest: "sha256:bad"},
+		"docker": {OK: true, DigestOK: 0, Tampered: true, Digest: "sha256:bad"},
 	}, 2)
 
 	got, _ := st.GetSource(id)
 	if got.Status != "blocked" {
-		t.Fatalf("摘要不一致应封禁，实际 %s", got.Status)
+		t.Fatalf("内容被替换应封禁，实际 %s", got.Status)
 	}
 	if got.StatusReason == "" {
 		t.Fatal("封禁要写原因")
+	}
+}
+
+// 只是落后官方 tag（内容自洽、digest 与实时基准不同）不能封：
+// 镜像站 tag 缓存滞后是常态，封掉等于自断源池。
+func TestApplyKeepsLaggingSourceUsable(t *testing.T) {
+	st := lifecycleStore(t)
+	id := lifecycleSource(t, st, "usable")
+	e := New(st)
+
+	s, _ := st.GetSource(id)
+	e.apply(*s, map[string]probe.Result{
+		"docker": {OK: true, DigestOK: 0, Digest: "sha256:old"},
+	}, 2)
+
+	got, _ := st.GetSource(id)
+	if got.Status != "usable" {
+		t.Fatalf("落后官方 tag 应保持可用，实际 %s（%s）", got.Status, got.StatusReason)
 	}
 }
 
@@ -93,7 +111,7 @@ func TestBlockedStaysOnFreshMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, _ := st.GetSource(id)
-	e.apply(*s, map[string]probe.Result{"docker": {OK: true, DigestOK: 0}}, 2)
+	e.apply(*s, map[string]probe.Result{"docker": {OK: true, DigestOK: 0, Tampered: true}}, 2)
 	if got, _ := st.GetSource(id); got.Status != "blocked" {
 		t.Fatalf("又对不上就该继续封禁，实际 %s", got.Status)
 	}

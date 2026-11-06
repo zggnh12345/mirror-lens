@@ -472,9 +472,11 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 		}
 	}
 
-	// 内容被替换：直接封禁，等人看
+	// 内容被替换（响应头/平台 manifest 与自身声明不符）：直接封禁，等人看。
+	// 只是落后官方 tag 的（digest 与官方实时基准不同、但内容自洽）不封：
+	// 镜像站的 tag 缓存天然滞后，官方每次发版都会造成一批，封掉等于自断源池。
 	for _, r := range res {
-		if r.DigestOK == 0 {
+		if r.Tampered {
 			_, _ = e.st.SetStatusLive(s.ID, "blocked", "内容与官方摘要不一致")
 			return
 		}

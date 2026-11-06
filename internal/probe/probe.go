@@ -36,9 +36,10 @@ type Result struct {
 	LatencyMS int64  `json:"latency_ms"`
 	SpeedKBps int64  `json:"speed_kbps"`
 	Digest    string `json:"digest"`
-	DigestOK  int    `json:"digest_ok"` // manifest：-1 未知 / 0 不一致 / 1 一致
-	BlobOK    int    `json:"blob_ok"`   // layer 实际字节：-1 未校验 / 0 不符 / 1 一致
-	TTFBMS    int64  `json:"ttfb_ms"`   // 从发请求到收到正文首字节；0 表示没测
+	DigestOK  int    `json:"digest_ok"`          // manifest：-1 未知 / 0 与官方基准不同 / 1 一致
+	Tampered  bool   `json:"tampered,omitempty"` // 内容与自身声明不符（真篡改），与「落后官方 tag」区分
+	BlobOK    int    `json:"blob_ok"`            // layer 实际字节：-1 未校验 / 0 不符 / 1 一致
+	TTFBMS    int64  `json:"ttfb_ms"`            // 从发请求到收到正文首字节；0 表示没测
 	TLSOK     bool   `json:"tls_ok"`
 	CertDays  int    `json:"cert_days"`
 	// GhcrPrefix 表示这次 ghcr 探测是通过「带 ghcr.io 前缀」格式打通的。

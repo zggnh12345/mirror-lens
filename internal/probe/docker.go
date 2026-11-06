@@ -172,6 +172,7 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 		// 响应头说的摘要和实际字节对不上：源在说谎，
 		// 拿它跟官方比已经没意义了。
 		res.DigestOK = 0
+		res.Tampered = true
 		res.Detail = "Docker-Content-Digest 与实际内容不符"
 	}
 	if expectedDigest != "" && digest != "" {
@@ -191,6 +192,7 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 				mf = mf2
 				if bad2 || d2 != d {
 					res.DigestOK = 0
+					res.Tampered = true
 					res.Detail = "平台 manifest 与请求的 digest 不符"
 				}
 			}
