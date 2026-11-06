@@ -275,6 +275,24 @@ func TestParallelAssemblesInOrder(t *testing.T) {
 	}
 }
 
+// 星标源不支持 Range 时不能硬凑并行：宁可单流用星标源。
+func TestParallelYieldsToPreferredSource(t *testing.T) {
+	g, _, _, body, _, mirror, os, ms := parFixture(t, 9<<20)
+	mirror.noRange = true
+	plan, cand := parPlan(t, os, body)
+	cand.Preferred = true
+	g.parTargets = func(*adapter.Plan) []fetchTarget {
+		return []fetchTarget{{u: mustURL(t, ms.URL), c: cand}, {u: plan.Upstream}}
+	}
+	rec := parRun(g, plan)
+	if rec.Code != -1 {
+		t.Fatalf("星标源不支持分片时应回落单流，得到 %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("不应写出任何字节")
+	}
+}
+
 func TestParallelRequiresDigest(t *testing.T) {
 	g, _, _, body, _, _, os, ms := parFixture(t, 4<<20)
 	plan, cand := parPlan(t, os, body)

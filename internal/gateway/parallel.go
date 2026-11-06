@@ -82,6 +82,24 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.decline(fmt.Sprintf("%d 台源里只有 %d 台支持分片", len(targets), len(srcs)))
 		return false
 	}
+	// 星标源被分片预检剔除时宁可单流：用户手动置顶的源通常快一个数量级
+	// （实测春川单流 50MB/s，sparkcr 并行 2.8MB/s），并行看着热闹实际更慢。
+	for _, t := range targets {
+		if t.c == nil || !t.c.Preferred {
+			continue
+		}
+		found := false
+		for _, s := range srcs {
+			if s.t.u.String() == t.u.String() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			g.decline("星标源不支持分片，回落单流优先用它")
+			return false
+		}
+	}
 	if total > g.limitFor(plan) {
 		g.decline(fmt.Sprintf("文件 %d 字节超过单文件上限 %d", total, g.limitFor(plan)))
 		return false
