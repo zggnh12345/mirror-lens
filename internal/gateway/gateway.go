@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.8"
+const Version = "2.6.9"
 
 type Gateway struct {
 	st      *store.Store
@@ -733,9 +733,9 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 				continue
 			}
 			t = targets[idx]
-			e, notMod, code, err = g.saveBody(ctx, plan, prev, up)
+			e, notMod, code, err = g.saveBody(ctx, plan, prev, up, t)
 		} else {
-			e, notMod, code, err = g.fetchURL(ctx, plan, prev, t.u)
+			e, notMod, code, err = g.fetchURL(ctx, plan, prev, t.u, t)
 		}
 		act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, err)
 		switch act {
@@ -981,7 +981,7 @@ func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 
 // saveBody 接管胜者的响应体：状态判断、落盘、校验、提交。
 // 304 直接复用 prev，不产生任何下载。
-func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, up *upstream) (*store.CacheEntry, bool, int, error) {
+func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, up *upstream, t fetchTarget) (*store.CacheEntry, bool, int, error) {
 	resp := up.resp
 	defer func() {
 		resp.Body.Close()
@@ -1033,6 +1033,7 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	if ftask != nil {
 		sink = &taskOnlyWriter{w: dw, t: ftask}
 	}
+	start := time.Now()
 	n, err := io.Copy(io.MultiWriter(sink, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
@@ -1050,6 +1051,13 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	if resp.ContentLength >= 0 && n != resp.ContentLength {
 		cleanup()
 		return nil, false, 0, fmt.Errorf("长度不符：期望 %d，实际 %d", resp.ContentLength, n)
+	}
+	// 记真实回源吞吐：这是单流独占带宽下量到的持续速度，
+	// 比探测那 4MB 准得多。小文件慢启动占比高，不记。
+	if t.c != nil && g.st != nil && n >= 16<<20 {
+		if el := time.Since(start).Milliseconds(); el > 0 {
+			_ = g.st.AddProxySpeed(t.c.ID, plan.Kind, n, el)
+		}
 	}
 	if err := tmp.Sync(); err != nil {
 		cleanup()
@@ -1110,12 +1118,12 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 }
 
 // fetchURL 是「单源完整取」的薄包装：非对冲路径与旧行为完全一致。
-func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*store.CacheEntry, bool, int, error) {
+func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, t fetchTarget) (*store.CacheEntry, bool, int, error) {
 	up, err := g.openUpstream(ctx, plan, prev, u)
 	if err != nil {
 		return nil, false, 0, err
 	}
-	return g.saveBody(ctx, plan, prev, up)
+	return g.saveBody(ctx, plan, prev, up, t)
 }
 
 // fromCache=false 表示刚回源填充：字节已记 fill，再记 hit 会抬高命中率。

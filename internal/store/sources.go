@@ -175,6 +175,43 @@ func (s *Store) sourceSamples(id int64, kind string) (n, ok int, lat, spd, last 
 }
 
 // samples 取样本统计。legacy=true 时只取没有 kind 的历史行。
+// AddProxySpeed 记一次真实回源下载的吞吐。和 checks 分开：
+// 探测是「冷启动 4MB」，这里是持续传输，口径不同不能混。
+func (s *Store) AddProxySpeed(sourceID int64, kind string, bytes, ms int64) error {
+	if sourceID <= 0 || bytes <= 0 || ms <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO proxy_speed(source_id, kind, ts, bytes, ms) VALUES(?,?,?,?,?)`,
+		sourceID, kind, time.Now().Unix(), bytes, ms)
+	return err
+}
+
+// proxySpeed 用最近的真实回源吞吐估这台源能跑多快（KB/s），没样本返回 0。
+func (s *Store) proxySpeed(id int64, kind string) int64 {
+	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
+		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
+		ORDER BY ts DESC LIMIT 20`, id, kind, 16<<20)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	var sw, sv, w float64
+	w = 1
+	for rows.Next() {
+		var b, ms int64
+		if rows.Scan(&b, &ms) != nil || ms <= 0 {
+			continue
+		}
+		sv += float64(b) / float64(ms) * w // bytes/ms 正好是 KB/s
+		sw += w
+		w *= 0.8
+	}
+	if sw == 0 {
+		return 0
+	}
+	return int64(sv / sw)
+}
+
 func (s *Store) samples(id int64, kind string, legacy bool) (n, ok int, lat, spd, last int64, err error) {
 	q := `SELECT ts, ok, latency_ms, speed_kbps FROM checks
 		WHERE source_id = ? AND tier >= 2`
@@ -227,6 +264,10 @@ func (s *Store) samples(id int64, kind string, legacy bool) (n, ok int, lat, spd
 	}
 	if sw > 0 {
 		spd = int64(sv / sw)
+	}
+	// 真实回源吞吐优先：探测那 4MB 量的是冷启动，估大文件会低一个量级。
+	if v := s.proxySpeed(id, kind); v > 0 {
+		spd = v
 	}
 	return
 }

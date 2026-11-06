@@ -231,6 +231,15 @@ CREATE TABLE IF NOT EXISTS checks (
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_checks_src_ts ON checks(source_id, ts DESC);
+CREATE TABLE IF NOT EXISTS proxy_speed (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT '',
+  ts INTEGER NOT NULL,
+  bytes INTEGER NOT NULL,
+  ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_proxy_speed_src ON proxy_speed(source_id, ts DESC);
 CREATE TABLE IF NOT EXISTS source_health (
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   family TEXT NOT NULL,
