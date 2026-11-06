@@ -216,7 +216,18 @@ func (s *Store) samples(id int64, kind string, legacy bool) (n, ok int, lat, spd
 	}
 	err = rows.Err()
 	lat = median(lats)
-	spd = median(spds)
+	// 速度改用指数加权（最新的权重 1，往前每条乘 0.8）：中位数对链路突变
+	// 反应太慢，一次掉速要等整个窗口换完才反映出来。
+	var sw, sv, w float64
+	w = 1
+	for _, v := range spds {
+		sv += float64(v) * w
+		sw += w
+		w *= 0.8
+	}
+	if sw > 0 {
+		spd = int64(sv / sw)
+	}
 	return
 }
 

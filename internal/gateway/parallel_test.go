@@ -293,6 +293,35 @@ func TestParallelYieldsToPreferredSource(t *testing.T) {
 	}
 }
 
+// 星标源掉速时，其余源合计明显更快就该改走并行；星标源够快时保持单流。
+func TestParWorthIt(t *testing.T) {
+	g := &Gateway{}
+	mk := func(id, v int64) parSource {
+		return parSource{t: fetchTarget{c: &scheduler.Candidate{ID: id, SpeedKBps: v}}}
+	}
+	pref := &scheduler.Candidate{ID: 1, SpeedKBps: 25600} // 25MB/s
+	slow := []parSource{mk(2, 4000), mk(3, 4000)}
+	if g.parWorthIt(64<<20, pref, slow) {
+		t.Fatal("星标源 25MB/s 时不该为了 8MB/s 的并行放弃它")
+	}
+
+	prefSlow := &scheduler.Candidate{ID: 1, SpeedKBps: 2000} // 2MB/s
+	fast := []parSource{mk(2, 20000), mk(3, 10000)}
+	if !g.parWorthIt(64<<20, prefSlow, fast) {
+		t.Fatal("星标源只有 2MB/s、其余源合计 30MB/s 时应改走并行")
+	}
+
+	if g.parWorthIt(10<<20, prefSlow, fast) {
+		t.Fatal("10MB 的小文件不该并行")
+	}
+
+	// 官方源（c==nil）不算供数能力
+	official := []parSource{{t: fetchTarget{u: mustURL(t, "http://example.com")}}}
+	if g.parWorthIt(64<<20, prefSlow, official) {
+		t.Fatal("只剩官方源时不该放弃星标源")
+	}
+}
+
 // 已知不支持 Range 的源在 TTL 内不该再被预检：否则每次 pull 都让它整层传一遍。
 func TestProbeSkipsKnownRangeOff(t *testing.T) {
 	var hits int

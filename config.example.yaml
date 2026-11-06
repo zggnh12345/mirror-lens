@@ -105,6 +105,9 @@ parallel:
   enabled: true
   # 小于这个尺寸不值得分片：多几次握手反而更慢
   min_size_mb: 8
+  # 「该源不支持 Range」的结论缓存多久（默认 6h）。过期后重新预检一次，
+  # 免得把后来修好 Range 的源永久挡在分片之外。
+  range_ttl: 6h
   # 单片大小
   chunk_mb: 4
   # 同时下载几片（2~16）

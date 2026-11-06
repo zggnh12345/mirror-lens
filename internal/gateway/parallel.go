@@ -96,8 +96,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 			}
 		}
 		if !found {
-			g.decline("星标源不支持分片，回落单流优先用它")
-			return false
+			// 固定「一律单流」在星标源本身掉速时会误判，这里比一下两条路的
+			// 预计用时：只有并行明显更快才放弃星标源。
+			if !g.parWorthIt(total, t.c, srcs) {
+				g.decline("星标源不支持分片，回落单流优先用它")
+				return false
+			}
+			log.Printf("并行填充：星标源 %s 不支持分片，但其余源合计预计更快，改走并行", t.c.Name)
 		}
 	}
 	if total > g.limitFor(plan) {
@@ -631,6 +636,35 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 	// 预检只证明「支持 Range」，不代表这次真的传成功，不记成功样本。
 	g.noteRangeCap(t, 1)
 	return parProbe{src: parSource{t: t, name: parName(t), ctype: ctype}, total: tot, ok: true}
+}
+
+// parWorthIt 判断「放弃星标源改走并行」值不值：单流按星标源最近速度估，
+// 并行按其余源速度之和打 0.75 折扣估，并行至少快 20% 才切换，免得来回抖。
+func (g *Gateway) parWorthIt(size int64, pref *scheduler.Candidate, srcs []parSource) bool {
+	const (
+		defSpeed = 5000.0 // KB/s，没有速度样本时的保守值
+		gain     = 1.2
+		eff      = 0.75
+	)
+	if size < 32<<20 {
+		return false // 小文件并行开销占比太高，不值得
+	}
+	vp := float64(pref.SpeedKBps)
+	if vp <= 0 {
+		vp = defSpeed
+	}
+	var sum float64
+	for _, s := range srcs {
+		if s.t.c == nil || s.t.c.ID == pref.ID {
+			continue
+		}
+		v := float64(s.t.c.SpeedKBps)
+		if v <= 0 {
+			v = defSpeed
+		}
+		sum += v
+	}
+	return sum*eff >= vp*gain
 }
 
 // rangeKnownOff 判断这台源上次是否已判定不支持 Range，且结论还没过期。

@@ -50,6 +50,7 @@ var fieldDocs = map[string]string{
 	"sources.recovery_minutes":     "被熔断的源每隔多少分钟试恢复一次",
 	"parallel.enabled":             "是否启用多源分片并行下载",
 	"parallel.min_size_mb":         "文件大于该值才分片（MiB）",
+	"parallel.range_ttl":           "「该源不支持 Range」结论的缓存时长，过期重测（默认 6h）",
 	"parallel.chunk_mb":            "每个分片的请求大小（MiB）",
 	"parallel.workers":             "单个文件的并行分片数",
 	"parallel.disable_tail_verify": "跳过尾部哈希校验，仅调试用，生产不要开",
