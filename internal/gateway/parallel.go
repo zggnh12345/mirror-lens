@@ -577,6 +577,11 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 
 // probeTarget 探一台源：能不能给 1 字节 Range，对象总长多少。
 func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTarget) parProbe {
+	// 上次已判定不做 Range（HubProxy 这类整层转发的反代）且结论没过期时，
+	// 预检只会让它把整个层再传一遍，直接跳过。
+	if g.rangeKnownOff(t) {
+		return parProbe{}
+	}
 	st := time.Now()
 	resp, err := g.rangeReq(ctx, plan, t.u, 0, 0)
 	if err != nil {
@@ -605,6 +610,10 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 			}
 			g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode, Mode: "chunk"})
 		}
+		if resp.StatusCode == http.StatusOK && resp.Header.Get("Content-Range") == "" {
+			// 200 全量 = 明确不认 Range，记下来免得下次再白拉一遍。
+			g.noteRangeCap(t, 0)
+		}
 		log.Printf("并行填充：%s 不参与分片（HTTP %d，Content-Range=%q）",
 			t.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
 		return parProbe{}
@@ -620,7 +629,26 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 		return parProbe{}
 	}
 	// 预检只证明「支持 Range」，不代表这次真的传成功，不记成功样本。
+	g.noteRangeCap(t, 1)
 	return parProbe{src: parSource{t: t, name: parName(t), ctype: ctype}, total: tot, ok: true}
+}
+
+// rangeKnownOff 判断这台源上次是否已判定不支持 Range，且结论还没过期。
+func (g *Gateway) rangeKnownOff(t fetchTarget) bool {
+	if t.c == nil || t.c.RangeCap != 0 || g.par.RangeTTL <= 0 || t.c.RangeAt <= 0 {
+		return false
+	}
+	return time.Since(time.Unix(t.c.RangeAt, 0)) < g.par.RangeTTL
+}
+
+// noteRangeCap 把预检结论写回源表，下次预检直接跳过或直接用。
+func (g *Gateway) noteRangeCap(t fetchTarget, cap int) {
+	if g.st == nil || t.c == nil || t.c.RangeCap == cap {
+		return
+	}
+	if err := g.st.SetRangeCap(t.c.ID, cap); err == nil {
+		t.c.RangeCap, t.c.RangeAt = cap, time.Now().Unix()
+	}
 }
 
 // parProbe 一台源的预检结果。

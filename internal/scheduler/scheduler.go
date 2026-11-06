@@ -70,6 +70,9 @@ type Candidate struct {
 	GroupRank int `json:"group_rank"`
 	// GhcrPrefix 代 ghcr 时用带 ghcr.io 前缀的路径（见 store.Source.GhcrPrefix）。
 	GhcrPrefix bool `json:"ghcr_prefix,omitempty"`
+	// RangeCap / RangeAt 是上次 Range 预检的结论与时间，用来跳过重复探测。
+	RangeCap int   `json:"range_cap,omitempty"`
+	RangeAt  int64 `json:"range_at,omitempty"`
 }
 
 type stickyPick struct {
@@ -238,7 +241,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.orderN(kind, items, limit)

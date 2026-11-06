@@ -144,6 +144,7 @@ func main() {
 		Parallel: gateway.ParOptions{
 			Enabled:    cfg.Parallel.Enabled,
 			MinSize:    cfg.Parallel.MinSizeMB << 20,
+			RangeTTL:   cfg.Parallel.RangeTTL.Duration,
 			ChunkSize:  cfg.Parallel.ChunkMB << 20,
 			Workers:    cfg.Parallel.Workers,
 			TailVerify: !cfg.Parallel.DisableTailVerify,

@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.6"
+const Version = "2.6.7"
 
 type Gateway struct {
 	st      *store.Store
@@ -89,6 +89,8 @@ type ParOptions struct {
 	Workers   int
 	// TailVerify 为 true 时，最后一段字节要等整份哈希通过才放给客户端。
 	TailVerify bool
+	// RangeTTL 是「源不支持 Range」结论的缓存时长，0 表示每次预检都探。
+	RangeTTL time.Duration
 }
 
 // CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，

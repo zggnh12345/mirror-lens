@@ -288,6 +288,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		"site_name":     "TEXT NOT NULL DEFAULT ''",
 		"group_id":      "INTEGER NOT NULL DEFAULT 0",
 		"trusted":       "INTEGER NOT NULL DEFAULT 0",
+		"range_cap":     "INTEGER NOT NULL DEFAULT -1",
+		"range_at":      "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}
@@ -716,13 +718,21 @@ func (s *Store) SetCapsLive(id int64, docker, github, ghcr int, ghcrPrefix bool)
 	return n > 0, nil
 }
 
+// SetRangeCap 记一次 Range 预检结论：1 支持分片，0 不支持（整层吐）。
+func (s *Store) SetRangeCap(id int64, cap int) error {
+	_, err := s.db.Exec(`UPDATE sources SET range_cap=?, range_at=? WHERE id=?`,
+		cap, time.Now().Unix(), id)
+	return err
+}
+
 func (s *Store) SetStatusLive(id int64, status, reason string) (bool, error) {
 	now := time.Now().Unix()
 	res, err := s.db.Exec(`UPDATE sources SET
 		status_at = CASE WHEN status<>? THEN ? ELSE status_at END,
 		status_reason = CASE WHEN status<>? THEN ? ELSE status_reason END,
+		range_at = CASE WHEN status<>? AND ?='usable' THEN 0 ELSE range_at END,
 		status = ?
-		WHERE id=? AND status<>'archived'`, status, now, status, reason, status, id)
+		WHERE id=? AND status<>'archived'`, status, now, status, reason, status, status, status, id)
 	if err != nil {
 		return false, err
 	}

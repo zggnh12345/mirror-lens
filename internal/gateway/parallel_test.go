@@ -293,6 +293,35 @@ func TestParallelYieldsToPreferredSource(t *testing.T) {
 	}
 }
 
+// 已知不支持 Range 的源在 TTL 内不该再被预检：否则每次 pull 都让它整层传一遍。
+func TestProbeSkipsKnownRangeOff(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	g := &Gateway{par: ParOptions{RangeTTL: time.Hour}, cli: srv.Client()}
+	c := &scheduler.Candidate{ID: 1, RangeCap: 0, RangeAt: time.Now().Unix()}
+	res := g.probeTarget(context.Background(), &adapter.Plan{}, fetchTarget{u: mustURL(t, srv.URL), c: c})
+	if res.ok {
+		t.Fatal("不该把已知不支持 Range 的源算作可参与分片")
+	}
+	if hits != 0 {
+		t.Fatalf("TTL 内应跳过预检，实际发了 %d 次请求", hits)
+	}
+
+	// 过期后必须重测一次，不能永久钉死。
+	g.par.RangeTTL = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	g.probeTarget(context.Background(), &adapter.Plan{}, fetchTarget{u: mustURL(t, srv.URL), c: c})
+	if hits != 1 {
+		t.Fatalf("过期后应重探一次，实际 %d 次", hits)
+	}
+}
+
 func TestParallelRequiresDigest(t *testing.T) {
 	g, _, _, body, _, _, os, ms := parFixture(t, 4<<20)
 	plan, cand := parPlan(t, os, body)

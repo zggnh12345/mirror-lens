@@ -122,6 +122,9 @@ type Parallel struct {
 	// DisableTailVerify 关掉「尾部扣留」：正常情况下最后一段字节要等
 	// 整份 SHA-256 对上才放给客户端，关掉就退回边下边发的旧行为。
 	DisableTailVerify bool `yaml:"disable_tail_verify"`
+	// RangeTTL 是「该源不支持 Range」这条结论的缓存时长。过期后重新预检，
+	// 免得把后来修好 Range 的源永久挡在分片之外。0 表示每次都探。
+	RangeTTL Duration `yaml:"range_ttl"`
 }
 
 // Private 是带凭据（PAT）的私有请求的加速策略：凭据只发给显式信任的
@@ -237,7 +240,8 @@ func Default() *Config {
 			ChunkMB:   4,
 			// 4 是实测拐点：南大 GHCR 对同一出口的连接数限速很凶，
 			// 8 并发反而把每连接压到 0.2-0.4MB/s，总速不如 4。
-			Workers: 4,
+			Workers:  4,
+			RangeTTL: Duration{6 * time.Hour},
 		},
 		Private: Private{
 			BreakAfter:          3,

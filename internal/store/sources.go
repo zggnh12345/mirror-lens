@@ -27,6 +27,10 @@ type SourceStat struct {
 	LastTS     int64 `json:"last_ts"`
 	// Trust 是这台源在该类型上的可信度级别（见 trust.go）
 	Trust int `json:"trust"`
+	// RangeCap 是最近一次 Range 预检结论：1 支持，0 不支持，-1 没测过。
+	// RangeAt 是那次预检的时间戳，过期要重测。
+	RangeCap int   `json:"range_cap"`
+	RangeAt  int64 `json:"range_at"`
 }
 
 const sourceSampleWindow = 10
@@ -121,7 +125,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
-			s.ghcr_prefix, COALESCE(g.rank, 999)
+			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at
 		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1
 		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
@@ -132,7 +136,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	var out []SourceStat
 	for rows.Next() {
 		var st SourceStat
-		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred, &st.GhcrPrefix, &st.GroupRank); err != nil {
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred, &st.GhcrPrefix, &st.GroupRank, &st.RangeCap, &st.RangeAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
