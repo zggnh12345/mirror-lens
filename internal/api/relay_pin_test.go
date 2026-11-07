@@ -188,3 +188,56 @@ func TestTrustedListShowsEffectiveExpired(t *testing.T) {
 		t.Fatalf("应显示 expired，实际 %+v", out.Sources)
 	}
 }
+
+// fakeip 的 198.18/15、ULA fc00::/7 这类地址不是中转的真实地址，
+// 钉住只会把拨号钉死，解析阶段就得丢掉。
+func TestResolveRelayHostDropsBogusAddrs(t *testing.T) {
+	old := relayLookup
+	defer func() { relayLookup = old }()
+	relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("198.18.0.58"),
+			netip.MustParseAddr("fc00::3b"),
+			netip.MustParseAddr("203.0.113.9"),
+			netip.MustParseAddr("140.245.70.117"),
+			netip.MustParseAddr("2603:c024:10:d9ee:0:3982:3cdf:d2e9"),
+		}, nil
+	}
+	v4, v6, err := resolveRelayHost("gp.example.org", time.Second, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4) != 1 || v4[0] != "140.245.70.117" {
+		t.Fatalf("v4 过滤不对: %v", v4)
+	}
+	if len(v6) != 1 || v6[0] != "2603:c024:10:d9ee:0:3982:3cdf:d2e9" {
+		t.Fatalf("v6 过滤不对: %v", v6)
+	}
+}
+
+// 全是伪造地址时要报错，而不是“钉住一个假的”。
+func TestResolveRelayHostAllBogusFails(t *testing.T) {
+	old := relayLookup
+	defer func() { relayLookup = old }()
+	relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("198.18.0.58"), netip.MustParseAddr("fc00::3b")}, nil
+	}
+	if _, _, err := resolveRelayHost("fakeip.example.org", time.Second, ""); err == nil {
+		t.Fatal("全是伪造地址却解析成功了")
+	}
+}
+
+func TestBogusPinAddr(t *testing.T) {
+	bad := []string{"198.18.0.1", "198.19.255.255", "fc00::1", "fd12:3456::1", "100.64.0.1", "169.254.1.1", "203.0.113.5", "fe80::1", "ff02::1"}
+	for _, s := range bad {
+		if bogusPinAddr(netip.MustParseAddr(s)) == "" {
+			t.Errorf("%s 应该被判定为伪造/保留", s)
+		}
+	}
+	good := []string{"140.245.70.117", "2603:c024:10:d9ee:0:3982:3cdf:d2e9", "1.1.1.1", "2606:4700:4700::1111"}
+	for _, s := range good {
+		if r := bogusPinAddr(netip.MustParseAddr(s)); r != "" {
+			t.Errorf("%s 被误判为 %s", s, r)
+		}
+	}
+}
