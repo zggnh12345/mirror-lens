@@ -75,6 +75,9 @@ type Gateway struct {
 	privMu        sync.Mutex
 	privFails     map[string]int
 	privUntil     map[string]time.Time
+	pinClients    sync.Map // "id|v4|v6" -> *http.Client（只拨钉住地址）
+	pinMu         sync.Mutex
+	pinWarnAt     map[int64]time.Time
 	privClient    *http.Client
 	privSem       chan struct{} // 回退官方时限制同时下载的文件数
 	parFills      atomic.Int64  // 真正走了并行分片的次数

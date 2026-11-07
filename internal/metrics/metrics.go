@@ -107,6 +107,9 @@ type Registry struct {
 	// forgotten 记住已删除的源：在途请求的迟到回调不能再把序列写回来。
 	forgotten map[int64]bool
 	limited   map[string]uint64
+	// 信任中转没能走钉住地址的次数：state=unresolved（改用系统解析）
+	// 或 expired（直接拒绝拨号）。
+	relayFallback map[string]uint64
 
 	// 快照 gauge 由 janitor 刷新：抓取时重扫整盘，百万文件会卡死。
 	haveCache   bool
@@ -134,34 +137,35 @@ type Registry struct {
 // New 返回空注册表。
 func New() *Registry {
 	return &Registry{
-		httpReq:     map[httpKey]uint64{},
-		httpDur:     map[string]*hist{},
-		httpBytes:   map[string]uint64{},
-		cache:       map[cacheKey]uint64{},
-		tp:          map[string]*hist{},
-		srcReq:      map[srcKey]uint64{},
-		srcResp:     map[string]uint64{},
-		src429:      map[string]uint64{},
-		srcMiss:     map[srcMissKey]uint64{},
-		srcDur:      map[srcDurKey]*hist{},
-		srcTTFB:     map[srcDurKey]*hist{},
-		inflight:    map[int64]int{},
-		srclimit:    map[int64]int{},
-		gateWait:    map[int64]*hist{},
-		inflightAvg: map[int64]float64{},
-		srcBytes:    map[srcBytesKey]uint64{},
-		cand:        newHist(candBuckets),
-		forgotten:   map[int64]bool{},
-		limited:     map[string]uint64{},
-		sources:     map[SourceStat]uint64{},
-		hitHits:     map[string]*atomic.Uint64{},
-		hitTotal:    map[string]*atomic.Uint64{},
-		hitRatio:    map[string]float64{},
-		lastHits:    map[string]uint64{},
-		lastTotal:   map[string]uint64{},
-		sceneTotal:  map[string]*atomic.Uint64{},
-		sceneDelta:  map[string]uint64{},
-		lastScene:   map[string]uint64{},
+		httpReq:       map[httpKey]uint64{},
+		httpDur:       map[string]*hist{},
+		httpBytes:     map[string]uint64{},
+		cache:         map[cacheKey]uint64{},
+		tp:            map[string]*hist{},
+		srcReq:        map[srcKey]uint64{},
+		srcResp:       map[string]uint64{},
+		src429:        map[string]uint64{},
+		srcMiss:       map[srcMissKey]uint64{},
+		srcDur:        map[srcDurKey]*hist{},
+		srcTTFB:       map[srcDurKey]*hist{},
+		inflight:      map[int64]int{},
+		srclimit:      map[int64]int{},
+		gateWait:      map[int64]*hist{},
+		inflightAvg:   map[int64]float64{},
+		srcBytes:      map[srcBytesKey]uint64{},
+		cand:          newHist(candBuckets),
+		forgotten:     map[int64]bool{},
+		limited:       map[string]uint64{},
+		relayFallback: map[string]uint64{},
+		sources:       map[SourceStat]uint64{},
+		hitHits:       map[string]*atomic.Uint64{},
+		hitTotal:      map[string]*atomic.Uint64{},
+		hitRatio:      map[string]float64{},
+		lastHits:      map[string]uint64{},
+		lastTotal:     map[string]uint64{},
+		sceneTotal:    map[string]*atomic.Uint64{},
+		sceneDelta:    map[string]uint64{},
+		lastScene:     map[string]uint64{},
 	}
 }
 
@@ -456,6 +460,18 @@ func RateLimited(layer string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.limited[layer]++
+}
+
+// RelayFallback 记一次没用上钉住地址的拨号。
+// state 是封闭集合：unresolved / expired。
+func RelayFallback(state string) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.relayFallback[state]++
 }
 
 // SourceStat 是源站数标签。status 为封闭集合
@@ -844,6 +860,13 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "source_inflight_avg gauge\n")
 		for _, id := range aids {
 			fmt.Fprintf(&b, "%ssource_inflight_avg{source_id=%q} %s\n", prefix, strconv.FormatInt(id, 10), trimFloat(r.inflightAvg[id]))
+		}
+	}
+	if len(r.relayFallback) > 0 {
+		b.WriteString("# HELP " + prefix + "relay_fallback_total 信任中转未走钉住地址的次数（unresolved=沿用系统解析，expired=拒绝拨号）\n")
+		b.WriteString("# TYPE " + prefix + "relay_fallback_total counter\n")
+		for _, st := range sortedKeys(r.relayFallback) {
+			fmt.Fprintf(&b, "%srelay_fallback_total{state=%q} %d\n", prefix, st, r.relayFallback[st])
 		}
 	}
 	if len(r.limited) > 0 {

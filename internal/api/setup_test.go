@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,6 +38,12 @@ func newTestServerOpts(t *testing.T, opts ...Option) (*store.Store, http.Handler
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 测试不打真 DNS：信任源一律解析到示例公网地址，避免 5s 超时。
+	oldLookup := relayLookup
+	relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("192.0.2.10")}, nil
+	}
+	t.Cleanup(func() { relayLookup = oldLookup })
 	gw := gateway.New(st, gateway.Options{Cache: cs})
 	return st, New(st, runner.New(st), gw, nil, nil, opts...)
 }

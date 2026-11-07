@@ -601,6 +601,21 @@ function trFillPick(){
   pick.innerHTML = opts.join('');
 }
 
+var PIN_LABEL = {
+  pending: '已钉住·待确认',
+  confirmed: '已确认',
+  stale: '沿用上次地址',
+  unresolved: '未钉住·过渡中',
+  expired: '已过期·停止拨号'
+};
+
+function fmtLeft(ts){
+  var s = ts - Math.floor(Date.now()/1000);
+  if (s <= 0) return '窗口已到';
+  if (s >= 3600) return (s/3600).toFixed(1) + ' 小时后到期';
+  return Math.max(1, Math.ceil(s/60)) + ' 分钟后到期';
+}
+
 async function loadTrusted(){
   var box = $('#trList');
   var d;
@@ -619,10 +634,29 @@ async function loadTrusted(){
     return;
   }
   picked.forEach(function(x){
+    var wrap = document.createElement('div');
+
     var row = document.createElement('div');
     row.className = 'tkrow';
     var info = document.createElement('div');
-    info.innerHTML = '<b>' + esc(x.name || x.base_url) + '</b><div class="hint">' + esc(x.base_url) + '</div>';
+    var badge = PIN_LABEL[x.pin_state] || '未初始化';
+    var dns = '';
+    if (x.pin_ipv4) dns += 'v4 ' + x.pin_ipv4;
+    if (x.pin_ipv6) dns += (dns ? ' · ' : '') + 'v6 ' + x.pin_ipv6;
+    if (!dns) dns = (x.pin_state === 'unresolved') ? '未钉住，沿用系统解析' : '暂无地址';
+    var line = badge + ' · ' + dns;
+    if (x.pin_state === 'unresolved' && x.pin_grace_until) line += ' · ' + fmtLeft(x.pin_grace_until);
+    info.innerHTML = '<b>' + esc(x.name || x.base_url) + '</b>' +
+      '<div class="' + (x.pin_state === 'expired' || x.pin_state === 'unresolved' ? 'hint bad' : 'hint') + '">' + esc(line) + '</div>' +
+      '<div class="hint">' + esc(x.base_url) + '</div>';
+
+    var acts = document.createElement('div');
+    acts.style.cssText = 'display:flex;gap:8px;flex-shrink:0';
+
+    var edit = document.createElement('button');
+    edit.className = 'btn';
+    edit.textContent = '改 IP';
+
     var del = document.createElement('button');
     del.className = 'btn danger';
     del.textContent = '移除';
@@ -633,8 +667,39 @@ async function loadTrusted(){
         loadTrusted();
       }catch(e){ say($('#trMsg'), e.message, 'bad'); }
     });
-    row.appendChild(info); row.appendChild(del);
-    box.appendChild(row);
+
+    acts.appendChild(edit); acts.appendChild(del);
+    row.appendChild(info); row.appendChild(acts);
+    wrap.appendChild(row);
+
+    // 手工钉 IP：管理员填什么就连什么，直接 confirmed。
+    var form = document.createElement('div');
+    form.className = 'tkrow';
+    form.style.display = 'none';
+    var i4 = document.createElement('input');
+    i4.placeholder = 'IPv4，逗号分隔'; i4.value = x.pin_ipv4 || '';
+    i4.style.cssText = 'flex:1;min-width:0';
+    var i6 = document.createElement('input');
+    i6.placeholder = 'IPv6，逗号分隔'; i6.value = x.pin_ipv6 || '';
+    i6.style.cssText = 'flex:1;min-width:0';
+    var save = document.createElement('button');
+    save.className = 'btn';
+    save.textContent = '保存';
+    save.addEventListener('click', async function(){
+      try{
+        await api('/api/trusted/' + x.id, {method:'PATCH',
+          body: JSON.stringify({pin_ipv4:i4.value.trim(), pin_ipv6:i6.value.trim()})});
+        toast('已按手工地址钉住');
+        loadTrusted();
+      }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+    });
+    form.appendChild(i4); form.appendChild(i6); form.appendChild(save);
+    wrap.appendChild(form);
+    edit.addEventListener('click', function(){
+      form.style.display = (form.style.display === 'none') ? 'flex' : 'none';
+    });
+
+    box.appendChild(wrap);
   });
 }
 

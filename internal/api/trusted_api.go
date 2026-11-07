@@ -12,9 +12,15 @@ import (
 )
 
 // syncTrusted 把「勾了信任」的源推给网关，改完立刻生效。
+// 推之前先推进钉住状态机：没有解析结果的源在这里补一次解析，
+// 失败进入 24h 过渡窗口，而不是直接断掉私有下载。
 func (s *Server) syncTrusted() error {
 	list, err := s.st.ListTrustedRelays()
 	if err != nil {
+		return err
+	}
+	s.ensurePins(list)
+	if list, err = s.st.ListTrustedRelays(); err != nil {
 		return err
 	}
 	out := make([]gateway.TrustedRelay, 0, len(list))
@@ -57,6 +63,11 @@ func (s *Server) trusted(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(list))
 	for _, x := range list {
 		pin := byID[x.ID]
+		// 窗口到期但还没重启/改配置时，面板按实际生效状态显示：
+		// 网关已经在拒绝拨号，这里不能还写着「过渡中」。
+		if pin.PinState == "unresolved" && pin.PinGraceUntil > 0 && time.Now().Unix() >= pin.PinGraceUntil {
+			pin.PinState = "expired"
+		}
 		out = append(out, map[string]any{
 			"id":               x.ID,
 			"name":             x.Name,
@@ -108,12 +119,12 @@ func (s *Server) trustedItem(w http.ResponseWriter, r *http.Request) {
 		if in.PinIPv6 != nil {
 			v6 = strings.TrimSpace(*in.PinIPv6)
 		}
-		if v4 != "" && len(store.RelayPinIPs(v4)) != strings.Count(v4, ",")+1 {
-			writeJSON(w, 400, map[string]string{"error": "pin_ipv4 含非法地址"})
+		if err := checkPinList(v4, true); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
-		if v6 != "" && len(store.RelayPinIPs(v6)) != strings.Count(v6, ",")+1 {
-			writeJSON(w, 400, map[string]string{"error": "pin_ipv6 含非法地址"})
+		if err := checkPinList(v6, false); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
 		ok, err := s.st.UpdateRelayPin(id, v4, v6)

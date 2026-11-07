@@ -79,6 +79,19 @@ func (s *Store) UpdateRelayPin(id int64, ipv4, ipv6 string) (bool, error) {
 	return n > 0, nil
 }
 
+// SetRelayPin 写入状态机结果。pending/confirmed/stale 才带 IP；
+// unresolved 只带到期时间；expired 保留最后已知 IP 供排查。
+func (s *Store) SetRelayPin(id int64, state, ipv4, ipv6 string, graceUntil int64) error {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`UPDATE sources SET
+		pin_state=?, pin_ipv4=?, pin_ipv6=?,
+		pin_at=CASE WHEN pin_at=0 AND ?<>'' THEN ? ELSE pin_at END,
+		pin_grace_until=?
+		WHERE id=?`, state, strings.TrimSpace(ipv4), strings.TrimSpace(ipv6),
+		state, now, graceUntil, id)
+	return err
+}
+
 // RelayPinIPs 把逗号分隔的钉住地址拆开，过滤掉非法值。
 func RelayPinIPs(list string) []string {
 	if strings.TrimSpace(list) == "" {

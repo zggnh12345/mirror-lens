@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -38,8 +39,13 @@ type PrivateOptions struct {
 }
 
 // SetTrusted 热更新白名单：面板增删后立刻生效，不用重启进程。
+// 钉住地址可能跟着变，旧客户端连接池一并丢弃，避免继续拨旧 IP。
 func (g *Gateway) SetTrusted(list []TrustedRelay) {
 	g.trusted.Store(list)
+	g.pinClients.Range(func(k, _ any) bool {
+		g.pinClients.Delete(k)
+		return true
+	})
 }
 
 func (g *Gateway) trustedList() []TrustedRelay {
@@ -121,9 +127,15 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 	}
 	alive := make([]TrustedRelay, 0, len(list))
 	for _, t := range list {
-		if t.URL != "" && !g.privBroken(t.Name) {
-			alive = append(alive, t)
+		if t.URL == "" || g.privBroken(t.Name) {
+			continue
 		}
+		if _, err := g.pinUsable(t); err != nil {
+			g.pinWarn(t.ID, "信任中转 %s 暂停使用：%v", t.Name, err)
+			metrics.RelayFallback("expired")
+			continue
+		}
+		alive = append(alive, t)
 	}
 	if len(alive) == 0 {
 		return false
@@ -214,6 +226,12 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 }
 
 func (g *Gateway) doTrusted(ctx context.Context, plan *adapter.Plan, t TrustedRelay) (*http.Response, error) {
+	if t.PinState == "unresolved" {
+		// 过渡窗口内还在用系统解析：单独计数，面板能看出「没钉住」的流量。
+		metrics.RelayFallback("unresolved")
+		g.pinWarn(t.ID, "信任中转 %s 尚未钉住，正在沿用系统解析（窗口至 %s）",
+			t.Name, t.GraceEnd.Format("2006-01-02 15:04"))
+	}
 	target, err := relayURL(t.URL, plan.Upstream.String())
 	if err != nil {
 		return nil, err
@@ -232,7 +250,7 @@ func (g *Gateway) doTrusted(ctx context.Context, plan *adapter.Plan, t TrustedRe
 			req.Header.Add(k, v)
 		}
 	}
-	return g.privClient.Do(req)
+	return g.clientFor(t).Do(req)
 }
 
 // newPrivClient 只给白名单中转用：等响应头 8s，正文不设总时长，
@@ -365,7 +383,7 @@ func (g *Gateway) resumeRelay(parent context.Context, w io.Writer, t TrustedRela
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", off))
 		req.Header.Set("If-Range", etag)
-		resp, err := g.privClient.Do(req)
+		resp, err := g.clientFor(t).Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return off
