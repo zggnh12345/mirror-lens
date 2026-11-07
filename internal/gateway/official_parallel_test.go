@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
@@ -52,6 +53,9 @@ func TestOfficialParallelSegments(t *testing.T) {
 		}
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, to, total))
 		w.Header().Set("Content-Type", "application/octet-stream")
+		// 真实源分段请求有 RTT；CI 单核上响应快到请求来不及重叠，
+		// 会让并发观测退化成 1。用固定延迟造出必然重叠的窗口。
+		time.Sleep(10 * time.Millisecond)
 		w.WriteHeader(http.StatusPartialContent)
 		w.Write(data[from : to+1])
 	}))
