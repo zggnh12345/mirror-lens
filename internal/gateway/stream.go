@@ -474,9 +474,23 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	written := int64(0) // 这次真正写进 .part 的字节
 	// 换源只靠摘要兜底时置位：这份 .part 的版本无法自证，不能留着续传。
 	unverified := false
+	// 本次响应已经跨源拼接：按策略 A，未完整结束的 .part 一律丢弃，
+	// 不做「换源后断流留续传点」这种混合来源续传（下次必然无法安全复用）。
+	crossSource := false
+	// 只有完整成功（缓存已提交，或整份透传完成）才不清理 .part。
+	committed := false
 	savePartial := func() {
-		g.savePartialOrDrop(plan, resp, total, have+written, part, unverified)
+		g.savePartialOrDrop(plan, resp, total, have+written, part, unverified || crossSource)
 	}
+	defer func() {
+		if crossSource && !committed {
+			if part != nil {
+				part.Close()
+			}
+			g.cache.DropPartial(plan.CacheKey)
+			log.Printf("换源后未完整结束，丢弃续传点: %s", plan.CacheKey)
+		}
+	}()
 
 	// 先把旧前缀补给客户端并接着算哈希：这步与 cacheable 无关，
 	// 不落盘也要补齐客户端那半份。
@@ -567,6 +581,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				tgt = nil // 记账分散到各台源，这里不再重复记当前源
 				if ok {
 					outcome = outcomeOK
+					committed = true // 中途并行自己完成了落盘
 				}
 				finished = true
 				return
@@ -587,18 +602,30 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			// 靠 ExpectSHA 兜底换来的前缀无法证明版本，断流时不留 partial。
 			unverified = true
 		}
+		// 策略 A：一旦换源，本次请求的 .part 就是混合来源，任何未完成退出都不留续传点。
+		crossSource = true
 		sw.afterSwitch()
 		// 换源后的吞吐只算新源这一段，别把旧源的慢速混进来。
 		sentBase = sent
 		copyStart = time.Now()
 		if resp.StatusCode == http.StatusOK {
-			// 新源不支持 Range，从 0 开始：first 属于前缀，连同剩下的前缀一起读掉。
-			if skip := sent - int64(len(first)); skip > 0 {
-				if derr := discardN(resp.Body, skip); derr != nil {
+			// 新源忽略 Range，从 0 重发。first 的前 sent 字节是客户端已有的前缀，
+			// 超出部分必须走正常的写出路径（客户端、.part、哈希、计数），
+			// 不能整块丢掉，否则客户端会少一截、长度校验必然失败。
+			n := int64(len(first))
+			switch {
+			case n < sent:
+				if derr := discardN(resp.Body, sent-n); derr != nil {
 					savePartial()
 					finished = true
 					return
 				}
+			case n > sent:
+				if ferr := writeChunk(first[sent:]); ferr != nil && !errors.Is(ferr, errOverrun) {
+					finished = true
+					return
+				}
+				sw.add(n - sent)
 			}
 		} else if len(first) > 0 {
 			if ferr := writeChunk(first); ferr != nil {
@@ -730,6 +757,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			outcome = outcomeFail
 		} else {
 			outcome = outcomeOK
+			committed = true // 整份透传完成，没有需要保留的 .part
 		}
 		g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), sent-have)
 		return
@@ -770,6 +798,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		log.Printf("缓存落盘失败: %v", err)
 		return
 	}
+	committed = true
 	e := store.CacheEntry{
 		Key:          plan.CacheKey,
 		SHA256:       sha,

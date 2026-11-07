@@ -69,8 +69,33 @@ func TestSwitchAcceptable(t *testing.T) {
 			status: 206, clen: 900, expect: "abc",
 		},
 		{
-			name: "206 Last-Modified 一致", cur: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT"), newH: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT", "Content-Range", "bytes 100-999/1000"),
-			status: 206, clen: 900, wantOK: true, verified: true,
+			// Last-Modified 只有秒级精度：两个相同时间戳不能当字节级证据，
+			// 无强 ETag 时按无可靠验证器处理。
+			name: "206 Last-Modified 一致也不放行", cur: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT"), newH: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT", "Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900,
+		},
+		{
+			name: "206 Last-Modified 一致且有摘要", cur: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT"), newH: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT", "Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900, expect: "abc", wantOK: true,
+		},
+		{
+			// 两边都是相同的弱 ETag：语义等价不等于字节一致，不能直接放行。
+			name: "206 两边相同弱 ETag", cur: hdr("ETag", `W/"v1"`), newH: hdr("ETag", `W/"v1"`, "Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900,
+		},
+		{
+			name: "206 两边相同弱 ETag 有摘要", cur: hdr("ETag", `W/"v1"`), newH: hdr("ETag", `W/"v1"`, "Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900, expect: "abc", wantOK: true,
+		},
+		{
+			// 一强一弱：弱的那侧证明不了字节一致，即使有摘要也不能换。
+			name: "206 一强一弱有摘要", cur: hdr("ETag", `"v1"`), newH: hdr("ETag", `W/"v1"`, "Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900, expect: "abc",
+		},
+		{
+			// /http 这类没有整份摘要的路径：两边都无强验证器时必须拒绝。
+			name: "206 双方无强验证器且无摘要", cur: hdr(), newH: hdr("Content-Range", "bytes 100-999/1000"),
+			status: 206, clen: 900,
 		},
 		{
 			name: "206 Last-Modified 不同", cur: hdr("Last-Modified", "Wed, 01 Jan 2026 00:00:00 GMT"), newH: hdr("Last-Modified", "Thu, 02 Jan 2026 00:00:00 GMT", "Content-Range", "bytes 100-999/1000"),
@@ -103,20 +128,22 @@ func TestSwitchAcceptable(t *testing.T) {
 	}
 }
 
-// 不规则读取间隔不能被当成 1 秒：3 秒 3MB 是 1MB/s，不是 3MB/s。
+// 非整数秒不能被截断：3.9 秒传 3MiB 约 787KB/s，按 3 秒算会虚高到约 1024KB/s。
 func TestWatchIrregularIntervalUsesRealTime(t *testing.T) {
-	w := newStreamWatch(ParOptions{WatchWindow: 4 * time.Second, WatchMBps: 3})
-	w.winStart = time.Now().Add(-3 * time.Second)
+	w := newStreamWatch(ParOptions{WatchWindow: 5 * time.Second, WatchMBps: 3})
+	w.winStart = time.Now().Add(-3900 * time.Millisecond)
 	w.winBytes = 3 << 20
 	w.roll(time.Now())
 
-	sum, dur := w.windowStats()
-	if dur < 2*time.Second || dur > 4*time.Second {
-		t.Fatalf("真实时长应接近 3s，实际 %v", dur)
+	kb, sec := w.sample()
+	// 独立数学预期，不引用生产代码里的公式。
+	size := float64(3 << 20)
+	want := int64(size / 3.9 / 1024)
+	if kb < want-5 || kb > want+5 {
+		t.Fatalf("3.9s/3MiB 应约 %d KB/s，实际 %d（按整秒算会得约 1024）", want, kb)
 	}
-	kb := sum / int64(dur/time.Second) / 1000
-	if kb < 900 || kb > 1200 {
-		t.Fatalf("3 秒 3MB 应算出约 1MB/s，实际 %d KB/s", kb)
+	if sec != 4 {
+		t.Fatalf("3.9s 存储用秒数应向上取整为 4，实际 %d", sec)
 	}
 }
 

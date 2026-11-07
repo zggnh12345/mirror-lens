@@ -141,21 +141,33 @@ func (w *streamWatch) slow(sent, total int64) bool {
 	if dur < w.window {
 		return false
 	}
-	avgKB := sum / int64(dur/time.Second) / 1000
+	avgKB := rateKB(sum, dur)
 	return avgKB < w.limitKB
 }
 
-// sample 返回当前窗口的平均速度（KB/s）与覆盖的真实秒数。
+// rateKB 用真实时长（纳秒精度）算平均吞吐，不截断整秒。
+func rateKB(b int64, d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64(float64(b) / d.Seconds() / 1024)
+}
+
+// sample 返回当前窗口的平均速度（KB/s）与覆盖的整秒数（仅供存储展示）。
+// 速度按真实时长计算：3.9 秒就是 3.9 秒，不会被当成 3 秒而高估。
 func (w *streamWatch) sample() (int64, int) {
 	sum, dur := w.windowStats()
-	sec := int(dur / time.Second)
+	if dur <= 0 {
+		return 0, 0
+	}
+	if w.window > 0 && dur > w.window {
+		dur = w.window
+	}
+	sec := int((dur + time.Second - 1) / time.Second)
 	if sec <= 0 {
 		return 0, 0
 	}
-	if max := int(w.window / time.Second); max > 0 && sec > max {
-		sec = max
-	}
-	return sum / int64(sec) / 1000, sec
+	return rateKB(sum, dur), sec
 }
 
 // setGiveUp 标记本次请求不再尝试换源（没有可换的源，或新源首字节超时）。
@@ -170,25 +182,21 @@ func (w *streamWatch) afterSwitch() {
 	w.winStart = time.Now()
 }
 
-// verifierMatch 判断两份响应头能否证明是同一资源版本。
-// ETag 双方都有时以 ETag 为准；否则用 Last-Modified；两者都无法比较
-// 时返回 (false,false)，由调用方决定是否允许用摘要兜底。
-// 这里不做 W/ 归一：强弱验证器混用一律按不一致处理，宁可少换源。
+// verifierMatch 判断两份响应头能否证明是同一份字节。
+// 只接受强 ETag 精确相等。Last-Modified 只有秒级精度，同秒内资源仍可能变化，
+// 因此不再当作字节一致性证据；两边都没有强 ETag 时一律返回不可比，
+// 由调用方决定是否允许用整份摘要兜底。
 func verifierMatch(oldH, newH http.Header) (bool, bool) {
-	oe, ne := oldH.Get("ETag"), newH.Get("ETag")
+	oe, ne := strongETag(oldH), strongETag(newH)
 	if oe != "" && ne != "" {
 		return oe == ne, true
-	}
-	ol, nl := oldH.Get("Last-Modified"), newH.Get("Last-Modified")
-	if ol != "" && nl != "" {
-		return ol == nl, true
 	}
 	return false, false
 }
 
-// hasVerifier 表示这份响应带了任一强/弱验证器。
-func hasVerifier(h http.Header) bool {
-	return h.Get("ETag") != "" || h.Get("Last-Modified") != ""
+// hasStrongVerifier 表示这份响应带了可用于字节级比较的强 ETag。
+func hasStrongVerifier(h http.Header) bool {
+	return strongETag(h) != ""
 }
 
 // recentProxySpeeds 查某台源最近的实测吞吐（KB/s），测试可注入。
@@ -241,12 +249,11 @@ func switchAcceptable(curHdr, newHdr http.Header, status int, clen, sent, total 
 		}
 		return true, true
 	}
-	// 没有可比的同类型验证器：只要有一侧带了验证器，就无法证明是同一版本。
-	// （拿一侧的 ETag 去比另一侧的 Last-Modified 不算证据。）
-	if hasVerifier(curHdr) || hasVerifier(newHdr) {
+	// 没有可比的强 ETag：一侧有、另一侧没有，同样无法证明是同一版本。
+	if hasStrongVerifier(curHdr) != hasStrongVerifier(newHdr) {
 		return false, false
 	}
-	// 双方都没有验证器：只有可信摘要能兜底。
+	// 双方都没有强验证器：只有可信摘要能兜底。
 	return false, expectSHA != ""
 }
 
@@ -257,7 +264,8 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 	if sent <= 0 || total < 0 {
 		return nil, nil, nil, false, errors.New("没有可用的换源条件")
 	}
-	for _, t := range g.switchCandidates(plan) {
+	cands := g.switchCandidates(plan)
+	for _, t := range cands {
 		if t.c == nil || !t.c.Preferred || tried[t.c.ID] || (cur != nil && cur.c != nil && cur.c.ID == t.c.ID) {
 			continue
 		}
