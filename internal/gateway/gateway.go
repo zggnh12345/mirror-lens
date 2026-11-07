@@ -1087,7 +1087,7 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 	// 记真实回源吞吐：这是单流独占带宽下量到的持续速度，
 	// 比探测那 4MB 准得多。小文件慢启动占比高，不记。
-	if t.c != nil && g.st != nil && n >= 64<<20 {
+	if t.c != nil && g.st != nil && n >= minSpeedSample {
 		if el := time.Since(start).Milliseconds(); el > 0 {
 			_ = g.st.AddProxySpeed(t.c.ID, plan.Kind, n, el)
 		}

@@ -338,10 +338,14 @@ const (
 	outcomeFail
 )
 
-// noteSpeed 记一次完整单流下载的真实吞吐。小于 16MiB 不记：
-// 慢启动和握手占比太高，会把源站估慢。
+// minSpeedSample 是记吞吐样本的最小字节数：再小的话握手和慢启动
+// 占比太高，会把源站估慢。单流和整份落盘两条路径必须用同一个门槛，
+// 否则同一个文件在两条路径下一条记、一条不记，均速会被带偏。
+const minSpeedSample = 16 << 20
+
+// noteSpeed 记一次完整单流下载的真实吞吐。
 func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time.Time) {
-	if g.st == nil || t == nil || t.c == nil || bytes < 16<<20 {
+	if g.st == nil || t == nil || t.c == nil || bytes < minSpeedSample {
 		return
 	}
 	if el := time.Since(start).Milliseconds(); el > 0 {
