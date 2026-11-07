@@ -33,21 +33,75 @@ const (
 )
 
 // EnsureAdmin 首次启动写入默认账号 admin/admin，并标记需改密。
+//
+// 三项设置必须在同一事务里：旧实现逐条写入，若进程在写完 hash、还没写
+// must_change 时退出，下次启动会因为「hash 已存在」直接返回，留下一个
+// 永远不会强制改密的默认密码账号。事务保证要么三项齐全，要么什么都没写。
 func EnsureAdmin(st *store.Store) error {
-	if st.GetSetting(KeyHash, "") != "" {
+	return st.Tx(func(tx *sql.Tx) error { return ensureAdminTx(tx) })
+}
+
+// ensureAdminTx 在调用方的事务里完成初始化，便于测试注入回滚。
+func ensureAdminTx(tx *sql.Tx) error {
+	hash, err := settingTx(tx, KeyHash)
+	if err != nil {
+		return err
+	}
+	user, err := settingTx(tx, KeyUser)
+	if err != nil {
+		return err
+	}
+	must, err := settingTx(tx, KeyMustChg)
+	if err != nil {
+		return err
+	}
+
+	if hash != "" {
+		// 已有密码就当初始化完成。但 must_change 缺失是旧版本中断留下的
+		// 半成品状态，不能默认放行：补上强制改密，而不是直接 return。
+		if user == "" {
+			if err := putSettingTx(tx, KeyUser, DefaultUser); err != nil {
+				return err
+			}
+		}
+		if must != "0" && must != "1" {
+			return putSettingTx(tx, KeyMustChg, "1")
+		}
 		return nil
 	}
+
 	h, err := bcrypt.GenerateFromPassword([]byte(DefaultPass), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	if err := st.SetSetting(KeyUser, DefaultUser); err != nil {
-		return err
+	for _, kv := range [][2]string{
+		{KeyUser, DefaultUser},
+		{KeyHash, string(h)},
+		{KeyMustChg, "1"},
+	} {
+		if err := putSettingTx(tx, kv[0], kv[1]); err != nil {
+			return err
+		}
 	}
-	if err := st.SetSetting(KeyHash, string(h)); err != nil {
-		return err
+	return nil
+}
+
+// settingTx 在事务内读一个设置项；不存在按空串处理。
+func settingTx(tx *sql.Tx, key string) (string, error) {
+	var v string
+	err := tx.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
-	return st.SetSetting(KeyMustChg, "1")
+	return v, err
+}
+
+func putSettingTx(tx *sql.Tx, key, value string) error {
+	_, err := tx.Exec(
+		`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		key, value,
+	)
+	return err
 }
 
 // ErrSetupDone 表示首次设置已被别人做完。
