@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -58,7 +59,7 @@ func (g *Gateway) serveGit(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := g.fetch(r.Context(), plan, nil)
 	if err != nil {
 		code := statusFor(err)
-		log.Printf("git info/refs 回源失败 %s: %v", plan.Upstream, err)
+		log.Printf("git info/refs 回源失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -75,7 +76,7 @@ func (g *Gateway) serveGitCached(w http.ResponseWriter, r *http.Request, e *stor
 	}
 	f, err := g.cache.Open(e.SHA256)
 	if err != nil {
-		log.Printf("缓存文件丢失 %s (%s): %v", e.Key, e.SHA256, err)
+		log.Printf("缓存文件丢失 %s (%s): %v", e.Key, e.SHA256, logging.SafeErr(err))
 		_ = g.st.CacheDelete(e.Key)
 		http.Error(w, "502 缓存文件丢失，请重试", http.StatusBadGateway)
 		return
@@ -89,7 +90,7 @@ func (g *Gateway) serveGitCached(w http.ResponseWriter, r *http.Request, e *stor
 	w.Header().Set("X-ML-Cache", label)
 	cw := &countWriter{ResponseWriter: w}
 	if _, err := io.Copy(cw, f); err != nil {
-		log.Printf("回写 git 响应中断 %s: %v", e.Key, err)
+		log.Printf("回写 git 响应中断 %s: %v", e.Key, logging.SafeErr(err))
 	}
 	if fromCache {
 		g.st.CacheHit(e.Key)
@@ -125,7 +126,7 @@ func (g *Gateway) pipeGit(w http.ResponseWriter, r *http.Request, plan *adapter.
 	resp, err := g.cli.Do(req)
 	if err != nil {
 		code := statusFor(err)
-		log.Printf("git upload-pack 失败 %s: %v", plan.Upstream, err)
+		log.Printf("git upload-pack 失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -153,7 +154,7 @@ func (g *Gateway) pipeGit(w http.ResponseWriter, r *http.Request, plan *adapter.
 			break
 		}
 		if rerr != nil {
-			log.Printf("git upload-pack 传输中断 %s（已发 %d 字节）: %v", plan.Upstream, total, rerr)
+			log.Printf("git upload-pack 传输中断 %s（已发 %d 字节）: %v", safeUpstream(plan.Upstream), total, logging.SafeErr(rerr))
 			return
 		}
 	}

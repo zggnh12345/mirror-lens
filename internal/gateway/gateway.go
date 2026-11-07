@@ -1318,10 +1318,21 @@ func loggw(level slog.Level, msg string, ctx context.Context, plan *adapter.Plan
 		attrs = append(attrs, "error_code", code)
 	}
 	if err != nil {
-		attrs = append(attrs, "error", err)
+		// 错误文本里常带完整 URL（*url.Error），这里统一剥掉查询串，
+		// 保留 %w 链以便 errors.Is/As 照常工作。
+		attrs = append(attrs, "error", logging.SafeErr(err))
 	}
 	attrs = append(attrs, extra...)
 	slog.Log(ctx, level, msg, attrs...)
+}
+
+// safeUpstream 把上游地址转成可进日志的骨架：去掉查询串和 userinfo，
+// 保留 host 与路径。只用于输出，原始 *url.URL 不动。
+func safeUpstream(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	return logging.SanitizeURL(u.String())
 }
 
 // codeFor 只做粗粒度归类：日志要能聚合，不必精确到 errno。

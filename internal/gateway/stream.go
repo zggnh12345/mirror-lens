@@ -423,7 +423,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			// 只有 206 后半段时发出去就是残缺文件：丢掉续传点，
 			// 让客户端重试完整 GET。
 			g.cache.DropPartial(plan.CacheKey)
-			log.Printf("续传数据缺失，要求客户端重试: %v (%s)", perr, plan.Upstream)
+			log.Printf("续传数据缺失，要求客户端重试: %v (%s)", logging.SafeErr(perr), safeUpstream(plan.Upstream))
 			noStore(w.Header())
 			http.Error(w, "502 续传数据缺失，请重新请求", http.StatusBadGateway)
 			return
@@ -488,7 +488,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				part.Close()
 			}
 			g.cache.DropPartial(plan.CacheKey)
-			log.Printf("换源后未完整结束，丢弃续传点: %s", plan.CacheKey)
+			log.Printf("换源后未完整结束，丢弃续传点: %s", logging.SanitizeKey(plan.CacheKey))
 		}
 	}()
 
@@ -518,7 +518,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			var err error
 			part, err = g.cache.OpenPartial(plan.CacheKey)
 			if err != nil {
-				log.Printf("打开缓存文件失败，降级为透传: %v", err)
+				log.Printf("打开缓存文件失败，降级为透传: %v", logging.SafeErr(err))
 				cacheable = false
 			}
 		}
@@ -558,7 +558,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			part = nil
 			hasher = sha256.New()
 			written = 0
-			log.Printf("超过单文件上限，转透传: %s", plan.Upstream)
+			log.Printf("超过单文件上限，转透传: %s", safeUpstream(plan.Upstream))
 		}
 		if flusher != nil {
 			flusher.Flush()
@@ -576,7 +576,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		if serr != nil {
 			sw.setGiveUp()
 			g.noteLive(tgt, plan.Kind, sw)
-			log.Printf("单流判慢：%v", serr)
+			log.Printf("单流判慢：%v", logging.SafeErr(serr))
 			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp); taken {
 				tgt = nil // 记账分散到各台源，这里不再重复记当前源
 				if ok {
@@ -765,7 +765,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	part.Close()
 	if total >= 0 && sent != total {
 		g.cache.DropPartial(plan.CacheKey)
-		log.Printf("长度不符，丢弃：期望 %d 实得 %d (%s)", total, sent, plan.Upstream)
+		log.Printf("长度不符，丢弃：期望 %d 实得 %d (%s)", total, sent, safeUpstream(plan.Upstream))
 		if r.Context().Err() == nil {
 			outcome = outcomeFail
 		}
@@ -778,14 +778,14 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 这里唯一要保证的是绝不把错内容写进缓存。
 		g.cache.DropPartial(plan.CacheKey)
 		g.verifyFail.Add(1)
-		log.Printf("内容校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, plan.Upstream)
+		log.Printf("内容校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, safeUpstream(plan.Upstream))
 		outcome = outcomeFail
 		return
 	}
 	if checked, ok := checkDigest(resp.Header, sha); checked && !ok {
 		g.cache.DropPartial(plan.CacheKey)
 		g.verifyFail.Add(1)
-		log.Printf("内容与上游声明的摘要不符，不入缓存：%s", plan.Upstream)
+		log.Printf("内容与上游声明的摘要不符，不入缓存：%s", safeUpstream(plan.Upstream))
 		outcome = outcomeFail
 		return
 	}
@@ -795,7 +795,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	if _, err := g.cache.Commit(partPath, sha); err != nil {
 		unlock()
 		g.cache.DropPartial(plan.CacheKey)
-		log.Printf("缓存落盘失败: %v", err)
+		log.Printf("缓存落盘失败: %v", logging.SafeErr(err))
 		return
 	}
 	committed = true
@@ -814,7 +814,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	err := g.st.CachePut(e)
 	unlock()
 	if err != nil {
-		log.Printf("写缓存索引失败 %s: %v", plan.CacheKey, err)
+		log.Printf("写缓存索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), sent)
@@ -870,7 +870,7 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, pe
 		Have:         size,
 		Updated:      g.now().Unix(),
 	}); err != nil {
-		log.Printf("记录续传点失败: %v", err)
+		log.Printf("记录续传点失败: %v", logging.SafeErr(err))
 		g.cache.DropPartial(plan.CacheKey)
 	}
 }
@@ -954,7 +954,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	if resp == nil {
 		code := statusFor(err)
-		log.Printf("透传失败 %s: %v", plan.Upstream, err)
+		log.Printf("透传失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
 		noStore(w.Header())
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
@@ -1025,12 +1025,12 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 		return
 	}
 	if prev != nil {
-		log.Printf("回源失败，用旧缓存 %s: %v", plan.CacheKey, err)
+		log.Printf("回源失败，用旧缓存 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 		g.serveCached(w, r, plan, prev, "STALE", true)
 		return
 	}
 	code := statusFor(err)
-	log.Printf("回源失败 %s: %v", plan.CacheKey, err)
+	log.Printf("回源失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	noStore(w.Header())
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 }

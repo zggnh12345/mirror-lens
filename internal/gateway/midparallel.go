@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -268,7 +269,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if _, err := g.cache.Commit(partPath, sha); err != nil {
 		unlock()
 		g.cache.DropPartial(plan.CacheKey)
-		log.Printf("中途并行：落盘失败: %v", err)
+		log.Printf("中途并行：落盘失败: %v", logging.SafeErr(err))
 		return true, false
 	}
 	e := store.CacheEntry{
@@ -286,7 +287,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	err = g.st.CachePut(e)
 	unlock()
 	if err != nil {
-		log.Printf("中途并行：写索引失败 %s: %v", plan.CacheKey, err)
+		log.Printf("中途并行：写索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)
@@ -302,6 +303,6 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		}
 	}
 	log.Printf("中途并行完成：%s %d 字节（%d 起），%d 段 × %d 源，用时 %s",
-		plan.CacheKey, total, sent, n, len(srcs), time.Since(start).Round(time.Millisecond))
+		logging.SanitizeKey(plan.CacheKey), total, sent, n, len(srcs), time.Since(start).Round(time.Millisecond))
 	return true, true
 }

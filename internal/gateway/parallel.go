@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -145,13 +146,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 
 	// 先开 .part，再写响应头：开不了文件还能干净地退回单流。
 	if err := g.cache.ResetPartial(plan.CacheKey); err != nil {
-		log.Printf("并行填充：建 .part 失败，退回单流: %v", err)
+		log.Printf("并行填充：建 .part 失败，退回单流: %v", logging.SafeErr(err))
 		g.parFalls.Add(1)
 		return false
 	}
 	part, err := g.cache.OpenPartial(plan.CacheKey)
 	if err != nil {
-		log.Printf("并行填充：打开 .part 失败，退回单流: %v", err)
+		log.Printf("并行填充：打开 .part 失败，退回单流: %v", logging.SafeErr(err))
 		g.parFalls.Add(1)
 		return false
 	}
@@ -327,7 +328,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 			if _, werr := part.WriteAt(buf[:nr], got); werr != nil {
 				resp0.Body.Close()
 				abort()
-				log.Printf("并行填充：写 .part 失败，断开: %v", werr)
+				log.Printf("并行填充：写 .part 失败，断开: %v", logging.SafeErr(werr))
 				return true
 			}
 			got += int64(nr)
@@ -345,7 +346,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 			if !clientGone {
 				atomic.AddInt32(&stats[0].fail, 1)
 			}
-			log.Printf("并行填充：第 0 段中断 %s: %v", srcs[0].name, rerr)
+			log.Printf("并行填充：第 0 段中断 %s: %v", srcs[0].name, logging.SafeErr(rerr))
 			return true
 		}
 	}
@@ -365,7 +366,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for i := 1; i < n; i++ {
 		if err := <-dones[i]; err != nil {
 			abort()
-			log.Printf("并行填充：第 %d 段失败，断开连接: %v", i, err)
+			log.Printf("并行填充：第 %d 段失败，断开连接: %v", i, logging.SafeErr(err))
 			return true
 		}
 		off := int64(i) * chunk
@@ -392,13 +393,13 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	// 整份校验：只有它能把「每片都成功、拼起来是错的」这种情况拦下来。
 	if _, err := part.Seek(0, io.SeekStart); err != nil {
 		drop()
-		log.Printf("并行填充：回读 .part 失败: %v", err)
+		log.Printf("并行填充：回读 .part 失败: %v", logging.SafeErr(err))
 		return true
 	}
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, part); err != nil {
 		drop()
-		log.Printf("并行填充：哈希失败: %v", err)
+		log.Printf("并行填充：哈希失败: %v", logging.SafeErr(err))
 		return true
 	}
 	sha := hex.EncodeToString(hasher.Sum(nil))
@@ -418,7 +419,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	if hold > 0 {
 		if _, werr := io.CopyN(out, io.NewSectionReader(part, flushUntil, hold), hold); werr != nil {
 			abort()
-			log.Printf("并行填充：补发尾部失败: %v", werr)
+			log.Printf("并行填充：补发尾部失败: %v", logging.SafeErr(werr))
 			return true
 		}
 		if flusher != nil {
@@ -433,7 +434,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	if _, err := g.cache.Commit(partPath, sha); err != nil {
 		unlock()
 		g.cache.DropPartial(plan.CacheKey)
-		log.Printf("并行填充：落盘失败: %v", err)
+		log.Printf("并行填充：落盘失败: %v", logging.SafeErr(err))
 		return true
 	}
 	e := store.CacheEntry{
@@ -451,7 +452,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	err = g.st.CachePut(e)
 	unlock()
 	if err != nil {
-		log.Printf("并行填充：写索引失败 %s: %v", plan.CacheKey, err)
+		log.Printf("并行填充：写索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)
@@ -469,7 +470,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 				scheduler.Hint{Code: http.StatusPartialContent, Mode: "parallel"})
 		}
 	}
-	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s%s", plan.CacheKey, total, n, len(srcs),
+	log.Printf("并行填充完成：%s %d 字节，%d 段 × %d 源，用时 %s%s", logging.SanitizeKey(plan.CacheKey), total, n, len(srcs),
 		time.Since(start).Round(time.Millisecond), parSpeedNote(srcs, stats))
 	return true
 }
