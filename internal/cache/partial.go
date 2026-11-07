@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // PartialMeta 记录没下完的文件。续传前要核对地址、
@@ -51,8 +53,16 @@ func (s *Store) ReadPartial(key string) (*PartialMeta, bool) {
 	if m.Have != fi.Size() || m.Size < 0 || m.Have > m.Size {
 		return nil, false
 	}
+	// 弱 ETag（W/…）不能证明字节一致，不能拿它当续传依据。
+	// 只剩它一条线索的半截文件留着只会被反复读到，直接清掉重下；
+	// 有强 Last-Modified 时降级用它，还能救回来。
+	if strings.HasPrefix(m.ETag, "W/") {
+		m.ETag = ""
+	}
 	if m.ETag == "" && m.LastModified == "" {
-		return nil, false // 没有验证依据，不敢续
+		s.DropPartial(key)
+		log.Printf("清理无有效校验器的半截文件：%s", m.URL)
+		return nil, false
 	}
 	return &m, true
 }
