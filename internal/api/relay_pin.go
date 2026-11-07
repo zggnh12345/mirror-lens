@@ -19,15 +19,6 @@ var relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
 	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 }
 
-// relayLookupNS 用指定 DNS 解析：系统解析器拿不到 AAAA 时的补救。
-var relayLookupNS = func(ctx context.Context, host, server string) ([]netip.Addr, error) {
-	d := &net.Dialer{Timeout: 5 * time.Second}
-	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return d.DialContext(ctx, network, server)
-	}}
-	return r.LookupNetIP(ctx, "ip", host)
-}
-
 // 这些网段不是“能不能连”的问题，而是“这个地址根本不是这台机器的公网地址”：
 // fakeip 的 198.18.0.0/15 / fc00::/7、CGNAT、保留段、文档段、组播、链路本地。
 // 钉住它们等于把中转永久钉死在一个假地址上，比不钉更糟，所以解析阶段就丢掉。
@@ -73,7 +64,6 @@ func (s *Server) ensurePins(list []store.TrustedRelay) {
 	}
 	timeout := 5 * time.Second
 	grace := 24 * time.Hour
-	dns := ""
 	if cfg := s.cfg.Load(); cfg != nil {
 		if d := cfg.Relay.ResolverTimeout.Duration; d > 0 {
 			timeout = d
@@ -81,7 +71,6 @@ func (s *Server) ensurePins(list []store.TrustedRelay) {
 		if h := cfg.Relay.PinGraceHours; h > 0 {
 			grace = time.Duration(h) * time.Hour
 		}
-		dns = strings.TrimSpace(cfg.Relay.Resolver)
 	}
 	now := time.Now()
 	var wg sync.WaitGroup
@@ -102,7 +91,7 @@ func (s *Server) ensurePins(list []store.TrustedRelay) {
 		wg.Add(1)
 		go func(r store.TrustedRelay) {
 			defer wg.Done()
-			v4, v6, err := resolveRelayHost(r.PinHost, timeout, dns)
+			v4, v6, err := resolveRelayHost(r.PinHost, timeout)
 			if err == nil {
 				if e := s.st.SetRelayPin(r.ID, "pending", strings.Join(v4, ","), strings.Join(v6, ","), 0); e != nil {
 					log.Printf("api: 信任中转 %s 保存钉住结果失败: %v", r.Name, e)
@@ -159,7 +148,7 @@ func checkPinList(v string, want4 bool) error {
 
 // resolveRelayHost 解析并过滤结果：只留公网地址，按解析器返回顺序
 // 分别保留 v4/v6，去重。域名已经是 IP 字面量时直接用它。
-func resolveRelayHost(hostport string, timeout time.Duration, dns string) (v4, v6 []string, err error) {
+func resolveRelayHost(hostport string, timeout time.Duration) (v4, v6 []string, err error) {
 	host := hostport
 	if h, _, e := net.SplitHostPort(hostport); e == nil {
 		host = h
@@ -181,15 +170,7 @@ func resolveRelayHost(hostport string, timeout time.Duration, dns string) (v4, v
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	var addrs []netip.Addr
-	if dns != "" {
-		if _, _, e := net.SplitHostPort(dns); e != nil {
-			dns = net.JoinHostPort(dns, "53")
-		}
-		addrs, err = relayLookupNS(ctx, host, dns)
-	} else {
-		addrs, err = relayLookup(ctx, host)
-	}
+	addrs, err := relayLookup(ctx, host)
 	if err != nil {
 		return nil, nil, err
 	}

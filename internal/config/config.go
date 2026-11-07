@@ -166,7 +166,6 @@ type Relay struct {
 	ResolverTimeout Duration `yaml:"resolver_timeout"`
 	// Resolver 指定钉住解析专用的 DNS（如 "223.5.5.5:53"），空 = 系统解析。
 	// 家里/运营商 DNS 常把 AAAA 吃掉（fakeip、只回 A），双栈站点就只钉到 v4。
-	Resolver string `yaml:"resolver"`
 }
 
 // Hedge 控制上游响应头的延迟对冲：首选源迟迟不回响应头时，

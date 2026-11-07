@@ -149,7 +149,6 @@ relay:
   pin_grace_hours: 24
   # 钉住解析专用 DNS，如 "223.5.5.5:53"；留空用系统解析。
   # 家宽/运营商 DNS 常丢 AAAA，双栈中转会只钉到 v4。
-  resolver: ""
   # 单次 DNS 解析超时，解析结果会被钉住，后续拨号不再重新解析。
   resolver_timeout: 5s
 

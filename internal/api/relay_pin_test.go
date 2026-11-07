@@ -203,7 +203,7 @@ func TestResolveRelayHostDropsBogusAddrs(t *testing.T) {
 			netip.MustParseAddr("2603:c024:10:d9ee:0:3982:3cdf:d2e9"),
 		}, nil
 	}
-	v4, v6, err := resolveRelayHost("gp.example.org", time.Second, "")
+	v4, v6, err := resolveRelayHost("gp.example.org", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestResolveRelayHostAllBogusFails(t *testing.T) {
 	relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
 		return []netip.Addr{netip.MustParseAddr("198.18.0.58"), netip.MustParseAddr("fc00::3b")}, nil
 	}
-	if _, _, err := resolveRelayHost("fakeip.example.org", time.Second, ""); err == nil {
+	if _, _, err := resolveRelayHost("fakeip.example.org", time.Second); err == nil {
 		t.Fatal("全是伪造地址却解析成功了")
 	}
 }
