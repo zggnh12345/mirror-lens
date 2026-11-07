@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.19"
+const Version = "3.0.0"
 
 type Gateway struct {
 	st      *store.Store
