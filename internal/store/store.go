@@ -210,6 +210,13 @@ CREATE TABLE IF NOT EXISTS sources (
   probe_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   trusted INTEGER NOT NULL DEFAULT 0,
+  pin_host TEXT NOT NULL DEFAULT '',
+  pin_ipv4 TEXT NOT NULL DEFAULT '',
+  pin_ipv6 TEXT NOT NULL DEFAULT '',
+  pin_state TEXT NOT NULL DEFAULT '',
+  pin_at INTEGER NOT NULL DEFAULT 0,
+  pin_confirmed_at INTEGER NOT NULL DEFAULT 0,
+  pin_grace_until INTEGER NOT NULL DEFAULT 0,
   UNIQUE(base_url)
 );
 CREATE TABLE IF NOT EXISTS checks (
@@ -299,18 +306,25 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		return err
 	}
 	if err := s.ensureColumns("sources", map[string]string{
-		"git_cap":       "INTEGER NOT NULL DEFAULT 0",
-		"ghcr_cap":      "INTEGER NOT NULL DEFAULT -1",
-		"ghcr_prefix":   "INTEGER NOT NULL DEFAULT 0",
-		"preferred":     "INTEGER NOT NULL DEFAULT 0",
-		"status_at":     "INTEGER NOT NULL DEFAULT 0",
-		"status_reason": "TEXT NOT NULL DEFAULT ''",
-		"probe_at":      "INTEGER NOT NULL DEFAULT 0",
-		"site_name":     "TEXT NOT NULL DEFAULT ''",
-		"group_id":      "INTEGER NOT NULL DEFAULT 0",
-		"trusted":       "INTEGER NOT NULL DEFAULT 0",
-		"range_cap":     "INTEGER NOT NULL DEFAULT -1",
-		"range_at":      "INTEGER NOT NULL DEFAULT 0",
+		"git_cap":          "INTEGER NOT NULL DEFAULT 0",
+		"ghcr_cap":         "INTEGER NOT NULL DEFAULT -1",
+		"ghcr_prefix":      "INTEGER NOT NULL DEFAULT 0",
+		"preferred":        "INTEGER NOT NULL DEFAULT 0",
+		"status_at":        "INTEGER NOT NULL DEFAULT 0",
+		"status_reason":    "TEXT NOT NULL DEFAULT ''",
+		"probe_at":         "INTEGER NOT NULL DEFAULT 0",
+		"site_name":        "TEXT NOT NULL DEFAULT ''",
+		"group_id":         "INTEGER NOT NULL DEFAULT 0",
+		"trusted":          "INTEGER NOT NULL DEFAULT 0",
+		"range_cap":        "INTEGER NOT NULL DEFAULT -1",
+		"range_at":         "INTEGER NOT NULL DEFAULT 0",
+		"pin_host":         "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv4":         "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv6":         "TEXT NOT NULL DEFAULT ''",
+		"pin_state":        "TEXT NOT NULL DEFAULT ''",
+		"pin_at":           "INTEGER NOT NULL DEFAULT 0",
+		"pin_confirmed_at": "INTEGER NOT NULL DEFAULT 0",
+		"pin_grace_until":  "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}

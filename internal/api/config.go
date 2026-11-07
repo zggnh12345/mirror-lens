@@ -186,6 +186,18 @@ var cfgSchema = []cfgField{
 			return setIntI(&c.Parallel.SwitchGapSec, v, 0, 600, true, true)
 		}},
 
+	// 信任中转：IP 钉死与解析策略
+	{Section: "信任中转", Key: "relay.pin_grace_hours", Label: "IP 钉死迁移窗口", Kind: "int", Unit: "小时", Min: 0, Max: 720, HasMin: true, HasMax: true, Restart: true,
+		Hint: "首次解析失败时沿用旧版解析的时限；到期仍未解析成功就停止未钉 IP 的拨号。0 = 24 小时",
+		Get:  func(c *config.Config) string { return i32(c.Relay.PinGraceHours) },
+		Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Relay.PinGraceHours, v, 0, 720, true, true)
+		}},
+	{Section: "信任中转", Key: "relay.resolver_timeout", Label: "DNS 解析超时", Kind: "duration", Restart: true,
+		Hint: "单次解析超时；解析结果会被钉住，后续拨号不再重新解析。0 = 5s",
+		Get:  func(c *config.Config) string { return durStr(c.Relay.ResolverTimeout.Duration) },
+		Set:  func(c *config.Config, v string) error { return setDur(&c.Relay.ResolverTimeout.Duration, v) }},
+
 	// 探测
 	{Section: "探测", Key: "probe.allow_private", Label: "允许探测内网源", Kind: "bool", Restart: true,
 		Hint: "源架在局域网时才开；开启等于关掉 SSRF 防护", Get: func(c *config.Config) string { return b2s(c.Probe.AllowPrivate) }, Set: func(c *config.Config, v string) error { c.Probe.AllowPrivate = parseBool(v); return nil }},

@@ -155,6 +155,17 @@ type Private struct {
 	FallbackConcurrency int `yaml:"fallback_concurrency"`
 }
 
+// Relay 控制「信任中转」的 IP 钉死与解析参数。
+// 中继本身是 sources 里 trusted=1 的源，域名来自 base_url；这里只放
+// 全局策略，具体每个中继钉住的 IP 存库、可在面板逐个修改。
+type Relay struct {
+	// PinGraceHours 首次解析失败后的迁移窗口（小时），0 = 24。
+	// 窗口内沿用旧版系统解析并告警，到期仍失败则禁止未钉 IP 的拨号。
+	PinGraceHours int `yaml:"pin_grace_hours"`
+	// ResolverTimeout 单次 DNS 解析超时，0 = 5s。
+	ResolverTimeout Duration `yaml:"resolver_timeout"`
+}
+
 // Hedge 控制上游响应头的延迟对冲：首选源迟迟不回响应头时，
 // 并行向第二个源发同一请求，谁先交出「符合本次请求语义」的响应头用谁。
 // 只在首选源慢的时候多打一个请求，正常情况零成本。
@@ -186,6 +197,7 @@ type Config struct {
 	Sources  Sources        `yaml:"sources"`
 	Parallel Parallel       `yaml:"parallel"`
 	Private  Private        `yaml:"private"`
+	Relay    Relay          `yaml:"relay"`
 	Hedge    Hedge          `yaml:"hedge"`
 	Probe    Probe          `yaml:"probe"`
 	Auth     Auth           `yaml:"auth"`
@@ -285,6 +297,10 @@ func Default() *Config {
 			BreakSeconds:        60,
 			FallbackConcurrency: 2,
 		},
+		Relay: Relay{
+			PinGraceHours:   24,
+			ResolverTimeout: Duration{5 * time.Second},
+		},
 		Hedge: Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
 		Probe: Probe{AllowPrivate: false,
 			IntervalSec: 30, Concurrency: 8, TimeoutSec: 45, SampleMiB: 4},
@@ -359,6 +375,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Private.BreakAfter < 0 || c.Private.BreakSeconds < 0 || c.Private.FallbackConcurrency < 0 {
 		return fmt.Errorf("private 的熔断与并发参数不能是负数")
+	}
+	if c.Relay.PinGraceHours < 0 {
+		return fmt.Errorf("relay.pin_grace_hours 不能是负数")
+	}
+	if c.Relay.ResolverTimeout.Duration < 0 {
+		return fmt.Errorf("relay.resolver_timeout 不能是负数")
 	}
 	if c.Janitor.PartialTTL.Duration < 0 || c.Janitor.ExpiredGrace.Duration < 0 {
 		return fmt.Errorf("janitor 的时限不能是负数")

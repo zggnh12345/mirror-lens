@@ -21,6 +21,13 @@ type TrustedRelay struct {
 	Name    string
 	URL     string        // 含 {url} 则替换成原地址，否则按「relay + "/" + 原地址」拼接
 	Timeout time.Duration // 保留字段：等响应头的超时由客户端统一控制
+
+	// 拨号只允许这些地址；空集合表示还没钉住（pending 前/unresolved）。
+	PinHost  string
+	PinIPv4  string
+	PinIPv6  string
+	PinState string // pending / confirmed / stale / unresolved / expired
+	GraceEnd time.Time
 }
 
 // PrivateOptions 控制带凭据的私有请求怎么走。

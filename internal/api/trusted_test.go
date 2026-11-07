@@ -64,3 +64,41 @@ func TestTrustedWhitelistUsesExistingSources(t *testing.T) {
 		t.Fatalf("不存在的源应 404，得到 %d", r.Code)
 	}
 }
+
+// 管理员可以手填钉住地址：直接 confirmed，非法地址整体拒绝。
+func TestTrustedPinManualUpdate(t *testing.T) {
+	st, h := newTestServer(t)
+	ck := setupPanel(t, h)
+
+	id, err := st.AddSource(store.Source{Name: "relay", BaseURL: "https://relay.example", Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := patchJSON(h, "/api/trusted/"+itoa(id), `{"trusted":true}`, ck); r.Code != http.StatusOK {
+		t.Fatalf("勾选失败: %d %s", r.Code, r.Body.String())
+	}
+
+	if r := patchJSON(h, "/api/trusted/"+itoa(id), `{"pin_ipv4":"1.1.1.1,8.8.8.8","pin_ipv6":"2606:4700::1111"}`, ck); r.Code != http.StatusOK {
+		t.Fatalf("钉 IP 失败: %d %s", r.Code, r.Body.String())
+	}
+	list, err := st.ListTrustedRelays()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].PinState != "confirmed" || list[0].PinIPv4 != "1.1.1.1,8.8.8.8" {
+		t.Fatalf("钉住结果不对：%+v", list)
+	}
+
+	if r := patchJSON(h, "/api/trusted/"+itoa(id), `{"pin_ipv4":"1.1.1.1,bad"}`, ck); r.Code != http.StatusBadRequest {
+		t.Fatalf("非法地址应 400，得到 %d %s", r.Code, r.Body.String())
+	}
+
+	// 没勾信任的源不能钉。
+	other, err := st.AddSource(store.Source{Name: "plain", BaseURL: "https://plain.example", Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := patchJSON(h, "/api/trusted/"+itoa(other), `{"pin_ipv4":"1.1.1.1"}`, ck); r.Code != http.StatusNotFound {
+		t.Fatalf("未勾信任应 404，得到 %d %s", r.Code, r.Body.String())
+	}
+}
