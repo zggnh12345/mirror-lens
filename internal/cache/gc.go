@@ -126,6 +126,16 @@ func (s *Store) SweepPartial(olderThan int64) (files int, freed int64, err error
 	for base := range bases {
 		part := filepath.Join(dir, base+".part")
 		meta := filepath.Join(dir, base+".json")
+		// 只有 .part 没有 .json：续传无从核对上游版本，永远救不回来。
+		// 并行填充本来就不写 meta，客户端中断后留下的孤儿就是这种形态，
+		// 等 partial_ttl 纯属白占盘，直接清（照样只删抢得到锁的）。
+		if _, e := os.Stat(meta); os.IsNotExist(e) {
+			if n, sz, ok := s.dropPartialLocked(part, meta); ok {
+				files += n
+				freed += sz
+			}
+			continue
+		}
 		if !s.stalePartial(part, meta, olderThan) {
 			continue
 		}

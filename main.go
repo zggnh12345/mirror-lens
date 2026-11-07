@@ -27,6 +27,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
+	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -140,7 +141,10 @@ func main() {
 		CacheMaxBytes:     cfg.Cache.MaxGB << 30,
 		CacheMinFreeBytes: cfg.Cache.MinFreeGB << 30,
 		RequireToken:      cfg.Auth.RequireToken,
-		CDN:               gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
+		// 与探测共用放行策略：自建局域网源要能回源，否则面板允许探测、
+		// 真正下载时又被拦下，等于配置无效。
+		Guard: safehttp.New(safehttp.Options{MaxRedirects: 6, AllowPrivate: cfg.Probe.AllowPrivate}),
+		CDN:   gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
 			Enabled:          cfg.Parallel.Enabled,
 			MinSize:          cfg.Parallel.MinSizeMB << 20,

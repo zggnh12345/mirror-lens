@@ -743,6 +743,11 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				onSlow()
 			}
 		case <-r.Context().Done():
+			// 客户端走了。可续传的进度要落成元信息；不能再续的
+			// （无强验证器、长度对不上）由 savePartialOrDrop 当场删掉，
+			// 否则 .part 会以「无元数据的孤儿」形式一直躺在 partial 目录，
+			// 既续不上也占着盘。
+			savePartial()
 			return
 		}
 	}

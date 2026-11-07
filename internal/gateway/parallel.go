@@ -161,6 +161,32 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.cache.DropPartial(plan.CacheKey)
 	}
 
+	// 填充期间连续 90s 一字节都没送到客户端，就认定这条路卡死了
+	// （源半路断流、分片 goroutine 卡在等名额/读盘都会是这个症状）。
+	// 没有这道闸，客户端断开也唤不醒卡住的填充：请求线程回不来，
+	// .part 一直躺在 partial 目录里，只有 janitor 到点才清。
+	var lastOut atomic.Int64
+	lastOut.Store(time.Now().UnixNano())
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	defer watchCancel()
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-t.C:
+				if time.Since(time.Unix(0, lastOut.Load())) > 90*time.Second {
+					log.Printf("并行填充：90s 无进展，取消上游并清理半截文件")
+					watchCancel()
+					return
+				}
+			}
+		}
+	}()
+	ctx = watchCtx
+
 	// 尾部扣留：最后 hold 字节先不给客户端，整份哈希对上才放出去。
 	// 校验失败时客户端收到的是「内容比 Content-Length 少」的短响应，
 	// 必然报错；不会像旧行为那样收下一个长度正确、内容错误的 200。
@@ -321,6 +347,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 					abort()
 					return true // 客户端走了，不落缓存（分片是乱序的，留下也没法续）
 				}
+				lastOut.Store(time.Now().UnixNano())
 				if flusher != nil {
 					flusher.Flush()
 				}
@@ -383,6 +410,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 				abort()
 				return true
 			}
+			lastOut.Store(time.Now().UnixNano())
 			if flusher != nil {
 				flusher.Flush()
 			}

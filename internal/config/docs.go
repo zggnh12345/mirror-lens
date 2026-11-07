@@ -76,6 +76,7 @@ var fieldDocs = map[string]string{
 	"relay":                        "信任中转的 IP 钉死与解析策略",
 	"relay.pin_grace_hours":        "首次解析失败后的迁移窗口（小时），到期停止未钉 IP 的拨号",
 	"relay.resolver_timeout":       "单次 DNS 解析超时，解析结果会被钉住",
+	"relay.resolver":               "钉住解析专用 DNS（如 223.5.5.5:53），留空用系统解析；系统 DNS 丢 AAAA 时填",
 	"probe.allow_private":          "允许探测内网地址，默认关闭以防 SSRF",
 	"auth.require_token":           "下载接口是否强制校验 Access Token",
 	"limits.enabled":               "是否启用全局限流",
