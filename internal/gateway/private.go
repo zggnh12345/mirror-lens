@@ -278,6 +278,10 @@ func (g *Gateway) serveRelay(ctx context.Context, w http.ResponseWriter, resp *h
 	defer func() {
 		if sent > 0 {
 			g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), sent)
+			if t.ID > 0 {
+				// 中转交付的字节同样算这个源的产出，续传补齐的也在 sent 里。
+				metrics.SourceBytes(t.ID, plan.Kind, sent)
+			}
 		}
 	}()
 	// 和公开请求一样登记成任务，面板才能看到进度、速度和实际用的中转名。
