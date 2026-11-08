@@ -24,7 +24,6 @@ type leaseBody struct {
 	done     chan struct{}
 	doneOnce sync.Once
 	last     atomic.Int64 // 最近一次读到字节的时间（UnixNano）
-	cancel   context.CancelFunc
 }
 
 func (b *leaseBody) Read(p []byte) (int, error) {
@@ -55,9 +54,7 @@ func (b *leaseBody) watch(limit time.Duration) {
 				log.Printf("单流 %v 无进展，回收名额（源 %d）", limit, b.l.SourceID)
 				b.l.Reclaim("stall")
 			}
-			if b.cancel != nil {
-				b.cancel()
-			}
+			// 关闭 Body 会一并断开这条上游连接，读侧立刻返回。
 			b.ReadCloser.Close()
 			return
 		}

@@ -289,3 +289,43 @@ func (s *leaseSet) snapshotHeld() int {
 	h, _, _, _, _ := s.snapshot()
 	return h
 }
+
+// I8 补充：Transfer 后新旧 Body 各自退出，旧 Token 的 Release 不能动当前
+// Owner，但最后一个 Body 退出时名额必须归还，否则租约漏账。
+func TestTransferOldTokenFinalizesWhenLastBody(t *testing.T) {
+	hard, dispatch := testCaps(2)
+	set := newLeaseSet(7, hard, dispatch)
+
+	l, err := set.acquire(context.Background(), KindNormal, "blocking", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTok := l.Token()
+	retireOld, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tok2, err := l.Transfer(oldTok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retireNew, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 旧 Body 先退出：新 Owner 还活着，名额不能还。
+	retireOld()
+	l.Release(oldTok)
+	if held, _, _, _, bodies := set.snapshot(); held != 1 || bodies != 1 {
+		t.Fatalf("旧 Body 退出后 held/bodies = %d/%d，期望 1/1", held, bodies)
+	}
+
+	// 新 Body 退出：最后一个引用，必须归还。
+	retireNew()
+	l.Release(tok2)
+	if held, _, _, _, bodies := set.snapshot(); held != 0 || bodies != 0 {
+		t.Fatalf("最后一个 Body 退出后 held/bodies = %d/%d，期望 0/0", held, bodies)
+	}
+}

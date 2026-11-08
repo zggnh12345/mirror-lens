@@ -189,8 +189,20 @@ func (l *Lease) Transfer(tok Token) (Token, error) {
 // Release 释放所有权。Body 尚未退出时只解绑 owner，名额保留到最后一个 Body 退出。
 func (l *Lease) Release(tok Token) {
 	l.mu.Lock()
-	if tok.ID != l.ID || tok.Gen != l.gen || l.state == StateReleased {
+	if tok.ID != l.ID || l.state == StateReleased {
 		l.mu.Unlock()
+		return
+	}
+	if tok.Gen != l.gen {
+		// 旧 Owner 的 Body 退出：不能动当前 Owner 的状态，
+		// 但如果这是最后一个 Body，名额必须在这里归还（I8），否则漏账。
+		if l.bodies > 0 {
+			l.mu.Unlock()
+			return
+		}
+		l.state = StateReleased
+		l.mu.Unlock()
+		l.finalize()
 		return
 	}
 	l.state = StateReleased

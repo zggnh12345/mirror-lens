@@ -219,8 +219,14 @@ registry:
   max_file_mb: 4096     # layer 单独算
   tag_ttl: 5m
 sources:
-  dynamic: true         # 动态带宽调度
-  max_per_source: 4
+  max_per_source: 4     # 单源硬上限
+  headroom: 0.8         # 普通派发占硬上限的比例，其余留给换源接管
+  admission: wait_then_fallback  # 名额不足：最多等 2s 再换源
+  wait_timeout: 2s
+  preflight_concurrency: 4       # 预检全局在途
+  relay_concurrency: 4           # 信任中转竞速站数
+  git_concurrency: 4             # Git upload-pack 并发
+  dynamic: false        # 3.0 默认关（AIMD 不再参与派发）
 parallel:
   enabled: true         # 多源分片并行
 ```
@@ -333,11 +339,22 @@ pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败
 
 状态变化时间（`status_at`）只在状态真的变化时刷新。否则一个常年 dead 的源每轮探测都会把「坏了多久」清零，永远到不了归档条件。
 
-## 动态带宽调度
+## 并发与名额（3.0）
+
+每台源有两个上限：
+
+- `max_per_source`：硬上限，换源/中途接管这类 handover 用到这里为止。
+- `dispatch_cap = max(1, min(max_per_source-1, floor(max_per_source*headroom)))`：普通请求的派发上限。默认 `4 → 3`，剩下 1 个名额留给换源，避免「换源时旧 Body 还没退、新 Body 又拿不到名额」。
+
+名额不足时按 `admission` 处理，默认 `wait_then_fallback`：最多等 `wait_timeout`（2s），等不到就在源组内换下一台，不排队死等。其它取值：`blocking`（老行为）、`non_blocking`、`observe`（只记账）。
+
+B 档（官方源、信任中转、Git upload-pack）和预检有各自独立配额，不占 `max_per_source`：`preflight_concurrency` / `relay_concurrency` / `git_concurrency`，默认都是 4。
+
+## 动态带宽调度（3.0 默认关闭）
 
 固定并发是个折中：定 4 路，对 5 Mbps 的源是互相抢带宽（比单路还慢），对 1 Gbps 的源又喂不饱。该开几路由实测吞吐决定。
 
-`sources.dynamic: true`（默认）时，每台源的并发上限在 `1..max_per_source` 之间自动调整：
+`sources.dynamic: true` 时，每台源的并发上限在 `1..max_per_source` 之间自动调整：
 
 - **排队了、吞吐没退步** → 加一路，说明还有余量
 - **吞吐比滑动平均掉了 40%** → 退一路，说明已经在互相踩
@@ -349,7 +366,7 @@ pending ──探测通过──▶ usable ⇄ degraded ──连续 3 次失败
 
 观测：`mirrorlens_source_concurrency_limit{source_id="12"}` 是当前上限，和 `mirrorlens_source_inflight` 一起看——上限贴着占用说明在扩容，上限掉到 1 说明这台源最近在挨打。
 
-关掉动态（`dynamic: false`）就是老行为：每台源固定 `max_per_source` 路。
+3.0 默认 `dynamic: false`：容量由 `headroom` 固定换算，AIMD 不再参与派发。需要旧的自适应行为可以显式打开。
 
 ## 监控
 

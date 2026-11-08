@@ -244,9 +244,8 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			lastErr = lerr
 			continue
 		}
-		actx, acancel := context.WithCancel(ctx)
 		start := time.Now()
-		resp, err := g.doUpstream(actx, plan, pm, prev, t.u)
+		resp, err := g.doUpstream(ctx, plan, pm, prev, t.u)
 		if err != nil {
 			releaseLease(l)
 			if t.c == nil {
@@ -288,13 +287,11 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 		resp, werr := wrapLease(resp, l)
 		if werr != nil {
 			resp.Body.Close()
-			acancel()
 			releaseLease(l)
 			lastErr = werr
 			continue
 		}
 		if lb, ok := resp.Body.(*leaseBody); ok && l != nil {
-			lb.cancel = acancel
 			go lb.watch(90 * time.Second)
 		}
 		holderFrom(ctx).set(l)
