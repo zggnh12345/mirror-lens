@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -170,6 +171,68 @@ func TestParChunkRetryUsesFreshAttempt(t *testing.T) {
 		t.Fatal("旧 Attempt 的 Context 在重试后仍存活")
 	}
 	assertNoLeak(t, f.id)
+}
+
+// finish 必须先让 Body 关闭，再取消 Attempt Context：
+// 提前 cancel 会让 Transport 丢掉可复用的连接。
+func TestParChunkCancelsAfterBodyClose(t *testing.T) {
+	cases := []struct {
+		name   string
+		header func(total int64) string
+		status int
+	}{
+		{name: "正常完成", status: http.StatusPartialContent, header: func(total int64) string {
+			return fmt.Sprintf("bytes 0-%d/%d", total-1, total)
+		}},
+		{name: "响应头校验失败", status: http.StatusOK, header: func(int64) string { return "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const length = 32 << 10
+			f := newParLeaseFixture(t, 34)
+			defer f.close()
+
+			src := parSource{t: fetchTarget{u: mustURL(t, "http://mirror.invalid/blob"), c: f.cand}}
+			f.plan.Upstream = src.t.u
+
+			var closedAfterCancel atomic.Bool
+			f.g.cli = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				h := http.Header{}
+				if v := tc.header(f.total); v != "" {
+					h.Set("Content-Range", v)
+				}
+				return &http.Response{
+					StatusCode: tc.status,
+					Header:     h,
+					Body:       &closeCheckBody{r: bytes.NewReader(f.body[:length]), ctx: r.Context(), seen: &closedAfterCancel},
+				}, nil
+			})}
+
+			part, err := os.CreateTemp(t.TempDir(), "part")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer part.Close()
+
+			stats := make([]parStat, 1)
+			_ = f.g.parChunk(context.Background(), f.plan, src, []parSource{src}, 0, 0, length, f.total, part, stats, nil)
+			if closedAfterCancel.Load() {
+				t.Fatal("Body.Close 时 Attempt Context 已被取消，连接无法复用")
+			}
+		})
+	}
+}
+
+type closeCheckBody struct {
+	r    io.Reader
+	ctx  context.Context
+	seen *atomic.Bool
+}
+
+func (b *closeCheckBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+func (b *closeCheckBody) Close() error {
+	b.seen.Store(b.ctx.Err() != nil)
+	return nil
 }
 
 func assertNoLeak(t *testing.T, id int64) {

@@ -414,8 +414,10 @@ func (s *Scheduler) AcquireBody(ctx context.Context, id int64) (*Lease, Token, f
 	return l, l.Token(), done, nil
 }
 
-// ReclaimSource 回收一台源上所有未结束的 Lease，返回回收数量。
-// 用于手动踢掉某源的在途请求；Body 仍持有引用时名额等到 Body 退出才归还。
+// ReclaimSource 回收调用时该源已存在的全部 Lease，返回回收数量。
+// 注意它只作用于当前快照：调用之后新申请的 Lease 不受影响，
+// 因此不等同于源下线/隔离；真正的踢源需要先阻止新 Lease 进入。
+// Body 仍持有引用时，名额等最后一个 Body 退出才归还。
 func (s *Scheduler) ReclaimSource(id int64, reason string) int {
 	if s == nil || id == 0 {
 		return 0

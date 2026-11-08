@@ -115,10 +115,11 @@ type chunkLease struct {
 	body io.ReadCloser
 	done func() // 闸门 + 在途计数，AcquireBody 交回
 
-	unbind   func()
-	acancel  context.CancelFunc
-	dropOnce sync.Once
-	once     sync.Once
+	unbind     func()
+	acancel    context.CancelFunc
+	unbindOnce sync.Once
+	cancelOnce sync.Once
+	once       sync.Once
 }
 
 // bindAttempt 把本次 Attempt 的取消函数登记到 Lease：
@@ -138,7 +139,7 @@ func (c *chunkLease) unbindOnly() {
 	if c == nil {
 		return
 	}
-	c.dropOnce.Do(func() {
+	c.unbindOnce.Do(func() {
 		if c.unbind != nil {
 			c.unbind()
 			c.unbind = nil
@@ -146,18 +147,43 @@ func (c *chunkLease) unbindOnly() {
 	})
 }
 
-func (c *chunkLease) dropAttempt() {
+func (c *chunkLease) cancelOnly() {
 	if c == nil {
 		return
 	}
-	c.dropOnce.Do(func() {
-		if c.unbind != nil {
-			c.unbind()
-			c.unbind = nil
-		}
+	c.cancelOnce.Do(func() {
 		if c.acancel != nil {
 			c.acancel()
 			c.acancel = nil
+		}
+	})
+}
+
+// wrapLease 把响应体包上租约。必须在响应头到达后、读取正文前调用。
+// finish 的结算顺序按「Body 先退、Context 后取消」排列：
+// 提前 cancel 会让 Transport 直接丢弃连接，丢掉 Keep-Alive。
+func (c *chunkLease) finish(rc io.ReadCloser) {
+	if c == nil {
+		if rc != nil {
+			_ = rc.Close()
+		}
+		return
+	}
+	c.once.Do(func() {
+		if c.body != nil {
+			// 已接管：Close 负责 retire（解绑 + 退出 Body 引用 + Release）。
+			_ = c.body.Close()
+			c.cancelOnly()
+		} else {
+			if rc != nil {
+				_ = rc.Close()
+			}
+			c.unbindOnly()
+			c.cancelOnly()
+			c.l.Release(c.tok)
+		}
+		if c.done != nil {
+			c.done()
 		}
 	})
 }
@@ -201,30 +227,6 @@ func (c *chunkLease) attach(resp *http.Response) error {
 
 // finish 处理所有出口：已接管 Body 走 Close（retire+Release），
 // 未接管时关闭调用方给的原始 Body 并直接 Release——绝不留半开连接。
-func (c *chunkLease) finish(rc io.ReadCloser) {
-	if c == nil {
-		if rc != nil {
-			_ = rc.Close()
-		}
-		return
-	}
-	c.once.Do(func() {
-		c.dropAttempt()
-		if c.body != nil {
-			_ = c.body.Close()
-		} else {
-			if rc != nil {
-				_ = rc.Close()
-			}
-			c.l.Release(c.tok)
-		}
-		if c.done != nil {
-			c.done()
-		}
-	})
-}
-
-// wrapLease 把响应体包上租约。必须在响应头到达后、读取正文前调用。
 func wrapLease(resp *http.Response, l *scheduler.Lease) (*http.Response, error) {
 	if l == nil || resp == nil {
 		return resp, nil
