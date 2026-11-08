@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
@@ -104,6 +105,56 @@ func (g *Gateway) leaseFor(ctx context.Context, t fetchTarget, kind scheduler.Le
 		return nil, nil
 	}
 	return g.sched.AcquireLease(ctx, t.c.ID, kind)
+}
+
+// chunkLease 给分片请求同时记两笔账：Lease 名额（Body 进 bodies 账本）和
+// source_inflight（在途请求）。finish 是所有出口的唯一结算点，保证各只减一次。
+type chunkLease struct {
+	l    *scheduler.Lease
+	tok  scheduler.Token
+	id   int64
+	body io.ReadCloser
+	once sync.Once
+}
+
+func (g *Gateway) openChunkLease(ctx context.Context, t fetchTarget) (*chunkLease, error) {
+	if g == nil || g.sched == nil || t.c == nil {
+		return nil, nil
+	}
+	l, err := g.sched.AcquireLease(ctx, t.c.ID, scheduler.KindNormal)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	cl := &chunkLease{l: l, tok: l.Token(), id: t.c.ID}
+	metrics.SourceInflight(cl.id, 1)
+	return cl, nil
+}
+
+// attach 在响应头校验通过后调用：Body 正式进入 Lease 生命周期账本。
+func (c *chunkLease) attach(resp *http.Response) error {
+	retire, err := c.l.Activate()
+	if err != nil {
+		return err
+	}
+	c.body = newLeaseBody(resp.Body, c.l, c.tok, retire)
+	resp.Body = c.body
+	return nil
+}
+
+// finish 处理三种出口：已接管 Body（Close 负责 retire+Release）、
+// 未接管（直接 Release）、以及重复调用。source_inflight 始终只减一次。
+func (c *chunkLease) finish() {
+	if c == nil {
+		return
+	}
+	c.once.Do(func() {
+		if c.body != nil {
+			_ = c.body.Close()
+		} else {
+			c.l.Release(c.tok)
+		}
+		metrics.SourceInflight(c.id, -1)
+	})
 }
 
 // wrapLease 把响应体包上租约。必须在响应头到达后、读取正文前调用。

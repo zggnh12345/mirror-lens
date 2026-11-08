@@ -831,14 +831,15 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 	var last error
 	for _, a := range atts {
 		// 借用别的源先占它的并发名额：否则最快的源会被打成最慢。
-		var release func()
+		// 名额与在途都由 chunkLease 记账，所有出口走 finish()。
+		var cl *chunkLease
 		if a.idx >= 0 {
 			if c := srcs[a.idx].t.c; c != nil {
-				rel, aerr := g.sched.Acquire(ctx, c.ID)
+				var aerr error
+				cl, aerr = g.openChunkLease(ctx, srcs[a.idx].t)
 				if aerr != nil {
 					return aerr
 				}
-				release = rel
 			}
 		}
 		// t0 必须在这里：排在上面会把「等并发名额」的时间算进源速度，
@@ -846,9 +847,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		t0 := time.Now()
 		resp, err := g.rangeReq(ctx, plan, a.u, off, off+length-1)
 		if err != nil {
-			if release != nil {
-				release()
-			}
+			cl.finish()
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				if src.t.c != nil {
@@ -862,9 +861,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
-			if release != nil {
-				release()
-			}
+			cl.finish()
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				atomic.StoreInt32(&stats[a.idx].code, int32(resp.StatusCode))
@@ -872,20 +869,21 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			last = fmt.Errorf("分段响应对不上：%s 返回 %d %q", a.u.Host, resp.StatusCode, resp.Header.Get("Content-Range"))
 			continue
 		}
+		if cl != nil {
+			if err := cl.attach(resp); err != nil {
+				// Activate 失败说明名额状态已失效，不是源的问题：本段放弃。
+				cl.finish()
+				return err
+			}
+		}
 		dw := &diskWriter{w: io.NewOffsetWriter(part, off)}
 		n, cerr := io.Copy(dw, io.LimitReader(resp.Body, length))
-		resp.Body.Close()
+		cl.finish()
 		if dw.err != nil {
 			// 写自己的 .part 失败：盘的问题，换源重试也一样。
-			if release != nil {
-				release()
-			}
 			return local(fmt.Errorf("写分片失败: %w", dw.err))
 		}
 		if cerr != nil || n != length {
-			if release != nil {
-				release()
-			}
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 			}
@@ -906,9 +904,6 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 				metrics.SourceBytes(c.ID, plan.Kind, n)
 			}
 			task.addSource(a.idx, n, true)
-		}
-		if release != nil {
-			release()
 		}
 		return nil
 	}
