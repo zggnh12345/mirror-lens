@@ -147,11 +147,17 @@ var cfgSchema = []cfgField{
 	{Section: "多源调度", Key: "sources.wait_timeout", Label: "等名额上限", Kind: "duration", Restart: true,
 		Hint: "只有 wait_then_fallback 用；超时就不等了，换下一台源", Get: func(c *config.Config) string { return durStr(c.Sources.WaitTimeout.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.WaitTimeout.Duration, v) }},
 	{Section: "多源调度", Key: "sources.preflight_concurrency", Label: "预检并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "全局在途预检数，0 取默认 4；满了就跳过该源", Get: func(c *config.Config) string { return i32(c.Sources.PreflightConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.PreflightConcurrency, v, 0, 64, true, true) }},
+		Hint: "全局在途预检数，0 取默认 4；满了就跳过该源", Get: func(c *config.Config) string { return i32(c.Sources.PreflightConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.PreflightConcurrency, v, 0, 64, true, true)
+		}},
 	{Section: "多源调度", Key: "sources.relay_concurrency", Label: "中转竞速上限", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "按排名截断参与竞速的站数，不排队", Get: func(c *config.Config) string { return i32(c.Sources.RelayConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.RelayConcurrency, v, 0, 64, true, true) }},
+		Hint: "按排名截断参与竞速的站数，不排队", Get: func(c *config.Config) string { return i32(c.Sources.RelayConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.RelayConcurrency, v, 0, 64, true, true)
+		}},
 	{Section: "多源调度", Key: "sources.git_concurrency", Label: "Git 回源并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "upload-pack POST 前取名额，流结束才归还", Get: func(c *config.Config) string { return i32(c.Sources.GitConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.GitConcurrency, v, 0, 64, true, true) }},
+		Hint: "upload-pack POST 前取名额，流结束才归还", Get: func(c *config.Config) string { return i32(c.Sources.GitConcurrency) }, Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Sources.GitConcurrency, v, 0, 64, true, true)
+		}},
 	{Section: "多源调度", Key: "sources.archive_days", Label: "死源归档天数", Kind: "int", Restart: true,
 		Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.ArchiveDays, v, 0, 1<<20, false, false)
