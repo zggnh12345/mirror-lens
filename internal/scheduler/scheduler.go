@@ -307,14 +307,14 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 		out = append(out, c)
 	}
 	// 占满名额的源整体后移，免得最快的那台被所有任务一起压垮。
+	// 分组优先级压过容量：高优先组里某台满了，也应该先试同组的下一台，
+	// 而不是让低优先组插队（3.0 排序修正）。
 	sort.SliceStable(out, func(i, j int) bool {
-		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
-			return !bi
-		}
-		// 分组优先级最高的一档：好组里的源先上，用户按实测速度分组才有意义。
-		// 放在 atCap 之后，仍然别把满员源硬塞前面。
 		if gi, gj := groupKey(out[i].GroupRank), groupKey(out[j].GroupRank); gi != gj {
 			return gi < gj
+		}
+		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
+			return !bi
 		}
 		// 组内再看手动优先。
 		if out[i].Preferred != out[j].Preferred {

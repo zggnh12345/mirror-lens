@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -218,4 +219,68 @@ func (r *Registry) writeLease(b *strings.Builder) {
 			}
 		}
 	}
+}
+
+// B 档 / 预检的进程级指标：没有 source_id 维度，量小直接原子计数。
+var (
+	preflightInFlight atomic.Int64
+	preflightSkipped  atomic.Uint64
+	gitInFlight       atomic.Int64
+	relayInFlight     atomic.Int64
+)
+
+func PreflightInflight(d int64) {
+	for {
+		cur := preflightInFlight.Load()
+		next := cur + d
+		if next < 0 {
+			next = 0
+		}
+		if preflightInFlight.CompareAndSwap(cur, next) {
+			return
+		}
+	}
+}
+
+func PreflightCapped() { preflightSkipped.Add(1) }
+
+func GitInflight(d int64) {
+	for {
+		cur := gitInFlight.Load()
+		next := cur + d
+		if next < 0 {
+			next = 0
+		}
+		if gitInFlight.CompareAndSwap(cur, next) {
+			return
+		}
+	}
+}
+
+func RelayInflight(d int64) {
+	for {
+		cur := relayInFlight.Load()
+		next := cur + d
+		if next < 0 {
+			next = 0
+		}
+		if relayInFlight.CompareAndSwap(cur, next) {
+			return
+		}
+	}
+}
+
+func (r *Registry) writeQuota(b *strings.Builder) {
+	b.WriteString("# HELP " + prefix + "preflight_inflight 预检在途请求数\n")
+	b.WriteString("# TYPE " + prefix + "preflight_inflight gauge\n")
+	fmt.Fprintf(b, "%spreflight_inflight %d\n", prefix, preflightInFlight.Load())
+	b.WriteString("# HELP " + prefix + "preflight_capped_total 因预检名额不足而未预检的源数\n")
+	b.WriteString("# TYPE " + prefix + "preflight_capped_total counter\n")
+	fmt.Fprintf(b, "%spreflight_capped_total %d\n", prefix, preflightSkipped.Load())
+	b.WriteString("# HELP " + prefix + "git_inflight Git upload-pack 在途数\n")
+	b.WriteString("# TYPE " + prefix + "git_inflight gauge\n")
+	fmt.Fprintf(b, "%sgit_inflight %d\n", prefix, gitInFlight.Load())
+	b.WriteString("# HELP " + prefix + "relay_inflight 信任中转在途数\n")
+	b.WriteString("# TYPE " + prefix + "relay_inflight gauge\n")
+	fmt.Fprintf(b, "%srelay_inflight %d\n", prefix, relayInFlight.Load())
 }

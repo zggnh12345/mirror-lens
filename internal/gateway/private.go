@@ -140,6 +140,10 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 	if len(alive) == 0 {
 		return false
 	}
+	// 按排名截断参与竞速的站数；这是上限不是排队，超出的直接不参与。
+	if lim := g.relayCap(); lim > 0 && len(alive) > lim {
+		alive = alive[:lim]
+	}
 
 	type result struct {
 		idx  int
@@ -153,6 +157,8 @@ func (g *Gateway) tryTrusted(w http.ResponseWriter, r *http.Request, plan *adapt
 		ctx, cancel := context.WithCancel(r.Context())
 		cancels[i] = cancel
 		go func(i int, t TrustedRelay, ctx context.Context) {
+			metrics.RelayInflight(1)
+			defer metrics.RelayInflight(-1)
 			resp, err := g.doTrusted(ctx, plan, t)
 			if err != nil && resp != nil {
 				// 没交付出去就失败：body 归本 goroutine 关闭。

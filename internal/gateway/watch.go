@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
 var errOverrun = errors.New("上游返回的字节超过声明长度")
@@ -276,6 +277,12 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		tried[t.c.ID] = true
 
+		// 交接用预留名额：拿不到就放弃本次换源，绝不排队（I6）。
+		l, lerr := g.leaseFor(ctx, t, scheduler.KindHandover)
+		if lerr != nil {
+			continue
+		}
+
 		// 3 秒只限制「等到首字节」：读到数据后不能取消 ctx，否则 body 立刻断。
 		rctx, cancel := context.WithCancel(ctx)
 		timer := time.AfterFunc(3*time.Second, cancel)
@@ -283,6 +290,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		if err != nil {
 			timer.Stop()
 			cancel()
+			releaseLease(l)
 			continue
 		}
 		req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
@@ -298,12 +306,14 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		if err != nil {
 			timer.Stop()
 			cancel()
+			releaseLease(l)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 			timer.Stop()
 			resp.Body.Close()
 			cancel()
+			releaseLease(l)
 			continue
 		}
 		verified, ok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
@@ -311,6 +321,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			timer.Stop()
 			resp.Body.Close()
 			cancel()
+			releaseLease(l)
 			continue
 		}
 		buf := make([]byte, 64<<10)
@@ -319,11 +330,20 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		if n <= 0 {
 			cancel()
 			resp.Body.Close()
+			releaseLease(l)
 			if rerr == nil {
 				rerr = io.ErrNoProgress
 			}
 			continue
 		}
+		wrapped, werr := wrapLease(resp, l)
+		if werr != nil {
+			resp.Body.Close()
+			releaseLease(l)
+			continue
+		}
+		resp = wrapped
+		holderFrom(ctx).set(l)
 		log.Printf("单流换源：%s 已接手（已发 %d MB，验证器=%v）", t.c.Name, sent>>20, verified)
 		return resp, &t, buf[:n], verified, nil
 	}

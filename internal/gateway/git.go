@@ -123,6 +123,13 @@ func (g *Gateway) pipeGit(w http.ResponseWriter, r *http.Request, plan *adapter.
 		}
 	}
 
+	// upload-pack 是长连接（POST 到流结束），名额持到函数返回。
+	free, qerr := g.acquireGit(r.Context())
+	if qerr != nil {
+		http.Error(w, "503 回源繁忙", http.StatusServiceUnavailable)
+		return
+	}
+	defer free()
 	resp, err := g.cli.Do(req)
 	if err != nil {
 		code := statusFor(err)

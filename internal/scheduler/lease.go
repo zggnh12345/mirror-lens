@@ -407,6 +407,7 @@ func (s *leaseSet) drop(l *Lease) bool {
 	if s.held > 0 {
 		s.held--
 	}
+	metrics.LeaseStuckCleared(s.id)
 	l.mu.Lock()
 	l.state = StateReleased
 	l.mu.Unlock()

@@ -101,7 +101,19 @@ type Sources struct {
 	MaxPerSource int `yaml:"max_per_source"`
 	// Dynamic 按实测吞吐在 1..MaxPerSource 间自动调并发（AIMD）：
 	// 排队且吞吐不退步就加一路，吞吐掉 40% 或失败就减。
+	// 3.0 默认关闭：容量模型改为固定 headroom，AIMD 不再参与派发。
 	Dynamic bool `yaml:"dynamic"`
+	// Headroom 是普通派发相对硬上限的比例：dispatch_cap = max(1, min(hard-1, floor(hard*headroom)))。
+	// 剩下的名额留给换源/中途接管的 handover，它们到 hard_max 才停。
+	Headroom float64 `yaml:"headroom"`
+	// Admission 是准入模式：observe / blocking / wait_then_fallback / non_blocking。
+	Admission string `yaml:"admission"`
+	// WaitTimeout 是 wait_then_fallback 的最长等待，超时后组内换源。
+	WaitTimeout Duration `yaml:"wait_timeout"`
+	// B 档与预检的独立配额，0 取默认 4。它们不进 max_per_source 账本。
+	PreflightConcurrency int `yaml:"preflight_concurrency"`
+	RelayConcurrency     int `yaml:"relay_concurrency"`
+	GitConcurrency       int `yaml:"git_concurrency"`
 
 	// 源站生命周期，0 表示用默认值。
 	// ArchiveDays：dead/blocked 维持 14 天自动归档
@@ -266,7 +278,13 @@ func Default() *Config {
 			StickyTTL:     Duration{10 * time.Minute},
 			FailCooldown:  Duration{5 * time.Minute},
 			MaxPerSource:  4,
-			Dynamic:       true,
+			Dynamic:       false,
+			Headroom:      0.8,
+			Admission:     "wait_then_fallback",
+			WaitTimeout:   Duration{2 * time.Second},
+			PreflightConcurrency: 4,
+			RelayConcurrency:     4,
+			GitConcurrency:       4,
 
 			ArchiveDays:     14,
 			CleanupDays:     180,
@@ -393,6 +411,26 @@ func (c *Config) Validate() error {
 		}
 		if c.Sources.MaxPerSource > 64 {
 			return fmt.Errorf("sources.max_per_source 过大：%d", c.Sources.MaxPerSource)
+		}
+		if c.Sources.Headroom < 0 || c.Sources.Headroom > 1 {
+			return fmt.Errorf("sources.headroom 取值 (0,1]，当前 %v", c.Sources.Headroom)
+		}
+		switch c.Sources.Admission {
+		case "", "observe", "blocking", "wait_then_fallback", "non_blocking":
+		default:
+			return fmt.Errorf("sources.admission 只能是 observe/blocking/wait_then_fallback/non_blocking")
+		}
+		if c.Sources.WaitTimeout.Duration < 0 {
+			return fmt.Errorf("sources.wait_timeout 不能是负数")
+		}
+		for name, v := range map[string]int{
+			"preflight_concurrency": c.Sources.PreflightConcurrency,
+			"relay_concurrency":     c.Sources.RelayConcurrency,
+			"git_concurrency":       c.Sources.GitConcurrency,
+		} {
+			if v < 0 || v > 64 {
+				return fmt.Errorf("sources.%s 取值 0~64", name)
+			}
 		}
 		if c.Sources.StickyTTL.Duration < 0 || c.Sources.FailCooldown.Duration < 0 {
 			return fmt.Errorf("sources 的时间不能是负数")
