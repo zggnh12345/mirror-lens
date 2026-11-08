@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "3.0.0"
+const Version = "3.1.0"
 
 type Gateway struct {
 	st      *store.Store
@@ -74,6 +74,9 @@ type Gateway struct {
 	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
 	requireToken  bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）
 	cdn           CDNOptions                                 // 边缘缓存策略（阶段 8）
+	dockerOff     bool                                       // /v2/ 的 Docker Hub 通道关闭
+	ghcrOff       bool                                       // /v2/ 的 GHCR 通道关闭
+	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	trusted       atomic.Value                               // []TrustedRelay，面板热更新
 	privMu        sync.Mutex
@@ -156,6 +159,11 @@ type Options struct {
 	RequireToken bool
 	CDN          CDNOptions
 	Private      PrivateOptions
+	// 三类加速的独立开关（默认全开，零值即开启）。
+	// Off 而不是 On：老调用方不传这几个字段时行为不变。
+	DockerOff bool
+	GHCROff   bool
+	GitHubOff bool
 }
 
 func New(st *store.Store, o Options) *Gateway {
@@ -185,6 +193,9 @@ func New(st *store.Store, o Options) *Gateway {
 		}
 	}
 	gw := &Gateway{
+		dockerOff:     o.DockerOff,
+		ghcrOff:       o.GHCROff,
+		githubOff:     o.GitHubOff,
 		locks:         keymutex.New(),
 		st:            st,
 		cache:         o.Cache,
@@ -300,6 +311,10 @@ func (g *Gateway) Scheduler() *scheduler.Scheduler { return g.sched }
 
 // ServeRaw 处理 /raw/<owner>/<repo>/<ref>/<path...>
 func (g *Gateway) ServeRaw(w http.ResponseWriter, r *http.Request) {
+	if g.githubOff {
+		http.Error(w, "404 GitHub 加速未开启", http.StatusNotFound)
+		return
+	}
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		g.serve(w, r, g.raw)
 	})(w, r)
@@ -308,6 +323,10 @@ func (g *Gateway) ServeRaw(w http.ResponseWriter, r *http.Request) {
 // ServeGH 处理 release 资产与源码包。自带 Bearer/Basic 认证：
 // 客户端是 curl/wget/gh，不会带面板 cookie。
 func (g *Gateway) ServeGH(w http.ResponseWriter, r *http.Request) {
+	if g.githubOff {
+		http.Error(w, "404 GitHub 加速未开启", http.StatusNotFound)
+		return
+	}
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		g.serve(w, r, g.ghAd)
 	})(w, r)

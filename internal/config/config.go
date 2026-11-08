@@ -85,10 +85,26 @@ type Git struct {
 }
 
 type Registry struct {
-	Enabled   bool     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// Docker/GHCR 是 /v2/ 下两类加速的独立开关（默认都开）。
+	// Enabled 仍作总开关：关掉时整个 /v2/ 不挂载。
+	Docker    bool     `yaml:"docker_enabled"`
+	GHCR      bool     `yaml:"ghcr_enabled"`
 	Upstream  string   `yaml:"upstream"`
 	MaxFileMB int64    `yaml:"max_file_mb"`
 	TagTTL    Duration `yaml:"tag_ttl"`
+}
+
+// GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。
+// 它们共用「GitHub 加速」这一个语义，分开控只会让人配错。
+type GitHub struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// Network 控制回源的 IP 协议族选择。
+// auto = IPv4 优先、连不上再试 IPv6（默认）；v4/v6 = 只用该族。
+type Network struct {
+	IPFamily string `yaml:"ip_family"`
 }
 
 // Sources 是多源调度；enabled=false 时只走官方源。
@@ -208,6 +224,8 @@ type Config struct {
 	Raw      Raw            `yaml:"raw"`
 	Git      Git            `yaml:"git"`
 	Registry Registry       `yaml:"registry"`
+	GitHub   GitHub         `yaml:"github"`
+	Network  Network        `yaml:"network"`
 	Sources  Sources        `yaml:"sources"`
 	Parallel Parallel       `yaml:"parallel"`
 	Private  Private        `yaml:"private"`
@@ -268,6 +286,8 @@ func Default() *Config {
 		Git: Git{TTL: Duration{30 * time.Second}},
 		Registry: Registry{
 			Enabled:   true,
+			Docker:    true,
+			GHCR:      true,
 			Upstream:  "registry-1.docker.io",
 			MaxFileMB: 4096,
 			TagTTL:    Duration{300 * time.Second},
@@ -312,6 +332,8 @@ func Default() *Config {
 			SwitchMax:        2,
 			SwitchGapSec:     30,
 		},
+		GitHub:  GitHub{Enabled: true},
+		Network: Network{IPFamily: "auto"},
 		Private: Private{
 			BreakAfter:          3,
 			BreakSeconds:        60,
@@ -401,6 +423,13 @@ func (c *Config) Validate() error {
 	}
 	if c.Relay.ResolverTimeout.Duration < 0 {
 		return fmt.Errorf("relay.resolver_timeout 不能是负数")
+	}
+	switch c.Network.IPFamily {
+	case "", "auto":
+		c.Network.IPFamily = "auto"
+	case "v4", "v6":
+	default:
+		return fmt.Errorf("network.ip_family 只能是 auto/v4/v6，收到 %q", c.Network.IPFamily)
 	}
 	if c.Janitor.PartialTTL.Duration < 0 || c.Janitor.ExpiredGrace.Duration < 0 {
 		return fmt.Errorf("janitor 的时限不能是负数")

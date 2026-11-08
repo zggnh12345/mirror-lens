@@ -58,14 +58,28 @@ git:
 # ── Registry 加速 ───────────────────────────────────────
 
 registry:
+  # 总开关：关掉后 /v2/ 整体不可用
   enabled: true
+  # 分通道开关：裸镜像名走 docker，ghcr.io/... 走 ghcr
+  docker_enabled: true
+  ghcr_enabled: true
   # 一个实例对一个上游。只写主机名，不带 https:// 和路径。
-  # 要用 ghcr 就再起一个实例，upstream 改成 ghcr.io。
   upstream: "registry-1.docker.io"
   # layer 动辄上 GB，和普通文件分开算
   max_file_mb: 4096
   # tag 可能被覆盖，过一会儿要重新验证；digest 永久
   tag_ttl: 5m
+
+# ── GitHub 加速 ─────────────────────────────────────────
+# /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）共用这一个开关
+github:
+  enabled: true
+
+# ── 网络 ────────────────────────────────────────────────
+network:
+  # auto = IPv4 优先、连不上回退 IPv6；v4 / v6 = 只用该族
+  # 信任中转已钉死 IP，不受这里影响
+  ip_family: auto
 
 # ── 多源调度 ────────────────────────────────────────────
 #

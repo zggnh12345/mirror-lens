@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -123,8 +124,19 @@ func verifyChain(cs tls.ConnectionState, host string) error {
 func tlsInfo(ctx context.Context, host string) (ok bool, days int, err error) {
 	// 走 Guard 的拨号器，并且吃调用方的 ctx：证书探测不能成为绕过检查、
 	// 或者在取消后继续占着连接的口子。
-	d := currentGuard().Dialer()
+	g := currentGuard()
+	d := g.Dialer()
 	d.Timeout = 8 * time.Second
+	// 和回源用同一套 IP 族偏好：只按域名交给系统解析，v6 半通的源会被测成
+	// 「连不上」，白白冤枉一个源。
+	target := net.JoinHostPort(host, "443")
+	if _, err := netip.ParseAddr(host); err != nil {
+		if ips, lerr := net.DefaultResolver.LookupNetIP(ctx, "ip", host); lerr == nil {
+			if ordered := g.OrderIPs(ips); len(ordered) > 0 {
+				target = net.JoinHostPort(ordered[0].String(), "443")
+			}
+		}
+	}
 	td := &tls.Dialer{NetDialer: d, Config: &tls.Config{
 		ServerName:         host,
 		InsecureSkipVerify: true,
@@ -132,7 +144,7 @@ func tlsInfo(ctx context.Context, host string) (ok bool, days int, err error) {
 	}}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn, derr := td.DialContext(cctx, "tcp", net.JoinHostPort(host, "443"))
+	conn, derr := td.DialContext(cctx, "tcp", target)
 	if derr != nil {
 		return false, 0, derr
 	}

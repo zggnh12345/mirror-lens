@@ -58,6 +58,20 @@ func TestWebUIRegressions(t *testing.T) {
 		t.Error("matchMedia 应保留 addListener 兜底以兼容旧内核")
 	}
 
+	// 配置页 70+ 项按分组分栏：chip 栏、section 带 data-group、CSS 有选中态。
+	if !strings.Contains(s, `id="cfgGroups"`) {
+		t.Error("配置页应有分组 chip 栏（id=cfgGroups）")
+	}
+	if !strings.Contains(s, `class="grpchip`) {
+		t.Error("分组 chip 应使用 .grpchip 类")
+	}
+	if !strings.Contains(s, `data-group="`) {
+		t.Error("配置 section 应带 data-group，供前端按组切换")
+	}
+	if !strings.Contains(c, `.grpchip.on`) {
+		t.Error("app.css 应定义 .grpchip.on 选中态")
+	}
+
 	// 监测页错误用 .errchip，可展开原始技术参数，不再用裸红字 .err。
 	if !strings.Contains(ix, `function errHuman(`) {
 		t.Error("index.html 应定义 errHuman 中文错误映射")

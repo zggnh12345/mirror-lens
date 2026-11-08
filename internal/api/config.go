@@ -105,15 +105,37 @@ var cfgSchema = []cfgField{
 	{Section: "内容 TTL", Key: "git.ttl", Label: "Git info/refs 缓存", Kind: "duration", Restart: true,
 		Hint: "0 = 每次回源", Get: func(c *config.Config) string { return durStr(c.Git.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Git.TTL.Duration, v) }},
 
+	// 网络
+	{Section: "网络", Key: "network.ip_family", Label: "回源 IP 协议族", Kind: "enum", Options: []string{"auto", "v4", "v6"}, Restart: true,
+		Hint: "auto = IPv4 优先、失败回退 IPv6；v4/v6 = 只用该族。信任中转已钉死 IP，不受影响",
+		Get: func(c *config.Config) string {
+			if c.Network.IPFamily == "" {
+				return "auto"
+			}
+			return c.Network.IPFamily
+		}, Set: func(c *config.Config, v string) error { c.Network.IPFamily = strings.TrimSpace(v); return nil }},
+
 	// Registry
-	{Section: "Registry 加速", Key: "registry.enabled", Label: "开启 Docker 加速", Kind: "bool", Restart: true,
-		Get: func(c *config.Config) string { return b2s(c.Registry.Enabled) }, Set: func(c *config.Config, v string) error { c.Registry.Enabled = parseBool(v); return nil }},
+	{Section: "Registry 加速", Key: "registry.enabled", Label: "Registry 加速总开关", Kind: "bool", Restart: true,
+		Hint: "关掉后 /v2/ 整体不可用，下面的分通道开关随之失效",
+		Get:  func(c *config.Config) string { return b2s(c.Registry.Enabled) }, Set: func(c *config.Config, v string) error { c.Registry.Enabled = parseBool(v); return nil }},
+	{Section: "Registry 加速", Key: "registry.docker_enabled", Label: "Docker Hub 通道", Kind: "bool", Restart: true,
+		Hint: "裸镜像名（如 nginx、jc21/nginx-proxy-manager）走这条",
+		Get:  func(c *config.Config) string { return b2s(c.Registry.Docker) }, Set: func(c *config.Config, v string) error { c.Registry.Docker = parseBool(v); return nil }},
+	{Section: "Registry 加速", Key: "registry.ghcr_enabled", Label: "GHCR 通道", Kind: "bool", Restart: true,
+		Hint: "ghcr.io/... 的镜像走这条；关掉后这类镜像 404",
+		Get:  func(c *config.Config) string { return b2s(c.Registry.GHCR) }, Set: func(c *config.Config, v string) error { c.Registry.GHCR = parseBool(v); return nil }},
 	{Section: "Registry 加速", Key: "registry.upstream", Label: "上游主机", Kind: "string", Restart: true,
 		Hint: "只写主机名，不带 https:// 和路径", Get: func(c *config.Config) string { return c.Registry.Upstream }, Set: func(c *config.Config, v string) error { c.Registry.Upstream = strings.TrimSpace(v); return nil }},
 	{Section: "Registry 加速", Key: "registry.max_file_mb", Label: "layer 单文件上限", Kind: "int", Unit: "MB", Min: 0, HasMin: true, Restart: true,
 		Get: func(c *config.Config) string { return i64(c.Registry.MaxFileMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Registry.MaxFileMB, v, 0, 1<<20, true, false) }},
 	{Section: "Registry 加速", Key: "registry.tag_ttl", Label: "tag 重新验证", Kind: "duration", Restart: true,
 		Hint: "tag 可能被覆盖，过一会儿要复验", Get: func(c *config.Config) string { return durStr(c.Registry.TagTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Registry.TagTTL.Duration, v) }},
+
+	// GitHub
+	{Section: "GitHub 加速", Key: "github.enabled", Label: "开启 GitHub 加速", Kind: "bool", Restart: true,
+		Hint: "统一控制 /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）；关掉后三条路都返回 404",
+		Get:  func(c *config.Config) string { return b2s(c.GitHub.Enabled) }, Set: func(c *config.Config, v string) error { c.GitHub.Enabled = parseBool(v); return nil }},
 
 	// 多源调度
 	{Section: "多源调度", Key: "sources.enabled", Label: "开启多源调度", Kind: "bool", Restart: true,
@@ -417,6 +439,19 @@ func setDur(p *time.Duration, v string) error {
 	return nil
 }
 
+// cfgSectionGroup 把具体小节归到六个一级分类里：设置项太多，
+// 平铺 14 张小卡没人愿意滚。前端按组做一排 chip 过滤。
+var cfgSectionGroup = map[string]string{
+	"基础": "基础", "网络": "基础",
+	"Registry 加速": "加速", "GitHub 加速": "加速",
+	"缓存": "缓存", "后台巡检": "缓存", "内容 TTL": "缓存", "CDN 边缘": "缓存",
+	"多源调度": "调度", "探测": "调度", "分片并行": "并发",
+	"入口限流": "安全", "访问控制": "安全", "信任中转": "安全",
+	"日志": "观测", "指标": "观测",
+}
+
+var cfgGroupOrder = []string{"基础", "加速", "缓存", "调度", "并发", "安全", "观测"}
+
 // configView 把 cfg 按分组整理成前端要的结构。
 func configView(c *config.Config, path string) map[string]any {
 	groups := map[string][]map[string]any{}
@@ -443,10 +478,15 @@ func configView(c *config.Config, path string) map[string]any {
 	}
 	secs := make([]map[string]any, 0, len(order))
 	for _, name := range order {
-		secs = append(secs, map[string]any{"title": name, "fields": groups[name]})
+		g := cfgSectionGroup[name]
+		if g == "" {
+			g = "其他"
+		}
+		secs = append(secs, map[string]any{"title": name, "group": g, "fields": groups[name]})
 	}
 	return map[string]any{
 		"sections":     secs,
+		"groups":       cfgGroupOrder,
 		"config_path":  path,
 		"restart_note": "除「日志级别」即时生效外，其余参数在启动时已拷贝进各子系统，修改后需重启服务才生效；修改会写入 config.yaml（路径见上）。若配置文件位于镜像内而非持久卷，重启容器会丢失，请确认 -config 指向挂载卷。",
 	}

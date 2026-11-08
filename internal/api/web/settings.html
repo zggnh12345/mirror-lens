@@ -450,7 +450,12 @@ function cfgControl(f){
   var k = f.key;
   if (f.kind === 'bool' || f.kind === 'enum'){
     var opts = f.kind === 'bool' ? ['true','false'] : f.options;
-    var labels = f.kind === 'bool' ? ['开','关'] : opts;
+    // 枚举值要给人看：配置里存 auto/v4/v6，按钮上写中文。
+    var VAL_LBL = {
+      'true': '开', 'false': '关',
+      'auto': '自动（v4 优先）', 'v4': '仅 IPv4', 'v6': '仅 IPv6'
+    };
+    var labels = opts.map(function(o){ return VAL_LBL[o] || o; });
     var seg = '<div class="seg cfg-seg" data-role="' + f.kind + '" data-key="' + k + '">';
     opts.forEach(function(o, i){
       // 选中态必须落在 class 上：直接拼 ' on' 会变成裸属性 on，选中永远不生效。
@@ -482,8 +487,24 @@ function buildConfig(d){
   CFG.data = d; CFG.orig = {}; CFG.cur = {};
   var html = '<div class="cfg-note">' + esc(d.restart_note) + '</div>';
   html += '<div class="cfg-path">配置文件：' + esc(d.config_path || '（运行时未指定 -config，改动只存内存）') + '</div>';
+  var groups = d.groups || [];
+  /* 70 项平铺太长：先选分类，只看这一类的小节。 */
+  var saved = '';
+  try{ saved = localStorage.getItem('cfgGroup') || ''; }catch(e){}
+  if (groups.length && groups.indexOf(saved) < 0) saved = groups[0];
+  CFG.group = saved;
+  if (groups.length){
+    html += '<div class="grpchips" id="cfgGroups">';
+    groups.forEach(function(g){
+      html += '<button type="button" class="grpchip' + (g === saved ? ' on' : '') +
+        '" data-g="' + esc(g) + '">' + esc(g) + '</button>';
+    });
+    html += '</div>';
+  }
   d.sections.forEach(function(sec){
-    html += '<div class="sec"><h2>' + esc(sec.title) + '</h2>';
+    var show = !groups.length || sec.group === saved;
+    html += '<div class="sec" data-group="' + esc(sec.group || '') + '"' +
+      (show ? '' : ' style="display:none"') + '><h2>' + esc(sec.title) + '</h2>';
     sec.fields.forEach(function(f){
       CFG.orig[f.key] = f.value; CFG.cur[f.key] = f.value;
       var rtag = f.restart
@@ -502,6 +523,19 @@ function buildConfig(d){
   bindCfg();
 }
 function bindCfg(){
+  var gb = $('#cfgGroups');
+  if (gb){
+    gb.querySelectorAll('.grpchip').forEach(function(b){
+      b.addEventListener('click', function(){
+        gb.querySelectorAll('.grpchip').forEach(function(x){ x.classList.toggle('on', x === b); });
+        CFG.group = b.dataset.g;
+        try{ localStorage.setItem('cfgGroup', CFG.group); }catch(e){}
+        $('#cfgBox').querySelectorAll('.sec[data-group]').forEach(function(s){
+          s.style.display = (s.dataset.group === CFG.group) ? '' : 'none';
+        });
+      });
+    });
+  }
   $('#cfgBox').querySelectorAll('.cfg-seg button').forEach(function(b){
     b.addEventListener('click', function(){
       var seg = b.parentNode, k = seg.dataset.key;

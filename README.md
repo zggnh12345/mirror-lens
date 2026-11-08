@@ -215,9 +215,16 @@ raw:
 git:
   ttl: 30s              # info/refs 缓存
 registry:
+  enabled: true         # /v2/ 总开关
+  docker_enabled: true  # 裸镜像名（nginx、jc21/...）
+  ghcr_enabled: true    # ghcr.io/...
   upstream: "registry-1.docker.io"
   max_file_mb: 4096     # layer 单独算
   tag_ttl: 5m
+github:
+  enabled: true         # /gh/ /raw/ /git/ 一起控
+network:
+  ip_family: auto       # auto=IPv4 优先、IPv6 兜底；或 v4 / v6
 sources:
   max_per_source: 4     # 单源硬上限
   headroom: 0.8         # 普通派发占硬上限的比例，其余留给换源接管

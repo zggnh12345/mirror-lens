@@ -6,6 +6,7 @@
 package safehttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -25,6 +26,9 @@ type Options struct {
 	MaxRedirects  int
 	AllowLoopback bool
 	AllowPrivate  bool
+	// IPFamily 控制域名解析后的拨号顺序：auto = IPv4 优先、失败回退 IPv6；
+	// v4/v6 = 只用该族。空值等同 auto。
+	IPFamily string
 }
 
 type Guard struct {
@@ -140,12 +144,78 @@ func (g *Guard) Dialer() *net.Dialer {
 	}
 }
 
+// orderIPs 按 IPFamily 过滤并排序候选地址。
+// auto 把 v4 排前面：家宽/机房的 v6 常常绕路或半通，先试 v4 更快；
+// 只有 v4 全失败才轮到 v6，等于「默认 v4、v6 兜底」。
+func (g *Guard) orderIPs(ips []netip.Addr) []netip.Addr {
+	mode := g.o.IPFamily
+	if mode == "" {
+		mode = "auto"
+	}
+	var v4, v6 []netip.Addr
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		switch {
+		case ip.Is4():
+			v4 = append(v4, ip)
+		case ip.Is6():
+			v6 = append(v6, ip)
+		}
+	}
+	switch mode {
+	case "v4":
+		return v4
+	case "v6":
+		return v6
+	default:
+		return append(v4, v6...)
+	}
+}
+
+// OrderIPs 供需要自己握手的场景（TLS 探测）复用同一套族偏好。
+func (g *Guard) OrderIPs(ips []netip.Addr) []netip.Addr { return g.orderIPs(ips) }
+
+// dialContext 先解析再按族逐个拨号，保留 Control 里的内网校验。
+// 不用系统默认的 Happy Eyeballs，因为那套在 v6 半通时会先卡数百毫秒。
+func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	d := g.Dialer()
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if err := g.CheckIP(ip); err != nil {
+			return nil, err
+		}
+		return d.DialContext(ctx, network, addr)
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	ips = g.orderIPs(ips)
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("没有可用的 %s 地址", g.o.IPFamily)
+	}
+	var lastErr error
+	for _, ip := range ips {
+		c, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return c, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	return nil, lastErr
+}
+
 // Client 返回带防护的客户端：超时留在 Transport 上、整体 Timeout 设 0，
 // 否则大文件会被整体超时切断。
 func (g *Guard) Client() *http.Client {
-	d := g.Dialer()
 	tr := &http.Transport{
-		DialContext:           d.DialContext,
+		DialContext:           g.dialContext,
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: g.o.HeaderTimeout,

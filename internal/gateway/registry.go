@@ -21,6 +21,20 @@ func (g *Gateway) ServeRegistry(w http.ResponseWriter, r *http.Request) {
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) { g.serveRegistry(w, r) })(w, r)
 }
 
+// registryChannelOff 判断某仓库属于哪条通道、该通道是否被关掉。
+func (g *Gateway) registryChannelOff(repo string) (string, bool) {
+	if strings.HasPrefix(repo, "ghcr.io/") {
+		if g.ghcrOff {
+			return "GHCR 加速未开启", true
+		}
+		return "", false
+	}
+	if g.dockerOff {
+		return "Docker 加速未开启", true
+	}
+	return "", false
+}
+
 func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 	if g.regAd == nil {
 		http.Error(w, "404 Docker 加速未开启", http.StatusNotFound)
@@ -35,10 +49,20 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`))
 		return
 	}
-	kind, _, _, err := g.regAd.Route(r.URL.Path)
+	kind, repo, _, err := g.regAd.Route(r.URL.Path)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	// 通道开关按请求里的站前缀判：/v2/ghcr.io/... 走 GHCR 开关，
+	// 其余（裸名或别的 registry）走 Docker 开关。Ping 不受影响，
+	// 否则 docker 客户端连"能不能连"都判不出来。
+	switch kind {
+	case registryadapter.KindManifest, registryadapter.KindBlob:
+		if msg, off := g.registryChannelOff(repo); off {
+			http.Error(w, "404 "+msg, http.StatusNotFound)
+			return
+		}
 	}
 	switch kind {
 	case registryadapter.KindPing:

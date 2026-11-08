@@ -130,7 +130,13 @@ func main() {
 	var regAd *registryadapter.Adapter
 	if cfg.Registry.Enabled {
 		regAd = registryadapter.New(cfg.Registry.Upstream, cfg.Registry.MaxFileMB<<20, cfg.Registry.TagTTL.Duration)
-		log.Printf("Docker 加速已开: /v2/ → %s", cfg.Registry.Upstream)
+		log.Printf("Registry 加速已开: /v2/ → %s（docker=%v ghcr=%v）", cfg.Registry.Upstream, cfg.Registry.Docker, cfg.Registry.GHCR)
+	}
+	if !cfg.GitHub.Enabled {
+		log.Printf("GitHub 加速已关: /gh/ /raw/ /git/ 返回 404")
+	}
+	if cfg.Network.IPFamily != "auto" {
+		log.Printf("回源 IP 族: 仅 %s", cfg.Network.IPFamily)
 	}
 	gw := gateway.New(st, gateway.Options{
 		Cache:             cstore,
@@ -143,8 +149,12 @@ func main() {
 		RequireToken:      cfg.Auth.RequireToken,
 		// 与探测共用放行策略：自建局域网源要能回源，否则面板允许探测、
 		// 真正下载时又被拦下，等于配置无效。
-		Guard: safehttp.New(safehttp.Options{MaxRedirects: 6, AllowPrivate: cfg.Probe.AllowPrivate}),
-		CDN:   gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
+		Guard: safehttp.New(safehttp.Options{MaxRedirects: 6, AllowPrivate: cfg.Probe.AllowPrivate, IPFamily: cfg.Network.IPFamily}),
+		// 三个独立加速开关：总开关关闭时 regAd 为 nil，/v2/ 整体不挂。
+		DockerOff: !cfg.Registry.Docker,
+		GHCROff:   !cfg.Registry.GHCR,
+		GitHubOff: !cfg.GitHub.Enabled,
+		CDN:       gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
 			Enabled:              cfg.Parallel.Enabled,
 			MinSize:              cfg.Parallel.MinSizeMB << 20,

@@ -168,6 +168,54 @@ logging:
 	}
 }
 
+// TestConfigViewGroupAssignment 分组是前端分栏的唯一依据：漏一个 section
+// 或写错组名，那一栏就永远不显示；新增开关也必须能在配置页里看到。
+func TestConfigViewGroupAssignment(t *testing.T) {
+	v := configView(config.Default(), "")
+	groups, ok := v["groups"].([]string)
+	if !ok || len(groups) == 0 {
+		t.Fatalf("groups 格式不对: %#v", v["groups"])
+	}
+	known := map[string]bool{}
+	for _, g := range groups {
+		known[g] = true
+	}
+	secs := v["sections"].([]map[string]any)
+	seen := map[string]bool{}
+	for _, s := range secs {
+		g, _ := s["group"].(string)
+		if !known[g] {
+			t.Errorf("section %q 的组 %q 不在 groups 里，前端会漏显示", s["title"], g)
+		}
+		seen[g] = true
+	}
+	for _, g := range groups {
+		if !seen[g] {
+			t.Errorf("组 %q 没有任何 section，点了是空白", g)
+		}
+	}
+
+	want := map[string]string{
+		"network.ip_family":       "enum",
+		"registry.docker_enabled": "bool",
+		"registry.ghcr_enabled":   "bool",
+		"github.enabled":          "bool",
+	}
+	got := map[string]string{}
+	for _, s := range secs {
+		for _, f := range s["fields"].([]map[string]any) {
+			if k, _ := f["key"].(string); want[k] != "" {
+				got[k], _ = f["kind"].(string)
+			}
+		}
+	}
+	for k, kind := range want {
+		if got[k] != kind {
+			t.Errorf("%s 字段缺失或类型不对: %q", k, got[k])
+		}
+	}
+}
+
 // TestWriteConfigFileListKey 验证列表键 trusted_proxies 整段重建。
 func TestWriteConfigFileListKey(t *testing.T) {
 	dir := t.TempDir()

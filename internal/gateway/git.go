@@ -16,6 +16,10 @@ import (
 // GET info/refs 小、可缓存几秒；
 // POST git-upload-pack 大、与协商相关，不缓存。
 func (g *Gateway) ServeGit(w http.ResponseWriter, r *http.Request) {
+	if g.githubOff {
+		http.Error(w, "404 GitHub 加速未开启", http.StatusNotFound)
+		return
+	}
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) { g.serveGit(w, r) })(w, r)
 }
 
