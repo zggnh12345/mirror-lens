@@ -21,6 +21,7 @@ type leaseBody struct {
 	tok      scheduler.Token
 	retire   func()
 	once     sync.Once
+	closeErr error
 	done     chan struct{}
 	doneOnce sync.Once
 	last     atomic.Int64 // 最近一次读到字节的时间（UnixNano）
@@ -36,6 +37,9 @@ func (b *leaseBody) Read(p []byte) (int, error) {
 
 // watch 是单流的最后一道兜底：判慢换源都没救回来时，回收名额并断开。
 func (b *leaseBody) watch(limit time.Duration) {
+	if b.done == nil { // 零值对象没有生命周期可观测，直接不启动看门狗。
+		return
+	}
 	if limit <= 0 {
 		limit = 90 * time.Second
 	}
@@ -74,10 +78,14 @@ func (b *leaseBody) stopWatch() {
 	b.doneOnce.Do(func() { close(b.done) })
 }
 
+// Close 整体只执行一次：底层 Body、retire、Release 都在同一个 Once 里，
+// 重复调用返回同一个错误，避免「生命周期只结算一次、底层却关了多次」的歧义。
 func (b *leaseBody) Close() error {
-	b.stopWatch()
-	err := b.ReadCloser.Close()
 	b.once.Do(func() {
+		b.stopWatch()
+		if b.ReadCloser != nil {
+			b.closeErr = b.ReadCloser.Close()
+		}
 		if b.retire != nil {
 			b.retire()
 		}
@@ -85,7 +93,7 @@ func (b *leaseBody) Close() error {
 			b.l.Release(b.tok)
 		}
 	})
-	return err
+	return b.closeErr
 }
 
 // leaseFor 为目标源申请一个名额；官方源（无 Candidate）不记账。
