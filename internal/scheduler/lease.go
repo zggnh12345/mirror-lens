@@ -204,15 +204,9 @@ func (l *Lease) Release(tok Token) {
 		return
 	}
 	if tok.Gen != l.gen {
-		// 旧 Owner 的 Body 退出：不能动当前 Owner 的状态，
-		// 但如果这是最后一个 Body，名额必须在这里归还（I8），否则漏账。
-		if l.bodies > 0 {
-			l.mu.Unlock()
-			return
-		}
-		l.setState(StateReleased)
+		// 旧 Owner 只退出自己的 Body（bodies 已在 retire 里减过），
+		// 名额归属由当前 Owner 的 Release 决定（I8）。旧 Token 一律不改状态。
 		l.mu.Unlock()
-		l.finalize()
 		return
 	}
 	l.setState(StateReleased)

@@ -287,6 +287,9 @@ func TestWaitWithoutHoldingLease(t *testing.T) {
 	}
 }
 
+// 覆盖的是 bodies>0 分支：旧 Release 到达时旧 Body 还没 retire。
+// bodies 已归零的状态转换见 TestStaleOwnerReleaseAfterTransfer。
+//
 // I8：最后一个 Body 退出前，Release 不得归还名额。
 func TestReleaseWaitsForAllBodies(t *testing.T) {
 	hard, dispatch := testCaps(2)
