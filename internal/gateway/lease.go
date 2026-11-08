@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
@@ -114,6 +113,7 @@ type chunkLease struct {
 	tok  scheduler.Token
 	id   int64
 	body io.ReadCloser
+	done func() // 闸门 + 在途计数，AcquireBody 交回
 	once sync.Once
 }
 
@@ -121,19 +121,25 @@ func (g *Gateway) openChunkLease(ctx context.Context, t fetchTarget) (*chunkLeas
 	if g == nil || g.sched == nil || t.c == nil {
 		return nil, nil
 	}
-	l, err := g.sched.AcquireLease(ctx, t.c.ID, scheduler.KindNormal)
-	if err != nil || l == nil {
+	l, tok, done, err := g.sched.AcquireBody(ctx, t.c.ID)
+	if err != nil {
 		return nil, err
 	}
-	cl := &chunkLease{l: l, tok: l.Token(), id: t.c.ID}
-	metrics.SourceInflight(cl.id, 1)
-	return cl, nil
+	if l == nil {
+		if done != nil {
+			done() // 没有名额可托管，立即归还在途
+		}
+		return nil, nil
+	}
+	return &chunkLease{l: l, tok: tok, id: t.c.ID, done: done}, nil
 }
 
 // attach 在响应头校验通过后调用：Body 正式进入 Lease 生命周期账本。
+// 约定：要么接管 Body，要么把它关掉——失败时绝不留半开的连接。
 func (c *chunkLease) attach(resp *http.Response) error {
 	retire, err := c.l.Activate()
 	if err != nil {
+		_ = resp.Body.Close()
 		return err
 	}
 	c.body = newLeaseBody(resp.Body, c.l, c.tok, retire)
@@ -141,19 +147,27 @@ func (c *chunkLease) attach(resp *http.Response) error {
 	return nil
 }
 
-// finish 处理三种出口：已接管 Body（Close 负责 retire+Release）、
-// 未接管（直接 Release）、以及重复调用。source_inflight 始终只减一次。
-func (c *chunkLease) finish() {
+// finish 处理所有出口：已接管 Body 走 Close（retire+Release），
+// 未接管时关闭调用方给的原始 Body 并直接 Release——绝不留半开连接。
+func (c *chunkLease) finish(rc io.ReadCloser) {
 	if c == nil {
+		if rc != nil {
+			_ = rc.Close()
+		}
 		return
 	}
 	c.once.Do(func() {
 		if c.body != nil {
 			_ = c.body.Close()
 		} else {
+			if rc != nil {
+				_ = rc.Close()
+			}
 			c.l.Release(c.tok)
 		}
-		metrics.SourceInflight(c.id, -1)
+		if c.done != nil {
+			c.done()
+		}
 	})
 }
 

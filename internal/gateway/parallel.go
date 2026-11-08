@@ -847,7 +847,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		t0 := time.Now()
 		resp, err := g.rangeReq(ctx, plan, a.u, off, off+length-1)
 		if err != nil {
-			cl.finish()
+			cl.finish(nil)
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				if src.t.c != nil {
@@ -857,11 +857,14 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			last = err
 			continue
 		}
+		// finish 是成功/短读/写盘失败三条出口的统一结算点：
+		// 有 chunkLease 时由它 Close（retire + Release + done），
+		// 没有名额时（官方源 fallback、源被删、无调度器）直接关原始 Body。
+		finish := func() { cl.finish(resp.Body) }
 		start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-			cl.finish()
+			finish()
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				atomic.StoreInt32(&stats[a.idx].code, int32(resp.StatusCode))
@@ -872,13 +875,14 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if cl != nil {
 			if err := cl.attach(resp); err != nil {
 				// Activate 失败说明名额状态已失效，不是源的问题：本段放弃。
-				cl.finish()
+				// attach 内部已经关掉原始 Body。
+				cl.finish(nil)
 				return err
 			}
 		}
 		dw := &diskWriter{w: io.NewOffsetWriter(part, off)}
 		n, cerr := io.Copy(dw, io.LimitReader(resp.Body, length))
-		cl.finish()
+		finish()
 		if dw.err != nil {
 			// 写自己的 .part 失败：盘的问题，换源重试也一样。
 			return local(fmt.Errorf("写分片失败: %w", dw.err))

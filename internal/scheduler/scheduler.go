@@ -351,48 +351,67 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 // observe 阶段保留旧的准入计数，同时向 Lease 账本登记，避免两套生命周期；
 // 正式准入阶段（Step 8 起）只走 Lease，一次请求一个名额。
 func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
+	l, tok, done, err := s.AcquireBody(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if l != nil {
+				l.Release(tok)
+			}
+			if done != nil {
+				done()
+			}
+		})
+	}, nil
+}
+
+// AcquireBody 与 Acquire 语义完全一致（含 observe 模式仍走旧 gate），
+// 区别是把名额凭证交回调用方：由 Body 的生命周期负责 Release，
+// done 只负责闸门/在途计数。分片路径用它把 Body 纳入 Lease 账本。
+func (s *Scheduler) AcquireBody(ctx context.Context, id int64) (*Lease, Token, func(), error) {
+	noop := func() {}
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
-		return func() {}, nil
+		return nil, Token{}, noop, nil
 	}
 	if s.deleted(id) {
 		// 源在下载途中被删：不建闸门直接放行，在途请求不该失败。
-		return func() {}, nil
+		return nil, Token{}, noop, nil
 	}
 
 	if s.cfg.Admission != "observe" {
 		l, err := s.AcquireLease(ctx, id, KindNormal)
 		if err != nil {
-			return nil, err
+			return nil, Token{}, nil, err
 		}
 		if l == nil {
-			return func() {}, nil
+			return nil, Token{}, noop, nil
 		}
 		metrics.SourceInflight(id, 1)
 		var once sync.Once
-		return func() {
-			once.Do(func() {
-				l.Release(l.Token())
-				metrics.SourceInflight(id, -1)
-			})
-		}, nil
+		done := func() { once.Do(func() { metrics.SourceInflight(id, -1) }) }
+		return l, l.Token(), done, nil
 	}
 
 	release, err := s.gateFor(id).acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, Token{}, nil, err
 	}
 	l, _ := s.acquireLeaseMode(ctx, id, KindNormal, "observe")
 	metrics.SourceInflight(id, 1)
 	var once sync.Once
-	return func() {
+	done := func() {
 		once.Do(func() {
-			if l != nil {
-				l.Release(l.Token())
-			}
 			release()
 			metrics.SourceInflight(id, -1)
 		})
-	}, nil
+	}
+	if l == nil {
+		return nil, Token{}, done, nil
+	}
+	return l, l.Token(), done, nil
 }
 
 // AcquireLease 按当前准入模式申请一个 A 档名额。必须在拨号之前调用。

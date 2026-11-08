@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,6 +39,11 @@ func TestParChunkLeaseLifecycle(t *testing.T) {
 			f.sourceURL = srv.URL
 		}},
 		{name: "写盘失败", setup: func(t *testing.T, f *parLeaseFixture) { f.closePart = true }},
+		{name: "回源失败", setup: func(t *testing.T, f *parLeaseFixture) {
+			dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			dead.Close()
+			f.sourceURL = dead.URL
+		}},
 	}
 
 	for i, tc := range cases {
@@ -175,5 +182,84 @@ func TestParChunkBodiesCounted(t *testing.T) {
 	}
 	if got := leaseGauge(t, "source_inflight", f.id); got != 0 {
 		t.Fatalf("分片退出后 source_inflight=%v，期望 0", got)
+	}
+}
+
+// 官方源 fallback（idx=-1）没有 Lease，也必须关闭原始 Body。
+func TestParChunkClosesBodyWithoutLease(t *testing.T) {
+	const length = 1 << 20
+	f := newParLeaseFixture(t, 21)
+	defer f.close()
+
+	rc := &trackedBody{r: bytes.NewReader(f.body[:length])}
+	old := f.g.cli
+	f.g.cli = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusPartialContent,
+			Header:     http.Header{"Content-Range": []string{fmt.Sprintf("bytes 0-%d/%d", f.total-1, f.total)}},
+			Body:       rc,
+		}, nil
+	})}
+	defer func() { f.g.cli = old }()
+
+	src := parSource{t: fetchTarget{u: mustURL(t, "http://mirror.invalid/blob"), c: f.cand}}
+	part, err := os.CreateTemp(t.TempDir(), "part")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer part.Close()
+
+	stats := make([]parStat, 1)
+	// idx=-1：没有任何 Lease，历史实现此处靠 resp.Body.Close() 兜底。
+	if err := f.g.parChunk(context.Background(), f.plan, src, []parSource{src}, -1, 0, length, f.total, part, stats, nil); err != nil {
+		t.Fatalf("官方源 fallback 应成功: %v", err)
+	}
+	if rc.closes != 1 {
+		t.Fatalf("无 Lease 路径底层 Body 关闭 %d 次，期望 1", rc.closes)
+	}
+	if got := leaseGauge(t, "source_inflight", f.id); got != 0 {
+		t.Fatalf("source_inflight=%v，期望 0", got)
+	}
+}
+
+type trackedBody struct {
+	r      io.Reader
+	closes int
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+func (b *trackedBody) Close() error {
+	b.closes++
+	return nil
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Activate 失败时必须关掉上游 Body：不能留下半开连接。
+func TestChunkLeaseAttachFailureClosesBody(t *testing.T) {
+	f := newParLeaseFixture(t, 22)
+	defer f.close()
+
+	l, err := f.g.sched.AcquireLease(context.Background(), f.id, scheduler.KindNormal)
+	if err != nil || l == nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	tok := l.Token()
+	cl := &chunkLease{l: l, tok: tok, id: f.id, done: func() {}}
+	l.Reclaim("测试：让 Activate 必然失败")
+
+	rc := &countingCloser{}
+	resp := &http.Response{Body: rc}
+	if err := cl.attach(resp); err == nil {
+		t.Fatal("Lease 已回收，Activate 应失败")
+	}
+	if rc.closes != 1 {
+		t.Fatalf("Activate 失败后底层 Body 关闭 %d 次，期望 1", rc.closes)
+	}
+	cl.finish(nil)
+	if got := leaseGauge(t, "leases_held", f.id); got != 0 {
+		t.Fatalf("leases_held=%v，期望 0", got)
 	}
 }
