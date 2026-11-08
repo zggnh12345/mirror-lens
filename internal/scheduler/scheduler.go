@@ -140,6 +140,11 @@ type Scheduler struct {
 
 func New(st *store.Store, cfg Config) *Scheduler {
 	cfg.fill()
+	if cfg.Dynamic {
+		// 3.0 起容量由 headroom 固定换算，AIMD 不再参与派发。
+		log.Printf("sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行")
+		cfg.Dynamic = false
+	}
 	return &Scheduler{
 		st:     st,
 		cfg:    cfg,

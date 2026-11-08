@@ -32,7 +32,8 @@ func TestForgetDropsRuntimeState(t *testing.T) {
 	metrics.Enable()
 	t.Cleanup(metrics.Disable)
 
-	s := New(st, Config{Enabled: true, MaxCandidates: 3, Dynamic: true, MaxPerSource: 4})
+	s := New(st, Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4})
+	s.cfg.Dynamic = true // 3.0 起 New 默认关 AIMD，这里显式打开以覆盖清理逻辑
 	if got := s.Candidates("docker"); len(got) != 1 {
 		t.Fatalf("应有一个候选，得到 %+v", got)
 	}

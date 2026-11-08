@@ -218,8 +218,9 @@ func TestSnapshotGauges(t *testing.T) {
 			t.Fatalf("快照指标缺失 %q:\n%s", want, out)
 		}
 	}
-	// 标签只能出现 kind/status，绝不能出现 url/ip/filename/id。
-	for _, banned := range []string{"url", "ip", "filename", "file=", "source_id", "token", "id="} {
+	// 标签只能出现 kind/status/state/source_id，绝不能出现 url/ip/filename/token。
+	// source_id 是有界维度（源表条数），用于面板单源展示。
+	for _, banned := range []string{"url", "ip", "filename", "file=", "token", "id="} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("标签里出现高基数/敏感维度 %q:\n%s", banned, out)
 		}

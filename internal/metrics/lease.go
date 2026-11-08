@@ -132,9 +132,6 @@ func LeaseWaitTimeout(id int64) {
 
 // writeLease 输出 3.0 的租约指标。
 func (r *Registry) writeLease(b *strings.Builder) {
-	if len(r.leaseHeld) == 0 {
-		return
-	}
 	ids := make([]int64, 0, len(r.leaseHeld))
 	for id := range r.leaseHeld {
 		ids = append(ids, id)

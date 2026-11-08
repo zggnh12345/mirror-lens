@@ -8,7 +8,10 @@ import (
 
 func dynSched(dynamic bool, max int) *Scheduler {
 	// AIMD 只在 observe（2.x 兼容）路径上工作；3.0 默认准入不再使用 gate。
-	return New(nil, Config{Enabled: true, Dynamic: dynamic, MaxPerSource: max, MaxCandidates: 3, Admission: "observe"})
+	// 3.0 起 New 会关掉 AIMD；这里直接打开，继续覆盖动态调参状态机本身。
+	s := New(nil, Config{Enabled: true, MaxPerSource: max, MaxCandidates: 3, Admission: "observe"})
+	s.cfg.Dynamic = dynamic
+	return s
 }
 
 func TestGateBlocksAtLimitAndReleases(t *testing.T) {

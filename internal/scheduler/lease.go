@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
@@ -86,6 +87,7 @@ type Lease struct {
 
 	mu     sync.Mutex
 	state  LeaseState
+	st     atomic.Int32 // state 的原子镜像，供指标快照读取，避免锁序反转
 	gen    uint64
 	bodies int
 	cancel map[int]context.CancelFunc
@@ -101,9 +103,13 @@ func (l *Lease) Token() Token {
 
 // State 返回当前状态。
 func (l *Lease) State() LeaseState {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.state
+	return LeaseState(l.st.Load())
+}
+
+// setState 同时更新字段与原子镜像；调用方持 l.mu。
+func (l *Lease) setState(st LeaseState) {
+	l.state = st
+	l.st.Store(int32(st))
 }
 
 // BodyRefs 返回尚未退出的 Body 引用数。
@@ -148,11 +154,12 @@ func (l *Lease) Activate() (func(), error) {
 		l.mu.Unlock()
 		return nil, fmt.Errorf("%w: activate from %s", ErrLeaseState, st)
 	}
-	l.state = StateActive
+	l.setState(StateActive)
 	l.bodies++
 	l.mu.Unlock()
 
 	l.set.addBody(l.SourceID, 1)
+	l.set.publish()
 
 	var once sync.Once
 	return func() {
@@ -183,6 +190,9 @@ func (l *Lease) Transfer(tok Token) (Token, error) {
 	}
 	l.gen++
 	metrics.LeaseTransfer(l.SourceID, true)
+	l.mu.Unlock()
+	l.set.publish()
+	l.mu.Lock()
 	return Token{ID: l.ID, Gen: l.gen}, nil
 }
 
@@ -200,16 +210,16 @@ func (l *Lease) Release(tok Token) {
 			l.mu.Unlock()
 			return
 		}
-		l.state = StateReleased
+		l.setState(StateReleased)
 		l.mu.Unlock()
 		l.finalize()
 		return
 	}
-	l.state = StateReleased
+	l.setState(StateReleased)
 	pending := l.bodies > 0
 	if pending {
 		// 还有 Body 没退出：状态对外呈现为 Reclaiming，名额继续占用（I4/I8）。
-		l.state = StateReclaiming
+		l.setState(StateReclaiming)
 	}
 	l.mu.Unlock()
 
@@ -226,7 +236,7 @@ func (l *Lease) Reclaim(reason string) bool {
 		l.mu.Unlock()
 		return false
 	}
-	l.state = StateReclaiming
+	l.setState(StateReclaiming)
 	fns := make([]context.CancelFunc, 0, len(l.cancel))
 	for _, fn := range l.cancel {
 		fns = append(fns, fn)
@@ -305,6 +315,7 @@ func (s *leaseSet) admitLocked(kind LeaseKind) bool {
 func (s *leaseSet) newLeaseLocked(kind LeaseKind) *Lease {
 	s.nextID++
 	l := &Lease{ID: s.nextID, SourceID: s.id, Kind: kind, set: s, state: StateReserved}
+	l.st.Store(int32(StateReserved))
 	s.leases[l.ID] = l
 	s.held++
 	if s.held > s.peak {
@@ -405,6 +416,7 @@ func (s *leaseSet) addBody(id int64, delta int) {
 	if s.bodies < 0 {
 		s.bodies = 0
 	}
+	s.publishLocked()
 	s.mu.Unlock()
 }
 
@@ -421,7 +433,7 @@ func (s *leaseSet) drop(l *Lease) bool {
 	}
 	metrics.LeaseStuckCleared(s.id)
 	l.mu.Lock()
-	l.state = StateReleased
+	l.setState(StateReleased)
 	l.mu.Unlock()
 
 	for len(s.waitq) > 0 {
@@ -442,6 +454,13 @@ func (s *leaseSet) drop(l *Lease) bool {
 	s.publishLocked()
 	s.mu.Unlock()
 	return true
+}
+
+// publish 在不持 set 锁时刷新指标。
+func (s *leaseSet) publish() {
+	s.mu.Lock()
+	s.publishLocked()
+	s.mu.Unlock()
 }
 
 // publishLocked 把当前分项推到指标；调用方持锁。
