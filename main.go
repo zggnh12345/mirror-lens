@@ -161,6 +161,9 @@ func main() {
 			ChunkSize:        cfg.Parallel.ChunkMB << 20,
 			Workers:          cfg.Parallel.Workers,
 			TailVerify:       !cfg.Parallel.DisableTailVerify,
+			PreflightConcurrency: cfg.Sources.PreflightConcurrency,
+			RelayConcurrency:     cfg.Sources.RelayConcurrency,
+			GitConcurrency:       cfg.Sources.GitConcurrency,
 		},
 		Private: gateway.PrivateOptions{
 			BreakAfter:  cfg.Private.BreakAfter,
@@ -188,6 +191,9 @@ func main() {
 			FailCooldown:  cfg.Sources.FailCooldown.Duration,
 			MaxPerSource:  cfg.Sources.MaxPerSource,
 			Dynamic:       cfg.Sources.Dynamic,
+			Headroom:      cfg.Sources.Headroom,
+			Admission:     cfg.Sources.Admission,
+			WaitTimeout:   cfg.Sources.WaitTimeout.Duration,
 		})
 		gw.SetScheduler(sched)
 		log.Printf("多源调度已开：每个协议最多试 %d 个源", cfg.Sources.MaxCandidates)

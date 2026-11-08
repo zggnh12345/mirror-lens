@@ -36,9 +36,10 @@ func TestOrderGroupThenScore(t *testing.T) {
 	}
 }
 
-// 占满名额的源仍然让位，分组不能把它硬塞到前面。
-func TestOrderGroupYieldsWhenAtCap(t *testing.T) {
-	s := New(nil, Config{Enabled: true, MaxCandidates: 5, MaxPerSource: 1})
+// 容量只在组内生效：高优先组即使有一台满员，也不会被低优先组插队；
+// 同组内满员的那台让给有空位的同组源。
+func TestOrderAtCapWithinGroup(t *testing.T) {
+	s := New(nil, Config{Enabled: true, MaxCandidates: 5, MaxPerSource: 2})
 	s.now = func() time.Time { return time.Unix(1000, 0) }
 
 	rel, err := s.Acquire(context.Background(), 2)
@@ -48,10 +49,12 @@ func TestOrderGroupYieldsWhenAtCap(t *testing.T) {
 	defer rel()
 
 	out := s.order("docker", []Candidate{
-		{ID: 1, Name: "free", Score: 0.10, GroupRank: 0},
-		{ID: 2, Name: "group-full", Score: 0.90, GroupRank: 1},
+		{ID: 1, Name: "g2-free", Score: 0.90, GroupRank: 2},
+		{ID: 2, Name: "g1-full", Score: 0.90, GroupRank: 1},
+		{ID: 3, Name: "g1-free", Score: 0.10, GroupRank: 1},
 	})
-	if len(out) != 2 || out[0].ID != 1 {
-		t.Fatalf("占满名额的组内源应后移，实际 %v", out)
+	got := []int64{out[0].ID, out[1].ID, out[2].ID}
+	if got[0] != 3 || got[1] != 2 || got[2] != 1 {
+		t.Fatalf("期望 [3 2 1]（组1优先，组内空位优先），实际 %v", got)
 	}
 }

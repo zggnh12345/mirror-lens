@@ -128,6 +128,30 @@ var cfgSchema = []cfgField{
 		Hint: "0 取默认 4，负数不限", Get: func(c *config.Config) string { return i32(c.Sources.MaxPerSource) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.MaxPerSource, v, 0, 64, true, true) }},
 	{Section: "多源调度", Key: "sources.dynamic", Label: "动态带宽调度", Kind: "bool", Restart: true,
 		Hint: "按实测吞吐自动调并发（AIMD）", Get: func(c *config.Config) string { return b2s(c.Sources.Dynamic) }, Set: func(c *config.Config, v string) error { c.Sources.Dynamic = parseBool(v); return nil }},
+	{Section: "多源调度", Key: "sources.headroom", Label: "普通派发余量", Kind: "float", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
+		Hint: "普通请求最多占到硬上限的这个比例，其余留给换源接管", Get: func(c *config.Config) string { return f2s(c.Sources.Headroom) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Sources.Headroom, v, 0, 1, false, false) }},
+	{Section: "多源调度", Key: "sources.admission", Label: "名额不足时", Kind: "enum", Options: []string{"wait_then_fallback", "blocking", "non_blocking", "observe"}, Restart: true,
+		Hint: "wait_then_fallback：最多等 wait_timeout 再换源（默认）", Get: func(c *config.Config) string {
+			if c.Sources.Admission == "" {
+				return "wait_then_fallback"
+			}
+			return c.Sources.Admission
+		}, Set: func(c *config.Config, v string) error {
+			switch v {
+			case "observe", "blocking", "wait_then_fallback", "non_blocking":
+				c.Sources.Admission = v
+				return nil
+			}
+			return fmt.Errorf("admission 只支持 observe/blocking/wait_then_fallback/non_blocking")
+		}},
+	{Section: "多源调度", Key: "sources.wait_timeout", Label: "等名额上限", Kind: "duration", Restart: true,
+		Hint: "只有 wait_then_fallback 用；超时就不等了，换下一台源", Get: func(c *config.Config) string { return durStr(c.Sources.WaitTimeout.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.WaitTimeout.Duration, v) }},
+	{Section: "多源调度", Key: "sources.preflight_concurrency", Label: "预检并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "全局在途预检数，0 取默认 4；满了就跳过该源", Get: func(c *config.Config) string { return i32(c.Sources.PreflightConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.PreflightConcurrency, v, 0, 64, true, true) }},
+	{Section: "多源调度", Key: "sources.relay_concurrency", Label: "中转竞速上限", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "按排名截断参与竞速的站数，不排队", Get: func(c *config.Config) string { return i32(c.Sources.RelayConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.RelayConcurrency, v, 0, 64, true, true) }},
+	{Section: "多源调度", Key: "sources.git_concurrency", Label: "Git 回源并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "upload-pack POST 前取名额，流结束才归还", Get: func(c *config.Config) string { return i32(c.Sources.GitConcurrency) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.GitConcurrency, v, 0, 64, true, true) }},
 	{Section: "多源调度", Key: "sources.archive_days", Label: "死源归档天数", Kind: "int", Restart: true,
 		Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.ArchiveDays, v, 0, 1<<20, false, false)

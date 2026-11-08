@@ -101,6 +101,22 @@ type Registry struct {
 	// P0 观测：闸门排队时长、并发占用的时间加权均值。
 	gateWait    map[int64]*hist
 	inflightAvg map[int64]float64
+	// 3.0 Lease 账本（口径见 docs/concurrency.md）。
+	leaseHeld          map[int64]int
+	leaseReserved      map[int64]int
+	leaseActive        map[int64]int
+	leaseReclaiming    map[int64]int
+	leaseBodies        map[int64]int
+	leaseStuck         map[int64]int
+	leaseCapNormal     map[int64]uint64
+	leaseCapHand       map[int64]uint64
+	leaseTransfer      map[int64]uint64
+	leaseTransferF     map[int64]uint64
+	leaseReclaimed     map[int64]uint64
+	leaseRelHand       map[int64]uint64
+	leaseWaitTO        map[int64]uint64
+	leaseReclaimReason map[string]uint64
+	leaseWait          map[int64]*hist
 	// 每源实际写出的字节数，按协议分。
 	srcBytes map[srcBytesKey]uint64
 	cand     *hist
@@ -150,8 +166,23 @@ func New() *Registry {
 		srcTTFB:       map[srcDurKey]*hist{},
 		inflight:      map[int64]int{},
 		srclimit:      map[int64]int{},
-		gateWait:      map[int64]*hist{},
-		inflightAvg:   map[int64]float64{},
+		gateWait:           map[int64]*hist{},
+		inflightAvg:        map[int64]float64{},
+		leaseHeld:          map[int64]int{},
+		leaseReserved:      map[int64]int{},
+		leaseActive:        map[int64]int{},
+		leaseReclaiming:    map[int64]int{},
+		leaseBodies:        map[int64]int{},
+		leaseStuck:         map[int64]int{},
+		leaseCapNormal:     map[int64]uint64{},
+		leaseCapHand:       map[int64]uint64{},
+		leaseTransfer:      map[int64]uint64{},
+		leaseTransferF:     map[int64]uint64{},
+		leaseReclaimed:     map[int64]uint64{},
+		leaseRelHand:       map[int64]uint64{},
+		leaseWaitTO:        map[int64]uint64{},
+		leaseReclaimReason: map[string]uint64{},
+		leaseWait:          map[int64]*hist{},
 		srcBytes:      map[srcBytesKey]uint64{},
 		cand:          newHist(candBuckets),
 		forgotten:     map[int64]bool{},
@@ -372,6 +403,20 @@ func ForgetSource(id int64) {
 	delete(r.srclimit, id)
 	delete(r.gateWait, id)
 	delete(r.inflightAvg, id)
+	delete(r.leaseHeld, id)
+	delete(r.leaseReserved, id)
+	delete(r.leaseActive, id)
+	delete(r.leaseReclaiming, id)
+	delete(r.leaseBodies, id)
+	delete(r.leaseStuck, id)
+	delete(r.leaseCapNormal, id)
+	delete(r.leaseCapHand, id)
+	delete(r.leaseTransfer, id)
+	delete(r.leaseTransferF, id)
+	delete(r.leaseReclaimed, id)
+	delete(r.leaseRelHand, id)
+	delete(r.leaseWaitTO, id)
+	delete(r.leaseWait, id)
 	for k := range r.srcBytes {
 		if k.id == id {
 			delete(r.srcBytes, k)
@@ -862,6 +907,8 @@ func (r *Registry) render() []byte {
 			fmt.Fprintf(&b, "%ssource_inflight_avg{source_id=%q} %s\n", prefix, strconv.FormatInt(id, 10), trimFloat(r.inflightAvg[id]))
 		}
 	}
+	r.writeLease(&b)
+	r.writeQuota(&b)
 	if len(r.relayFallback) > 0 {
 		b.WriteString("# HELP " + prefix + "relay_fallback_total 信任中转未走钉住地址的次数（unresolved=沿用系统解析，expired=拒绝拨号）\n")
 		b.WriteString("# TYPE " + prefix + "relay_fallback_total counter\n")

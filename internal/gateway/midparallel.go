@@ -100,14 +100,51 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if n == 1 {
 		firstLen = rest
 	}
+	// 同源接管不新开名额（Transfer），异源才 +1（handover，非阻塞）。
+	hm := holderFrom(ctx)
+	cur := hm.get()
+	same := cur != nil && srcs[0].t.c != nil && cur.SourceID == srcs[0].t.c.ID
+	var l0 *scheduler.Lease
+	if !same {
+		var lerr error
+		l0, lerr = g.leaseFor(ctx, srcs[0].t, scheduler.KindHandover)
+		if lerr != nil {
+			log.Printf("中途并行：名额已满（%v），继续单流", lerr)
+			return false, false
+		}
+	}
+
 	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, sent, sent+firstLen-1)
 	if err != nil {
+		releaseLease(l0)
 		return false, false
 	}
 	if start, tot2, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
 		perr != nil || start != sent || tot2 != total {
 		resp0.Body.Close()
+		releaseLease(l0)
 		return false, false
+	}
+	if same {
+		// 首块校验通过后再交接：失败还能继续单流，不丢名额。
+		tok, terr := cur.Transfer(cur.Token())
+		if terr != nil {
+			resp0.Body.Close()
+			return false, false
+		}
+		retire, aerr := cur.Activate()
+		if aerr != nil {
+			cur.Release(tok)
+			resp0.Body.Close()
+			return false, false
+		}
+		resp0.Body = &leaseBody{ReadCloser: resp0.Body, l: cur, tok: tok, retire: retire}
+	} else if resp0, err = wrapLease(resp0, l0); err != nil {
+		resp0.Body.Close()
+		releaseLease(l0)
+		return false, false
+	} else {
+		hm.set(l0)
 	}
 	defer resp0.Body.Close()
 

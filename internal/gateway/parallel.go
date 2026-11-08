@@ -201,8 +201,22 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	if n == 1 {
 		firstLen = total
 	}
+	l0, lerr := g.leaseFor(ctx, srcs[0].t, scheduler.KindNormal)
+	if lerr != nil {
+		drop()
+		g.parFalls.Add(1)
+		return false
+	}
 	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, 0, firstLen-1)
 	if err != nil {
+		releaseLease(l0)
+		drop()
+		g.parFalls.Add(1)
+		return false
+	}
+	if resp0, err = wrapLease(resp0, l0); err != nil {
+		resp0.Body.Close()
+		releaseLease(l0)
 		drop()
 		g.parFalls.Add(1)
 		return false
@@ -595,6 +609,12 @@ func (g *Gateway) parPreflight(ctx context.Context, plan *adapter.Plan, targets 
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			// 预检有全局在途上限：拿不到就跳过这台源，不占着名额排队。
+			if !g.acquirePreflight() {
+				out[i] = parProbe{src: parSource{t: ordered[i]}}
+				return
+			}
+			defer g.releasePreflight()
 			out[i] = g.probeTarget(ctx, plan, ordered[i])
 			if out[i].ok && out[i].total > 0 && ordered[i].u.String() != plan.Upstream.String() {
 				// 两台镜像源都确认过总长，交叉校验已经成立，没必要再等官方。

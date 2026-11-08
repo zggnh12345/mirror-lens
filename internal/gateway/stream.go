@@ -122,6 +122,8 @@ func (g *Gateway) endFill(key string, ch chan struct{}) {
 
 // fillStream 边下边发；中途断了留下 .part，下次带 If-Range 续。
 func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
+	// 租约持有者随请求走：midFill 同源接管时用它做 Transfer。
+	r = r.WithContext(mustHolder(r.Context()))
 	prev, _ := g.st.CacheGet(plan.CacheKey)
 
 	var pm *cache.PartialMeta
@@ -236,9 +238,16 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 	var lastErr error
 	for i := range targets {
 		t := targets[i]
+		// 名额必须在拨号之前拿到：否则限流保护不到建连和 TLS 握手阶段。
+		l, lerr := g.leaseFor(ctx, t, scheduler.KindNormal)
+		if lerr != nil {
+			lastErr = lerr
+			continue
+		}
 		start := time.Now()
 		resp, err := g.doUpstream(ctx, plan, pm, prev, t.u)
 		if err != nil {
+			releaseLease(l)
 			if t.c == nil {
 				return nil, nil, 0, err
 			}
@@ -275,6 +284,17 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			lastErr = ue
 			continue
 		}
+		resp, werr := wrapLease(resp, l)
+		if werr != nil {
+			resp.Body.Close()
+			releaseLease(l)
+			lastErr = werr
+			continue
+		}
+		if lb, ok := resp.Body.(*leaseBody); ok && l != nil {
+			go lb.watch(90 * time.Second)
+		}
+		holderFrom(ctx).set(l)
 		// 成功不在这里记：响应头到了不代表身子能收完。见 streamBody 的收尾。
 		if t.c != nil {
 			plan.Source = t.c.Name

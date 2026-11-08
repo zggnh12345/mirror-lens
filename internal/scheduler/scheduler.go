@@ -32,6 +32,12 @@ type Config struct {
 	MaxPerSource int
 	// MaxCooldown 是单次冷却上限：Retry-After: 86400 不该把源关一天。
 	MaxCooldown time.Duration
+	// Headroom 是普通派发占硬上限的比例（3.0 默认 0.8）。
+	Headroom float64
+	// Admission 是准入模式：observe / blocking / wait_then_fallback / non_blocking。
+	Admission string
+	// WaitTimeout 是 wait_then_fallback 的最长等待。
+	WaitTimeout time.Duration
 }
 
 func (c *Config) fill() {
@@ -52,6 +58,15 @@ func (c *Config) fill() {
 	}
 	if c.MaxPerSource == 0 {
 		c.MaxPerSource = 4
+	}
+	if c.Headroom <= 0 || c.Headroom > 1 {
+		c.Headroom = 0.8
+	}
+	if c.Admission == "" {
+		c.Admission = "wait_then_fallback"
+	}
+	if c.WaitTimeout <= 0 {
+		c.WaitTimeout = 2 * time.Second
 	}
 }
 
@@ -116,6 +131,7 @@ type Scheduler struct {
 	loadMu sync.Mutex
 	gates  map[int64]*gate // 源 id → 并发闸门（容量可动态调整）
 	dyn    map[int64]*dynState
+	leases *leaseManager // 3.0 统一回源账本（A 档）
 
 	// gone 是已删除源的墓碑，挡住迟到回调把状态重建出来。
 	// 用 sync.Map 避开与 Forget（s.mu → loadMu）的反向锁序。
@@ -124,6 +140,11 @@ type Scheduler struct {
 
 func New(st *store.Store, cfg Config) *Scheduler {
 	cfg.fill()
+	if cfg.Dynamic {
+		// 3.0 起容量由 headroom 固定换算，AIMD 不再参与派发。
+		log.Printf("sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行")
+		cfg.Dynamic = false
+	}
 	return &Scheduler{
 		st:     st,
 		cfg:    cfg,
@@ -133,6 +154,7 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		brk:    map[string]*breaker{},
 		gates:  map[int64]*gate{},
 		dyn:    map[int64]*dynState{},
+		leases: newLeaseManager(),
 	}
 }
 
@@ -173,6 +195,7 @@ func (s *Scheduler) Forget(id int64) {
 	s.loadMu.Lock()
 	delete(s.gates, id)
 	s.loadMu.Unlock()
+	s.leases.forget(id)
 
 	metrics.ForgetSource(id)
 }
@@ -289,14 +312,14 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 		out = append(out, c)
 	}
 	// 占满名额的源整体后移，免得最快的那台被所有任务一起压垮。
+	// 分组优先级压过容量：高优先组里某台满了，也应该先试同组的下一台，
+	// 而不是让低优先组插队（3.0 排序修正）。
 	sort.SliceStable(out, func(i, j int) bool {
-		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
-			return !bi
-		}
-		// 分组优先级最高的一档：好组里的源先上，用户按实测速度分组才有意义。
-		// 放在 atCap 之后，仍然别把满员源硬塞前面。
 		if gi, gj := groupKey(out[i].GroupRank), groupKey(out[j].GroupRank); gi != gj {
 			return gi < gj
+		}
+		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
+			return !bi
 		}
 		// 组内再看手动优先。
 		if out[i].Preferred != out[j].Preferred {
@@ -323,8 +346,10 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 	return out
 }
 
-// Acquire 占一个回源并发名额，返回的释放函数必须调用（可重复）。
-// 满员时等待是排队而非故障，不计健康、不熔断。
+// Acquire 是 2.x 的兼容入口，返回的释放函数必须调用（可重复）。
+//
+// observe 阶段保留旧的准入计数，同时向 Lease 账本登记，避免两套生命周期；
+// 正式准入阶段（Step 8 起）只走 Lease，一次请求一个名额。
 func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
 		return func() {}, nil
@@ -333,18 +358,76 @@ func (s *Scheduler) Acquire(ctx context.Context, id int64) (func(), error) {
 		// 源在下载途中被删：不建闸门直接放行，在途请求不该失败。
 		return func() {}, nil
 	}
+
+	if s.cfg.Admission != "observe" {
+		l, err := s.AcquireLease(ctx, id, KindNormal)
+		if err != nil {
+			return nil, err
+		}
+		if l == nil {
+			return func() {}, nil
+		}
+		metrics.SourceInflight(id, 1)
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				l.Release(l.Token())
+				metrics.SourceInflight(id, -1)
+			})
+		}, nil
+	}
+
 	release, err := s.gateFor(id).acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
+	l, _ := s.acquireLeaseMode(ctx, id, KindNormal, "observe")
 	metrics.SourceInflight(id, 1)
 	var once sync.Once
 	return func() {
 		once.Do(func() {
+			if l != nil {
+				l.Release(l.Token())
+			}
 			release()
 			metrics.SourceInflight(id, -1)
 		})
 	}, nil
+}
+
+// AcquireLease 按当前准入模式申请一个 A 档名额。必须在拨号之前调用。
+func (s *Scheduler) AcquireLease(ctx context.Context, id int64, kind LeaseKind) (*Lease, error) {
+	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
+		return nil, nil
+	}
+	if s.deleted(id) {
+		// 源在下载途中被删：不再为新请求记账（账面在 Forget 里已清）。
+		return nil, nil
+	}
+	return s.acquireLeaseMode(ctx, id, kind, s.cfg.Admission)
+}
+
+func (s *Scheduler) acquireLeaseMode(ctx context.Context, id int64, kind LeaseKind, mode string) (*Lease, error) {
+	hard, dispatch := s.cfg.caps()
+	set := s.leases.get(id, hard, dispatch)
+	l, err := set.acquire(ctx, kind, mode, s.cfg.WaitTimeout)
+	if err != nil {
+		return nil, err
+	}
+	set.mu.Lock()
+	set.publishLocked()
+	set.mu.Unlock()
+	return l, nil
+}
+
+// LeaseHeld 是某台源当前持有的租约数（含 reserved/reclaiming）。
+func (s *Scheduler) LeaseHeld(id int64) int {
+	if s == nil || s.cfg.MaxPerSource <= 0 {
+		return 0
+	}
+	hard, dispatch := s.cfg.caps()
+	held, _, _, _, _ := s.leases.get(id, hard, dispatch).snapshot()
+	return held
 }
 
 // gateFor 取某台源的闸门，首次使用时初始化。
@@ -371,23 +454,21 @@ func (s *Scheduler) gateFor(id int64) *gate {
 
 // InFlight 是某台源此刻占用的名额数，用于选源时负载均衡。
 func (s *Scheduler) InFlight(id int64) int {
-	if s == nil || s.cfg.MaxPerSource <= 0 {
-		return 0
-	}
-	g := s.gateFor(id)
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.inflight
+	return s.LeaseHeld(id)
 }
 
+// atCap 判断普通请求此刻是否会被拒绝；observe 阶段不把 80% 当上限。
 func (s *Scheduler) atCap(id int64) bool {
 	if s == nil || s.cfg.MaxPerSource <= 0 {
 		return false
 	}
-	g := s.gateFor(id)
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.inflight >= g.limit
+	hard, dispatch := s.cfg.caps()
+	limit := dispatch
+	if s.cfg.Admission == "observe" {
+		limit = hard
+	}
+	held, _, _, _, _ := s.leases.get(id, hard, dispatch).snapshot()
+	return held >= limit
 }
 
 // Rewrite 把官方地址改写成某个源的地址。

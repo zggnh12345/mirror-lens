@@ -38,7 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-const Version = "2.6.19"
+const Version = "3.0.0"
 
 type Gateway struct {
 	st      *store.Store
@@ -65,6 +65,10 @@ type Gateway struct {
 	fillFlights   map[string]chan struct{} // cacheKey -> 正在回源的流式填充
 	verifyFail    atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
 	par           ParOptions
+	preSem        chan struct{}
+	gitSem        chan struct{}
+	relayLimit    int
+	semOnce       sync.Once
 	hedge         HedgeOptions
 	parTargets    func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
 	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
@@ -113,6 +117,11 @@ type ParOptions struct {
 	SwitchMaxSentMiB int64
 	SwitchMax        int
 	SwitchGap        time.Duration
+
+	// B 档与预检的独立配额（3.0）。0 表示用默认值 4。
+	PreflightConcurrency int
+	RelayConcurrency     int
+	GitConcurrency       int
 }
 
 // CDNOptions 控制边缘缓存语义：Enabled=false 只发保守短 TTL，

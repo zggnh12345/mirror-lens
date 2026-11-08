@@ -4,3 +4,6 @@ testdata/
 *.db-wal
 *.db-shm
 mirror-lens
+
+# 本地构建产物
+dist/
