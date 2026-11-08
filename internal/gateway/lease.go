@@ -61,7 +61,16 @@ func (b *leaseBody) watch(limit time.Duration) {
 	}
 }
 
+// newLeaseBody 是唯一构造入口：done 必须初始化，否则 Close 会 close(nil) panic。
+// midparallel 的同源接管曾经用字面量绕过这里，导致每次接管成功都在 defer Close 崩掉。
+func newLeaseBody(rc io.ReadCloser, l *scheduler.Lease, tok scheduler.Token, retire func()) *leaseBody {
+	return &leaseBody{ReadCloser: rc, l: l, tok: tok, retire: retire, done: make(chan struct{})}
+}
+
 func (b *leaseBody) stopWatch() {
+	if b.done == nil { // 防御：零值不是合法构造，但绝不能因此 panic 掉请求。
+		return
+	}
 	b.doneOnce.Do(func() { close(b.done) })
 }
 
@@ -97,7 +106,7 @@ func wrapLease(resp *http.Response, l *scheduler.Lease) (*http.Response, error) 
 	if err != nil {
 		return nil, err
 	}
-	resp.Body = &leaseBody{ReadCloser: resp.Body, l: l, tok: l.Token(), retire: retire, done: make(chan struct{})}
+	resp.Body = newLeaseBody(resp.Body, l, l.Token(), retire)
 	return resp, nil
 }
 

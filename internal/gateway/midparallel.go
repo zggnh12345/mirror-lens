@@ -138,7 +138,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 			resp0.Body.Close()
 			return false, false
 		}
-		resp0.Body = &leaseBody{ReadCloser: resp0.Body, l: cur, tok: tok, retire: retire}
+		resp0.Body = newLeaseBody(resp0.Body, cur, tok, retire)
 	} else if resp0, err = wrapLease(resp0, l0); err != nil {
 		resp0.Body.Close()
 		releaseLease(l0)

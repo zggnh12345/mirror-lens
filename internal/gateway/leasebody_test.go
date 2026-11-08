@@ -4,6 +4,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
 // leaseBody 的 done channel 必须由构造函数初始化：
@@ -16,4 +18,22 @@ func TestLeaseBodyCloseWithNilDone(t *testing.T) {
 		}
 	}()
 	_ = b.Close()
+}
+
+// 同源接管拿到的 Body 必须已完成初始化，且重复 Close 只结算一次。
+func TestNewLeaseBodyClosesOnce(t *testing.T) {
+	var released int
+	b := newLeaseBody(io.NopCloser(strings.NewReader("x")), nil, scheduler.Token{}, func() { released++ })
+	if b.done == nil {
+		t.Fatal("newLeaseBody 没有初始化 done")
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if released != 1 {
+		t.Fatalf("retire 调用 %d 次，期望 1", released)
+	}
 }
