@@ -845,8 +845,20 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		// t0 必须在这里：排在上面会把「等并发名额」的时间算进源速度，
 		// 让最快的源显示成最慢的，AIMD 据此降速就形成了负反馈。
 		t0 := time.Now()
-		resp, err := g.rangeReq(ctx, plan, a.u, off, off+length-1)
+		// 每次上游尝试都有独立的 Attempt Context：Reclaim 只取消这一次尝试，
+		// 不影响同分片的重试，也不复用客户端请求的 Context。
+		actx, acancel := context.WithCancel(ctx)
+		if cl != nil {
+			if !cl.bindAttempt(actx, acancel) {
+				// 名额在登记前已被回收：不拨号。
+				acancel()
+				cl.finish(nil)
+				return fmt.Errorf("名额已被回收，放弃分片: %w", context.Canceled)
+			}
+		}
+		resp, err := g.rangeReq(actx, plan, a.u, off, off+length-1)
 		if err != nil {
+			acancel()
 			cl.finish(nil)
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
@@ -860,7 +872,11 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		// finish 是成功/短读/写盘失败三条出口的统一结算点：
 		// 有 chunkLease 时由它 Close（retire + Release + done），
 		// 没有名额时（官方源 fallback、源被删、无调度器）直接关原始 Body。
-		finish := func() { cl.finish(resp.Body) }
+		finish := func() {
+			// 先结算 Body（否则取消 Context 会打断连接复用），再收尾 Attempt。
+			cl.finish(resp.Body)
+			acancel()
+		}
 		start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -876,6 +892,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			if err := cl.attach(resp); err != nil {
 				// Activate 失败说明名额状态已失效，不是源的问题：本段放弃。
 				// attach 内部已经关掉原始 Body。
+				acancel()
 				cl.finish(nil)
 				return err
 			}

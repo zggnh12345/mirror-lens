@@ -127,7 +127,9 @@ func (l *Lease) BindCancel(fn context.CancelFunc) func() {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.state == StateReclaiming {
+	// Reserved/Active 之外（Reclaiming、已 Release）都表示名额已失效，
+	// 登记即取消：调用方随后必须检查 ctx.Err()，不允许继续拨号。
+	if l.state != StateReserved && l.state != StateActive {
 		fn()
 		return func() {}
 	}
@@ -517,6 +519,13 @@ func (m *leaseManager) get(id int64, hardMax, dispatch int) *leaseSet {
 	s := newLeaseSet(id, hardMax, dispatch)
 	m.sets[id] = s
 	return s
+}
+
+// peek 只查询，不创建集合。
+func (m *leaseManager) peek(id int64) *leaseSet {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sets[id]
 }
 
 func (m *leaseManager) forget(id int64) {

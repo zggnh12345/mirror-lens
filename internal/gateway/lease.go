@@ -114,7 +114,52 @@ type chunkLease struct {
 	id   int64
 	body io.ReadCloser
 	done func() // 闸门 + 在途计数，AcquireBody 交回
-	once sync.Once
+
+	unbind   func()
+	acancel  context.CancelFunc
+	dropOnce sync.Once
+	once     sync.Once
+}
+
+// bindAttempt 把本次 Attempt 的取消函数登记到 Lease：
+// 顺序固定为 unbind → cancel → Release，任何出口都只做一次。
+// 返回 false 表示名额已被回收（登记即取消），调用方不得继续拨号。
+func (c *chunkLease) bindAttempt(actx context.Context, cancel context.CancelFunc) bool {
+	if c == nil || c.l == nil || cancel == nil {
+		return true
+	}
+	c.acancel = cancel
+	c.unbind = c.l.BindCancel(cancel)
+	// BindCancel 对已失效的名额会立即 cancel，必须回查再决定是否拨号。
+	return actx.Err() == nil
+}
+
+func (c *chunkLease) unbindOnly() {
+	if c == nil {
+		return
+	}
+	c.dropOnce.Do(func() {
+		if c.unbind != nil {
+			c.unbind()
+			c.unbind = nil
+		}
+	})
+}
+
+func (c *chunkLease) dropAttempt() {
+	if c == nil {
+		return
+	}
+	c.dropOnce.Do(func() {
+		if c.unbind != nil {
+			c.unbind()
+			c.unbind = nil
+		}
+		if c.acancel != nil {
+			c.acancel()
+			c.acancel = nil
+		}
+	})
 }
 
 func (g *Gateway) openChunkLease(ctx context.Context, t fetchTarget) (*chunkLease, error) {
@@ -142,6 +187,13 @@ func (c *chunkLease) attach(resp *http.Response) error {
 		_ = resp.Body.Close()
 		return err
 	}
+	// Body 退出时先解绑，避免已结束的 Attempt 还挂在 Lease 上；
+	// Context 的取消交给 finish/Close 的收尾顺序处理。
+	inner := retire
+	retire = func() {
+		c.unbindOnly()
+		inner()
+	}
 	c.body = newLeaseBody(resp.Body, c.l, c.tok, retire)
 	resp.Body = c.body
 	return nil
@@ -157,6 +209,7 @@ func (c *chunkLease) finish(rc io.ReadCloser) {
 		return
 	}
 	c.once.Do(func() {
+		c.dropAttempt()
 		if c.body != nil {
 			_ = c.body.Close()
 		} else {

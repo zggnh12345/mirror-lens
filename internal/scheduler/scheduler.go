@@ -414,6 +414,34 @@ func (s *Scheduler) AcquireBody(ctx context.Context, id int64) (*Lease, Token, f
 	return l, l.Token(), done, nil
 }
 
+// ReclaimSource 回收一台源上所有未结束的 Lease，返回回收数量。
+// 用于手动踢掉某源的在途请求；Body 仍持有引用时名额等到 Body 退出才归还。
+func (s *Scheduler) ReclaimSource(id int64, reason string) int {
+	if s == nil || id == 0 {
+		return 0
+	}
+	if s.leases == nil {
+		return 0
+	}
+	set := s.leases.peek(id)
+	if set == nil {
+		return 0
+	}
+	set.mu.Lock()
+	ls := make([]*Lease, 0, len(set.leases))
+	for _, l := range set.leases {
+		ls = append(ls, l)
+	}
+	set.mu.Unlock()
+	n := 0
+	for _, l := range ls {
+		if l.Reclaim(reason) {
+			n++
+		}
+	}
+	return n
+}
+
 // AcquireLease 按当前准入模式申请一个 A 档名额。必须在拨号之前调用。
 func (s *Scheduler) AcquireLease(ctx context.Context, id int64, kind LeaseKind) (*Lease, error) {
 	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
