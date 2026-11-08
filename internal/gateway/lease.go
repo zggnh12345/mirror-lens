@@ -58,8 +58,9 @@ func (b *leaseBody) watch(limit time.Duration) {
 				log.Printf("单流 %v 无进展，回收名额（源 %d）", limit, b.l.SourceID)
 				b.l.Reclaim("stall")
 			}
-			// 关闭 Body 会一并断开这条上游连接，读侧立刻返回。
-			b.ReadCloser.Close()
+			// 走统一的 Close：底层关闭、retire、Release 都在同一个 Once 里，
+			// 外层 defer Close 随后到达时不会重复关闭底层 Body。
+			_ = b.Close()
 			return
 		}
 	}

@@ -1,11 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
@@ -52,5 +55,51 @@ func TestLeaseBodyCloseIsIdempotent(t *testing.T) {
 	}
 	if retired != 1 {
 		t.Fatalf("retire 调用 %d 次，期望 1", retired)
+	}
+}
+
+// 看门狗回收后外层 defer 再关闭：底层 Body / retire / Release 都必须只结算一次。
+// watch 曾经直接 b.ReadCloser.Close()，绕过了 Once，导致底层被关两次、retire 漏掉。
+func TestLeaseBodyWatchCloseIsOnce(t *testing.T) {
+	f := newMidFixture(t, 1)
+	defer f.close()
+	metrics.Enable()
+	t.Cleanup(metrics.Disable)
+
+	const srcID = int64(91)
+	sched := scheduler.New(f.st, scheduler.Config{Enabled: true, MaxPerSource: 4})
+	l, err := sched.AcquireLease(context.Background(), srcID, scheduler.KindNormal)
+	if err != nil || l == nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	var retired int
+	retire, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := &countingCloser{}
+	b := newLeaseBody(rc, l, l.Token(), func() { retired++; retire() })
+
+	go b.watch(60 * time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for l.State() != scheduler.StateReleased && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st := l.State(); st != scheduler.StateReleased {
+		t.Fatalf("看门狗应回收 Lease，状态 %s", st)
+	}
+	// 外层 handler 的 defer 随后到达。
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rc.closes != 1 {
+		t.Fatalf("底层 Body 关闭 %d 次，期望 1", rc.closes)
+	}
+	if retired != 1 {
+		t.Fatalf("retire 调用 %d 次，期望 1", retired)
+	}
+	if got := leaseGauge(t, "leases_held", srcID); got != 0 {
+		t.Fatalf("看门狗回收后 held=%v，期望 0", got)
 	}
 }
