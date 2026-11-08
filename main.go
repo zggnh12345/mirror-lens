@@ -83,7 +83,7 @@ func main() {
 	}
 
 	// 探测与网关共用安全拨号：源地址是用户填的，不能变成内网探针。
-	probe.Configure(cfg.Probe.AllowPrivate)
+	probe.Configure(cfg.Probe.AllowPrivate, cfg.Network.IPFamily)
 	if cfg.Probe.AllowPrivate {
 		log.Printf("探测已允许内网地址（probe.allow_private=true），仅限自建源场景")
 	}

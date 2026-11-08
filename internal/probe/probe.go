@@ -78,9 +78,14 @@ var (
 
 // Configure 设置探测的拨号策略。allowPrivate 打开后允许探测内网/回环地址，
 // 只给「源在自己局域网里」的场景用；公网部署保持 false。
-func Configure(allowPrivate bool) {
+// ipFamily 必须和回源一致：探测走 v4、下载走 v6 时，源会被判成「能连」但实际拉不动。
+func Configure(allowPrivate bool, ipFamily ...string) {
+	fam := "auto"
+	if len(ipFamily) > 0 && ipFamily[0] != "" {
+		fam = ipFamily[0]
+	}
 	guardMu.Lock()
-	guard = safehttp.New(safehttp.Options{MaxRedirects: 8, AllowPrivate: allowPrivate})
+	guard = safehttp.New(safehttp.Options{MaxRedirects: 8, AllowPrivate: allowPrivate, IPFamily: fam})
 	guardMu.Unlock()
 }
 

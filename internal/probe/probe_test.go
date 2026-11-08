@@ -8,10 +8,31 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 )
+
+// 探测的族偏好必须跟回源一致，否则「探测能连、下载连不上」会互相打脸。
+func TestConfigureIPFamily(t *testing.T) {
+	defer Configure(true) // 恢复 TestMain 的内网放行，否则后面的假源全被拦
+	v4 := netip.MustParseAddr("93.184.216.34")
+	v6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
+
+	Configure(false, "v6")
+	if got := currentGuard().OrderIPs([]netip.Addr{v4, v6}); len(got) != 1 || got[0] != v6 {
+		t.Fatalf("v6 模式仍给出 v4: %v", got)
+	}
+	Configure(false, "v4")
+	if got := currentGuard().OrderIPs([]netip.Addr{v6, v4}); len(got) != 1 || got[0] != v4 {
+		t.Fatalf("v4 模式仍给出 v6: %v", got)
+	}
+	Configure(false)
+	if got := currentGuard().OrderIPs([]netip.Addr{v6, v4}); len(got) != 2 || got[0] != v4 {
+		t.Fatalf("缺省应为 auto(v4 优先): %v", got)
+	}
+}
 
 func TestMain(m *testing.M) {
 	// 测试里的假源都在 127.0.0.1 上。
