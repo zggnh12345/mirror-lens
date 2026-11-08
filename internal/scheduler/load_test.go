@@ -10,19 +10,20 @@ import (
 func TestAcquireCapsPerSource(t *testing.T) {
 	st := newStore(t)
 	id := addSource(t, st, "https://m.example", true, 100, 900)
-	s := New(st, Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 2})
+	// 3.0：MaxPerSource=4 时普通派发上限是 3（20% 留给交接）。
+	s := New(st, Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4})
 
 	ctx := context.Background()
-	r1, err := s.Acquire(ctx, id)
-	if err != nil {
-		t.Fatal(err)
+	var rels []func()
+	for i := 0; i < 3; i++ {
+		r, err := s.Acquire(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rels = append(rels, r)
 	}
-	r2, err := s.Acquire(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := s.InFlight(id); got != 2 {
-		t.Fatalf("InFlight want 2 got %d", got)
+	if got := s.InFlight(id); got != 3 {
+		t.Fatalf("InFlight want 3 got %d", got)
 	}
 
 	wait, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
@@ -33,15 +34,16 @@ func TestAcquireCapsPerSource(t *testing.T) {
 		t.Fatalf("等待超时应返回 ctx 错误，得到 %v", err)
 	}
 
-	r1()
-	if got := s.InFlight(id); got != 1 {
-		t.Fatalf("释放后 InFlight want 1 got %d", got)
+	rels[0]()
+	if got := s.InFlight(id); got != 2 {
+		t.Fatalf("释放后 InFlight want 2 got %d", got)
 	}
 	r3, err := s.Acquire(ctx, id)
 	if err != nil {
 		t.Fatalf("释放后应能拿到名额：%v", err)
 	}
-	r2()
+	rels[1]()
+	rels[2]()
 	r3()
 	if got := s.InFlight(id); got != 0 {
 		t.Fatalf("全部释放后 InFlight want 0 got %d", got)
