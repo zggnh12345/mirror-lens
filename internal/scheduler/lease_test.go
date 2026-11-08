@@ -3,10 +3,103 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
+
+// P0 回归：旧 Generation 的 Release 不得释放当前 Owner 的 Lease（I8）。
+//
+// 与 TestLeaseTransferFencesOldOwner 的差别就在这里：那个用例在旧 Release 前
+// 没有 retire，bodies>0，走的是「保留」分支；本用例让旧 Body 先退出，bodies 归零，
+// 正是旧实现会顺手 setState(Released)+finalize 的状态转换。
+func TestStaleOwnerReleaseAfterTransfer(t *testing.T) {
+	metrics.Enable()
+	t.Cleanup(metrics.Disable)
+
+	hard, dispatch := testCaps(4)
+	set := newLeaseSet(7, hard, dispatch)
+
+	l, err := set.acquire(context.Background(), KindNormal, "blocking", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retireOld, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := l.Token()
+	newTok, err := l.Transfer(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newTok.Gen == old.Gen {
+		t.Fatalf("Transfer 没换 generation: %+v", newTok)
+	}
+
+	// 旧 Body 退出：bodies 归零，但所有权已经交给新 Generation。
+	retireOld()
+	l.Release(old)
+
+	if st := l.State(); st != StateActive {
+		t.Fatalf("旧 Token Release 后 Lease 应仍归当前 Owner（active），得到 %s", st)
+	}
+	if held := set.snapshotHeld(); held != 1 {
+		t.Fatalf("旧 Token 不得归还名额：held=%d，期望 1", held)
+	}
+	if got := leaseReleasedTotal(t, 7); got != 0 {
+		t.Fatalf("旧 Token 不得计一次 lease_released_total：%d", got)
+	}
+
+	// 新 Owner 必须还能接管这个 Lease。
+	retireNew, err := l.Activate()
+	if err != nil {
+		t.Fatalf("新 Owner 应能激活：%v", err)
+	}
+	if _, _, _, _, bodies := set.snapshot(); bodies != 1 {
+		t.Fatalf("新 Body 激活后 bodies=%d，期望 1", bodies)
+	}
+
+	retireNew()
+	l.Release(newTok)
+
+	if held := set.snapshotHeld(); held != 0 {
+		t.Fatalf("新 Owner 释放后名额应归零，held=%d", held)
+	}
+	if _, _, _, _, bodies := set.snapshot(); bodies != 0 {
+		t.Fatalf("所有 Body 退出后 bodies=%d，期望 0", bodies)
+	}
+	if got := leaseReleasedTotal(t, 7); got != 1 {
+		t.Fatalf("名额只能归还一次：lease_released_total=%d，期望 1", got)
+	}
+}
+
+// leaseReleasedTotal 从 Prometheus 文本里取指定源的归还次数。
+func leaseReleasedTotal(t *testing.T, id int64) uint64 {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	metrics.Get().Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	want := fmt.Sprintf("lease_released_total{source_id=%q}", strconv.FormatInt(id, 10))
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.Contains(line, want) {
+			continue
+		}
+		f := strings.Fields(line)
+		v, err := strconv.ParseUint(f[len(f)-1], 10, 64)
+		if err != nil {
+			t.Fatalf("解析指标失败 %q: %v", line, err)
+		}
+		return v
+	}
+	return 0
+}
 
 func testCaps(hard int) (int, int) {
 	return Config{MaxPerSource: hard}.caps()
