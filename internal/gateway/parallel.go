@@ -878,6 +878,9 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if err != nil {
 			acancel()
 			cl.finish(nil)
+			if ctx.Err() == nil {
+				log.Printf("分片请求失败: 源=%s range=%d-%d err=%v", a.u.Host, off, off+length-1, err)
+			}
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				if src.t.c != nil {
@@ -899,6 +902,8 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			finish()
+			log.Printf("分片响应异常: 源=%s range=%d-%d status=%d content-range=%q content-length=%d",
+				a.u.Host, off, off+length-1, resp.StatusCode, resp.Header.Get("Content-Range"), resp.ContentLength)
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 				atomic.StoreInt32(&stats[a.idx].code, int32(resp.StatusCode))
@@ -923,6 +928,10 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			return local(fmt.Errorf("写分片失败: %w", dw.err))
 		}
 		if cerr != nil || n != length {
+			if ctx.Err() == nil {
+				log.Printf("分片短读: 源=%s range=%d-%d got=%d want=%d err=%v",
+					a.u.Host, off, off+length-1, n, length, cerr)
+			}
 			if a.blame && ctx.Err() == nil {
 				atomic.AddInt32(&stats[a.idx].fail, 1)
 			}
@@ -949,6 +958,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 	if last == nil {
 		last = fmt.Errorf("没有可用源")
 	}
+	log.Printf("分片放弃: range=%d-%d 尝试=%d 台源 last=%v", off, off+length-1, len(atts), last)
 	return last
 }
 

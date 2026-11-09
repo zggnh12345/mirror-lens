@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -261,5 +263,41 @@ func TestChunkLeaseAttachFailureClosesBody(t *testing.T) {
 	cl.finish(nil)
 	if got := leaseGauge(t, "leases_held", f.id); got != 0 {
 		t.Fatalf("leases_held=%v，期望 0", got)
+	}
+}
+
+// 分片响应不是 206 时必须留下可定位的日志：源、Range、状态码、Content-Range。
+// 生产上 midFill 接管后整条响应被中止，日志里却没有任何原因，只能靠这条补。
+func TestParChunkLogsRangeMismatch(t *testing.T) {
+	const length = 1 << 20
+	f := newParLeaseFixture(t, 77)
+	defer f.close()
+	f.mirror.noRange = true // 忽略 Range，返回 200 + 整份长度
+	// 官方兜底也指向这台源，否则 parChunk 会回落到正常的上游把分片补齐。
+	f.plan.Upstream = mustURL(t, f.sourceURL)
+
+	part, err := os.CreateTemp(t.TempDir(), "part")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer part.Close()
+
+	src := parSource{t: fetchTarget{u: mustURL(t, f.sourceURL), c: f.cand}}
+	stats := make([]parStat, 1)
+
+	var buf bytes.Buffer
+	oldOut, oldFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(oldOut); log.SetFlags(oldFlags) }()
+
+	if err := f.g.parChunk(context.Background(), f.plan, src, []parSource{src}, 0, 0, length, f.total, part, stats, nil); err == nil {
+		t.Fatal("200 响应应判为分片失败")
+	}
+	got := buf.String()
+	for _, want := range []string{"分片响应异常", "status=200", "range=0-", "分片放弃"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("日志缺少 %q：\n%s", want, got)
+		}
 	}
 }

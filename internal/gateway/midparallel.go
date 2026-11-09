@@ -71,11 +71,13 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	// wrote 一旦置位，响应就无法撤回：此后的任何失败都必须让连接异常结束，
 	// 不能正常收尾，否则客户端会把损坏内容当成完整响应。
 	var wrote, clientGone bool
+	delivered := sent
 	defer func() {
 		if !wrote || ok || clientGone || requestCtx.Err() != nil {
 			return
 		}
 		metrics.MidfillAborted()
+		log.Printf("中途并行失败：已交付 %d/%d 字节，将中止连接", delivered, total)
 		if killConn != nil {
 			killConn()
 		}
@@ -262,6 +264,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 				clientGone = true // 客户端走了
 				return true, false
 			}
+			delivered += wn
 			if !wrote {
 				wrote = true
 				metrics.MidfillStarted()
@@ -299,7 +302,9 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		if off+length > total {
 			length = total - off
 		}
-		if _, werr := io.CopyN(out, io.NewSectionReader(part, off, length), length); werr != nil {
+		nw, werr := io.CopyN(out, io.NewSectionReader(part, off, length), length)
+		delivered += nw
+		if werr != nil {
 			return true, false
 		}
 		if flusher != nil {
