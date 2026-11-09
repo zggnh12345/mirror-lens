@@ -347,6 +347,37 @@ func (s *Store) BlobFailureCount(since int64) (int64, error) {
 	return n, err
 }
 
+// BlobFailures 返回 since 之后的失败事件，按时间倒序。
+func (s *Store) BlobFailures(since int64, limit int) ([]BlobFailure, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`SELECT expected_digest, actual_digest, digest_source, protocol,
+		COALESCE(source_id,0), COALESCE(source_name,''), COALESCE(cache_key,''), COALESCE(error_code,''), created_at
+		FROM blob_integrity_failures WHERE created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?`, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BlobFailure
+	for rows.Next() {
+		var f BlobFailure
+		if err := rows.Scan(&f.ExpectedDigest, &f.ActualDigest, &f.DigestSource, &f.Protocol,
+			&f.SourceID, &f.SourceName, &f.CacheKey, &f.ErrorCode, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// PruneBlobFailures 删除 before 之前的失败事件。事件表只用于排障，
+// 不做长期账本，保留窗口由调用方（janitor/runner）决定。
+func (s *Store) PruneBlobFailures(before int64) error {
+	_, err := s.db.Exec(`DELETE FROM blob_integrity_failures WHERE created_at < ?`, before)
+	return err
+}
+
 // BlobIntegrityCounts 按完整性状态统计 blob 数（不是条目数）。
 func (s *Store) BlobIntegrityCounts() (map[string]int64, error) {
 	rows, err := s.db.Query(`SELECT integrity_status, COUNT(*) FROM blobs GROUP BY 1`)

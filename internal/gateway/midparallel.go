@@ -64,12 +64,15 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if old == nil || old.Request == nil {
 		return false, false
 	}
-	ctx := old.Request.Context()
+	// requestCtx 只表示客户端请求本身；并行任务另用 taskCtx。
+	// 两者必须分开：任务失败会 cancel(taskCtx)，若这里复用同一变量，
+	// 下面的 defer 会把「我们主动中止」误判成「客户端已断开」而跳过断连。
+	requestCtx := old.Request.Context()
 	// wrote 一旦置位，响应就无法撤回：此后的任何失败都必须让连接异常结束，
 	// 不能正常收尾，否则客户端会把损坏内容当成完整响应。
 	var wrote, clientGone bool
 	defer func() {
-		if !wrote || ok || clientGone || ctx.Err() != nil {
+		if !wrote || ok || clientGone || requestCtx.Err() != nil {
 			return
 		}
 		metrics.MidfillAborted()
@@ -85,7 +88,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		log.Printf("中途并行跳过：没有候选源")
 		return false, false
 	}
-	srcs, tot := g.parPreflight(ctx, plan, targets, 6*time.Second)
+	srcs, tot := g.parPreflight(requestCtx, plan, targets, 6*time.Second)
 	// 总长必须和正在发的这份一致，否则拼起来必错。
 	// 只剩一台也能接：对同一台开多连接分段，比单流干等强。
 	if len(srcs) < 1 || (tot > 0 && tot != total) {
@@ -120,20 +123,20 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		firstLen = rest
 	}
 	// 同源接管不新开名额（Transfer），异源才 +1（handover，非阻塞）。
-	hm := holderFrom(ctx)
+	hm := holderFrom(requestCtx)
 	cur := hm.get()
 	same := cur != nil && srcs[0].t.c != nil && cur.SourceID == srcs[0].t.c.ID
 	var l0 *scheduler.Lease
 	if !same {
 		var lerr error
-		l0, lerr = g.leaseFor(ctx, srcs[0].t, scheduler.KindHandover)
+		l0, lerr = g.leaseFor(requestCtx, srcs[0].t, scheduler.KindHandover)
 		if lerr != nil {
 			log.Printf("中途并行：名额已满（%v），继续单流", lerr)
 			return false, false
 		}
 	}
 
-	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, sent, sent+firstLen-1)
+	resp0, err := g.rangeReq(requestCtx, plan, srcs[0].t.u, sent, sent+firstLen-1)
 	if err != nil {
 		releaseLease(l0)
 		return false, false
@@ -170,7 +173,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	start := time.Now()
 	stats := make([]parStat, len(srcs))
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(ctx)
+	taskCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 
 	// 先派后面的段，第 0 段留给自己直通客户端。
@@ -221,7 +224,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 			defer wg.Done()
 			for {
 				i := int(next.Add(1)) - 1
-				if i >= n || ctx.Err() != nil {
+				if i >= n || taskCtx.Err() != nil {
 					return
 				}
 				off := sent + int64(i)*chunk
@@ -231,7 +234,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 				}
 				si := pick()
 				busy[si].Add(1)
-				err := g.parChunk(ctx, plan, srcs[si], srcs, si, off, length, total, part, stats, nil)
+				err := g.parChunk(taskCtx, plan, srcs[si], srcs, si, off, length, total, part, stats, nil)
 				busy[si].Add(-1)
 				if err != nil {
 					cancel() // 一段补不齐，整份就别再白下载了
@@ -288,7 +291,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	for i := 1; i < n; i++ {
 		select {
 		case <-dones[i]:
-		case <-ctx.Done():
+		case <-taskCtx.Done():
 			return true, false
 		}
 		off := sent + int64(i)*chunk
@@ -304,7 +307,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		}
 	}
 	wg.Wait()
-	if ctx.Err() != nil {
+	if taskCtx.Err() != nil {
 		return true, false
 	}
 
@@ -320,7 +323,11 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
 		metrics.MidfillVerifyFailed()
-		g.recordIntegrityFailure(plan, sha, nil)
+		var failSrc *fetchTarget
+		if len(srcs) == 1 { // 单源失败可归因；多源混跑不猜是哪台写坏的
+			failSrc = &srcs[0].t
+		}
+		g.recordIntegrityFailure(plan, sha, failSrc)
 		log.Printf("中途并行：整份校验失败，不入缓存：期望 %s 实得 %s", plan.ExpectSHA, sha)
 		return true, false
 	}

@@ -658,6 +658,8 @@ func (e *Engine) Loop(ctx context.Context) {
 				lastPrune = now
 				_ = e.st.Prune(now.AddDate(0, 0, -30).Unix())
 				e.st.PruneSessions()
+				// 完整性失败事件只留 180 天：够排障，不会无限长。
+				_ = e.st.PruneBlobFailures(now.AddDate(0, 0, -180).Unix())
 			}
 		}
 	}

@@ -53,3 +53,30 @@ func TestBlobFailureCountWindow(t *testing.T) {
 		t.Fatalf("全部应 2 条，实际 %d", n)
 	}
 }
+
+// 事件表按保留窗口清理：179 天的留、181 天的删。
+func TestPruneBlobFailures(t *testing.T) {
+	s := openBlobTest(t)
+	now := time.Now().Unix()
+	for _, ts := range []int64{now - 179*86400, now - 181*86400} {
+		if err := s.RecordBlobFailure(BlobFailure{
+			ExpectedDigest: "e", ActualDigest: "a", DigestSource: "github_api",
+			Protocol: "release", SourceID: 3, SourceName: "s3", ErrorCode: "digest_mismatch", CreatedAt: ts,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PruneBlobFailures(now - 180*86400); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.BlobFailureCount(0); n != 1 {
+		t.Fatalf("180 天内应留 1 条，实际 %d", n)
+	}
+	rows, err := s.BlobFailures(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SourceID != 3 || rows[0].SourceName != "s3" {
+		t.Fatalf("保留下来的事件归因丢了: %+v", rows)
+	}
+}
