@@ -159,6 +159,18 @@ func (s *Server) accelStats(w http.ResponseWriter, r *http.Request) {
 		}
 		cache["verify_failed"] = s.gw.VerifyFailed()
 		cache["parallel"] = s.gw.ParallelStats()
+		// 冷层占比由 janitor 每轮算好，这里只读快照，不在请求路径上扫表。
+		if cold, total, cn, tn, ok := metrics.LayerColdView(); ok {
+			ratio := 0.0
+			if total > 0 {
+				ratio = float64(cold) / float64(total)
+			}
+			cache["layer"] = map[string]any{
+				"cold_bytes": cold, "total_bytes": total,
+				"cold_entries": cn, "total_entries": tn,
+				"cold_ratio": ratio, "cold_days": 7,
+			}
+		}
 	}
 	if s.gw != nil && s.gw.CacheLimit() > 0 {
 		cache["limit"] = s.gw.CacheLimit()

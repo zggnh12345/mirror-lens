@@ -333,7 +333,9 @@ function renderAccel(a){
   var c = a.cache || {}, t = (a.today && a.today.all) || {};
   var line = (c.entries||0) + ' 个 / ' + fmtBytes(c.disk || c.bytes || 0);
   if (c.limit) line += ' · ' + pct((c.disk||0)/c.limit) + '（上限 ' + fmtBytes(c.limit) + '）';
+  if (c.layer && c.layer.total_bytes) line += ' · 冷层 ' + pct(c.layer.cold_ratio) + '（' + fmtBytes(c.layer.cold_bytes) + '）';
   $('#acCache').textContent = line;
+  if (c.layer) $('#acCache').title = '冷层=超过 ' + (c.layer.cold_days||7) + ' 天没再被取用的 layer 字节，主要是旧 latest 被替换下来的差异层；只做观测，不参与淘汰';
   var v = c.verify || {}, vf = c.verify_failed || 0;
   $('#acVerify').textContent = '已验证 ' + (v.verified||0) + ' · 无摘要 ' + (v.unknown||0)
     + ((v.mismatch||0) ? ' · 对不上 ' + v.mismatch : '') + (vf ? ' · 拒收 ' + vf : '');

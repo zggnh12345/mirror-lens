@@ -177,6 +177,11 @@ func (j *Janitor) Once() Stats {
 	j.lastRun = now
 	j.mu.Unlock()
 
+	// coldLayerAge 是「冷」的判定阈值：7 天没有命中就算冷。
+	// 选 7 天是因为 latest 通常几天内就会更新一次，超过一周还没人取的层
+	// 基本就是被新版本替换掉的差异层。
+	const coldLayerAge = 7 * 24 * time.Hour
+
 	// 9. 快照推给 metrics，抓取时不重扫整盘（百万文件会卡死）。
 	if r := metrics.Get(); r != nil {
 		blobs := uint64(0)
@@ -188,6 +193,11 @@ func (j *Janitor) Once() Stats {
 			free = f
 		}
 		metrics.SetCache(uint64(s.Usage), blobs, uint64(free))
+		// 冷层占比：7 天没再被取用的 layer 字节。只做观测，不参与淘汰；
+		// 用来判断「旧 latest 的差异层」是否值得上引用图回收。
+		if cold, total, cn, tn, cerr := j.st.ColdLayerStats(now.Add(-coldLayerAge).Unix()); cerr == nil {
+			metrics.SetLayerCold(uint64(cold), uint64(total), uint64(cn), uint64(tn))
+		}
 		if srcs, err := j.st.ListSources(); err == nil {
 			m := make(map[metrics.SourceStat]uint64, len(srcs)*2)
 			for _, s2 := range srcs {

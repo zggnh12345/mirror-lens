@@ -128,10 +128,16 @@ type Registry struct {
 	relayFallback map[string]uint64
 
 	// 快照 gauge 由 janitor 刷新：抓取时重扫整盘，百万文件会卡死。
-	haveCache   bool
-	cacheBytes  uint64
-	cacheBlobs  uint64
-	cacheFree   uint64
+	haveCache  bool
+	cacheBytes uint64
+	cacheBlobs uint64
+	cacheFree  uint64
+	// layer 冷热快照：只统计 docker:blob:*，janitor 每轮刷新。
+	haveLayers  bool
+	layerCold   uint64
+	layerTotal  uint64
+	layerColdN  uint64
+	layerTotalN uint64
 	haveSources bool
 	sources     map[SourceStat]uint64
 
@@ -540,6 +546,33 @@ func SetCache(bytes, blobs, free uint64) {
 	r.mu.Unlock()
 }
 
+// SetLayerCold 刷新 layer 冷热快照（字节与条目数）。冷 = last_hit 超过阈值。
+func SetLayerCold(cold, total, coldN, totalN uint64) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.haveLayers = true
+	r.layerCold, r.layerTotal = cold, total
+	r.layerColdN, r.layerTotalN = coldN, totalN
+	r.mu.Unlock()
+}
+
+// LayerColdView 给面板用：冷字节、总字节、冷条目、总条目、占比。
+func LayerColdView() (cold, total, coldN, totalN uint64, ok bool) {
+	r := current.Load()
+	if r == nil {
+		return 0, 0, 0, 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.haveLayers {
+		return 0, 0, 0, 0, false
+	}
+	return r.layerCold, r.layerTotal, r.layerColdN, r.layerTotalN, true
+}
+
 // SetSources 刷新源站数快照。
 func SetSources(m map[SourceStat]uint64) {
 	r := current.Load()
@@ -750,6 +783,27 @@ func (r *Registry) render() []byte {
 		b.WriteString("# HELP " + prefix + "cache_free_bytes 缓存盘剩余字节\n")
 		b.WriteString("# TYPE " + prefix + "cache_free_bytes gauge\n")
 		fmt.Fprintf(&b, "%scache_free_bytes %d\n", prefix, r.cacheFree)
+	}
+	if r.haveLayers {
+		b.WriteString("# HELP " + prefix + "layer_cold_bytes 超过冷阈值未再命中的 layer 字节\n")
+		b.WriteString("# TYPE " + prefix + "layer_cold_bytes gauge\n")
+		fmt.Fprintf(&b, "%slayer_cold_bytes %d\n", prefix, r.layerCold)
+		b.WriteString("# HELP " + prefix + "layer_total_bytes 全部 layer 字节\n")
+		b.WriteString("# TYPE " + prefix + "layer_total_bytes gauge\n")
+		fmt.Fprintf(&b, "%slayer_total_bytes %d\n", prefix, r.layerTotal)
+		b.WriteString("# HELP " + prefix + "layer_cold_entries 冷 layer 条目数\n")
+		b.WriteString("# TYPE " + prefix + "layer_cold_entries gauge\n")
+		fmt.Fprintf(&b, "%slayer_cold_entries %d\n", prefix, r.layerColdN)
+		b.WriteString("# HELP " + prefix + "layer_total_entries layer 条目总数\n")
+		b.WriteString("# TYPE " + prefix + "layer_total_entries gauge\n")
+		fmt.Fprintf(&b, "%slayer_total_entries %d\n", prefix, r.layerTotalN)
+		ratio := 0.0
+		if r.layerTotal > 0 {
+			ratio = float64(r.layerCold) / float64(r.layerTotal)
+		}
+		b.WriteString("# HELP " + prefix + "layer_cold_ratio 冷 layer 字节占比\n")
+		b.WriteString("# TYPE " + prefix + "layer_cold_ratio gauge\n")
+		fmt.Fprintf(&b, "%slayer_cold_ratio %.4f\n", prefix, ratio)
 	}
 	// 源站数快照
 	if r.haveSources {
