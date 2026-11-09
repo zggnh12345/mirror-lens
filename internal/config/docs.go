@@ -102,7 +102,7 @@ var fieldDocs = map[string]string{
 	"limits.token_per_minute":       "单个 Token 每分钟请求数上限",
 	"limits.token_burst":            "单个 Token 突发请求数上限",
 	"limits.token_concurrency":      "单个 Token 并发请求数上限",
-	"limits.trusted_proxies":        "信任的反向代理网段，只有这些来源的 X-Forwarded-For 会被采信",
+	"limits.trusted_proxies":        "信任的反向代理网段，只有这些来源的 X-Forwarded-For/Proto/Host 会被采信；默认 Docker 网桥+回环",
 	"metrics.enabled":               "是否开启 /api/metrics",
 	"metrics.require_token":         "访问 /api/metrics 是否需要 Token",
 	"cdn.enabled":                   "是否为响应加上 CDN 缓存头",

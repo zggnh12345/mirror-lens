@@ -58,6 +58,11 @@ func Default() Config {
 		TokenPerMinute:    1200,
 		TokenBurst:        200,
 		TokenConcurrency:  32,
+		// 默认信任 Docker 网桥与本机回环：容器部署时反代（Traefik/nginx）
+		// 就在这些网段里，不信任的话 X-Forwarded-Proto 会被忽略，
+		// 首次登录会因 Origin 协议对不上被当成跨站。只影响转发头采信，
+		// 显式写 trusted_proxies: [] 仍可关掉。
+		TrustedProxies: []string{"172.16.0.0/12", "fd00::/8", "127.0.0.1/32", "::1/128"},
 	}
 }
 

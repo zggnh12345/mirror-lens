@@ -36,12 +36,18 @@ func TestDefaults(t *testing.T) {
 	if got := c.CacheDir(); got != "/data/cache" {
 		t.Fatalf("缓存目录: %s", got)
 	}
-	// 限流默认开着，且默认不信任何转发头
+	// 限流默认开着；默认只信任 Docker 网桥和回环，容器里的反代才能还原来源。
 	if !c.Limits.Enabled || c.Limits.IPPerMinute != 300 || c.Limits.IPConcurrency != 8 {
 		t.Fatalf("限流默认值不对: %+v", c.Limits)
 	}
-	if len(c.Limits.TrustedProxies) != 0 {
-		t.Fatalf("默认不该信任任何代理: %v", c.Limits.TrustedProxies)
+	wantTrusted := []string{"172.16.0.0/12", "fd00::/8", "127.0.0.1/32", "::1/128"}
+	if len(c.Limits.TrustedProxies) != len(wantTrusted) {
+		t.Fatalf("默认信任网段不对: %v", c.Limits.TrustedProxies)
+	}
+	for i, w := range wantTrusted {
+		if c.Limits.TrustedProxies[i] != w {
+			t.Fatalf("默认信任网段[%d] 应为 %s，实际 %v", i, w, c.Limits.TrustedProxies)
+		}
 	}
 }
 

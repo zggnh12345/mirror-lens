@@ -224,12 +224,12 @@ limits:
   token_per_minute: 1200    # 单个 Access Token 每分钟请求数
   token_burst: 200
   token_concurrency: 32
-  # 可信反向代理网段（CIDR，或单个地址）。默认空 = 不信任何转发头，
-  # 按 TCP 对端地址限流。部署在 nginx/Traefik/Caddy 后面时，把反代
-  # 自己的网段填进来，例如：
-  #   trusted_proxies: ["127.0.0.1/32", "::1/128", "10.0.0.0/8"]
-  # 只信这些地址发来的 X-Forwarded-For，并取最右侧的非可信地址作为客户端。
-  trusted_proxies: []
+  # 可信反向代理网段（CIDR，或单个地址）。只有这些来源的
+  # X-Forwarded-For/Proto/Host 会被采信，并取最右侧的非可信地址作为客户端。
+  # 默认信任 Docker 网桥和本机回环：容器里跑 Traefik/nginx 时反代就在这些
+  # 网段，不信任会让首次登录因 Origin 协议对不上被拒。
+  # 反代在别的网段（如 10.x）就加进来；写 [] 表示谁都不信。
+  trusted_proxies: ["172.16.0.0/12", "fd00::/8", "127.0.0.1/32", "::1/128"]
 
 # ── 日志 ────────────────────────────────────────────────
 #

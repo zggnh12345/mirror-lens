@@ -43,7 +43,7 @@ docker compose up -d
 
 想从源码构建就把 compose 里 `image:` 那行注释掉，改成 `build: .`。
 
-bind mount 挂 `./data` 时容器内是 uid 10001，先 `sudo chown -R 10001:10001 ./data`，否则启动会报「数据目录不可写」。嫌麻烦就用 named volume，权限自动继承。
+bind mount 挂 `./data`、`./config` 时容器内是 uid 10001，先 `sudo chown -R 10001:10001 ./data ./config`，否则启动会报「数据目录不可写」，配置模板也写不进 `./config`。嫌麻烦就用 named volume，权限自动继承。
 
 ## 面板
 
@@ -202,7 +202,7 @@ curl -H "Authorization: Bearer <token>" \
 
 参数写在 `config.yaml` 里，字段全都有默认值，不写也能跑。优先级：命令行（`-config` / `-addr` / `-data` / `-no-seed`）> 环境变量（`ADDR` / `DATA_DIR` / `CACHE_DIR`）> 配置文件 > 默认值。
 
-容器里固定读 `/config/config.yaml`（compose 把宿主 `config/` 目录挂到这里）；找不到就回退到当前目录的 `config.yaml`，方便本地直接跑。
+容器里固定读 `/config/config.yaml`（compose 把宿主 `config/` 目录挂到这里）；只有 `/config` 目录不存在时才回退到当前目录的 `config.yaml`，方便本地直接跑。首次启动文件不存在会在 `/config` 下生成模板，不会写进 `/data`。
 
 完整模板见 [config.example.yaml](config.example.yaml)，字段说明都写在文件里。常用的几段：
 

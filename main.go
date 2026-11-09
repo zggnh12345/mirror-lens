@@ -44,10 +44,11 @@ func main() {
 
 	path, required := *cfgPath, true
 	if path == "" {
-		// 容器里配置固定放 /config/config.yaml（compose 挂载点）；
-		// 找不到再回退当前目录的 config.yaml，方便本地跑。
-		if _, err := os.Stat("/config/config.yaml"); err == nil {
-			path = "/config/config.yaml"
+		// 容器里配置固定放 /config/config.yaml（compose 挂载点）。
+		// 判据是「目录在不在」而不是「文件在不在」：首次启动文件还不存在，
+		// 若按文件判断就会回落到工作目录 /data，把配置写进数据卷。
+		if fi, err := os.Stat("/config"); err == nil && fi.IsDir() {
+			path, required = "/config/config.yaml", false
 		} else {
 			path, required = "config.yaml", false
 		}
@@ -59,7 +60,7 @@ func main() {
 	// 文件不存在时直接落一份完整模板：默认值都写出来，照着改就行。
 	// 放在环境变量/命令行覆盖之前，模板里是纯默认值，不会被部署参数固化。
 	if wrote, werr := config.WriteTemplate(path, cfg); werr != nil {
-		log.Printf("生成配置模板失败: %v", werr)
+		log.Printf("生成配置模板失败: %v（目录需对容器内 uid 10001 可写：chown -R 10001:10001 ./config）", werr)
 	} else if wrote {
 		log.Printf("已生成完整配置模板: %s（改完需重启生效）", path)
 	}

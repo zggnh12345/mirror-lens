@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
+	"github.com/zggnh12345/mirror-lens/internal/limits"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -154,6 +155,30 @@ func TestCSRFOriginBehindTrustedProxy(t *testing.T) {
 	req("https://evil.example", "https", "evil.example", "203.0.113.5:40000", "mirror-lens:8080", 403)
 	// 默认端口归一：http://a:80 与 http://a 同源。
 	req("http://ml.example.com:80", "", "", "203.0.113.5:40000", "ml.example.com", 200)
+}
+
+// 默认配置就应覆盖容器反代场景：Traefik 在 172.x 网桥里，TLS 在它那终止。
+// 旧默认空列表会把这种登录判成跨站，用户首次部署直接登不进去。
+func TestCSRFOriginBehindDefaultDockerProxy(t *testing.T) {
+	st, h := newAuthServer(t, false)
+	ck, tok := signedIn(t, st, h)
+	defer auth.SetTrustedProxies(nil)
+	auth.SetTrustedProxies(limits.Default().TrustedProxies)
+
+	hdr := map[string]string{
+		"X-CSRF-Token":      tok,
+		"Origin":            "https://ml.example.com:3333",
+		"X-Forwarded-Proto": "https",
+		"X-Forwarded-Host":  "ml.example.com:3333",
+		"X-Forwarded-For":   "203.0.113.9",
+	}
+	if got := putRaw(h, "/api/settings", `{"l1_minutes":12}`, hdr, "172.18.0.2:5555", "mirror-lens:8080", ck); got != 200 {
+		t.Fatalf("Docker 网桥反代应放行，得到 %d", got)
+	}
+	// 非可信网段照旧不采信转发头。
+	if got := putRaw(h, "/api/settings", `{"l1_minutes":12}`, hdr, "203.0.113.5:40000", "mirror-lens:8080", ck); got != 403 {
+		t.Fatalf("公网对端自带转发头应拒绝，得到 %d", got)
+	}
 }
 
 func putRaw(h http.Handler, path, body string, hdr map[string]string, remote, host string, ck *http.Cookie) int {
