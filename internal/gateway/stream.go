@@ -539,6 +539,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			}
 		}
 		if cacheable {
+			// 先登记再开文件：清理侧靠它覆盖「已拿到 Lease、还没持文件锁」的窗口。
+			endFill := g.cache.BeginFill(plan.CacheKey)
+			defer endFill()
 			var err error
 			part, err = g.cache.OpenPartial(plan.CacheKey)
 			if err != nil {
@@ -601,7 +604,11 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			sw.setGiveUp()
 			g.noteLive(tgt, plan.Kind, sw)
 			log.Printf("单流判慢：%v", logging.SafeErr(serr))
-			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp, abortResponse(w)); taken {
+			killConn, canAbort := abortResponse(w)
+			if !canAbort {
+				log.Printf("中途并行跳过：连接不支持异常终止（HTTP/2 或不支持 Hijack）")
+			}
+			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp, killConn); taken {
 				tgt = nil // 记账分散到各台源，这里不再重复记当前源
 				if ok {
 					outcome = outcomeOK
@@ -807,7 +814,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 这里唯一要保证的是绝不把错内容写进缓存。
 		g.cache.DropPartial(plan.CacheKey)
 		g.verifyFail.Add(1)
-		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
+		g.recordIntegrityFailure(plan, sha, tgt)
 		log.Printf("内容校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, safeUpstream(plan.Upstream))
 		outcome = outcomeFail
 		return

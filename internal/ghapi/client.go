@@ -118,7 +118,9 @@ func (c *Client) AssetDigest(ctx context.Context, owner, repo, tag, file string)
 		return Digest{Result: ResultAuthFailed, Source: SourceNone,
 			Err: errors.New("GitHub Token 鉴权连续失败，已停用 Release API（改配置或重启后恢复）")}
 	}
-	key := strings.ToLower(owner + "/" + repo + "/" + tag + "/" + file)
+	// owner/repo 在 GitHub 上不区分大小写；tag 和 asset 文件名区分大小写，
+	// 一起小写会让 v1.0.0/Linux.tar.gz 与 v1.0.0/linux.tar.gz 共用一条摘要。
+	key := strings.ToLower(owner) + "/" + strings.ToLower(repo) + "/" + tag + "/" + file
 	if d, ok := c.cached(key); ok {
 		return d
 	}

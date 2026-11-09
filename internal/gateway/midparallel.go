@@ -36,6 +36,12 @@ func midChunks(rest, chunk int64) int {
 // 返回 false 表示还没写新字节，调用方可以继续原来的单流连接。
 func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	sent, total int64, flusher http.Flusher, old *http.Response, killConn func()) (taken, ok bool) {
+	// 不能异常终止连接的客户端（HTTP/2、writer 链里没有 Hijacker）不接管：
+	// 边填边发之后校验失败却只能正常收尾，等于把损坏内容当完整响应交付。
+	if killConn == nil {
+		log.Printf("中途并行跳过：当前连接无法异常终止（HTTP/2 或不支持 Hijack）")
+		return false, false
+	}
 	// 没有 .part 就没法拼装（超大文件已转透传），客户端自带 Range 也不掺和。
 	if part == nil || total <= 0 || sent <= 0 || sent >= total {
 		log.Printf("中途并行跳过：part=%v sent=%d total=%d", part != nil, sent, total)
@@ -314,7 +320,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
 		metrics.MidfillVerifyFailed()
-		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
+		g.recordIntegrityFailure(plan, sha, nil)
 		log.Printf("中途并行：整份校验失败，不入缓存：期望 %s 实得 %s", plan.ExpectSHA, sha)
 		return true, false
 	}

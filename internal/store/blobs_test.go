@@ -93,7 +93,8 @@ func TestBlobUpsertPrecedence(t *testing.T) {
 		t.Fatalf("verified 被降级: %+v", b)
 	}
 
-	if err := s.BlobMarkMismatch("x", "expected", "actual", DigestSourceGitHub, "digest_mismatch"); err != nil {
+	if err := s.BlobUpsert(Blob{SHA256: "x", IntegrityStatus: BlobMismatch,
+		ExpectedDigest: "expected", ActualDigest: "actual", DigestSource: DigestSourceGitHub}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ = s.BlobGet("x"); b.IntegrityStatus != BlobMismatch {

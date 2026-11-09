@@ -145,7 +145,7 @@ func (f *midFixture) run(t *testing.T, expectSHA string) ([]byte, bool, bool) {
 	req := httptest.NewRequest(http.MethodGet, "/v2/library/postgres/blobs/sha256:"+f.sha, nil)
 	old := &http.Response{Request: req, Header: http.Header{}}
 	var out bytes.Buffer
-	taken, ok := f.g.midFill(&out, plan, part, midSent, midTotal, nil, old, nil)
+	taken, ok := f.g.midFill(&out, plan, part, midSent, midTotal, nil, old, func() {})
 	return out.Bytes(), taken, ok
 }
 
@@ -205,7 +205,7 @@ func TestMidFillNoSources(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v2/x", nil)
 	old := &http.Response{Request: req, Header: http.Header{}}
 	var out bytes.Buffer
-	taken, ok := f.g.midFill(&out, plan, part, midSent, midTotal, nil, old, nil)
+	taken, ok := f.g.midFill(&out, plan, part, midSent, midTotal, nil, old, func() {})
 	if taken || ok {
 		t.Fatalf("无分片源应放弃接入，实际 taken=%v ok=%v", taken, ok)
 	}

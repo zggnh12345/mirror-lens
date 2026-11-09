@@ -181,6 +181,22 @@ func (s *Store) migrateAccel() error {
 			verified_at INTEGER NOT NULL DEFAULT 0,
 			verification_error TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_blobs_integrity ON blobs(integrity_status)`,
+		// 完整性失败是「某次获取没通过验证」的事件，不是内容身份。
+		// 写在这里就不会把实际下载到的 SHA 标成不可信——那份内容可能
+		// 在别处已经过可信校验，两者必须分开记。
+		`CREATE TABLE IF NOT EXISTS blob_integrity_failures(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			expected_digest TEXT NOT NULL,
+			actual_digest TEXT NOT NULL,
+			digest_source TEXT NOT NULL,
+			protocol TEXT NOT NULL,
+			source_id INTEGER,
+			source_name TEXT NOT NULL DEFAULT '',
+			cache_key TEXT NOT NULL DEFAULT '',
+			error_code TEXT NOT NULL,
+			created_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_blob_integrity_failures_created
+			ON blob_integrity_failures(created_at)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -290,12 +306,45 @@ func (s *Store) BlobUpsert(b Blob) error {
 	return err
 }
 
-// BlobMarkMismatch 记「有摘要但对不上」。这条记录不参与命中，只用于排障与面板。
-func (s *Store) BlobMarkMismatch(sha, expected, actual, source, errText string) error {
-	return s.BlobUpsert(Blob{
-		SHA256: sha, IntegrityStatus: BlobMismatch, ExpectedDigest: expected, ActualDigest: actual,
-		DigestSource: source, DigestAlgorithm: "sha256", VerificationError: errText,
-	})
+// BlobFailure 是一次「取到的字节和预期摘要对不上」的事件记录。
+// 它不描述内容身份：actual_digest 指向的字节可能完好，只是这次获取的过程
+// 没通过可信度验证（分片拼错、上游被替换、源站截断）。因此绝不能拿它去
+// 改 blobs.integrity_status。
+type BlobFailure struct {
+	ExpectedDigest string
+	ActualDigest   string
+	DigestSource   string
+	Protocol       string
+	SourceID       int64
+	SourceName     string
+	CacheKey       string
+	ErrorCode      string
+	CreatedAt      int64
+}
+
+// RecordBlobFailure 落一条完整性失败事件。写失败只返回错误，调用方不应
+// 因此改变下载结果或资源释放路径。
+func (s *Store) RecordBlobFailure(f BlobFailure) error {
+	if f.CreatedAt == 0 {
+		f.CreatedAt = time.Now().Unix()
+	}
+	var sid any // 未知来源存 NULL，不用 0 冒充一个不存在的源
+	if f.SourceID != 0 {
+		sid = f.SourceID
+	}
+	_, err := s.db.Exec(`INSERT INTO blob_integrity_failures
+		(expected_digest, actual_digest, digest_source, protocol, source_id, source_name, cache_key, error_code, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		f.ExpectedDigest, f.ActualDigest, f.DigestSource, f.Protocol,
+		sid, f.SourceName, f.CacheKey, f.ErrorCode, f.CreatedAt)
+	return err
+}
+
+// BlobFailureCount 返回窗口内的失败事件数（面板/排障用）。
+func (s *Store) BlobFailureCount(since int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM blob_integrity_failures WHERE created_at >= ?`, since).Scan(&n)
+	return n, err
 }
 
 // BlobIntegrityCounts 按完整性状态统计 blob 数（不是条目数）。

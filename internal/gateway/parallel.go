@@ -151,6 +151,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.parFalls.Add(1)
 		return false
 	}
+	endFill := g.cache.BeginFill(plan.CacheKey)
+	defer endFill()
 	part, err := g.cache.OpenPartial(plan.CacheKey)
 	if err != nil {
 		log.Printf("并行填充：打开 .part 失败，退回单流: %v", logging.SafeErr(err))
@@ -449,7 +451,11 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	sha := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
-		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
+		var failSrc *fetchTarget
+		if len(srcs) == 1 {
+			failSrc = &srcs[0].t
+		}
+		g.recordIntegrityFailure(plan, sha, failSrc)
 		drop()
 		// 拼错只证明「组合」错了：单源才归因记失败，
 		// 多源时不动评分，免得正常源被熔断。

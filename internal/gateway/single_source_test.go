@@ -92,7 +92,7 @@ func TestMidFillSingleSourceRepeat(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v2/x/blobs/sha256:"+sha, nil)
 		old := &http.Response{Request: req, Header: http.Header{}}
 		var out bytes.Buffer
-		taken, ok := g.midFill(&out, plan, part, sent, int64(len(data)), nil, old, nil)
+		taken, ok := g.midFill(&out, plan, part, sent, int64(len(data)), nil, old, func() {})
 		part.Close()
 		if !taken || !ok {
 			t.Fatalf("第 %d 轮单源多连接没接上: taken=%v ok=%v", round+1, taken, ok)

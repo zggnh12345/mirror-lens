@@ -123,6 +123,9 @@ type Registry struct {
 	// forgotten 记住已删除的源：在途请求的迟到回调不能再把序列写回来。
 	forgotten map[int64]bool
 	limited   map[string]uint64
+
+	// 目录 fsync 不被文件系统支持（EINVAL/ENOTSUP）的次数。
+	dirSyncUnsupported uint64
 	// 信任中转没能走钉住地址的次数：state=unresolved（改用系统解析）
 	// 或 expired（直接拒绝拨号）。
 	relayFallback map[string]uint64
@@ -511,6 +514,18 @@ func RateLimited(layer string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.limited[layer]++
+}
+
+// DirSyncUnsupported 记一次「文件系统不支持目录 fsync」。
+// 这不是成功，只表示提交路径拿不到目录项持久性保证。
+func DirSyncUnsupported() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dirSyncUnsupported++
 }
 
 // RelayFallback 记一次没用上钉住地址的拨号。
@@ -972,6 +987,11 @@ func (r *Registry) render() []byte {
 		for _, st := range sortedKeys(r.relayFallback) {
 			fmt.Fprintf(&b, "%srelay_fallback_total{state=%q} %d\n", prefix, st, r.relayFallback[st])
 		}
+	}
+	if r.dirSyncUnsupported > 0 {
+		b.WriteString("# HELP " + prefix + "cache_dir_fsync_unsupported_total 文件系统不支持目录 fsync 的提交次数（持久性保证降级）\n")
+		b.WriteString("# TYPE " + prefix + "cache_dir_fsync_unsupported_total counter\n")
+		fmt.Fprintf(&b, "%scache_dir_fsync_unsupported_total %d\n", prefix, r.dirSyncUnsupported)
 	}
 	if len(r.limited) > 0 {
 		b.WriteString("# HELP " + prefix + "ratelimit_rejected_total 入口限流拒绝数（按层）\n")

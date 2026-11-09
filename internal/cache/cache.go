@@ -5,6 +5,7 @@ package cache
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
 type Store struct {
@@ -24,6 +26,43 @@ type Store struct {
 	// tempActive 记录正在写的临时文件，SweepTemp 跳过。
 	// 只靠 mtime 不够：连接卡住时文件一小时都不增长。
 	tempActive sync.Map
+
+	// fills 记录正在填充的 .part（按文件名）。文件锁只能覆盖「已经打开
+	// 并持锁」的写入者；从拿到 Lease 到打开文件之间还有窗口。清理时
+	// 必须在同一把互斥锁下先看这里再删，否则会把刚要续传的文件删掉。
+	fillMu sync.Mutex
+	fills  map[string]int
+}
+
+// BeginFill 标记某个 key 的 .part 正在被填充，返回结束标记。
+// 必须在打开文件之前调用：先登记，再动文件，清理侧才不会在窗口期误删。
+func (s *Store) BeginFill(key string) (end func()) {
+	part, _ := s.PartialPaths(key)
+	base := filepath.Base(part)
+	s.fillMu.Lock()
+	if s.fills == nil {
+		s.fills = map[string]int{}
+	}
+	s.fills[base]++
+	s.fillMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.fillMu.Lock()
+			if n := s.fills[base]; n <= 1 {
+				delete(s.fills, base)
+			} else {
+				s.fills[base] = n - 1
+			}
+			s.fillMu.Unlock()
+		})
+	}
+}
+
+// fillActiveLocked 在 fillMu 内判断是否有活动填充。调用方负责加锁。
+func (s *Store) fillActiveLocked(base string) bool {
+	return s.fills[base] > 0
 }
 
 func New(root string) (*Store, error) {
@@ -142,8 +181,11 @@ func syncFile(path string) error {
 	return f.Sync()
 }
 
-// syncDir 刷目录项。部分文件系统不支持对目录 fsync（EINVAL/ENOTSUP），
-// 这类返回视为成功——它们本来就没有需要单独落盘的目录项。
+var dirSyncWarned sync.Once
+
+// syncDir 刷目录项。部分文件系统不支持对目录 fsync（EINVAL/ENOTSUP）：
+// 这时不阻断缓存提交，但也不能记成「已经持久化」——目录项没有持久性保证，
+// 掉电后 rename 可能回退。用日志和计数器把这种降级暴露给运维。
 func syncDir(dir string) error {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -152,6 +194,10 @@ func syncDir(dir string) error {
 	defer f.Close()
 	if err := f.Sync(); err != nil {
 		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+			dirSyncWarned.Do(func() {
+				log.Printf("警告: 文件系统不支持目录 fsync（%v），缓存提交缺少目录项持久性保证: %s", err, dir)
+			})
+			metrics.DirSyncUnsupported()
 			return nil
 		}
 		return err
