@@ -11,6 +11,7 @@ import (
 //	ok / no_digest / not_found        → 正常
 //	api_schema_unexpected            → API 结构变了，需要人看
 //	unsupported_algorithm            → 上游换了算法，明确降级
+//	auth_failed                      → Token 失效/被吊销，需改配置
 //	rate_limited / timeout / unavailable → 外部故障，走降级路径
 var (
 	ghMu   sync.Mutex
@@ -43,7 +44,7 @@ func (r *Registry) writeGHMeta(b *strings.Builder) {
 	b.WriteString("# TYPE " + prefix + "github_meta_total counter\n")
 	for _, k := range []string{
 		"ok", "no_digest", "not_found", "api_schema_unexpected",
-		"unsupported_algorithm", "rate_limited", "timeout", "unavailable", "no_credentials",
+		"unsupported_algorithm", "auth_failed", "rate_limited", "timeout", "unavailable", "no_credentials",
 	} {
 		fmt.Fprintf(b, "%sgithub_meta_total{result=%q} %d\n", prefix, k, snapshot[k])
 	}

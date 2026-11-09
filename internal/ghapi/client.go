@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/sums"
@@ -33,8 +35,11 @@ const (
 	ResultSchema         = "api_schema_unexpected"
 	ResultUnsupportedAlg = "unsupported_algorithm"
 	ResultRateLimited    = "rate_limited"
-	ResultUnavailable    = "unavailable"
-	ResultTimeout        = "timeout"
+	// ResultAuthFailed 是 Token 失效/被吊销（401）。与限流分开：前者改配置才能恢复，
+	// 后者等一会儿就好，混在一起运维看不出该做什么。
+	ResultAuthFailed  = "auth_failed"
+	ResultUnavailable = "unavailable"
+	ResultTimeout     = "timeout"
 )
 
 // 摘要来源。
@@ -74,7 +79,15 @@ type Client struct {
 	mu    sync.Mutex
 	cache map[string]cacheEntry
 	sf    singleflight
+
+	// 连续 401 到阈值就本进程停用 Release API：Token 失效时不该每 2 分钟
+	// 继续打无效请求。改配置或重启后自然恢复。
+	authFails atomic.Int32
+	disabled  atomic.Bool
 }
+
+// authFailLimit 是停用前的连续 401 次数。
+const authFailLimit = 5
 
 type cacheEntry struct {
 	d   Digest
@@ -101,11 +114,22 @@ func (c *Client) AssetDigest(ctx context.Context, owner, repo, tag, file string)
 	if !c.Enabled() {
 		return Digest{Result: ResultNoToken, Source: SourceNone, Err: errors.New("未配置 GitHub Token")}
 	}
+	if c.disabled.Load() {
+		return Digest{Result: ResultAuthFailed, Source: SourceNone,
+			Err: errors.New("GitHub Token 鉴权连续失败，已停用 Release API（改配置或重启后恢复）")}
+	}
 	key := strings.ToLower(owner + "/" + repo + "/" + tag + "/" + file)
 	if d, ok := c.cached(key); ok {
 		return d
 	}
 	d := c.sf.Do(key, func() Digest { return c.fetch(ctx, owner, repo, tag, file) })
+	if d.Result == ResultAuthFailed {
+		if c.authFails.Add(1) >= authFailLimit && c.disabled.CompareAndSwap(false, true) {
+			log.Printf("GitHub Token 连续 %d 次鉴权失败（401），已停用 Release 摘要 API；下载不受影响，改配置或重启后恢复", authFailLimit)
+		}
+	} else {
+		c.authFails.Store(0)
+	}
 	c.store(key, d)
 	return d
 }
@@ -189,7 +213,9 @@ func (c *Client) release(ctx context.Context, owner, repo, tag string) (*release
 		return nil, classifyNetErr(ctx, err)
 	}
 	switch {
-	case code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusTooManyRequests:
+	case code == http.StatusUnauthorized:
+		return nil, Digest{Result: ResultAuthFailed, Source: SourceNone, Err: fmt.Errorf("GitHub API %d（Token 无效或已过期）", code)}
+	case code == http.StatusForbidden || code == http.StatusTooManyRequests:
 		return nil, Digest{Result: ResultRateLimited, Source: SourceNone, Err: fmt.Errorf("GitHub API %d", code)}
 	case code == http.StatusNotFound:
 		return nil, Digest{Result: ResultNotFound, Source: SourceNone, Err: errors.New("release 不存在")}
