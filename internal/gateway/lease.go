@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
@@ -120,6 +121,11 @@ type chunkLease struct {
 	unbindOnce sync.Once
 	cancelOnce sync.Once
 	once       sync.Once
+
+	// Attempt 指标：started 只在 bindAttempt 成功后置位；
+	// reclaimed 标出「本次取消来自 Reclaim」，普通收尾的 cancel 不算取消。
+	started   atomic.Bool
+	reclaimed atomic.Bool
 }
 
 // bindAttempt 把本次 Attempt 的取消函数登记到 Lease：
@@ -130,9 +136,21 @@ func (c *chunkLease) bindAttempt(actx context.Context, cancel context.CancelFunc
 		return true
 	}
 	c.acancel = cancel
-	c.unbind = c.l.BindCancel(cancel)
+	// Lease 侧的取消回调先做标记再取消：事后无法区分「Reclaim 取消」和
+	// 「正常收尾取消」，而指标只应统计前者。
+	c.unbind = c.l.BindCancel(func() {
+		if c.reclaimed.CompareAndSwap(false, true) {
+			metrics.AttemptCancelled()
+		}
+		cancel()
+	})
 	// BindCancel 对已失效的名额会立即 cancel，必须回查再决定是否拨号。
-	return actx.Err() == nil
+	if actx.Err() != nil {
+		return false
+	}
+	c.started.Store(true)
+	metrics.AttemptStarted()
+	return true
 }
 
 func (c *chunkLease) unbindOnly() {
@@ -184,6 +202,9 @@ func (c *chunkLease) finish(rc io.ReadCloser) {
 		}
 		if c.done != nil {
 			c.done()
+		}
+		if c.started.Load() {
+			metrics.AttemptFinished()
 		}
 	})
 }

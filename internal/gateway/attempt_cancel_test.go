@@ -196,7 +196,9 @@ func TestParChunkCancelsAfterBodyClose(t *testing.T) {
 			f.plan.Upstream = src.t.u
 
 			var closedAfterCancel atomic.Bool
+			var attemptCtx context.Context
 			f.g.cli = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				attemptCtx = r.Context()
 				h := http.Header{}
 				if v := tc.header(f.total); v != "" {
 					h.Set("Content-Range", v)
@@ -218,6 +220,14 @@ func TestParChunkCancelsAfterBodyClose(t *testing.T) {
 			_ = f.g.parChunk(context.Background(), f.plan, src, []parSource{src}, 0, 0, length, f.total, part, stats, nil)
 			if closedAfterCancel.Load() {
 				t.Fatal("Body.Close 时 Attempt Context 已被取消，连接无法复用")
+			}
+			// 顺序之外还要确认取消确实发生：只测「Close 时还没取消」会让
+			// 「永远不取消」的实现也通过。
+			if attemptCtx == nil {
+				t.Fatal("没有拿到 Attempt Context")
+			}
+			if attemptCtx.Err() == nil {
+				t.Fatal("分片结束后 Attempt Context 仍未取消")
 			}
 		})
 	}
