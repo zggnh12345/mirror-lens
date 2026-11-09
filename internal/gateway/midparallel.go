@@ -15,6 +15,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -34,7 +35,7 @@ func midChunks(rest, chunk int64) int {
 // 返回 true 表示已经接手：无论后面成功还是失败，调用方都不该再动这条响应；
 // 返回 false 表示还没写新字节，调用方可以继续原来的单流连接。
 func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
-	sent, total int64, flusher http.Flusher, old *http.Response) (taken, ok bool) {
+	sent, total int64, flusher http.Flusher, old *http.Response, killConn func()) (taken, ok bool) {
 	// 没有 .part 就没法拼装（超大文件已转透传），客户端自带 Range 也不掺和。
 	if part == nil || total <= 0 || sent <= 0 || sent >= total {
 		log.Printf("中途并行跳过：part=%v sent=%d total=%d", part != nil, sent, total)
@@ -58,6 +59,18 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		return false, false
 	}
 	ctx := old.Request.Context()
+	// wrote 一旦置位，响应就无法撤回：此后的任何失败都必须让连接异常结束，
+	// 不能正常收尾，否则客户端会把损坏内容当成完整响应。
+	var wrote, clientGone bool
+	defer func() {
+		if !wrote || ok || clientGone || ctx.Err() != nil {
+			return
+		}
+		metrics.MidfillAborted()
+		if killConn != nil {
+			killConn()
+		}
+	}()
 	targets := g.parallelTargetsN(plan, 20)
 	if g.parTargets != nil {
 		targets = g.parTargets(plan)
@@ -237,7 +250,12 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 				wn = avail
 			}
 			if _, werr := out.Write(buf[:wn]); werr != nil {
-				return true, false // 客户端走了
+				clientGone = true // 客户端走了
+				return true, false
+			}
+			if !wrote {
+				wrote = true
+				metrics.MidfillStarted()
 			}
 			if _, werr := pw.Write(buf[:wn]); werr != nil {
 				return true, false
@@ -295,6 +313,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	sha := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
+		metrics.MidfillVerifyFailed()
 		log.Printf("中途并行：整份校验失败，不入缓存：期望 %s 实得 %s", plan.ExpectSHA, sha)
 		return true, false
 	}

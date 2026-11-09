@@ -601,7 +601,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			sw.setGiveUp()
 			g.noteLive(tgt, plan.Kind, sw)
 			log.Printf("单流判慢：%v", logging.SafeErr(serr))
-			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp); taken {
+			if taken, ok := g.midFill(out, plan, part, sent, total, flusher, resp, abortResponse(w)); taken {
 				tgt = nil // 记账分散到各台源，这里不再重复记当前源
 				if ok {
 					outcome = outcomeOK

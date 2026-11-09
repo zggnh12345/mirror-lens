@@ -115,7 +115,7 @@ func TestMidFillClientGoneStopsWorkers(t *testing.T) {
 
 	// 只让客户端收 128KB 就断开。
 	out := &limitWriter{limit: 128 << 10}
-	taken, ok := g.midFill(out, plan, part, midSent, midTotal, nil, old)
+	taken, ok := g.midFill(out, plan, part, midSent, midTotal, nil, old, nil)
 	if !taken || ok {
 		t.Fatalf("客户端断开应 taken=true ok=false，实际 %v %v", taken, ok)
 	}

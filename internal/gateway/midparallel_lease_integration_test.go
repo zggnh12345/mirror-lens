@@ -64,7 +64,7 @@ func TestMidFillSameSourceLeaseBodyClose(t *testing.T) {
 	old := &http.Response{Request: req, Header: http.Header{}}
 
 	var out bytes.Buffer
-	taken, ok := g.midFill(&out, plan, part, midSent, midTotal, nil, old)
+	taken, ok := g.midFill(&out, plan, part, midSent, midTotal, nil, old, nil)
 	if !taken || !ok {
 		t.Fatalf("同源接管失败: taken=%v ok=%v", taken, ok)
 	}

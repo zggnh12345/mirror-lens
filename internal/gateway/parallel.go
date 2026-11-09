@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -838,6 +839,13 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 				var aerr error
 				cl, aerr = g.openChunkLease(ctx, srcs[a.idx].t)
 				if aerr != nil {
+					// 名额有限等待超时只是「这台源此刻没空」，不是段失败：
+					// 直接换下一个源，别让一个慢源把整份传输掐断。
+					if ctx.Err() == nil && errors.Is(aerr, scheduler.ErrLeaseWaitTimeout) {
+						metrics.ParFillLeaseTimeout()
+						last = aerr
+						continue
+					}
 					return aerr
 				}
 			}
