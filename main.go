@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -217,6 +219,15 @@ func main() {
 	// 多源调度：只有回源才选源，缓存命中不受影响。
 	var sched *scheduler.Scheduler
 	if cfg.Sources.Enabled {
+		// 速度项饱和点：默认 12MB/s（生产 P75）。1.5MB/s 的老值会让 77% 的源同分。
+		speedCap := 12000.0
+		if v := strings.TrimSpace(os.Getenv("ML_SPEED_CAP_KBPS")); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+				speedCap = f
+			} else {
+				log.Printf("ML_SPEED_CAP_KBPS=%q 无效，用默认 12000", v)
+			}
+		}
 		sched = scheduler.New(st, scheduler.Config{
 			Enabled:       true,
 			MaxCandidates: cfg.Sources.MaxCandidates,
@@ -227,9 +238,10 @@ func main() {
 			Headroom:      cfg.Sources.Headroom,
 			Admission:     cfg.Sources.Admission,
 			WaitTimeout:   cfg.Sources.WaitTimeout.Duration,
+			SpeedCapKBps:  speedCap,
 		})
 		gw.SetScheduler(sched)
-		log.Printf("多源调度已开：每个协议最多试 %d 个源", cfg.Sources.MaxCandidates)
+		log.Printf("多源调度已开：每个协议最多试 %d 个源，速度饱和点 %.0f KB/s", cfg.Sources.MaxCandidates, speedCap)
 	}
 	probe.SetSampleCap(int64(cfg.Probe.SampleMiB) << 20)
 	eng := runner.New(st, runner.Options{

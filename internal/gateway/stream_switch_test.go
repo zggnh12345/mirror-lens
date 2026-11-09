@@ -156,7 +156,7 @@ func (f *swFixture) stream(t *testing.T, slow, fast *swSrc, expect string) ([]by
 	g.cli = slow.srv.Client()
 	g.speedProbe = func(id int64, kind string, n int) []int64 {
 		if id == 2 {
-			return []int64{64 << 10} // 64MB/s 的快样本
+			return []int64{64 << 10, 64 << 10, 64 << 10} // 64MB/s 的快样本（中位数取 3 条）
 		}
 		return nil
 	}

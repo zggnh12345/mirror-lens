@@ -86,8 +86,8 @@ func TestGitCapGatesCandidates(t *testing.T) {
 
 // 一次成功不等于 100%：样本少时向 50% 收，免得新源冲上第一。
 func TestScoreSmoothsSmallSamples(t *testing.T) {
-	one := score(store.SourceStat{Samples: 1, OK: 1, LatencyMS: 50, SpeedKBps: 2000})
-	many := score(store.SourceStat{Samples: 10, OK: 10, LatencyMS: 50, SpeedKBps: 2000})
+	one := score(store.SourceStat{Samples: 1, OK: 1, LatencyMS: 50, SpeedKBps: 2000}, 12000)
+	many := score(store.SourceStat{Samples: 10, OK: 10, LatencyMS: 50, SpeedKBps: 2000}, 12000)
 	if !(one < many) {
 		t.Fatalf("单样本不该比十次全成功更高：%.3f vs %.3f", one, many)
 	}
@@ -96,7 +96,7 @@ func TestScoreSmoothsSmallSamples(t *testing.T) {
 	}
 
 	// 没有速度样本时给中性分，不该被当成 0 速
-	noSpeed := score(store.SourceStat{Samples: 10, OK: 10, LatencyMS: 50})
+	noSpeed := score(store.SourceStat{Samples: 10, OK: 10, LatencyMS: 50}, 12000)
 	if noSpeed < 0.5 {
 		t.Fatalf("缺速度样本时不该被判成慢源：%.3f", noSpeed)
 	}

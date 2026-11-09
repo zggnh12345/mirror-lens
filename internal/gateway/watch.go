@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -200,6 +201,25 @@ func hasStrongVerifier(h http.Header) bool {
 	return strongETag(h) != ""
 }
 
+// switchSpeedOK 判断样本够不够快、能不能作为中途换源目标。
+// 少于 3 条不下结论：单条样本在慢启动/瞬时拥塞下偏差太大。
+func switchSpeedOK(sp []int64, minKBps int64) bool {
+	if len(sp) < 3 {
+		return false
+	}
+	return medianInt64(sp) >= minKBps
+}
+
+func medianInt64(v []int64) int64 {
+	c := append([]int64(nil), v...)
+	sort.Slice(c, func(i, j int) bool { return c[i] < c[j] })
+	n := len(c)
+	if n%2 == 1 {
+		return c[n/2]
+	}
+	return (c[n/2-1] + c[n/2]) / 2
+}
+
 // recentProxySpeeds 查某台源最近的实测吞吐（KB/s），测试可注入。
 func (g *Gateway) recentProxySpeeds(id int64, kind string, n int) []int64 {
 	if g.speedProbe != nil {
@@ -271,8 +291,9 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			continue
 		}
 		// 只换到有真实快样本的源：没样本时赌它快，代价是几十秒空档，不划算。
-		sp := g.recentProxySpeeds(t.c.ID, plan.Kind, 1)
-		if len(sp) == 0 || sp[0] < g.par.SwitchMinMBps*1024 {
+		// 取最近 5 条的中位数：生产样本 CV>1.4，最新一条的峰值会让慢源插队。
+		sp := g.recentProxySpeeds(t.c.ID, plan.Kind, 5)
+		if !switchSpeedOK(sp, g.par.SwitchMinMBps*1024) {
 			continue
 		}
 		tried[t.c.ID] = true

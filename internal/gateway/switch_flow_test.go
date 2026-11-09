@@ -75,7 +75,7 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 				cli: srv.Client(),
 				par: ParOptions{SwitchMinMBps: 1},
 				// 造一个够快的样本，否则 trySwitch 直接跳过这台源。
-				speedProbe: func(id int64, kind string, n int) []int64 { return []int64{128 << 10} },
+				speedProbe: func(id int64, kind string, n int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 				parTargets: func(*adapter.Plan) []fetchTarget {
 					return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: sid, Name: "b", Preferred: true}}}
 				},

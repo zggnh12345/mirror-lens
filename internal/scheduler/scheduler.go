@@ -38,6 +38,9 @@ type Config struct {
 	Admission string
 	// WaitTimeout 是 wait_then_fallback 的最长等待。
 	WaitTimeout time.Duration
+	// SpeedCapKBps 是速度项的饱和点（KB/s）：达到它即满分。
+	// 生产 P75≈12MB/s；沿用 1.5MB/s 会让 77% 的源都拿满分，速度维失去区分度。
+	SpeedCapKBps float64
 }
 
 func (c *Config) fill() {
@@ -67,6 +70,9 @@ func (c *Config) fill() {
 	}
 	if c.WaitTimeout <= 0 {
 		c.WaitTimeout = 2 * time.Second
+	}
+	if c.SpeedCapKBps <= 0 {
+		c.SpeedCapKBps = 12000 // 12 MB/s，生产 P75
 	}
 }
 
@@ -266,7 +272,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	}
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.orderN(kind, items, limit)
@@ -637,7 +643,7 @@ func pkey(kind string, id int64) string {
 
 // score 把三个指标压到 0..1 再加权。
 // 成功率做贝叶斯平滑（先验 50%）；缺速度样本给中性 0.5，给 0 会让新源排不上。
-func score(st store.SourceStat) float64 {
+func score(st store.SourceStat, speedCapKBps float64) float64 {
 	const prior, priorWeight = 0.5, 2.0
 	okRate := (float64(st.OK) + prior*priorWeight) / (float64(st.Samples) + priorWeight)
 	lat := 0.5
@@ -646,7 +652,10 @@ func score(st store.SourceStat) float64 {
 	}
 	spd := 0.5
 	if st.SpeedKBps > 0 {
-		spd = math.Min(float64(st.SpeedKBps)/1500, 1)
+		if speedCapKBps <= 0 {
+			speedCapKBps = 12000
+		}
+		spd = math.Min(float64(st.SpeedKBps)/speedCapKBps, 1)
 	}
 	return 0.5*okRate + 0.25*lat + 0.25*spd
 }
