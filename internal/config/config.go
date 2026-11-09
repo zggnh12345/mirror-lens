@@ -99,19 +99,31 @@ type Registry struct {
 // 它们共用「GitHub 加速」这一个语义，分开控只会让人配错。
 type GitHub struct {
 	Enabled bool `yaml:"enabled"`
-	// TokenEnv 是存放 GitHub Token 的环境变量名。Token 只从环境读，
-	// 不写配置文件、不进日志；未设置时完全不调用 Release Asset API。
+	// TokenEnv 是存放 GitHub Token 的环境变量名。环境变量优先级最高，
+	// 适合容器/K8s 注入；未设置时完全不调用 Release Asset API。
 	TokenEnv string `yaml:"token_env"`
+	// TokenEnc 是设置页保存的 Token 密文（AES-256-GCM，密钥在
+	// <data>/secret.key）。配置文件里不出现明文，也不回显。
+	TokenEnc string `yaml:"token_enc"`
+	// TokenPlain 只在进程内存在，启动时解密填入，yaml 不落盘。
+	TokenPlain string `yaml:"-"`
 }
 
 // Token 返回当前进程可见的 GitHub Token（可能为空）。
+// 优先级：环境变量 > 设置页保存的加密 Token。
 func (g GitHub) Token() string {
 	name := g.TokenEnv
 	if name == "" {
 		name = "MIRRORLENS_GITHUB_TOKEN"
 	}
-	return strings.TrimSpace(os.Getenv(name))
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(g.TokenPlain)
 }
+
+// HasToken 表示「有可用凭据」，用于设置页显示已配置/未配置，不暴露内容。
+func (g GitHub) HasToken() bool { return g.Token() != "" }
 
 // Network 控制回源的 IP 协议族选择。
 // auto = IPv4 优先、连不上再试 IPv6（默认）；v4/v6 = 只用该族。

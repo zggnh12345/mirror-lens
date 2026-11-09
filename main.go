@@ -30,6 +30,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
+	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -91,6 +92,19 @@ func main() {
 
 	if err := os.MkdirAll(cfg.Data, 0o755); err != nil {
 		log.Fatalf("创建数据目录: %v", err)
+	}
+	// 设置页保存的 Token 是密文；密钥在数据目录里，跟着数据卷走。
+	// 解不开时按「未配置」继续跑：不能因为一个可选凭据让服务起不来。
+	if cfg.GitHub.TokenEnc != "" {
+		key, kerr := secret.LoadOrCreateKey(filepath.Join(cfg.Data, "secret.key"))
+		if kerr != nil {
+			log.Printf("读取 Token 密钥失败，按未配置处理: %v", kerr)
+		} else if plain, derr := secret.Decrypt(key, cfg.GitHub.TokenEnc); derr != nil {
+			log.Printf("解密 GitHub Token 失败，按未配置处理: %v", derr)
+		} else {
+			cfg.GitHub.TokenPlain = plain
+			log.Printf("已加载设置页保存的 GitHub Token（Release 摘要 API 可用）")
+		}
 	}
 	cstore, err := cache.New(cfg.CacheDir())
 	if err != nil {

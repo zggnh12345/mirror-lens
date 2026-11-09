@@ -465,6 +465,13 @@ function cfgControl(f){
     seg += '</div>';
     return seg;
   }
+  if (f.kind === 'secret'){
+    // 值永不回显：只给「已配置/未配置」和一次性输入框。
+    var ph = f.set ? '已配置（留空保持不变）' : '未配置（留空=不启用）';
+    return '<input class="cfg-in" type="password" autocomplete="new-password" data-key="' + k +
+      '" value="" placeholder="' + ph + '">' +
+      (f.set ? '<button type="button" class="btn" data-clear="' + k + '" style="margin-left:8px">清除</button>' : '');
+  }
   if (f.kind === 'list'){
     return '<textarea class="cfg-ta" data-key="' + k + '">' + esc(f.value) + '</textarea>';
   }
@@ -549,6 +556,18 @@ function bindCfg(){
     el.addEventListener('input', function(){
       CFG.cur[el.dataset.key] = el.value;
       el.closest('.cfgrow').classList.remove('bad');
+    });
+  });
+  $('#cfgBox').querySelectorAll('[data-clear]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var k = b.dataset.clear;
+      if (!confirm('清除已保存的 Token？清掉后不再调用 Release Asset API。')) return;
+      b.disabled = true;
+      try{
+        await api('/api/config', {method:'PUT', body: JSON.stringify({values: (function(){ var o={}; o[k]=''; return o; })()})});
+        toast('Token 已清除');
+        loadConfig();
+      }catch(e){ say($('#cfgMsg'), e.message, 'bad'); b.disabled = false; }
     });
   });
   var btn = $('#btnCfg');

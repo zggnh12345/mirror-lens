@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/config"
+	"github.com/zggnh12345/mirror-lens/internal/secret"
 )
 
 func TestConfigViewGroupsAndFields(t *testing.T) {
@@ -240,5 +241,73 @@ limits:
 	}
 	if strings.Contains(string(raw), "10.0.0.0/8") {
 		t.Fatalf("旧列表项没被替换:\n%s", raw)
+	}
+}
+
+// TestGitHubTokenEncryptedAtRest 设置页保存的 Token 不能以明文进配置文件，
+// 也不能从 GET 回显；密钥跟数据目录走，能解回原值。
+func TestGitHubTokenEncryptedAtRest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	src := "data: " + dir + "\ngithub:\n  enabled: true\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const tok = "ghp_0123456789abcdefghijklmnopqrstuvwx"
+	if err := writeConfigFile(path, map[string]string{"github.token": tok}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), tok) {
+		t.Fatalf("配置文件里出现明文 Token:\n%s", raw)
+	}
+	c, err := config.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GitHub.TokenEnc == "" {
+		t.Fatal("token_enc 没写进配置")
+	}
+	key, err := secret.LoadOrCreateKey(filepath.Join(dir, "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := secret.Decrypt(key, c.GitHub.TokenEnc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain != tok {
+		t.Fatalf("解出 %q，期望原 Token", plain)
+	}
+
+	// GET 不回显内容，只标记 set。
+	v := configView(c, path)
+	for _, s := range v["sections"].([]map[string]any) {
+		for _, f := range s["fields"].([]map[string]any) {
+			if f["key"] != "github.token" {
+				continue
+			}
+			if f["value"] != "" {
+				t.Fatalf("设置页回显了 Token: %v", f["value"])
+			}
+			if f["set"] != true {
+				t.Fatal("set 标记应为 true")
+			}
+		}
+	}
+
+	// 传空串 = 清除。
+	if err := writeConfigFile(path, map[string]string{"github.token": ""}); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := config.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.GitHub.TokenEnc != "" {
+		t.Fatal("清除后 token_enc 仍非空")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/config"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
+	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,6 +138,31 @@ var cfgSchema = []cfgField{
 	{Section: "GitHub 加速", Key: "github.enabled", Label: "开启 GitHub 加速", Kind: "bool", Restart: true,
 		Hint: "统一控制 /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）；关掉后三条路都返回 404",
 		Get:  func(c *config.Config) string { return b2s(c.GitHub.Enabled) }, Set: func(c *config.Config, v string) error { c.GitHub.Enabled = parseBool(v); return nil }},
+	// 敏感字段：Get 永远返回空串，值只单向写入；是否已配置由 configView 的 set 标记。
+	// 加密密钥跟数据目录走，换机器/换数据卷后旧密文解不开，需要重新填。
+	{Section: "GitHub 加速", Key: "github.token", Label: "Release 摘要 API Token", Kind: "secret", Restart: true,
+		Hint: "可选。留空=完全不调用 Release Asset API，不耗配额；填入后加密保存，不回显。环境变量 token_env 优先",
+		Get:  func(c *config.Config) string { return "" },
+		Set: func(c *config.Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.GitHub.TokenEnc = ""
+				return nil
+			}
+			if len(v) < 20 || strings.ContainsAny(v, " 	\r\n") {
+				return fmt.Errorf("Token 格式不对：长度至少 20，且不能含空白")
+			}
+			key, err := secret.LoadOrCreateKey(filepath.Join(c.Data, "secret.key"))
+			if err != nil {
+				return fmt.Errorf("读取加密密钥失败: %w", err)
+			}
+			enc, err := secret.Encrypt(key, v)
+			if err != nil {
+				return fmt.Errorf("加密 Token 失败: %w", err)
+			}
+			c.GitHub.TokenEnc = enc
+			return nil
+		}},
 
 	// 多源调度
 	{Section: "多源调度", Key: "sources.enabled", Label: "开启多源调度", Kind: "bool", Restart: true,
@@ -461,7 +488,7 @@ func configView(c *config.Config, path string) map[string]any {
 			groups[f.Section] = nil
 			order = append(order, f.Section)
 		}
-		groups[f.Section] = append(groups[f.Section], map[string]any{
+		fields := map[string]any{
 			"key":     f.Key,
 			"label":   f.Label,
 			"kind":    f.Kind,
@@ -474,7 +501,12 @@ func configView(c *config.Config, path string) map[string]any {
 			"hasMax":  f.HasMax,
 			"hint":    f.Hint,
 			"restart": f.Restart,
-		})
+		}
+		if f.Kind == "secret" {
+			// 只告诉前端「有没有」，不给任何可回显的内容。
+			fields["set"] = c.GitHub.TokenEnc != ""
+		}
+		groups[f.Section] = append(groups[f.Section], fields)
 	}
 	secs := make([]map[string]any, 0, len(order))
 	for _, name := range order {

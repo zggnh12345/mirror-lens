@@ -79,6 +79,8 @@ github:
   # 不消耗匿名配额，也不给下载链路加延迟，Release 走单流。
   # 设置后才会查 Asset digest，查不到再退到发布者 SHA256SUMS。
   token_env: MIRRORLENS_GITHUB_TOKEN
+  # 设置页保存的 Token 密文，由面板写入；不要手改。环境变量优先于这里。
+  token_enc: ""
 
 # ── 网络 ────────────────────────────────────────────────
 network:
