@@ -3,11 +3,13 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
 )
@@ -102,6 +104,9 @@ func (s *Store) LockBlob(sha string) func() {
 
 // Commit 按哈希落位临时文件；已存在同内容就丢弃临时文件，
 // 去重靠这里：两个上游同样的字节只占一份。
+//
+// 提交顺序固定：文件 fsync → 关闭 → rename → 目录 fsync，之后调用方才写 SQLite。
+// 少了目录 fsync，断电后可能出现「库里有记录、盘上没文件」。
 func (s *Store) Commit(tmp, sha string) (string, error) {
 	dst := s.BlobPath(sha)
 	if dst == "" {
@@ -114,11 +119,44 @@ func (s *Store) Commit(tmp, sha string) (string, error) {
 		os.Remove(tmp)
 		return dst, nil
 	}
+	if err := syncFile(tmp); err != nil {
+		return "", err
+	}
 	if err := os.Rename(tmp, dst); err != nil {
 		return "", err
 	}
 	_ = os.Chmod(dst, 0o444)
+	if err := syncDir(filepath.Dir(dst)); err != nil {
+		return "", err
+	}
 	return dst, nil
+}
+
+// syncFile 把数据刷到盘；调用方可能还持有同一个文件句柄，这里另开只读句柄。
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// syncDir 刷目录项。部分文件系统不支持对目录 fsync（EINVAL/ENOTSUP），
+// 这类返回视为成功——它们本来就没有需要单独落盘的目录项。
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Open(sha string) (*os.File, error) {

@@ -408,6 +408,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for i := 1; i < n; i++ {
 		if err := <-dones[i]; err != nil {
 			abort()
+			metrics.MidfillAborted() // 已写出前 i 段，只能让响应异常截断
 			log.Printf("并行填充：第 %d 段失败，断开连接: %v", i, logging.SafeErr(err))
 			return true
 		}
