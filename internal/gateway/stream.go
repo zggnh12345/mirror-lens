@@ -364,12 +364,23 @@ const (
 const minSpeedSample = 16 << 20
 
 // noteSpeed 记一次完整单流下载的真实吞吐。
-func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time.Time) {
+func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time.Time, blocked time.Duration) {
 	if g.st == nil || t == nil || t.c == nil || bytes < minSpeedSample {
 		return
 	}
-	if el := time.Since(start).Milliseconds(); el > 0 {
-		_ = g.st.AddProxySpeed(t.c.ID, kind, bytes, el)
+	// 只计上游有效时间：客户端限速/慢、写盘慢都不该算进「源站速度」。
+	el := time.Since(start)
+	if el <= 0 {
+		return
+	}
+	// 下游阻塞占比过高，说明这次传输是被客户端限速/慢网拖住的：
+	// 上游读到的只是 TCP 背压后的节奏，不是源站能力，直接丢弃这条样本。
+	// 实测：客户端限速 1MB/s、源站 10MB/s 时，仅扣时间仍会记成 1.6MB/s。
+	if blocked*3 > el {
+		return
+	}
+	if up := el - blocked; up >= time.Millisecond {
+		_ = g.st.AddProxySpeed(t.c.ID, kind, bytes, up.Milliseconds())
 	}
 }
 
@@ -553,6 +564,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 
 	copyStart := time.Now()
 	sentBase := sent
+	// blocked 累计「写客户端 + 写盘 + Flush」的耗时：这些是下游/磁盘的阻塞，
+	// 不是上游的吞吐能力。noteSpeed 用它把墙钟时间修正成上游有效时间。
+	var blocked time.Duration
 	sw := newStreamWatch(g.par)
 	tried := map[int64]bool{}
 	if tgt != nil && tgt.c != nil {
@@ -562,12 +576,18 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// writeChunk 把一段上游字节写到客户端和 partial。
 	// 返回 errOverrun 表示上游多给了字节（继续收尾判失败），其它错误直接结束。
 	writeChunk := func(b []byte) error {
-		if _, werr := out.Write(b); werr != nil {
+		tw := time.Now()
+		_, werr := out.Write(b)
+		blocked += time.Since(tw)
+		if werr != nil {
 			savePartial()
 			return werr
 		}
 		if part != nil {
-			if _, werr := part.Write(b); werr != nil {
+			tp := time.Now()
+			_, werr := part.Write(b)
+			blocked += time.Since(tp)
+			if werr != nil {
 				savePartial()
 				return werr
 			}
@@ -588,7 +608,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			log.Printf("超过单文件上限，转透传: %s", safeUpstream(plan.Upstream))
 		}
 		if flusher != nil {
+			tf := time.Now()
 			flusher.Flush()
+			blocked += time.Since(tf)
 		}
 		return nil
 	}
@@ -786,7 +808,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// 完整下完才记：这是单流独占带宽下的持续吞吐，比探测那 4MB 准。
 	// 客户端中途断开不计，避免把「用户网速」记成「源站速度」。
 	if total < 0 || sent == total {
-		g.noteSpeed(tgt, plan.Kind, sent-sentBase, copyStart)
+		g.noteSpeed(tgt, plan.Kind, sent-sentBase, copyStart, blocked)
 	}
 	if part == nil {
 		if total >= 0 && sent != total {

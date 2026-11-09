@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // 真实回源吞吐优先于探测样本：探测只读 4MB，量到的是冷启动速度。
@@ -23,6 +24,13 @@ func TestProxySpeedPreferred(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 200MiB / 8s ≈ 25MB/s
+	if err := st.AddProxySpeed(id, "docker", 200<<20, 8000); err != nil {
+		t.Fatal(err)
+	}
+	// 至少 3 条样本才生效（防单条慢启动带偏）。
+	if err := st.AddProxySpeed(id, "docker", 200<<20, 8000); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.AddProxySpeed(id, "docker", 200<<20, 8000); err != nil {
 		t.Fatal(err)
 	}
@@ -132,5 +140,64 @@ func TestSourceSamplesFallsBackToLegacyOnly(t *testing.T) {
 	}
 	if len(gh) != 1 || gh[0].LatencyMS != 800 || gh[0].Samples != 1 {
 		t.Fatalf("github 应只退回 1 条老样本（800ms），实际 %+v", gh)
+	}
+}
+
+// 少于 3 条真实吞吐样本时不该用 EWMA 估速，回退探测值。
+func TestProxySpeedNeedsThreeSamples(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.AddSource(Source{Name: "m", BaseURL: "https://m.example", Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddCheck(Check{SourceID: id, Kind: "docker", Tier: 3, OK: true, SpeedKBps: 2500}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := st.AddProxySpeed(id, "docker", 200<<20, 8000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, _, spd, _, err := st.samples(id, "docker", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spd != 2500 {
+		t.Fatalf("2 条样本应回退探测值 2500，实际 %d", spd)
+	}
+}
+
+// 72h 半衰期：一天前的样本权重减半，不会被当成当前速度。
+func TestProxySpeedHalfLife(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.AddSource(Source{Name: "m", BaseURL: "https://m.example", Status: "usable", Enabled: true, DockerCap: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1 条新样本 20MB/s + 2 条 72h 前 2MB/s：加权约 (20000 + 2*2000*0.5)/2 = 11000。
+	if err := st.AddProxySpeed(id, "docker", 200<<20, 10000); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-72 * time.Hour).Unix()
+	for i := 0; i < 2; i++ {
+		if _, err := st.db.Exec(`INSERT INTO proxy_speed(source_id, kind, ts, bytes, ms) VALUES(?,?,?,?,?)`,
+			id, "docker", old, int64(200<<20), int64(100000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, _, spd, _, err := st.samples(id, "docker", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spd < 9000 || spd > 13000 {
+		t.Fatalf("72h 半衰期加权应约 11000，实际 %d", spd)
 	}
 }

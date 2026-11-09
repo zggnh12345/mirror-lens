@@ -2,9 +2,15 @@ package store
 
 import (
 	"database/sql"
+	"math"
 	"sort"
 	"time"
 )
+
+// minProxySpeedBytes 是单条真实吞吐样本的最小字节数。
+// 与 gateway.minSpeedSample 必须一致：写入门槛 16MiB、读门槛 64MiB 时，
+// 16–64MiB 的样本永远读不到，等于白记。
+const minProxySpeedBytes = 16 << 20
 
 // SourceStat 是调度用的源画像。
 // 速度与延迟只取探测样本（checks.tier >= 2）；代理请求不写进 checks，
@@ -220,7 +226,7 @@ func (s *Store) RecentLiveSpeeds(id int64, kind string, since int64, n int) []in
 func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
 		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT ?`, id, kind, 64<<20, n)
+		ORDER BY ts DESC LIMIT ?`, id, kind, minProxySpeedBytes, n)
 	if err != nil {
 		return nil
 	}
@@ -237,25 +243,38 @@ func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 
 // proxySpeed 用最近的真实回源吞吐估这台源能跑多快（KB/s），没样本返回 0。
 func (s *Store) proxySpeed(id int64, kind string) int64 {
-	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
+	rows, err := s.db.Query(`SELECT bytes, ms, ts FROM proxy_speed
 		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT 20`, id, kind, 64<<20)
+		ORDER BY ts DESC LIMIT 20`, id, kind, minProxySpeedBytes)
 	if err != nil {
 		return 0
 	}
 	defer rows.Close()
-	var sw, sv, w float64
-	w = 1
+	// 72h 半衰期：24h 硬切会让多数源没样本，直接回退到 4MB 探测值。
+	// 最少 3 条才生效，避免单条慢启动样本把估计带偏；ghcr 样本稀，放宽到 2 条。
+	const halfLifeSec = 72 * 3600
+	minN := 3
+	if kind == "ghcr" {
+		minN = 2
+	}
+	now := time.Now().Unix()
+	var sw, sv float64
+	n := 0
 	for rows.Next() {
-		var b, ms int64
-		if rows.Scan(&b, &ms) != nil || ms <= 0 {
+		var b, ms, ts int64
+		if rows.Scan(&b, &ms, &ts) != nil || ms <= 0 {
 			continue
 		}
+		age := float64(now - ts)
+		if age < 0 {
+			age = 0
+		}
+		w := math.Pow(0.5, age/halfLifeSec)
 		sv += float64(b) / float64(ms) * w // bytes/ms 正好是 KB/s
 		sw += w
-		w *= 0.8
+		n++
 	}
-	if sw == 0 {
+	if n < minN || sw == 0 {
 		return 0
 	}
 	return int64(sv / sw)
