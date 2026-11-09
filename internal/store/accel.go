@@ -77,6 +77,42 @@ const (
 	VerifyUnverified = "unverified"
 )
 
+// Blob 是内容身份（sha256），不是 URL 身份。
+// 同一份内容被多个 cache_entries 引用时，完整性状态只有一份，必须一致。
+// integrity_status:
+//
+//	unknown  — 只确认字节收全了，没有可信摘要可对（历史数据、无摘要的 Release/raw）
+//	verified — 有可信摘要（Docker digest / GitHub asset digest / SUMS），逐字节比对通过
+//	mismatch — 有可信摘要但对不上：该 blob 不可再被任何键命中
+//	failed   — 校验过程本身失败（读错误、算法不支持），不等于 mismatch
+type Blob struct {
+	SHA256            string `json:"sha256"`
+	Size              int64  `json:"size"`
+	IntegrityStatus   string `json:"integrity_status"`
+	ExpectedDigest    string `json:"expected_digest"`
+	ActualDigest      string `json:"actual_digest"`
+	DigestSource      string `json:"digest_source"`
+	DigestAlgorithm   string `json:"digest_algorithm"`
+	VerifiedAt        int64  `json:"verified_at"`
+	VerificationError string `json:"verification_error"`
+}
+
+const (
+	BlobUnknown  = "unknown"
+	BlobVerified = "verified"
+	BlobMismatch = "mismatch"
+	BlobFailed   = "failed"
+)
+
+// 摘要来源：决定「可信」到什么程度，排障与面板都要能看出来。
+const (
+	DigestSourceContent = "content"                 // 自己算的 sha256，只能证明内容身份，不证明来源可信
+	DigestSourceDocker  = "docker_digest"           // registry 返回的 digest
+	DigestSourceGitHub  = "github_asset_api"        // Release Asset API 的 digest
+	DigestSourceSUMS    = "publisher_checksum_file" // 发布方 SHA256SUMS
+	DigestSourceLegacy  = "legacy_verified"         // 旧库 verified，无摘要留档，不算可信
+)
+
 type TrafficRow struct {
 	Day     string `json:"day"`
 	Traffic string `json:"traffic"`
@@ -133,6 +169,18 @@ func (s *Store) migrateAccel() error {
 			ms INTEGER NOT NULL DEFAULT 0,
 			code INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS idx_sev_src_ts ON source_events(source_id, ts DESC)`,
+		// 内容身份表：完整性状态按 blob 去重，不按 URL 重复。
+		`CREATE TABLE IF NOT EXISTS blobs(
+			sha256 TEXT PRIMARY KEY,
+			size INTEGER NOT NULL DEFAULT 0,
+			integrity_status TEXT NOT NULL DEFAULT 'unknown',
+			expected_digest TEXT NOT NULL DEFAULT '',
+			actual_digest TEXT NOT NULL DEFAULT '',
+			digest_source TEXT NOT NULL DEFAULT '',
+			digest_algorithm TEXT NOT NULL DEFAULT '',
+			verified_at INTEGER NOT NULL DEFAULT 0,
+			verification_error TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_blobs_integrity ON blobs(integrity_status)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -152,7 +200,121 @@ func (s *Store) migrateAccel() error {
 	}); err != nil {
 		return err
 	}
+	if err := s.migrateBlobs(); err != nil {
+		return err
+	}
 	return s.upgradeTrafficKind()
+}
+
+// migrateBlobs 把「按 URL 的 verify」迁到「按 blob 的 integrity」。
+// 旧库的 verified 只代表当时逐字节对过一次，摘要没有留档，不能当作今天仍然可信；
+// 因此统一映射为 unknown，并用 digest_source=legacy_verified 留痕。
+func (s *Store) migrateBlobs() error {
+	var done string
+	_ = s.db.QueryRow(`SELECT v FROM meta WHERE k='blobs_migrated_v1'`).Scan(&done)
+	if done == "1" {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 每个 sha 一行；大小取该内容被记录过的最大值（同内容不同键大小应相同）。
+	if _, err := tx.Exec(`INSERT INTO blobs(sha256, size, integrity_status, actual_digest, digest_source)
+		SELECT sha256, MAX(size), 'unknown', sha256, 'content' FROM cache_entries GROUP BY sha256
+		ON CONFLICT(sha256) DO NOTHING`); err != nil {
+		return fmt.Errorf("回填 blobs: %w", err)
+	}
+	// 历史 verified：状态仍是 unknown，只把来源标成 legacy，避免被当成可信摘要。
+	if _, err := tx.Exec(`UPDATE blobs SET digest_source='legacy_verified', verification_error='legacy_verified_no_digest'
+		WHERE sha256 IN (SELECT DISTINCT sha256 FROM cache_entries WHERE verify='verified')`); err != nil {
+		return fmt.Errorf("标记历史 verified: %w", err)
+	}
+	// 旧值映射：空串 → unverified；其他未知值一律归 unverified（列不再是可信度来源）。
+	if _, err := tx.Exec(`UPDATE cache_entries SET verify='unverified'
+		WHERE COALESCE(verify,'') NOT IN ('verified','unverified')`); err != nil {
+		return fmt.Errorf("规范化 verify: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO meta(k,v) VALUES('blobs_migrated_v1','1')
+		ON CONFLICT(k) DO UPDATE SET v='1'`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ---- Blob 完整性 ----
+
+func (s *Store) BlobGet(sha string) (*Blob, error) {
+	var b Blob
+	err := s.db.QueryRow(`SELECT sha256, size, integrity_status, expected_digest, actual_digest,
+		digest_source, digest_algorithm, verified_at, verification_error FROM blobs WHERE sha256=?`, sha).
+		Scan(&b.SHA256, &b.Size, &b.IntegrityStatus, &b.ExpectedDigest, &b.ActualDigest,
+			&b.DigestSource, &b.DigestAlgorithm, &b.VerifiedAt, &b.VerificationError)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &b, nil
+}
+
+// BlobUpsert 只在「新状态更可信」时升级，避免普通内容写入把 verified 覆盖成 unknown。
+// mismatch/failed 是终态，不允许被后续写入洗白。
+func (s *Store) BlobUpsert(b Blob) error {
+	if b.IntegrityStatus == "" {
+		b.IntegrityStatus = BlobUnknown
+	}
+	if b.DigestSource == "" {
+		b.DigestSource = DigestSourceContent
+	}
+	_, err := s.db.Exec(`INSERT INTO blobs(sha256, size, integrity_status, expected_digest, actual_digest,
+		digest_source, digest_algorithm, verified_at, verification_error)
+		VALUES(?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(sha256) DO UPDATE SET
+			size=CASE WHEN excluded.size>0 THEN excluded.size ELSE blobs.size END,
+			integrity_status=CASE
+				WHEN excluded.integrity_status IN ('mismatch','failed') THEN excluded.integrity_status
+				WHEN blobs.integrity_status IN ('mismatch','failed') THEN blobs.integrity_status
+				WHEN excluded.integrity_status='verified' THEN 'verified'
+				ELSE blobs.integrity_status END,
+			expected_digest=CASE WHEN excluded.expected_digest<>'' THEN excluded.expected_digest ELSE blobs.expected_digest END,
+			actual_digest=CASE WHEN excluded.actual_digest<>'' THEN excluded.actual_digest ELSE blobs.actual_digest END,
+			digest_source=CASE WHEN excluded.digest_source<>'' THEN excluded.digest_source ELSE blobs.digest_source END,
+			digest_algorithm=CASE WHEN excluded.digest_algorithm<>'' THEN excluded.digest_algorithm ELSE blobs.digest_algorithm END,
+			verified_at=CASE WHEN excluded.verified_at>0 THEN excluded.verified_at ELSE blobs.verified_at END,
+			verification_error=excluded.verification_error`,
+		b.SHA256, b.Size, b.IntegrityStatus, b.ExpectedDigest, b.ActualDigest,
+		b.DigestSource, b.DigestAlgorithm, b.VerifiedAt, b.VerificationError)
+	return err
+}
+
+// BlobMarkMismatch 记「有摘要但对不上」。这条记录不参与命中，只用于排障与面板。
+func (s *Store) BlobMarkMismatch(sha, expected, actual, source, errText string) error {
+	return s.BlobUpsert(Blob{
+		SHA256: sha, IntegrityStatus: BlobMismatch, ExpectedDigest: expected, ActualDigest: actual,
+		DigestSource: source, DigestAlgorithm: "sha256", VerificationError: errText,
+	})
+}
+
+// BlobIntegrityCounts 按完整性状态统计 blob 数（不是条目数）。
+func (s *Store) BlobIntegrityCounts() (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT integrity_status, COUNT(*) FROM blobs GROUP BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{BlobUnknown: 0, BlobVerified: 0, BlobMismatch: 0, BlobFailed: 0}
+	for rows.Next() {
+		var k string
+		var n int64
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, err
+		}
+		out[k] = n
+	}
+	return out, rows.Err()
 }
 
 // ---- Token ----
@@ -248,7 +410,20 @@ func (s *Store) CachePut(e CacheEntry) error {
 			etag=excluded.etag, last_modified=excluded.last_modified, upstream=excluded.upstream,
 			created_at=excluded.created_at, ttl=excluded.ttl, verify=excluded.verify`,
 		e.Key, e.SHA256, e.Size, e.ContentType, e.ETag, e.LastModified, e.Upstream, e.CreatedAt, e.LastHit, e.Hits, e.TTL, e.Verify)
-	return err
+	if err != nil {
+		return err
+	}
+	// 内容身份同步登记：同一 sha 只有一行，状态按 blob 去重。
+	// verify=verified 只代表写入时对过摘要，来源在后续阶段（GitHub digest/SUMS）补。
+	st := BlobUnknown
+	if e.Verify == VerifyVerified {
+		st = BlobVerified
+	}
+	b := Blob{SHA256: e.SHA256, Size: e.Size, IntegrityStatus: st, ActualDigest: e.SHA256, DigestSource: DigestSourceContent}
+	if st == BlobVerified {
+		b.VerifiedAt = time.Now().Unix()
+	}
+	return s.BlobUpsert(b)
 }
 
 // CacheHit 只记命中，不动 created_at（TTL 不因命中而延长）。
@@ -324,16 +499,15 @@ func (s *Store) TrafficByDay(days int) ([]TrafficRow, error) {
 	return out, rows.Err()
 }
 
-// CacheVerifyCounts 按验证状态统计条目数。空值（老记录）算 unverified：
-// 阶段 6 之前落盘的内容没有验证依据，列空不等于已验证。
+// CacheVerifyCounts 按 blob 完整性统计。条目数会重复计数同一内容，
+// 这里改成按内容身份统计，避免「一个 blob 多个 URL」把可信度算虚高。
 func (s *Store) CacheVerifyCounts() (map[string]int64, error) {
-	rows, err := s.db.Query(`SELECT CASE WHEN COALESCE(verify,'')='verified' THEN 'verified' ELSE 'unverified' END, COUNT(*)
-		FROM cache_entries GROUP BY 1`)
+	rows, err := s.db.Query(`SELECT integrity_status, COUNT(*) FROM blobs GROUP BY 1`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]int64{VerifyVerified: 0, VerifyUnverified: 0}
+	out := map[string]int64{BlobUnknown: 0, BlobVerified: 0, BlobMismatch: 0, BlobFailed: 0}
 	for rows.Next() {
 		var k string
 		var n int64

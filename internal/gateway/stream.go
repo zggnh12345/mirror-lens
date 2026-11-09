@@ -215,7 +215,7 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 
 		default:
 			resp.Body.Close()
-			g.fail(w, r, plan, prev, &upstreamError{Code: resp.StatusCode})
+			g.fail(w, r, plan, prev, &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)})
 			return
 		}
 
@@ -267,7 +267,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			metrics.SourceMiss(plan.Kind, resp.StatusCode)
 			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", t.c.Name, "status", resp.StatusCode)
-			lastErr = &upstreamError{Code: resp.StatusCode}
+			lastErr = &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 			continue
 		}
 		if t.c != nil && retryableFromMirror(resp.StatusCode) {
@@ -807,6 +807,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 这里唯一要保证的是绝不把错内容写进缓存。
 		g.cache.DropPartial(plan.CacheKey)
 		g.verifyFail.Add(1)
+		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
 		log.Printf("内容校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, safeUpstream(plan.Upstream))
 		outcome = outcomeFail
 		return
@@ -844,6 +845,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	unlock()
 	if err != nil {
 		log.Printf("写缓存索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+	} else {
+		g.recordBlobProvenance(e.SHA256, plan)
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), sent)
@@ -1061,6 +1064,7 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	code := statusFor(err)
 	log.Printf("回源失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	noStore(w.Header())
+	setRetryAfter(w, err)
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 }
 

@@ -231,6 +231,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			p.TTL = 0
 			// 按 digest 拉清单：摘要来自客户端，是可信参照，落盘前必须比对。
 			p.ExpectSHA = strings.TrimPrefix(ref, "sha256:")
+			p.ExpectSource = adapter.DigestSourceDocker
 		}
 		a.addGhcrFallback(p, name, host, def)
 		return p, nil
@@ -253,6 +254,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 			RangeOK:      true,
 			MaxBytes:     a.MaxBytes,
 			ExpectSHA:    strings.TrimPrefix(ref, "sha256:"),
+			ExpectSource: adapter.DigestSourceDocker,
 		}, nil
 	}
 	return nil, adapter.ErrNoMatch

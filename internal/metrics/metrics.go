@@ -910,6 +910,7 @@ func (r *Registry) render() []byte {
 	r.writeLease(&b)
 	r.writeAttempt(&b)
 	r.writeMidfill(&b)
+	r.writeGHMeta(&b)
 	r.writeQuota(&b)
 	if len(r.relayFallback) > 0 {
 		b.WriteString("# HELP " + prefix + "relay_fallback_total 信任中转未走钉住地址的次数（unresolved=沿用系统解析，expired=拒绝拨号）\n")

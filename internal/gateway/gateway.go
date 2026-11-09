@@ -30,6 +30,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
+	"github.com/zggnh12345/mirror-lens/internal/ghapi"
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
@@ -50,6 +51,7 @@ type Gateway struct {
 	httpAd  *httpadapter.Adapter
 	gitAd   *gitadapter.Adapter
 	regAd   *registryadapter.Adapter
+	ghMeta  *ghapi.Client
 	maxSize int64
 
 	cacheMaxBytes int64
@@ -164,6 +166,8 @@ type Options struct {
 	DockerOff bool
 	GHCROff   bool
 	GitHubOff bool
+	// GHMetadata 为 nil 或未配置 Token 时，Release 下载完全不碰 GitHub API。
+	GHMetadata *ghapi.Client
 }
 
 func New(st *store.Store, o Options) *Gateway {
@@ -193,6 +197,7 @@ func New(st *store.Store, o Options) *Gateway {
 		}
 	}
 	gw := &Gateway{
+		ghMeta:        o.GHMetadata,
 		dockerOff:     o.DockerOff,
 		ghcrOff:       o.GHCROff,
 		githubOff:     o.GitHubOff,
@@ -344,6 +349,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	g.enrichReleaseDigest(r.Context(), plan)
 	// 带凭据的私有内容一律直通：既不读索引，也不落盘。
 	// 用 NoStore 而不是 Cacheable：git info/refs 之类只是不值得按 TTL
 	// 缓存，仍需走原来的临时落盘路径。
@@ -441,6 +447,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		code := statusFor(err)
 		loggw(slog.LevelWarn, "回源失败", r.Context(), plan, codeFor(err), err)
 		noStore(w.Header())
+		setRetryAfter(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -1478,6 +1485,18 @@ func isAuthDenied(code int) bool {
 	return code == http.StatusUnauthorized || code == http.StatusForbidden
 }
 
+// setRetryAfter 把源站给的等待时间原样转给客户端；没有就什么都不做。
+func setRetryAfter(w http.ResponseWriter, err error) {
+	var ue *upstreamError
+	if errors.As(err, &ue) && ue.Code == http.StatusTooManyRequests && ue.RetryAfter > 0 {
+		secs := int(ue.RetryAfter.Seconds())
+		if secs < 1 {
+			secs = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+	}
+}
+
 func statusFor(err error) int {
 	var ue *upstreamError
 	if errors.As(err, &ue) {
@@ -1486,6 +1505,12 @@ func statusFor(err error) int {
 			return http.StatusNotFound
 		case http.StatusForbidden:
 			return http.StatusForbidden
+		case http.StatusTooManyRequests:
+			// 429 是「等会儿再来」，不是坏网关。原样透出，客户端才会退避；
+			// 折成 502 会让客户端立刻重试，把限流打成雪崩。
+			return http.StatusTooManyRequests
+		case http.StatusServiceUnavailable:
+			return http.StatusServiceUnavailable
 		}
 		return http.StatusBadGateway
 	}

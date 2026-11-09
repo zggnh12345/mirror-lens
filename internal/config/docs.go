@@ -40,6 +40,7 @@ var fieldDocs = map[string]string{
 	"registry.ghcr_enabled":         "GHCR 通道开关（ghcr.io/... 走这条）",
 	"github":                        "GitHub 加速：/gh/ /raw/ /git/ 三条路径",
 	"github.enabled":                "是否启用 GitHub 加速，关闭后三条路径都返回 404",
+	"github.token_env":              "存放 GitHub Token 的环境变量名；未设置时完全不调用 Release API",
 	"network":                       "回源网络行为",
 	"network.ip_family":             "IP 协议族：auto（IPv4 优先、IPv6 兜底）/ v4 / v6",
 	"registry.upstream":             "Registry 上游地址，默认 Docker Hub",

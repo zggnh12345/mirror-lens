@@ -314,6 +314,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
 		metrics.MidfillVerifyFailed()
+		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
 		log.Printf("中途并行：整份校验失败，不入缓存：期望 %s 实得 %s", plan.ExpectSHA, sha)
 		return true, false
 	}
@@ -344,6 +345,8 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	unlock()
 	if err != nil {
 		log.Printf("中途并行：写索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+	} else {
+		g.recordBlobProvenance(e.SHA256, plan)
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)

@@ -99,6 +99,18 @@ type Registry struct {
 // 它们共用「GitHub 加速」这一个语义，分开控只会让人配错。
 type GitHub struct {
 	Enabled bool `yaml:"enabled"`
+	// TokenEnv 是存放 GitHub Token 的环境变量名。Token 只从环境读，
+	// 不写配置文件、不进日志；未设置时完全不调用 Release Asset API。
+	TokenEnv string `yaml:"token_env"`
+}
+
+// Token 返回当前进程可见的 GitHub Token（可能为空）。
+func (g GitHub) Token() string {
+	name := g.TokenEnv
+	if name == "" {
+		name = "MIRRORLENS_GITHUB_TOKEN"
+	}
+	return strings.TrimSpace(os.Getenv(name))
 }
 
 // Network 控制回源的 IP 协议族选择。
@@ -332,7 +344,7 @@ func Default() *Config {
 			SwitchMax:        2,
 			SwitchGapSec:     30,
 		},
-		GitHub:  GitHub{Enabled: true},
+		GitHub:  GitHub{Enabled: true, TokenEnv: "MIRRORLENS_GITHUB_TOKEN"},
 		Network: Network{IPFamily: "auto"},
 		Private: Private{
 			BreakAfter:          3,

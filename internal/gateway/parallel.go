@@ -449,6 +449,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	sha := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(sha, plan.ExpectSHA) {
 		g.verifyFail.Add(1)
+		_ = g.st.BlobMarkMismatch(sha, plan.ExpectSHA, sha, store.DigestSourceDocker, "digest_mismatch")
 		drop()
 		// 拼错只证明「组合」错了：单源才归因记失败，
 		// 多源时不动评分，免得正常源被熔断。
@@ -497,6 +498,8 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	unlock()
 	if err != nil {
 		log.Printf("并行填充：写索引失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+	} else {
+		g.recordBlobProvenance(e.SHA256, plan)
 	}
 	g.cache.DropPartial(plan.CacheKey)
 	g.st.RecordTraffic(store.TrafficFill, store.KindOfKey(plan.CacheKey), total)

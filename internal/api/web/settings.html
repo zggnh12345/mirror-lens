@@ -335,13 +335,13 @@ function renderAccel(a){
   if (c.limit) line += ' · ' + pct((c.disk||0)/c.limit) + '（上限 ' + fmtBytes(c.limit) + '）';
   $('#acCache').textContent = line;
   var v = c.verify || {}, vf = c.verify_failed || 0;
-  $('#acVerify').textContent = '已验证 ' + (v.verified||0) + ' · 未验证 ' + (v.unverified||0)
-    + (vf ? ' · 拒收 ' + vf : '');
+  $('#acVerify').textContent = '已验证 ' + (v.verified||0) + ' · 无摘要 ' + (v.unknown||0)
+    + ((v.mismatch||0) ? ' · 对不上 ' + v.mismatch : '') + (vf ? ' · 拒收 ' + vf : '');
   var par = c.parallel || {};
   $('#acPar').textContent = (par.fills||0) + ' 次 / ' + fmtBytes(par.bytes||0)
     + ((par.fallbacks||0) ? ' · 退回单流 ' + par.fallbacks : '');
   $('#acPar').title = '只有带可信摘要的请求才会分片（目前是 Docker 按 digest 拉 blob）；退回单流=源不支持 Range 或可用源不足';
-  if (c.verify) $('#acVerify').title = '已验证=有客户端给的摘要做参照；未验证=只确认收全了，没有可信摘要可比';
+  if (c.verify) $('#acVerify').title = '已验证=有可信摘要（Docker digest/GitHub/SUMS）且逐字节比对通过；无摘要=只确认收全；对不上=摘要不符，永不命中';
   var kinds = (a.today && a.today.kinds) || {};
   var parts = [];
   ['raw','http','git','docker'].forEach(function(k){

@@ -19,6 +19,13 @@ var (
 	ErrReadOnly = errors.New("只支持只读操作")
 )
 
+// 摘要来源。与 store 里的同名字符串保持一致；这里不引 store，避免把 sqlite 拖进适配器。
+const (
+	DigestSourceDocker = "docker_digest"
+	DigestSourceGitHub = "github_asset_api"
+	DigestSourceSUMS   = "publisher_checksum_file"
+)
+
 // Plan 是一次代理请求的完整执行计划。
 type Plan struct {
 	Kind     string      // raw / release / http / git / docker
@@ -48,6 +55,10 @@ type Plan struct {
 	// ExpectSHA 非空时，落盘前必须校验内容哈希等于它。
 	// Docker blob 的 digest 就是内容哈希，比 ETag 硬。
 	ExpectSHA string
+
+	// ExpectSource 说明 ExpectSHA 从哪来（docker_digest / github_api / publisher_sums）。
+	// 只用于记录内容可信度，不参与校验判断。
+	ExpectSource string
 
 	// OfficialOnly 为真时不试镜像源：上游不是 Docker Hub 时，
 	// Hub 镜像站不认 ghcr.io/quay.io 的路径，只会白等一轮 401。

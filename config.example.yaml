@@ -74,6 +74,11 @@ registry:
 # /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）共用这一个开关
 github:
   enabled: true
+  # Token 只从环境变量读，不写在这里、也不进日志。
+  # 未设置（或留空）时完全不调用 Release Asset API：
+  # 不消耗匿名配额，也不给下载链路加延迟，Release 走单流。
+  # 设置后才会查 Asset digest，查不到再退到发布者 SHA256SUMS。
+  token_env: MIRRORLENS_GITHUB_TOKEN
 
 # ── 网络 ────────────────────────────────────────────────
 network:

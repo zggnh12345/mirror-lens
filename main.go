@@ -21,6 +21,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/config"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
+	"github.com/zggnh12345/mirror-lens/internal/ghapi"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
 	"github.com/zggnh12345/mirror-lens/internal/limits"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
@@ -154,7 +155,14 @@ func main() {
 		DockerOff: !cfg.Registry.Docker,
 		GHCROff:   !cfg.Registry.GHCR,
 		GitHubOff: !cfg.GitHub.Enabled,
-		CDN:       gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
+		GHMetadata: func() *ghapi.Client {
+			tok := cfg.GitHub.Token()
+			if tok == "" {
+				return nil
+			}
+			return ghapi.New(tok)
+		}(),
+		CDN: gateway.CDNOptions{Enabled: cfg.CDN.Enabled, MaxAge: cfg.CDN.MaxAge},
 		Parallel: gateway.ParOptions{
 			Enabled:              cfg.Parallel.Enabled,
 			MinSize:              cfg.Parallel.MinSizeMB << 20,
