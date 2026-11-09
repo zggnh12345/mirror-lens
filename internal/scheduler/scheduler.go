@@ -320,11 +320,17 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 	// 占满名额的源整体后移，免得最快的那台被所有任务一起压垮。
 	// 分组优先级压过容量：高优先组里某台满了，也应该先试同组的下一台，
 	// 而不是让低优先组插队（3.0 排序修正）。
+	// atCap 要拿 leaseSet 的锁；放在比较器里会被调用 O(n log n) 次。
+	// 排序前拍一次快照，结果等价，锁竞争降到 O(n)。
+	capAt := make(map[int64]bool, len(out))
+	for _, c := range out {
+		capAt[c.ID] = s.atCap(c.ID)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if gi, gj := groupKey(out[i].GroupRank), groupKey(out[j].GroupRank); gi != gj {
 			return gi < gj
 		}
-		if bi, bj := s.atCap(out[i].ID), s.atCap(out[j].ID); bi != bj {
+		if bi, bj := capAt[out[i].ID], capAt[out[j].ID]; bi != bj {
 			return !bi
 		}
 		// 组内再看手动优先。

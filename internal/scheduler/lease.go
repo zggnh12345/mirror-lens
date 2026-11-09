@@ -160,8 +160,8 @@ func (l *Lease) Activate() (func(), error) {
 	l.bodies++
 	l.mu.Unlock()
 
+	// addBody 内部已持锁 publish，这里不再重复扫一遍全表。
 	l.set.addBody(l.SourceID, 1)
-	l.set.publish()
 
 	var once sync.Once
 	return func() {
@@ -183,19 +183,22 @@ func (l *Lease) Activate() (func(), error) {
 // Transfer 把所有权交给新的 attempt（同源接管）。旧 Token 随即失效。
 func (l *Lease) Transfer(tok Token) (Token, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if tok.ID != l.ID || tok.Gen != l.gen {
+		l.mu.Unlock()
 		return Token{}, ErrLeaseStale
 	}
 	if l.state != StateActive {
-		return Token{}, fmt.Errorf("%w: transfer from %s", ErrLeaseState, l.state)
+		st := l.state
+		l.mu.Unlock()
+		return Token{}, fmt.Errorf("%w: transfer from %s", ErrLeaseState, st)
 	}
 	l.gen++
-	metrics.LeaseTransfer(l.SourceID, true)
+	next := Token{ID: l.ID, Gen: l.gen}
 	l.mu.Unlock()
+	// 指标刷新不持 Lease 锁，避免 publish 卡住别的 Body 状态机。
+	metrics.LeaseTransfer(l.SourceID, true)
 	l.set.publish()
-	l.mu.Lock()
-	return Token{ID: l.ID, Gen: l.gen}, nil
+	return next, nil
 }
 
 // Release 释放所有权。Body 尚未退出时只解绑 owner，名额保留到最后一个 Body 退出。
