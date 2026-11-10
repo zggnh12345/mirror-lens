@@ -1,0 +1,29 @@
+HOST docker.1panel.dev v4=2 v6=1
+  250ms ms=[71 74 76 73 71 74 71 76 73 71] winner=172.64.148.44:443 fail=0
+  1ms ms=[75 79 71 72 75 74 74 71 64 70] winner=172.64.148.44:443 fail=0
+HOST docker.apiba.cn v4=1 v6=0
+  SKIP non-dual
+HOST docker.jiaxin.site v4=4 v6=0
+  SKIP non-dual
+HOST docker.m.ixdev.cn v4=1 v6=4
+  250ms ms=[24 28 27 24 28 25 29 25 29 23] winner=202.46.226.3:443 fail=0
+  1ms ms=[13 14 11 12 15 16 14 15 12 12] winner=[240e:96c:6400:600:3::a]:443 fail=0
+HOST docker.sparkcr.cn v4=4 v6=4
+  250ms ms=[10 11 10 15 14 15 13 11 14 14] winner=122.228.1.14:443 fail=0
+  1ms ms=[11 11 10 11 12 10 10 12 12 11] winner=[240e:f7:c000:105:3::6a]:443 fail=0
+HOST free.hubfast.cn v4=1 v6=1
+  250ms ms=[162 448 190 156 199 171 193 227 160 202] winner=172.67.170.234:443 fail=0
+  1ms ms=[156 239 165 174 165 208 162 158 182 165] winner=[2606:4700:3036::ac43:aaea]:443 fail=0
+HOST ghproxy.link v4=1 v6=0
+  SKIP non-dual
+HOST hub.1panel.dev v4=2 v6=3
+  250ms ms=[71 68 69 69 75 74 78 75 80 74] winner=104.18.41.35:443 fail=0
+  1ms ms=[68 72 73 78 87 75 69 74 75 74] winner=104.18.41.35:443 fail=0
+HOST hubfast.cn v4=2 v6=1
+  250ms ms=[197 189 200 224 191 223 226 188 155 168] winner=172.67.170.234:443 fail=0
+  1ms ms=[191 166 191 191 183 196 197 155 179 189] winner=172.67.170.234:443 fail=0
+HOST gp.zzgg.eu.org v4=1 v6=0
+  SKIP non-dual
+HOST ghcr.nju.edu.cn v4=1 v6=1
+  250ms ms=[44 41 39 45 45 45 45 45 42 44] winner=210.28.130.20:443 fail=0
+  1ms ms=[27 26 25 25 26 40 24 26 24 25] winner=[2001:da8:1007:4011::20]:443 fail=0

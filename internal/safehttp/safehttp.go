@@ -29,6 +29,9 @@ type Options struct {
 	// IPFamily：auto = 双栈同时竞速（两族各发一条，先握手成功的赢）；
 	// v4/v6 = 只解析并拨该族。空值等同 auto。
 	IPFamily string
+	// FallbackDelay 覆盖竞速起跑差：0 = 默认 1ms（几乎同时）；负值在 Go
+	// 里含义是「关掉竞速」，不要用。主要给实测对比留个口子。
+	FallbackDelay time.Duration
 }
 
 type Guard struct {
@@ -130,7 +133,12 @@ func (g *Guard) Dialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:       g.o.DialTimeout,
 		KeepAlive:     30 * time.Second,
-		FallbackDelay: time.Millisecond,
+		FallbackDelay: func() time.Duration {
+			if g.o.FallbackDelay != 0 {
+				return g.o.FallbackDelay
+			}
+			return time.Millisecond
+		}(),
 		Control: func(network, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {

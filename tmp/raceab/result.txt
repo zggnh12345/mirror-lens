@@ -1,0 +1,289 @@
+HOST docker.m.daocloud.io v4=4 v6=0
+  SKIP non-dual
+HOST docker.1ms.run v4=4 v6=0
+  SKIP non-dual
+HOST dockerproxy.net v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.9:443 fail=0
+  1ms ms=[1 1 2] winner=198.18.0.9:443 fail=0
+HOST docker.xuanyuan.me v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.88:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.88:443 fail=0
+HOST hub1.nat.tf v4=1 v6=1
+  250ms ms=[2 3 2] winner=198.18.0.11:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.11:443 fail=0
+HOST docker.1panel.dev v4=2 v6=1
+  250ms ms=[67 64 67] winner=172.64.148.44:443 fail=0
+  1ms ms=[73 74 74] winner=172.64.148.44:443 fail=0
+HOST docker.1panel.top v4=1 v6=1
+  250ms ms=[3 3 3] winner=198.18.0.84:443 fail=0
+  1ms ms=[3 3 3] winner=198.18.0.84:443 fail=0
+HOST docker.fxxk.dedyn.io v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.13:443 fail=0
+  1ms ms=[2 2 3] winner=198.18.0.13:443 fail=0
+HOST dockerproxy.cn v4=1 v6=1
+  250ms run0 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  250ms run1 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  250ms run2 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  1ms run1 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  1ms run2 FAIL dial tcp 31.13.68.169:443: i/o timeout
+  1ms ms=[] winner= fail=3
+HOST dockerpull.org v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.8:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.8:443 fail=0
+HOST docker.1panel.work v4=1 v6=1
+  250ms ms=[2 2 3] winner=198.18.0.85:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.85:443 fail=0
+HOST docker.anye.icu v4=1 v6=1
+  250ms ms=[2 3 2] winner=198.18.0.86:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.86:443 fail=0
+HOST docker.hpcloud.cloud v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.82:443 fail=0
+  1ms ms=[3 2 4] winner=198.18.0.82:443 fail=0
+HOST docker.rainbond.cc v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.79:443 fail=0
+  1ms ms=[4 2 3] winner=198.18.0.79:443 fail=0
+HOST docker.unsee.tech v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.78:443 fail=0
+  1ms ms=[2 3 2] winner=198.18.0.78:443 fail=0
+HOST gh-proxy.com v4=1 v6=1
+  250ms ms=[5 5 2] winner=198.18.0.7:443 fail=0
+  1ms ms=[2 3 2] winner=198.18.0.7:443 fail=0
+HOST ghfast.top v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.12:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.12:443 fail=0
+HOST ghproxy.net v4=1 v6=0
+  SKIP non-dual
+HOST gh.llkk.cc v4=1 v6=1
+  250ms ms=[2 2 3] winner=198.18.0.81:443 fail=0
+  1ms ms=[3 3 3] winner=198.18.0.81:443 fail=0
+HOST ghproxy.com v4=1 v6=0
+  SKIP non-dual
+HOST mirror.ghproxy.com v4=1 v6=1
+  250ms run0 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  250ms run1 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  250ms run2 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  1ms run1 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  1ms run2 FAIL dial tcp 31.13.70.13:443: i/o timeout
+  1ms ms=[] winner= fail=3
+HOST github.moeyy.xyz v4=1 v6=1
+  250ms run0 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  250ms run1 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  250ms run2 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  1ms run1 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  1ms run2 FAIL dial tcp 199.59.149.207:443: i/o timeout
+  1ms ms=[] winner= fail=3
+HOST gh.jasonzeng.dev v4=1 v6=1
+  250ms ms=[4 4 4] winner=198.18.0.80:443 fail=0
+  1ms ms=[3 3 5] winner=198.18.0.80:443 fail=0
+HOST gh.xxooo.cf v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.83:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.83:443 fail=0
+HOST atomhub.openatom.cn v4=1 v6=0
+  SKIP non-dual
+HOST dhub.kubesre.xyz v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.91:443 fail=0
+  1ms ms=[2 3 2] winner=198.18.0.91:443 fail=0
+HOST docker-0.unsee.tech v4=1 v6=1
+  250ms ms=[2 3 2] winner=198.18.0.15:443 fail=0
+  1ms ms=[2 3 2] winner=198.18.0.15:443 fail=0
+HOST docker-registry.nmqu.com v4=1 v6=1
+  250ms ms=[2 3 2] winner=198.18.0.10:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.10:443 fail=0
+HOST docker.1panel.live v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.17:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.17:443 fail=0
+HOST docker.367231.xyz v4=1 v6=1
+  250ms ms=[3 3 2] winner=198.18.0.18:443 fail=0
+  1ms ms=[5 10 2] winner=198.18.0.18:443 fail=0
+HOST docker.5z5f.com v4=1 v6=1
+  250ms ms=[3 3 3] winner=198.18.0.16:443 fail=0
+  1ms ms=[2 3 2] winner=198.18.0.16:443 fail=0
+HOST docker.aityp.com v4=1 v6=0
+  SKIP non-dual
+HOST docker.amingg.com v4=1 v6=1
+  250ms ms=[1 1 1] winner=198.18.0.19:443 fail=0
+  1ms ms=[1 1 2] winner=198.18.0.19:443 fail=0
+HOST docker.anyhub.us.kg v4=1 v6=1
+  250ms ms=[1 1 3] winner=198.18.0.20:443 fail=0
+  1ms ms=[2 1 2] winner=198.18.0.20:443 fail=0
+HOST docker.apiba.cn v4=1 v6=2
+  250ms ms=[216 209 154] winner=104.21.30.162:443 fail=0
+  1ms ms=[162 161 178] winner=[2606:4700:3032::ac43:ad3b]:443 fail=0
+HOST docker.awsl9527.cn v4=1 v6=1
+  250ms run0 FAIL dial tcp 104.244.46.17:443: i/o timeout
+  250ms run1 FAIL dial tcp 208.77.47.172:443: connect: connection refused
+  250ms run2 FAIL dial tcp 208.77.47.172:443: connect: connection refused
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 208.77.47.172:443: connect: connection refused
+  1ms run1 FAIL dial tcp 208.77.47.172:443: connect: connection refused
+  1ms run2 FAIL dial tcp 208.77.47.172:443: connect: connection refused
+  1ms ms=[] winner= fail=3
+HOST docker.bowen.games v4=1 v6=0
+  SKIP non-dual
+HOST docker.chenby.cn v4=0 v6=0
+  SKIP non-dual
+HOST docker.ckyl.me v4=1 v6=1
+  250ms run0 FAIL dial tcp 199.59.149.206:443: i/o timeout
+  250ms run1 FAIL dial tcp 69.171.229.73:443: i/o timeout
+  250ms run2 FAIL dial tcp 69.171.229.73:443: i/o timeout
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 69.171.229.73:443: i/o timeout
+  1ms run1 FAIL dial tcp 69.171.229.73:443: i/o timeout
+  1ms run2 FAIL dial tcp 69.171.229.73:443: i/o timeout
+  1ms ms=[] winner= fail=3
+HOST docker.cloudlayer.icu v4=1 v6=1
+  250ms ms=[3 3 2] winner=198.18.0.96:443 fail=0
+  1ms ms=[3 2 3] winner=198.18.0.96:443 fail=0
+HOST docker.fnnas.com v4=1 v6=0
+  SKIP non-dual
+HOST docker.foreverlink.love v4=1 v6=1
+  250ms ms=[3 2 4] winner=198.18.0.23:443 fail=0
+  1ms ms=[3 2 3] winner=198.18.0.23:443 fail=0
+HOST docker.hlmirror.com v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.25:443 fail=0
+  1ms ms=[1 2 2] winner=198.18.0.25:443 fail=0
+HOST docker.hlyun.org v4=1 v6=1
+  250ms ms=[5 2 1] winner=198.18.0.26:443 fail=0
+  1ms ms=[1 2 1] winner=198.18.0.26:443 fail=0
+HOST docker.jiaxin.site v4=4 v6=2
+  250ms ms=[12 13 10] winner=122.228.1.64:443 fail=0
+  1ms ms=[13 12 12] winner=122.228.1.64:443 fail=0
+HOST docker.kubesre.xyz v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.28:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.28:443 fail=0
+HOST docker.lefu.men v4=1 v6=1
+  250ms ms=[2 2 5] winner=198.18.0.29:443 fail=0
+  1ms ms=[4 3 3] winner=198.18.0.29:443 fail=0
+HOST docker.linkedbus.com v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.30:443 fail=0
+  1ms ms=[3 2 2] winner=198.18.0.30:443 fail=0
+HOST docker.m.ixdev.cn v4=1 v6=3
+  250ms ms=[23 25 25] winner=202.46.226.3:443 fail=0
+  1ms ms=[12 12 13] winner=[240e:96c:6400:600:3::a]:443 fail=0
+HOST docker.mhtsec.com v4=1 v6=1
+  250ms ms=[3 3 2] winner=198.18.0.31:443 fail=0
+  1ms ms=[3 2 3] winner=198.18.0.31:443 fail=0
+HOST docker.mrxn.net v4=1 v6=1
+  250ms ms=[2 3 2] winner=198.18.0.32:443 fail=0
+  1ms ms=[2 2 1] winner=198.18.0.32:443 fail=0
+HOST docker.mybacc.com v4=1 v6=0
+  SKIP non-dual
+HOST docker.shaunyang.site v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.33:443 fail=0
+  1ms ms=[3 2 2] winner=198.18.0.33:443 fail=0
+HOST docker.sparkcr.cn v4=4 v6=4
+  250ms ms=[9 10 10] winner=122.228.1.35:443 fail=0
+  1ms ms=[11 10 13] winner=[240e:f7:c000:105:3::58]:443 fail=0
+HOST docker.wanpeng.top v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.34:443 fail=0
+  1ms ms=[2 2 3] winner=198.18.0.34:443 fail=0
+HOST docker.wget.at v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.35:443 fail=0
+  1ms ms=[3 2 2] winner=198.18.0.35:443 fail=0
+HOST docker.xiaogenban1993.com v4=1 v6=1
+  250ms ms=[2 2 3] winner=198.18.0.36:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.36:443 fail=0
+HOST docker.xn--6oq72ry9d5zx.cn v4=0 v6=0
+  SKIP non-dual
+HOST docker.xpg666.xyz v4=1 v6=1
+  250ms ms=[2 2 3] winner=198.18.0.37:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.37:443 fail=0
+HOST docker.xuanyuan.dev v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.38:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.38:443 fail=0
+HOST docker.xuanyuan.run v4=2 v6=0
+  SKIP non-dual
+HOST docker.yomansunter.com v4=0 v6=0
+  SKIP non-dual
+HOST docker.zhai.cm v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.39:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.39:443 fail=0
+HOST dockerhub.icu v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.93:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.93:443 fail=0
+HOST dockerhub.jobcher.com v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.40:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.40:443 fail=0
+HOST dockerhub.websoft9.com v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.41:443 fail=0
+  1ms ms=[3 2 2] winner=198.18.0.41:443 fail=0
+HOST dockerimage.gbfeng.com v4=1 v6=0
+  SKIP non-dual
+HOST dockerproxy.com v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.42:443 fail=0
+  1ms ms=[3 3 7] winner=198.18.0.42:443 fail=0
+HOST dockerproxy.cool v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.43:443 fail=0
+  1ms ms=[2 3 3] winner=198.18.0.43:443 fail=0
+HOST dockerproxy.link v4=1 v6=1
+  250ms ms=[3 3 3] winner=198.18.0.92:443 fail=0
+  1ms ms=[3 3 3] winner=198.18.0.92:443 fail=0
+HOST free.hubfast.cn v4=2 v6=1
+  250ms ms=[190 222 188] winner=172.67.170.234:443 fail=0
+  1ms ms=[168 271 231] winner=[2606:4700:3036::ac43:aaea]:443 fail=0
+HOST gh.api.99988866.xyz v4=2 v6=0
+  SKIP non-dual
+HOST ghproxy.link v4=2 v6=1
+  250ms ms=[202 189 184] winner=104.21.11.15:443 fail=0
+  1ms ms=[189 163 166] winner=104.21.11.15:443 fail=0
+HOST github.hlyun.org v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.44:443 fail=0
+  1ms ms=[2 2 3] winner=198.18.0.44:443 fail=0
+HOST hub.1panel.dev v4=2 v6=1
+  250ms ms=[91 81 66] winner=172.64.148.44:443 fail=0
+  1ms ms=[76 71 70] winner=172.64.148.44:443 fail=0
+HOST hub.amingg.com v4=1 v6=1
+  250ms ms=[3 3 3] winner=198.18.0.45:443 fail=0
+  1ms ms=[3 2 2] winner=198.18.0.45:443 fail=0
+HOST hub.geekery.cn v4=1 v6=1
+  250ms run0 FAIL dial tcp 157.240.20.8:443: i/o timeout
+  250ms run1 FAIL dial tcp 162.125.2.5:443: i/o timeout
+  250ms run2 FAIL dial tcp 162.125.2.5:443: i/o timeout
+  250ms ms=[] winner= fail=3
+  1ms run0 FAIL dial tcp 162.125.2.5:443: i/o timeout
+  1ms run1 FAIL dial tcp 162.125.2.5:443: i/o timeout
+  1ms run2 FAIL dial tcp 162.125.2.5:443: i/o timeout
+  1ms ms=[] winner= fail=3
+HOST hub.gog.email v4=1 v6=1
+  250ms ms=[3 3 2] winner=198.18.0.46:443 fail=0
+  1ms ms=[3 3 2] winner=198.18.0.46:443 fail=0
+HOST hub.rat.dev v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.47:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.47:443 fail=0
+HOST hub.uuuadc.top v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.48:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.48:443 fail=0
+HOST hub3.nat.tf v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.49:443 fail=0
+  1ms ms=[2 2 3] winner=198.18.0.49:443 fail=0
+HOST hub4.nat.tf v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.50:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.50:443 fail=0
+HOST hubfast.cn v4=2 v6=1
+  250ms ms=[191 175 225] winner=172.67.170.234:443 fail=0
+  1ms ms=[197 195 198] winner=[2606:4700:3036::ac43:aaea]:443 fail=0
+HOST image.jianmuhub.com v4=1 v6=0
+  SKIP non-dual
+HOST mirror.ccs.tencentyun.com v4=0 v6=0
+  SKIP non-dual
+HOST proxy.vvvv.ee v4=1 v6=1
+  250ms ms=[3 2 2] winner=198.18.0.51:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.51:443 fail=0
+HOST registry.cyou v4=1 v6=1
+  250ms ms=[2 2 3] winner=198.18.0.52:443 fail=0
+  1ms ms=[2 3 11] winner=198.18.0.52:443 fail=0
+HOST gp.zzgg.eu.org v4=1 v6=1
+  250ms ms=[412 149 162] winner=129.153.90.135:443 fail=0
+  1ms ms=[147 1178 158] winner=[2603:c020:12:4c5d:cf48:44:a422:beb5]:443 fail=0
+HOST ghcr.dockerproxy.com v4=1 v6=1
+  250ms ms=[2 2 2] winner=198.18.0.53:443 fail=0
+  1ms ms=[2 2 2] winner=198.18.0.53:443 fail=0
+HOST ghcr.nju.edu.cn v4=1 v6=1
+  250ms ms=[41 41 42] winner=210.28.130.20:443 fail=0
+  1ms ms=[26 25 26] winner=[2001:da8:1007:4011::20]:443 fail=0
