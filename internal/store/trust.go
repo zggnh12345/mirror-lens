@@ -37,7 +37,7 @@ func (s *Store) trustMap(kind string, now time.Time) (map[int64]Trust, error) {
 		SUM(CASE WHEN ok=1 AND tier>=2 THEN 1 ELSE 0 END),
 		SUM(CASE WHEN digest_ok=1 THEN 1 ELSE 0 END),
 		SUM(CASE WHEN digest_ok=0 OR blob_ok=0 THEN 1 ELSE 0 END)
-		FROM checks WHERE ts>=? AND kind=? GROUP BY source_id`, since, kind)
+		FROM checks WHERE ts>=? AND kind=? GROUP BY source_id`, since, sampleKind(kind))
 	if err != nil {
 		return nil, err
 	}

@@ -68,6 +68,27 @@ func TestRawReleaseReadGithubProbeSamples(t *testing.T) {
 	}
 }
 
+// 信任度同样按家族取，否则 raw 请求会看到 Trust=0，和评分口径分叉。
+func TestTrustFamilyMapping(t *testing.T) {
+	st, id := newTestStore(t)
+	for i := 0; i < 3; i++ {
+		if _, err := st.db.Exec(`INSERT INTO checks(source_id, kind, tier, ok, digest_ok, blob_ok, ts)
+			VALUES(?,'github',2,1,1,1,?)`, id, time.Now().Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, err := st.trustMap("raw", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[id].OK7 != 3 {
+		t.Fatalf("raw 应读到 github 族信任样本，实际 OK7=%d", m[id].OK7)
+	}
+	if _, ok := m[id]; !ok {
+		t.Fatal("raw 没有拿到 github 族信任记录")
+	}
+}
+
 // raw/release 的代理速度必须复用 github 行，写入侧也要落到 github。
 func TestProxySpeedFamilyReadWrite(t *testing.T) {
 	st, id := newTestStore(t)
