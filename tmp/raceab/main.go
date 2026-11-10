@@ -52,6 +52,34 @@ func main() {
 			fmt.Println("  SKIP non-dual")
 			continue
 		}
+		// 旧行为：解析后 v4 优先，逐个顺序拨，全失败才轮到 v6。
+		{
+			g := safehttp.New(safehttp.Options{DialTimeout: 8 * time.Second})
+			var ms []int
+			var won string
+			fail := 0
+			for i := 0; i < n; i++ {
+				t0 := time.Now()
+				var c net.Conn
+				var err error
+				for _, a := range append(append([]string{}, v4...), v6...) {
+					c, err = g.Dialer().Dial("tcp", net.JoinHostPort(a, "443"))
+					if err == nil {
+						break
+					}
+				}
+				el := time.Since(t0).Milliseconds()
+				if err != nil {
+					fail++
+					fmt.Printf("  v4first run%d FAIL %v\n", i, err)
+					continue
+				}
+				won = c.RemoteAddr().String()
+				c.Close()
+				ms = append(ms, int(el))
+			}
+			fmt.Printf("  v4first ms=%v winner=%s fail=%d\n", ms, won, fail)
+		}
 		for _, d := range []struct {
 			name string
 			v    time.Duration
