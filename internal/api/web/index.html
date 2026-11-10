@@ -40,11 +40,11 @@
   </div>
 
   <div class="stats">
+    <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
     <div class="stat ok"><b id="sUsable">–</b><span>可用</span></div>
     <div class="stat dk"><b id="sDocker">–</b><span>支持 Docker</span></div>
     <div class="stat gh"><b id="sGithub">–</b><span>支持 GitHub</span></div>
     <div class="stat gc"><b id="sGhcr">–</b><span>支持 GHCR</span></div>
-    <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
   </div>
 
   <section id="liveSec" class="sec live" style="display:none">
@@ -137,6 +137,10 @@
     </div>
     <p class="hint" style="margin:2px 0 10px">最近 50 条错误级日志；单个请求的回源失败不在这里。</p>
     <div id="alertList" class="alist"></div>
+    <div class="arow">
+      <button class="btn" id="alertSeen">全部已读</button>
+      <button class="btn" id="alertClear">清空</button>
+    </div>
   </div>
 </div>
 
@@ -250,24 +254,31 @@ async function api(path, opt){
   return d;
 }
 
-/* 告警铃铛：30 秒轮询未读数，点开即清零。 */
+/* 告警铃铛：30 秒轮询未读数；点开只展示，已读/清空各自按钮。 */
 document.addEventListener('DOMContentLoaded', function(){
   var btn = document.getElementById('btnAlerts'), badge = document.getElementById('bellBadge');
-  if (!btn || !badge) return;
+  var list = document.getElementById('alertList');
+  if (!btn || !badge || !list) return;
   function paint(n){ if(n>0){ badge.hidden=false; badge.textContent = n>99 ? '99+' : n; } else { badge.hidden=true; } }
+  function render(items){
+    if (!items.length) { list.innerHTML = '<p class="hint">最近没有错误级日志。</p>'; return; }
+    list.innerHTML = items.map(function(it){
+      var t = new Date(it.at*1000);
+      var hh = ('0'+t.getHours()).slice(-2), mm = ('0'+t.getMinutes()).slice(-2);
+      return '<div class="aItem"><div class="aMeta">'+(t.getMonth()+1)+'-'+t.getDate()+' '+hh+':'+mm+' · '+esc(it.level)+'</div><div class="aMsg">'+esc(it.msg)+'</div></div>';
+    }).join('');
+  }
+  async function load(){ var d = await api('/api/alerts'); render(d.items||[]); paint(d.unread||0); }
   async function poll(){ try { var d = await api('/api/alerts'); paint(d.unread||0); } catch(e){} }
   btn.addEventListener('click', async function(){
-    try {
-      var d = await api('/api/alerts'), items = d.items || [];
-      document.getElementById('alertList').innerHTML = items.length ? items.map(function(it){
-        var t = new Date(it.at*1000);
-        var hh = ('0'+t.getHours()).slice(-2), mm = ('0'+t.getMinutes()).slice(-2);
-        return '<div class="aItem"><div class="aMeta">'+(t.getMonth()+1)+'-'+t.getDate()+' '+hh+':'+mm+' · '+esc(it.level)+'</div><div class="aMsg">'+esc(it.msg)+'</div></div>';
-      }).join('') : '<p class="hint">最近没有错误级日志。</p>';
-      openSheet('sheetAlerts');
-      await api('/api/alerts/seen', {method:'POST'});
-      paint(0);
-    } catch(e){ toast(e.message); }
+    try { await load(); openSheet('sheetAlerts'); } catch(e){ toast(e.message); }
+  });
+  document.getElementById('alertSeen').addEventListener('click', async function(){
+    try { await api('/api/alerts/seen', {method:'POST'}); paint(0); toast('已全部标记为已读'); } catch(e){ toast(e.message); }
+  });
+  document.getElementById('alertClear').addEventListener('click', async function(){
+    if (!confirm('清空全部告警记录？')) return;
+    try { await api('/api/alerts/clear', {method:'POST'}); await load(); paint(0); toast('已清空'); } catch(e){ toast(e.message); }
   });
   poll(); setInterval(poll, 30000);
 });

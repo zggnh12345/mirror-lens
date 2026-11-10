@@ -581,3 +581,13 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .trrow input{width:15px;height:15px;accent-color:var(--brand);flex:none}
 .trrow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trrow:has(input:checked){border-color:var(--brand)}
+
+/* 告警面板底部操作 */
+.arow{display:flex;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.arow .btn{flex:1}
+/* 调度顺序：每个项目独立一行，左侧标签垂直居中 */
+.kv.mid{align-items:center}
+.kv.mid > div{min-width:0;flex:1;text-align:right}
+.schedRow{display:flex;justify-content:flex-end;gap:6px;line-height:1.7;font-size:12.5px}
+.schedRow b{color:var(--muted);font-weight:600;flex:0 0 auto}
+.schedRow span{min-width:0;word-break:break-word}

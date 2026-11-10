@@ -25,3 +25,15 @@ func (s *Server) alertsSeen(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+// alertsClear 清空告警环。
+func (s *Server) alertsClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "只支持 POST"})
+		return
+	}
+	if s.alerts != nil {
+		s.alerts.Clear()
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

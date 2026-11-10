@@ -213,6 +213,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/health", guard(s.health))
 	mux.HandleFunc("/api/alerts", guard(s.alertsList))
 	mux.HandleFunc("/api/alerts/seen", guard(csrf(s.alertsSeen)))
+	mux.HandleFunc("/api/alerts/clear", guard(csrf(s.alertsClear)))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
 	mux.HandleFunc("/api/trusted", guard(csrf(s.trusted)))

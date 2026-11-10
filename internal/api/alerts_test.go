@@ -30,3 +30,24 @@ func TestAlertsListShape(t *testing.T) {
 		t.Fatalf("返回不对: %+v", got)
 	}
 }
+
+func TestAlertsClear(t *testing.T) {
+	s := &Server{}
+	WithAlerts(alert.New(10))(s)
+	s.alerts.Add(slog.LevelError, "boom")
+
+	w := httptest.NewRecorder()
+	s.alertsClear(w, httptest.NewRequest("POST", "/api/alerts/clear", nil))
+	if w.Code != 200 {
+		t.Fatalf("状态码 %d", w.Code)
+	}
+	items, unread := s.alerts.Snapshot(10)
+	if len(items) != 0 || unread != 0 {
+		t.Fatalf("清空后仍有 %d 条，未读 %d", len(items), unread)
+	}
+	w = httptest.NewRecorder()
+	s.alertsClear(w, httptest.NewRequest("GET", "/api/alerts/clear", nil))
+	if w.Code != 405 {
+		t.Fatalf("GET 应 405，得到 %d", w.Code)
+	}
+}

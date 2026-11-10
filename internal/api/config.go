@@ -101,6 +101,24 @@ var cfgSchema = []cfgField{
 	{Section: "后台巡检", Key: "janitor.expired_grace", Label: "过期宽限", Kind: "duration", Restart: true,
 		Hint: "条目过期后还要等多久没人访问才删", Get: func(c *config.Config) string { return durStr(c.Janitor.ExpiredGrace.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.ExpiredGrace.Duration, v) }},
 
+	// 数据库备份
+	{Section: "数据库备份", Key: "backup.enabled", Label: "每日快照", Kind: "bool", Restart: true,
+		Hint: "巡检时用 VACUUM INTO 出一份独立快照，随库复制 secret.key；防误删、迁移失败、索引损坏，不防磁盘故障",
+		Get:  func(c *config.Config) string { return b2s(c.Backup.Enabled) }, Set: func(c *config.Config, v string) error { c.Backup.Enabled = parseBool(v); return nil }},
+	{Section: "数据库备份", Key: "backup.keep", Label: "保留份数", Kind: "int", Unit: "份", Min: 1, Max: 365, HasMin: true, HasMax: true, Restart: true,
+		Hint: "按日期滚动，超出删最旧；每天最多一份",
+		Get:  func(c *config.Config) string { return i32(c.Backup.Keep) }, Set: func(c *config.Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 1 || n > 365 {
+				return fmt.Errorf("保留份数应在 1~365 之间")
+			}
+			c.Backup.Keep = n
+			return nil
+		}},
+	{Section: "数据库备份", Key: "backup.dir", Label: "快照目录", Kind: "string", Restart: true,
+		Hint: "留空 = <数据目录>/backup",
+		Get:  func(c *config.Config) string { return c.Backup.Dir }, Set: func(c *config.Config, v string) error { c.Backup.Dir = strings.TrimSpace(v); return nil }},
+
 	// 内容 TTL
 	{Section: "内容 TTL", Key: "raw.ttl", Label: "Raw 重新验证间隔", Kind: "duration", Restart: true,
 		Hint: "分支/标签；commit 永久缓存", Get: func(c *config.Config) string { return durStr(c.Raw.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Raw.TTL.Duration, v) }},
@@ -475,9 +493,10 @@ var cfgSectionGroup = map[string]string{
 	"多源调度": "调度", "探测": "调度", "分片并行": "并发",
 	"入口限流": "安全", "访问控制": "安全", "信任中转": "安全",
 	"日志": "观测", "指标": "观测",
+	"数据库备份": "运维",
 }
 
-var cfgGroupOrder = []string{"基础", "加速", "缓存", "调度", "并发", "安全", "观测"}
+var cfgGroupOrder = []string{"基础", "加速", "缓存", "调度", "并发", "安全", "运维", "观测"}
 
 // configView 把 cfg 按分组整理成前端要的结构。
 func configView(c *config.Config, path string) map[string]any {

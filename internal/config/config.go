@@ -433,6 +433,9 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("logging.level 只支持 debug/info/warn/error，收到 %q", c.Logging.Level)
 	}
+	if c.Backup.Keep < 1 || c.Backup.Keep > 365 {
+		return fmt.Errorf("backup.keep 应在 1~365 之间，收到 %d", c.Backup.Keep)
+	}
 	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 || c.Cache.MinFreeGB < 0 {
 		return fmt.Errorf("容量上限不能是负数")
 	}

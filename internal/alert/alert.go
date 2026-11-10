@@ -56,16 +56,23 @@ func (r *Ring) Snapshot(limit int) ([]Entry, int) {
 	}
 	out := make([]Entry, 0, limit)
 	unread := 0
-	for i, e := range r.buf {
+	for _, e := range r.buf {
 		if e.ID > r.seen {
 			unread++
 		}
-		_ = i
 	}
 	for i := len(r.buf) - 1; i >= 0 && len(out) < limit; i-- {
 		out = append(out, r.buf[i])
 	}
 	return out, unread
+}
+
+// Clear 清空全部条目，红点归零。
+func (r *Ring) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.buf = nil
+	r.seen = r.next
 }
 
 // MarkSeen 把全部现有条目标为已读。
