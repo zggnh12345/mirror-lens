@@ -1,6 +1,8 @@
 services:
   mirror-lens:
     image: ghcr.io/zggnh12345/mirror-lens:latest
+    # 从源码构建：注释掉上面一行，改用下一行
+    # build: .
     container_name: mirror-lens
     restart: unless-stopped
     environment:
