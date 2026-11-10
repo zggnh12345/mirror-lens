@@ -136,3 +136,29 @@ func TestSplitLinesSeparators(t *testing.T) {
 		}
 	}
 }
+
+// 设置页三个安全分组的顺序必须是 访问控制 → 入口限流 → 信任中转，且各自只出现一段。
+func TestSecuritySectionOrder(t *testing.T) {
+	var seq []string
+	for _, f := range cfgSchema {
+		if len(seq) == 0 || seq[len(seq)-1] != f.Section {
+			seq = append(seq, f.Section)
+		}
+	}
+	pos := map[string]int{}
+	for i, sec := range seq {
+		if _, dup := pos[sec]; dup {
+			t.Fatalf("分组 %q 出现了不止一段: %v", sec, seq)
+		}
+		pos[sec] = i
+	}
+	a, ok1 := pos["访问控制"]
+	b, ok2 := pos["入口限流"]
+	c, ok3 := pos["信任中转"]
+	if !ok1 || !ok2 || !ok3 {
+		t.Fatalf("缺少分组: %v", seq)
+	}
+	if !(a < b && b < c) {
+		t.Fatalf("顺序应为 访问控制(%d) → 入口限流(%d) → 信任中转(%d)，实际 %v", a, b, c, seq)
+	}
+}

@@ -518,7 +518,9 @@ function buildConfig(d){
         '<div class="cf"><div class="clabel">' + esc(f.label) +
         (f.hint ? '<span class="qi" data-tip="' + esc(f.hint) + '">?</span>' : '') +
         '</div>' + rtag + '</div>' +
-        '<div class="cc">' + cfgControl(f) + '</div></div>';
+        '<div class="cc">' + cfgControl(f) +
+        (f.kind === 'list' && f.hint ? '<div class="hint" style="margin-top:6px;line-height:1.6">' + esc(f.hint) + '</div>' : '') +
+        '</div></div>';
     });
     html += '</div>';
   });

@@ -284,18 +284,6 @@ var cfgSchema = []cfgField{
 			return setIntI(&c.Parallel.SwitchGapSec, v, 0, 600, true, true)
 		}},
 
-	// 信任中转：IP 钉死与解析策略
-	{Section: "信任中转", Key: "relay.pin_grace_hours", Label: "IP 钉死迁移窗口", Kind: "int", Unit: "小时", Min: 0, Max: 720, HasMin: true, HasMax: true, Restart: true,
-		Hint: "首次解析失败时沿用旧版解析的时限；到期仍未解析成功就停止未钉 IP 的拨号。0 = 24 小时",
-		Get:  func(c *config.Config) string { return i32(c.Relay.PinGraceHours) },
-		Set: func(c *config.Config, v string) error {
-			return setIntI(&c.Relay.PinGraceHours, v, 0, 720, true, true)
-		}},
-	{Section: "信任中转", Key: "relay.resolver_timeout", Label: "DNS 解析超时", Kind: "duration", Restart: true,
-		Hint: "单次解析超时；解析结果会被钉住，后续拨号不再重新解析。0 = 5s",
-		Get:  func(c *config.Config) string { return durStr(c.Relay.ResolverTimeout.Duration) },
-		Set:  func(c *config.Config, v string) error { return setDur(&c.Relay.ResolverTimeout.Duration, v) }},
-
 	// 探测
 	{Section: "探测", Key: "probe.allow_private", Label: "允许探测内网源", Kind: "bool", Restart: true,
 		Hint: "源架在局域网时才开；开启等于关掉 SSRF 防护", Get: func(c *config.Config) string { return b2s(c.Probe.AllowPrivate) }, Set: func(c *config.Config, v string) error { c.Probe.AllowPrivate = parseBool(v); return nil }},
@@ -319,6 +307,28 @@ var cfgSchema = []cfgField{
 	// 访问控制
 	{Section: "访问控制", Key: "auth.require_token", Label: "代理路径需 Token", Kind: "bool", Restart: true,
 		Hint: "默认匿名放行；true 时非浏览器客户端必须带 Access Token", Get: func(c *config.Config) string { return b2s(c.Auth.RequireToken) }, Set: func(c *config.Config, v string) error { c.Auth.RequireToken = parseBool(v); return nil }},
+	{Section: "访问控制", Key: "access.allow_cidrs", Label: "允许来源（白名单）", Kind: "list",
+		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：10.1.1.0/24, 192.168.1.5。留空 = 不限来源；填了就只有这些网段能访问。保存前会弹风险提示",
+		Get:  func(c *config.Config) string { return strings.Join(c.Access.Allow, "\n") }, Set: func(c *config.Config, v string) error {
+			c.Access.Allow = splitLines(v)
+			return nil
+		}},
+	{Section: "访问控制", Key: "access.deny_cidrs", Label: "拒绝来源（黑名单）", Kind: "list",
+		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：203.0.113.9, 198.51.100.0/24。优先于白名单，命中直接 403；留空 = 不拒绝任何人",
+		Get:  func(c *config.Config) string { return strings.Join(c.Access.Deny, "\n") }, Set: func(c *config.Config, v string) error {
+			c.Access.Deny = splitLines(v)
+			return nil
+		}},
+	{Section: "访问控制", Key: "access.scope", Label: "生效范围", Kind: "enum", Options: []string{"panel", "all"},
+		Hint: "panel = 只约束面板与 /api，加速路径照常开放（默认）；all = 连 /v2 /gh /raw /git 一起约束",
+		Get: func(c *config.Config) string {
+			if c.Access.Scope == "" {
+				return "panel"
+			}
+			return c.Access.Scope
+		}, Set: func(c *config.Config, v string) error { c.Access.Scope = strings.TrimSpace(v); return nil }},
+
+	// 日志
 
 	// 入口限流
 	{Section: "入口限流", Key: "limits.enabled", Label: "开启限流", Kind: "bool", Restart: true,
@@ -353,34 +363,25 @@ var cfgSchema = []cfgField{
 		Get: func(c *config.Config) string { return i32(c.Limits.TokenConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.TokenConcurrency, v, 0, 1<<30, true, false)
 		}},
-	{Section: "访问控制", Key: "limits.trusted_proxies", Label: "可信代理（XFF）", Kind: "list", Restart: true,
-		Hint: "每行一个，也可用逗号分隔。只有这些网段的 X-Forwarded-For 会被采信；默认 172.16.0.0/12（已含 172.16.0.0/16）+ fd00::/8 + 回环。放在反代后必须包含反代网段，填 0.0.0.0/0 等于信任所有人，白名单会失效",
+	// 信任中转：谁的话能被采信，以及中转 IP 的钉死/解析策略
+	{Section: "信任中转", Key: "limits.trusted_proxies", Label: "可信代理（XFF）", Kind: "list", Restart: true,
+		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：172.16.0.0/12, 10.1.1.0/24, 127.0.0.1。只有这些网段发来的 X-Forwarded-For 会被采信；默认 172.16.0.0/12 + fd00::/8 + 回环。放在反代后面时必须把反代网段写进来，否则白/黑名单会把所有请求当成同一个 IP。填 0.0.0.0/0 等于信任所有人，白名单会失效",
 		Get:  func(c *config.Config) string { return strings.Join(c.Limits.TrustedProxies, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Limits.TrustedProxies = splitLines(v)
 			return nil
 		}},
-	{Section: "访问控制", Key: "access.allow_cidrs", Label: "允许来源（白名单）", Kind: "list",
-		Hint: "每行一个，也可用逗号分隔。留空 = 不限来源；填了就只有这些网段能访问。保存前会弹风险提示",
-		Get:  func(c *config.Config) string { return strings.Join(c.Access.Allow, "\n") }, Set: func(c *config.Config, v string) error {
-			c.Access.Allow = splitLines(v)
-			return nil
+	// 信任中转：IP 钉死与解析策略
+	{Section: "信任中转", Key: "relay.pin_grace_hours", Label: "IP 钉死迁移窗口", Kind: "int", Unit: "小时", Min: 0, Max: 720, HasMin: true, HasMax: true, Restart: true,
+		Hint: "首次解析失败时沿用旧版解析的时限；到期仍未解析成功就停止未钉 IP 的拨号。0 = 24 小时",
+		Get:  func(c *config.Config) string { return i32(c.Relay.PinGraceHours) },
+		Set: func(c *config.Config, v string) error {
+			return setIntI(&c.Relay.PinGraceHours, v, 0, 720, true, true)
 		}},
-	{Section: "访问控制", Key: "access.deny_cidrs", Label: "拒绝来源（黑名单）", Kind: "list",
-		Hint: "每行一个，也可用逗号分隔。优先于白名单，命中直接 403；留空 = 不拒绝任何人",
-		Get:  func(c *config.Config) string { return strings.Join(c.Access.Deny, "\n") }, Set: func(c *config.Config, v string) error {
-			c.Access.Deny = splitLines(v)
-			return nil
-		}},
-	{Section: "访问控制", Key: "access.scope", Label: "生效范围", Kind: "enum", Options: []string{"panel", "all"},
-		Hint: "panel = 只约束面板与 /api，加速路径照常开放（默认）；all = 连 /v2 /gh /raw /git 一起约束",
-		Get: func(c *config.Config) string {
-			if c.Access.Scope == "" {
-				return "panel"
-			}
-			return c.Access.Scope
-		}, Set: func(c *config.Config, v string) error { c.Access.Scope = strings.TrimSpace(v); return nil }},
+	{Section: "信任中转", Key: "relay.resolver_timeout", Label: "DNS 解析超时", Kind: "duration", Restart: true,
+		Hint: "单次解析超时；解析结果会被钉住，后续拨号不再重新解析。0 = 5s",
+		Get:  func(c *config.Config) string { return durStr(c.Relay.ResolverTimeout.Duration) },
+		Set:  func(c *config.Config, v string) error { return setDur(&c.Relay.ResolverTimeout.Duration, v) }},
 
-	// 日志
 	{Section: "日志", Key: "logging.level", Label: "日志级别", Kind: "enum", Options: []string{"debug", "info", "warn", "error"}, Restart: false,
 		Hint: "改完即时生效", Get: func(c *config.Config) string { return effLevel(c.Logging.Level) }, Set: func(c *config.Config, v string) error {
 			v = strings.ToLower(strings.TrimSpace(v))
