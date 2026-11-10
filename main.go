@@ -348,12 +348,15 @@ func main() {
 		log.Printf("入口限流已关闭（limits.enabled=false）")
 	}
 
+	// 访问控制套在限流器外层：被 ACL 拒绝的请求不占配额，避免刷 403 把管理员限流掉。
+	app := api.New(st, eng, gw, jan, sched,
+		api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken),
+		api.WithConfig(cfg, path), api.WithAlerts(alerts))
+
 	srv := &http.Server{
-		Addr:     cfg.Addr,
-		ErrorLog: log.New(logging.Writer(slog.Default(), slog.LevelWarn), "", 0),
-		Handler: metrics.Middleware(lim.Wrap(api.New(st, eng, gw, jan, sched,
-			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken),
-			api.WithConfig(cfg, path), api.WithAlerts(alerts)))),
+		Addr:              cfg.Addr,
+		ErrorLog:          log.New(logging.Writer(slog.Default(), slog.LevelWarn), "", 0),
+		Handler:           metrics.Middleware(app.Access(lim.Wrap(app))),
 		ReadHeaderTimeout: 10 * time.Second,
 		// 默认 1MB 头部足够被慢速客户端刷爆；面板与代理的头部都很小。
 		MaxHeaderBytes: 64 << 10,

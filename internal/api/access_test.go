@@ -109,3 +109,30 @@ func TestAccessPolicyReload(t *testing.T) {
 		t.Fatal("清空名单后应立即放行")
 	}
 }
+
+func TestAccessHealthzAlwaysOpen(t *testing.T) {
+	s := &Server{}
+	cfg := config.Default()
+	cfg.Access = config.Access{Allow: []string{"10.1.1.0/24"}, Scope: "all"}
+	s.cfg.Store(cfg)
+	p := s.accessPolicy()
+	if p.applies("/healthz") {
+		t.Fatal("探活接口不该被 ACL 拦")
+	}
+	if !p.applies("/v2/") {
+		t.Fatal("scope=all 时应拦加速路径")
+	}
+}
+
+func TestSplitLinesSeparators(t *testing.T) {
+	got := splitLines("10.0.0.0/8, 192.168.0.0/16\n172.16.0.0/12\t127.0.0.1/32")
+	want := []string{"10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12", "127.0.0.1/32"}
+	if len(got) != len(want) {
+		t.Fatalf("得到 %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("得到 %v", got)
+		}
+	}
+}

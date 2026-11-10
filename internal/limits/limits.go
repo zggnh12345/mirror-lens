@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"gopkg.in/yaml.v3"
 	"net"
 	"net/http"
 	"strings"
@@ -42,7 +43,7 @@ type Config struct {
 	// TrustedProxies 是可信反代网段（CIDR），默认空即不信任何转发头：
 	// X-Forwarded-For 谁都能写，信了等于把限流键交给客户端。
 	// 如 127.0.0.1/32、::1/128、10.0.0.0/8。
-	TrustedProxies []string `yaml:"trusted_proxies"`
+	TrustedProxies StrList `yaml:"trusted_proxies"`
 }
 
 // Default 够一个人正常 pull / 下 release，又能挡住脚本刷量。
@@ -412,4 +413,46 @@ func credential(r *http.Request) string {
 		return h[i+1:]
 	}
 	return h
+}
+
+// StrList 让列表型配置同时接受两种写法：
+//
+//	allow_cidrs: ["10.0.0.0/8", "192.168.0.0/16"]
+//	allow_cidrs: 10.0.0.0/8, 192.168.0.0/16
+//
+// 空行、逗号、空格、制表符都当分隔符，方便手写配置。
+type StrList []string
+
+// SplitList 按换行/逗号/空白拆分，去掉空项。
+func SplitList(v string) []string {
+	parts := strings.FieldsFunc(v, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ' ' || r == '\t'
+	})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (l *StrList) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*l = SplitList(node.Value)
+		return nil
+	case yaml.SequenceNode:
+		var raw []string
+		if err := node.Decode(&raw); err != nil {
+			return err
+		}
+		out := make(StrList, 0, len(raw))
+		for _, v := range raw {
+			out = append(out, SplitList(v)...)
+		}
+		*l = out
+		return nil
+	}
+	return nil
 }

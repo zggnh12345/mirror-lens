@@ -270,9 +270,9 @@ type Config struct {
 // 只有显式配置才生效；scope 决定约束面板还是连加速路径一起管。
 type Access struct {
 	// Allow 为空表示不限来源；非空时只有命中的来源放行。
-	Allow []string `yaml:"allow_cidrs"`
+	Allow limits.StrList `yaml:"allow_cidrs"`
 	// Deny 优先于 Allow，命中直接拒绝。
-	Deny []string `yaml:"deny_cidrs"`
+	Deny limits.StrList `yaml:"deny_cidrs"`
 	// Scope 为 panel（默认，只管面板与 /api）或 all（含加速路径）。
 	Scope string `yaml:"scope"`
 }

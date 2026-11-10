@@ -48,6 +48,10 @@ func (p *accessPolicy) empty() bool { return len(p.allow) == 0 && len(p.deny) ==
 
 // applies 判断路径是否在约束范围内：panel 只护面板与 /api，加速路径照常开放。
 func (p *accessPolicy) applies(path string) bool {
+	// 探活接口不属于面板：外部监控/编排探针不能因为 ACL 被判死。
+	if path == "/healthz" {
+		return false
+	}
 	if p.scope == "all" {
 		return true
 	}
@@ -114,6 +118,7 @@ func (s *Server) accessPolicy() *accessPolicy {
 		return s.accessPol
 	}
 	s.accessCfg, s.accessPol = cfg, newAccessPolicy(cfg)
+	warnOpenTrust(cfg)
 	if s.accessPol.blocksEverything() {
 		slog.Warn("访问控制黑名单覆盖全部地址：除回环外所有请求都会被拒绝，确认这是你要的")
 	}
@@ -132,3 +137,23 @@ func (p *accessPolicy) blocksEverything() bool {
 	}
 	return false
 }
+
+// warnOpenTrust 提示 trusted_proxies 里出现 /0：等于信任所有人伪造转发头，
+// 白名单和按 IP 限流都会被绕过。
+func warnOpenTrust(c *config.Config) {
+	if c == nil {
+		return
+	}
+	for _, raw := range c.Limits.TrustedProxies {
+		if p, err := config.ParseCIDR(raw); err == nil && p.Bits() == 0 {
+			slog.Warn("trusted_proxies 含 /0：任何人都能伪造 X-Forwarded-For，白名单与按 IP 限流都会失效")
+			return
+		}
+	}
+}
+
+// ServeHTTP 让 Server 直接当 http.Handler 用，便于把访问控制套在限流器外层。
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.root.ServeHTTP(w, r) }
+
+// Access 包住下一层 handler 做来源校验；放在限流器外侧，被拒请求不消耗配额。
+func (s *Server) Access(next http.Handler) http.Handler { return s.access(next) }

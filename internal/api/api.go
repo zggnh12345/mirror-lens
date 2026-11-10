@@ -60,7 +60,9 @@ type Server struct {
 	accessMu  sync.Mutex
 	accessCfg *config.Config
 	accessPol *accessPolicy
-	cfgPath   string // 配置文件路径；空则改动只存内存
+
+	root    http.Handler
+	cfgPath string // 配置文件路径；空则改动只存内存
 }
 
 // Option 是 New 的可选开关，避免改所有调用点签名。
@@ -79,7 +81,7 @@ func WithMetrics(enabled, requireToken bool) Option {
 	}
 }
 
-func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Janitor, sch *scheduler.Scheduler, opts ...Option) http.Handler {
+func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Janitor, sch *scheduler.Scheduler, opts ...Option) *Server {
 	s := &Server{st: st, eng: eng, gw: gw, jan: j, sch: sch}
 	auth.EnsureCSRFSecret(st)
 	for _, o := range opts {
@@ -253,7 +255,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/metrics", guard(s.metricsView))
 	mux.HandleFunc("/api/audit", guard(s.auditList))
 
-	return logging.Middleware(logRequests(s.access(httpProxyBypass(s.gw, noStorePanel(mux)))))
+	s.root = logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
+	return s
 }
 
 // noStorePanel 给面板和接口加 no-store：响应带会话，缓存会串号。

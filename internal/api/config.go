@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/config"
+	"github.com/zggnh12345/mirror-lens/internal/limits"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"gopkg.in/yaml.v3"
@@ -353,19 +354,19 @@ var cfgSchema = []cfgField{
 			return setIntI(&c.Limits.TokenConcurrency, v, 0, 1<<30, true, false)
 		}},
 	{Section: "访问控制", Key: "limits.trusted_proxies", Label: "可信代理（XFF）", Kind: "list", Restart: true,
-		Hint: "只有这些网段的 X-Forwarded-For 会被采信；默认 172.16.0.0/12（已含 172.16.0.0/16）+ fd00::/8 + 回环。放在反代后必须包含反代网段，否则白/黑名单会把所有请求看成同一个 IP",
+		Hint: "每行一个，也可用逗号分隔。只有这些网段的 X-Forwarded-For 会被采信；默认 172.16.0.0/12（已含 172.16.0.0/16）+ fd00::/8 + 回环。放在反代后必须包含反代网段，填 0.0.0.0/0 等于信任所有人，白名单会失效",
 		Get:  func(c *config.Config) string { return strings.Join(c.Limits.TrustedProxies, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Limits.TrustedProxies = splitLines(v)
 			return nil
 		}},
 	{Section: "访问控制", Key: "access.allow_cidrs", Label: "允许来源（白名单）", Kind: "list",
-		Hint: "留空 = 不限来源；填了就只有这些网段能访问。保存前会弹风险提示",
+		Hint: "每行一个，也可用逗号分隔。留空 = 不限来源；填了就只有这些网段能访问。保存前会弹风险提示",
 		Get:  func(c *config.Config) string { return strings.Join(c.Access.Allow, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Access.Allow = splitLines(v)
 			return nil
 		}},
 	{Section: "访问控制", Key: "access.deny_cidrs", Label: "拒绝来源（黑名单）", Kind: "list",
-		Hint: "优先于白名单，命中直接 403；留空 = 不拒绝任何人",
+		Hint: "每行一个，也可用逗号分隔。优先于白名单，命中直接 403；留空 = 不拒绝任何人",
 		Get:  func(c *config.Config) string { return strings.Join(c.Access.Deny, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Access.Deny = splitLines(v)
 			return nil
@@ -846,13 +847,4 @@ func decodeJSON(r *http.Request, v any) error {
 }
 
 // splitLines 把多行文本框转成网段列表，顺便丢掉空行。
-func splitLines(v string) []string {
-	out := make([]string, 0, 4)
-	for _, line := range strings.Split(v, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
-}
+func splitLines(v string) []string { return limits.SplitList(v) }
