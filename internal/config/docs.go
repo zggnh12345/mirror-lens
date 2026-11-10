@@ -48,7 +48,7 @@ var fieldDocs = map[string]string{
 	"github.token_env":              "存放 GitHub Token 的环境变量名；未设置时完全不调用 Release API",
 	"github.token_enc":              "设置页保存的 Token 密文（AES-256-GCM，密钥在 <data>/secret.key）；不要手改",
 	"network":                       "回源网络行为",
-	"network.ip_family":             "IP 协议族：auto（双栈竞速，v6 先试、250ms 后并行 v4）/ v4 / v6",
+	"network.ip_family":             "IP 协议族：auto（双栈同时竞速，先握手成功者优先）/ v4 / v6",
 	"registry.upstream":             "Registry 上游地址，默认 Docker Hub",
 	"registry.max_file_mb":          "单个镜像层允许的最大体积（MiB）",
 	"registry.tag_ttl":              "tag 到 digest 的解析结果缓存时长",

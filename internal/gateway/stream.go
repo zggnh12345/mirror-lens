@@ -1110,12 +1110,16 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 		return
 	}
 	if prev != nil {
-		log.Printf("回源失败，用旧缓存 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+		if !logging.IsAbort(err) {
+			log.Printf("回源失败，用旧缓存 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+		}
 		g.serveCached(w, r, plan, prev, "STALE", true)
 		return
 	}
 	code := statusFor(err)
-	log.Printf("回源失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+	if !logging.IsAbort(err) {
+		log.Printf("回源失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
+	}
 	noStore(w.Header())
 	setRetryAfter(w, err)
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)

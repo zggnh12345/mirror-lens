@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -84,4 +85,23 @@ func TestDialAutoHostnameRespectsGuard(t *testing.T) {
 	} else if !errors.Is(err, ErrBlocked) {
 		t.Fatalf("应返回 ErrBlocked，得到 %v", err)
 	}
+}
+
+// 手动实测用：RACE_TARGET=host:port 时真拨一次，打印耗时。
+// 配合双栈 docker 网络（v6 地址无人应答、v4 正常）验证竞速是否生效。
+func TestDialRaceManual(t *testing.T) {
+	target := os.Getenv("RACE_TARGET")
+	if target == "" {
+		t.Skip("设置 RACE_TARGET 后手动实测")
+	}
+	g := New(Options{AllowPrivate: true, DialTimeout: 10 * time.Second})
+	start := time.Now()
+	c, err := g.dialContext(context.Background(), "tcp", target)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	el := time.Since(start)
+	la := c.LocalAddr().String()
+	c.Close()
+	t.Logf("dial %s -> %v local=%s", target, el.Round(time.Millisecond), la)
 }

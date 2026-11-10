@@ -30,7 +30,7 @@ func TestConfigureIPFamily(t *testing.T) {
 	}
 	Configure(false)
 	if got := currentGuard().OrderIPs([]netip.Addr{v6, v4}); len(got) != 2 || got[0] != v4 {
-		t.Fatalf("缺省应为 auto(双栈竞速): %v", got)
+		t.Fatalf("缺省应为 auto(同时竞速): %v", got)
 	}
 }
 

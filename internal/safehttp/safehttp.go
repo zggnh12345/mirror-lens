@@ -26,7 +26,7 @@ type Options struct {
 	MaxRedirects  int
 	AllowLoopback bool
 	AllowPrivate  bool
-	// IPFamily：auto = 交给标准库 Happy Eyeballs 竞速（v6 先试，250ms 后并行 v4）；
+	// IPFamily：auto = 双栈同时竞速（两族各发一条，先握手成功的赢）；
 	// v4/v6 = 只解析并拨该族。空值等同 auto。
 	IPFamily string
 }
@@ -130,7 +130,7 @@ func (g *Guard) Dialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:       g.o.DialTimeout,
 		KeepAlive:     30 * time.Second,
-		FallbackDelay: 250 * time.Millisecond,
+		FallbackDelay: time.Millisecond,
 		Control: func(network, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {
@@ -181,7 +181,7 @@ func (g *Guard) orderIPs(ips []netip.Addr) []netip.Addr {
 // 注意：这里不走竞速，auto 仍按 v4 优先排序。
 func (g *Guard) OrderIPs(ips []netip.Addr) []netip.Addr { return g.orderIPs(ips) }
 
-// dialContext：auto 交给标准库做 Happy Eyeballs（v6 先试，250ms 内没连上就并行试 v4），
+// dialContext：auto 交给标准库做 Happy Eyeballs（两族同时起跑，先握手成功的赢），
 // v4/v6 强制档才自己解析、过滤、顺序拨。两条路都保留 Control 里的内网校验。
 func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
@@ -196,8 +196,8 @@ func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn
 		return d.DialContext(ctx, network, addr)
 	}
 	if mode := g.family(); mode == "auto" {
-		// 不预解析：把域名交给拨号器，由它按 RFC 6724 排序并在 FallbackDelay 后
-		// 竞速另一族。v6 半通时不再白等整个拨号超时。
+		// 不预解析：把域名交给拨号器，由它按 RFC 6724 排序后双栈竞速。
+		// FallbackDelay=1ms 等于同时起跑；负值在 Go 里是关掉竞速、退化成顺序拨号。
 		return d.DialContext(ctx, network, addr)
 	}
 	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)

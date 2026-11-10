@@ -63,7 +63,9 @@ func (g *Gateway) serveGit(w http.ResponseWriter, r *http.Request) {
 	entry, _, err := g.fetch(r.Context(), plan, nil)
 	if err != nil {
 		code := statusFor(err)
-		log.Printf("git info/refs 回源失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
+		if !logging.IsAbort(err) {
+			log.Printf("git info/refs 回源失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
+		}
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}

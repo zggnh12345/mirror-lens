@@ -1345,6 +1345,11 @@ func proxyToken(r *http.Request) string {
 // loggw 统一日志字段，错误必带 error_code 便于聚合。
 // 不要塞 URL/Token/Cookie，只传脱敏过的地址。
 func loggw(level slog.Level, msg string, ctx context.Context, plan *adapter.Plan, code logging.Code, err error, extra ...any) {
+	// 竞速输掉的那条连接、换源时被我们主动关掉的连接，都会报 canceled/closed。
+	// 这类不是源故障，降级成 Debug 且不带错误码，免得污染日志、告警和源健康统计。
+	if err != nil && logging.IsAbort(err) {
+		level, code = slog.LevelDebug, ""
+	}
 	attrs := []any{
 		"request_id", logging.RequestID(ctx),
 		"kind", plan.Kind,

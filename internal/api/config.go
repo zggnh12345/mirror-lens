@@ -128,7 +128,7 @@ var cfgSchema = []cfgField{
 
 	// 网络
 	{Section: "网络", Key: "network.ip_family", Label: "回源 IP 协议族", Kind: "enum", Options: []string{"auto", "v4", "v6"}, Restart: true,
-		Hint: "auto = 双栈竞速：先试 IPv6，250ms 内没连上就并行试 IPv4，谁先连上就用谁；v4/v6 = 强制只用该族。信任中转已钉死 IP，不受影响",
+		Hint: "auto = 双栈同时竞速：IPv6 和 IPv4 各发一条，谁先握手成功就用谁，另一条自动丢弃（失败的那条不计入日志与告警）；v4/v6 = 强制只用该族。信任中转已钉死 IP，不受影响",
 		Get: func(c *config.Config) string {
 			if c.Network.IPFamily == "" {
 				return "auto"
