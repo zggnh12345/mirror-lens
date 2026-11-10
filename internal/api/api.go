@@ -54,9 +54,13 @@ type Server struct {
 	metricsOn    bool
 	metricsToken bool
 
-	cfg     atomic.Pointer[config.Config] // 可编辑的配置副本（设置页用）；发布后只读
-	cfgMu   sync.Mutex                    // 串行化配置读取-修改-写盘-发布
-	cfgPath string                        // 配置文件路径；空则改动只存内存
+	cfg   atomic.Pointer[config.Config] // 可编辑的配置副本（设置页用）；发布后只读
+	cfgMu sync.Mutex                    // 串行化配置读取-修改-写盘-发布
+
+	accessMu  sync.Mutex
+	accessCfg *config.Config
+	accessPol *accessPolicy
+	cfgPath   string // 配置文件路径；空则改动只存内存
 }
 
 // Option 是 New 的可选开关，避免改所有调用点签名。
@@ -249,7 +253,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/metrics", guard(s.metricsView))
 	mux.HandleFunc("/api/audit", guard(s.auditList))
 
-	return logging.Middleware(logRequests(httpProxyBypass(s.gw, noStorePanel(mux))))
+	return logging.Middleware(logRequests(s.access(httpProxyBypass(s.gw, noStorePanel(mux)))))
 }
 
 // noStorePanel 给面板和接口加 no-store：响应带会话，缓存会串号。

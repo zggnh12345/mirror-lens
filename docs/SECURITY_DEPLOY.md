@@ -55,9 +55,12 @@
   前缀代理会和上游路径解析打架，独立域名最省心。
 - TLS 在网关层终止；入口限流放在 Mirror Lens 这一层（已有 `ratelimit_rejected_total` 可观测），
   不要只靠运维侧。
-- **信任边界**：Mirror Lens 默认**不信任任何上游代理**（`trusted_proxies` 为空）。
-  如果前面是 Traefik，再显式把它加进 `trusted_proxies`，否则 `X-Forwarded-*` 会被忽略，
-  避免客户端伪造真实 IP / 绕过限流。
+- **信任边界**：默认只信任 Docker 网桥 `172.16.0.0/12`（含 `172.16.0.0/16`）、`fd00::/8` 与回环，
+  其它来源的 `X-Forwarded-*` 一律忽略，避免客户端伪造真实 IP / 绕过限流。
+  前面是 Traefik/nginx 时，把它的网段补进 `limits.trusted_proxies`（面板「安全 → 访问控制」可改），
+  否则反代后的请求会被当成同一个内网 IP。
+- **访问控制**：需要只允许固定来源时，用 `access.allow_cidrs` / `access.deny_cidrs`，
+  `access.scope` 选 `panel`（只护面板，加速路径照常开放）或 `all`（连加速路径一起约束）。
 
 ## 6. 出站守卫（SSRF 防护）
 

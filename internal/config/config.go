@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"reflect"
 	"sort"
@@ -259,9 +260,21 @@ type Config struct {
 	Auth     Auth           `yaml:"auth"`
 	Limits   limits.Config  `yaml:"limits"`
 	Metrics  Metrics        `yaml:"metrics"`
+	Access   Access         `yaml:"access"`
 	Backup   Backup         `yaml:"backup"`
 	CDN      CDN            `yaml:"cdn"`
 	Logging  logging.Config `yaml:"logging"`
+}
+
+// Access 是入口访问控制。默认两份名单都空 = 放行所有来源，
+// 只有显式配置才生效；scope 决定约束面板还是连加速路径一起管。
+type Access struct {
+	// Allow 为空表示不限来源；非空时只有命中的来源放行。
+	Allow []string `yaml:"allow_cidrs"`
+	// Deny 优先于 Allow，命中直接拒绝。
+	Deny []string `yaml:"deny_cidrs"`
+	// Scope 为 panel（默认，只管面板与 /api）或 all（含加速路径）。
+	Scope string `yaml:"scope"`
 }
 
 // Backup 是数据库的每日快照：VACUUM INTO 出一个独立文件，
@@ -384,6 +397,7 @@ func Default() *Config {
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),
 		Backup:  Backup{Enabled: true, Keep: 7},
+		Access:  Access{Scope: "panel"},
 		Metrics: Metrics{Enabled: true},
 		CDN:     CDN{Enabled: false, MaxAge: 300},
 	}
@@ -433,6 +447,26 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("logging.level 只支持 debug/info/warn/error，收到 %q", c.Logging.Level)
 	}
+	if c.Access.Scope == "" {
+		c.Access.Scope = "panel"
+	}
+	switch c.Access.Scope {
+	case "panel", "all":
+	default:
+		return fmt.Errorf("access.scope 只能是 panel 或 all，收到 %q", c.Access.Scope)
+	}
+	for _, raw := range append(append([]string{}, c.Access.Allow...), c.Access.Deny...) {
+		if _, err := ParseCIDR(raw); err != nil {
+			return fmt.Errorf("access 网段 %q 无效: %w", raw, err)
+		}
+	}
+	for i := range c.Access.Allow {
+		c.Access.Allow[i] = strings.TrimSpace(c.Access.Allow[i])
+	}
+	for i := range c.Access.Deny {
+		c.Access.Deny[i] = strings.TrimSpace(c.Access.Deny[i])
+	}
+
 	if c.Backup.Keep < 1 || c.Backup.Keep > 365 {
 		return fmt.Errorf("backup.keep 应在 1~365 之间，收到 %d", c.Backup.Keep)
 	}
@@ -616,4 +650,20 @@ func (c *Config) CacheDir() string {
 		return c.Cache.Dir
 	}
 	return strings.TrimRight(c.Data, "/") + "/cache"
+}
+
+// ParseCIDR 解析一条网段配置：既接受 10.0.0.0/8，也接受单个 IP（自动补 /32、/128）。
+func ParseCIDR(raw string) (netip.Prefix, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return netip.Prefix{}, fmt.Errorf("空网段")
+	}
+	if strings.Contains(raw, "/") {
+		return netip.ParsePrefix(raw)
+	}
+	ip, err := netip.ParseAddr(raw)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(ip, ip.BitLen()), nil
 }

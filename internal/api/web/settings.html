@@ -449,7 +449,8 @@ function cfgControl(f){
     // 枚举值要给人看：配置里存 auto/v4/v6，按钮上写中文。
     var VAL_LBL = {
       'true': '开', 'false': '关',
-      'auto': '自动（v4 优先）', 'v4': '仅 IPv4', 'v6': '仅 IPv6'
+      'auto': '自动（v4 优先）', 'v4': '仅 IPv4', 'v6': '仅 IPv6',
+      'panel': '仅面板', 'all': '全部（含加速）'
     };
     var labels = opts.map(function(o){ return VAL_LBL[o] || o; });
     var seg = '<div class="seg cfg-seg" data-role="' + f.kind + '" data-key="' + k + '">';
@@ -585,6 +586,16 @@ async function saveCfg(){
   var vals = {};
   Object.keys(CFG.cur).forEach(function(k){ if (CFG.cur[k] !== CFG.orig[k]) vals[k] = CFG.cur[k]; });
   if (!Object.keys(vals).length){ say(msg, '没有改动', ''); return; }
+  /* 白/黑名单与范围属于「一改就可能把自己或客户端关在门外」的开关，保存前必须确认。 */
+  var risky = ['access.allow_cidrs','access.deny_cidrs','access.scope'].filter(function(k){ return k in vals; });
+  if (risky.length){
+    var warn = '访问控制会立即生效：\n\n' +
+      '· 白名单非空时，不在名单内的来源会被拒绝，连你自己也可能进不来\n' +
+      '· 黑名单优先于白名单，填错网段会整段被拒\n' +
+      '· 范围选「全部」时，/v2 /gh /raw /git 等加速路径也会一起受限，公网客户端会失败\n' +
+      '· 回环（本机）永远放行\n\n确定保存？';
+    if (!confirm(warn)) { say(msg, '已取消', ''); return; }
+  }
   btn.disabled = true; say(msg, '保存中…');
   document.querySelectorAll('#cfgBox .cfgrow.bad').forEach(function(r){ r.classList.remove('bad'); });
   try{
