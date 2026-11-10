@@ -27,8 +27,9 @@ func addSource(t *testing.T, st *store.Store, base string, ok bool, lat, spd int
 		t.Fatalf("加源: %v", err)
 	}
 	for i := 0; i < 4; i++ {
-		// 评分按协议隔离：灌 raw 的样本，查询也得用 raw。
-		if err := st.AddCheck(store.Check{SourceID: id, Kind: "raw", Tier: 3, OK: ok, LatencyMS: lat, SpeedKBps: spd}); err != nil {
+		// raw 请求按家族读 github 的样本（探针只覆盖 docker/ghcr/github），
+		// 所以这里要灌 github 行，灌 raw 行反而永远读不到。
+		if err := st.AddCheck(store.Check{SourceID: id, Kind: "github", Tier: 3, OK: ok, LatencyMS: lat, SpeedKBps: spd}); err != nil {
 			t.Fatalf("加样本: %v", err)
 		}
 	}
