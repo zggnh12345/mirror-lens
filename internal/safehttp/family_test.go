@@ -1,8 +1,13 @@
 package safehttp
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/netip"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestOrderIPs(t *testing.T) {
@@ -43,5 +48,40 @@ func TestOrderIPs(t *testing.T) {
 	// 只要 v4 但域名只有 AAAA：返回空，由调用方报错，而不是偷偷用 v6。
 	if got := New(Options{IPFamily: "v4"}).orderIPs([]netip.Addr{v6}); len(got) != 0 {
 		t.Fatalf("v4 模式不该返回 v6: %v", got)
+	}
+}
+
+// auto 模式把域名交给拨号器竞速：能连通、且仍然过 Control 的内网校验。
+func TestDialAutoHostnameRespectsGuard(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("本机不能监听: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	addr := ln.Addr().String()
+
+	// 放开内网例外：auto 拨 localhost 应能连上（v6 若无监听，竞速会落到 v4）。
+	ok := New(Options{AllowPrivate: true, DialTimeout: 3 * time.Second})
+	c, err := ok.dialContext(context.Background(), "tcp", "localhost:"+strings.Split(addr, ":")[1])
+	if err != nil {
+		t.Fatalf("auto 拨 localhost 失败: %v", err)
+	}
+	c.Close()
+
+	// 不放开：同样的域名必须被 Control 拦下，说明竞速没绕过 SSRF 校验。
+	strict := New(Options{DialTimeout: 3 * time.Second})
+	if _, err := strict.dialContext(context.Background(), "tcp", "localhost:"+strings.Split(addr, ":")[1]); err == nil {
+		t.Fatal("auto 模式下内网地址应被拦")
+	} else if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("应返回 ErrBlocked，得到 %v", err)
 	}
 }

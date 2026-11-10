@@ -224,7 +224,7 @@ registry:
 github:
   enabled: true         # /gh/ /raw/ /git/ 一起控
 network:
-  ip_family: auto       # auto=IPv4 优先、IPv6 兜底；或 v4 / v6
+  ip_family: auto       # auto=双栈竞速（Happy Eyeballs，v6 先试、250ms 后并行 v4）；或强制 v4 / v6
 sources:
   max_per_source: 4     # 单源硬上限
   headroom: 0.8         # 普通派发占硬上限的比例，其余留给换源接管
@@ -303,6 +303,7 @@ POST   /git/<host>/<repo>.git/git-upload-pack  packfile 直通
 - **大文件下载只算一个请求**。服务端拆出去的分片是内部行为，不会让一个 2 GB 下载变成几百次请求。但下载期间一直占着一个并发名额，否则「并发」只统计了开始的那一下。
 - **`/healthz` 不受限**。容器自己的探活被 429 会显示成不健康，等于自己制造故障。
 - **限流和并发繁忙不计入源站健康**。被限流是「让你慢点」，不是「源站坏了」。
+- `network.ip_family: auto` 走标准库的 Happy Eyeballs：域名同时有 A/AAAA 时先试 v6，250ms 内没连上就并行试 v4，先连上的赢。v6 半通时不再白等整个拨号超时；`v4` / `v6` 则强制只解析该族（自己解析后顺序拨），给「这台机器 v6 明显绕路」这类场景用。竞速只决定握手谁快，不改变测速口径（仍从发请求算）。
 - **只信白名单里的反代**。`X-Forwarded-For` 谁都能写，信了等于把限流键交给客户端。默认信任 `172.16.0.0/12`（Docker 网桥，已含 `172.16.0.0/16`）、`fd00::/8`、回环；只有来自这些网段的请求才读转发头，并从右往左取第一个非可信地址。部署在 nginx / Traefik / Caddy 后面时，把反代自己的网段补进去——**面板「设置 → 配置参数 → 安全 → 访问控制 → 可信代理（XFF）」直接改**，也可以写配置文件 `limits.trusted_proxies`。
 
 所有数字在 `limits.*` 下，`limits.enabled: false` 整层关闭。

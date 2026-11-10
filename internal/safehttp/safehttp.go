@@ -26,8 +26,8 @@ type Options struct {
 	MaxRedirects  int
 	AllowLoopback bool
 	AllowPrivate  bool
-	// IPFamily 控制域名解析后的拨号顺序：auto = IPv4 优先、失败回退 IPv6；
-	// v4/v6 = 只用该族。空值等同 auto。
+	// IPFamily：auto = 交给标准库 Happy Eyeballs 竞速（v6 先试，250ms 后并行 v4）；
+	// v4/v6 = 只解析并拨该族。空值等同 auto。
 	IPFamily string
 }
 
@@ -128,8 +128,9 @@ func (g *Guard) CheckIP(ip netip.Addr) error {
 // 否则就是绕过 Guard 的另一条路。
 func (g *Guard) Dialer() *net.Dialer {
 	return &net.Dialer{
-		Timeout:   g.o.DialTimeout,
-		KeepAlive: 30 * time.Second,
+		Timeout:       g.o.DialTimeout,
+		KeepAlive:     30 * time.Second,
+		FallbackDelay: 250 * time.Millisecond,
 		Control: func(network, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
 			if err != nil {
@@ -145,13 +146,17 @@ func (g *Guard) Dialer() *net.Dialer {
 }
 
 // orderIPs 按 IPFamily 过滤并排序候选地址。
-// auto 把 v4 排前面：家宽/机房的 v6 常常绕路或半通，先试 v4 更快；
-// 只有 v4 全失败才轮到 v6，等于「默认 v4、v6 兜底」。
-func (g *Guard) orderIPs(ips []netip.Addr) []netip.Addr {
-	mode := g.o.IPFamily
-	if mode == "" {
-		mode = "auto"
+// auto 把 v4 排前面，供 OrderIPs 这类自己握手的场景使用；
+// 正常拨号（dialContext）在 auto 下走标准库竞速，不经过这里。
+func (g *Guard) family() string {
+	if g.o.IPFamily == "" {
+		return "auto"
 	}
+	return g.o.IPFamily
+}
+
+func (g *Guard) orderIPs(ips []netip.Addr) []netip.Addr {
+	mode := g.family()
 	var v4, v6 []netip.Addr
 	for _, ip := range ips {
 		ip = ip.Unmap()
@@ -173,10 +178,11 @@ func (g *Guard) orderIPs(ips []netip.Addr) []netip.Addr {
 }
 
 // OrderIPs 供需要自己握手的场景（TLS 探测）复用同一套族偏好。
+// 注意：这里不走竞速，auto 仍按 v4 优先排序。
 func (g *Guard) OrderIPs(ips []netip.Addr) []netip.Addr { return g.orderIPs(ips) }
 
-// dialContext 先解析再按族逐个拨号，保留 Control 里的内网校验。
-// 不用系统默认的 Happy Eyeballs，因为那套在 v6 半通时会先卡数百毫秒。
+// dialContext：auto 交给标准库做 Happy Eyeballs（v6 先试，250ms 内没连上就并行试 v4），
+// v4/v6 强制档才自己解析、过滤、顺序拨。两条路都保留 Control 里的内网校验。
 func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -187,6 +193,11 @@ func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn
 		if err := g.CheckIP(ip); err != nil {
 			return nil, err
 		}
+		return d.DialContext(ctx, network, addr)
+	}
+	if mode := g.family(); mode == "auto" {
+		// 不预解析：把域名交给拨号器，由它按 RFC 6724 排序并在 FallbackDelay 后
+		// 竞速另一族。v6 半通时不再白等整个拨号超时。
 		return d.DialContext(ctx, network, addr)
 	}
 	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
