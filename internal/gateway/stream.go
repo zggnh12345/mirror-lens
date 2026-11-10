@@ -363,6 +363,23 @@ const (
 // 否则同一个文件在两条路径下一条记、一条不记，均速会被带偏。
 const minSpeedSample = 16 << 20
 
+// sampleWindow 是一次「单一来源供数」的测速窗口。
+// 换源即换窗口：起点、起始字节、下游阻塞时间必须一起重置，
+// 否则旧源的阻塞会被当成新源的下游背压。
+type sampleWindow struct {
+	at      time.Time
+	base    int64
+	blocked time.Duration
+}
+
+// restart 在成功接管新源后调用：从这个字节数开始重新计时计阻塞。
+// 注意只在真正换源成功后调用，换源失败不能重置。
+func (w *sampleWindow) restart(sent int64) {
+	w.at = time.Now()
+	w.base = sent
+	w.blocked = 0
+}
+
 // noteSpeed 记一次完整单流下载的真实吞吐。
 func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time.Time, blocked time.Duration) {
 	if g.st == nil || t == nil || t.c == nil || bytes < minSpeedSample {
@@ -562,11 +579,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		}
 	}
 
-	copyStart := time.Now()
-	sentBase := sent
-	// blocked 累计「写客户端 + 写盘 + Flush」的耗时：这些是下游/磁盘的阻塞，
-	// 不是上游的吞吐能力。noteSpeed 用它把墙钟时间修正成上游有效时间。
-	var blocked time.Duration
+	// win 记录「这一段是哪个源在供数」的测速窗口：起点、起始字节数和下游阻塞时间。
+	// 换源必须整体重启窗口，否则旧源的阻塞时间会被算到新源头上。
+	win := &sampleWindow{at: time.Now(), base: sent}
 	sw := newStreamWatch(g.par)
 	tried := map[int64]bool{}
 	if tgt != nil && tgt.c != nil {
@@ -578,7 +593,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	writeChunk := func(b []byte) error {
 		tw := time.Now()
 		_, werr := out.Write(b)
-		blocked += time.Since(tw)
+		win.blocked += time.Since(tw)
 		if werr != nil {
 			savePartial()
 			return werr
@@ -586,7 +601,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		if part != nil {
 			tp := time.Now()
 			_, werr := part.Write(b)
-			blocked += time.Since(tp)
+			win.blocked += time.Since(tp)
 			if werr != nil {
 				savePartial()
 				return werr
@@ -610,7 +625,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		if flusher != nil {
 			tf := time.Now()
 			flusher.Flush()
-			blocked += time.Since(tf)
+			win.blocked += time.Since(tf)
 		}
 		return nil
 	}
@@ -659,8 +674,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		crossSource = true
 		sw.afterSwitch()
 		// 换源后的吞吐只算新源这一段，别把旧源的慢速混进来。
-		sentBase = sent
-		copyStart = time.Now()
+		// blocked 也要一起清零：它是旧源期间的写客户端/写盘阻塞，
+		// 留着会把新源的有效时间扣掉，甚至让整条样本被丢弃。
+		win.restart(sent)
 		if resp.StatusCode == http.StatusOK {
 			// 新源忽略 Range，从 0 重发。first 的前 sent 字节是客户端已有的前缀，
 			// 超出部分必须走正常的写出路径（客户端、.part、哈希、计数），
@@ -808,7 +824,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// 完整下完才记：这是单流独占带宽下的持续吞吐，比探测那 4MB 准。
 	// 客户端中途断开不计，避免把「用户网速」记成「源站速度」。
 	if total < 0 || sent == total {
-		g.noteSpeed(tgt, plan.Kind, sent-sentBase, copyStart, blocked)
+		g.noteSpeed(tgt, plan.Kind, sent-win.base, win.at, win.blocked)
 	}
 	if part == nil {
 		if total >= 0 && sent != total {
