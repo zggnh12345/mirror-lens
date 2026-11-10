@@ -284,9 +284,18 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
   .stats{gap:5px;margin:12px 0}
   .schedbar{flex-wrap:wrap;gap:6px;padding:6px 8px}
   .schedbar .sd{display:none}
-  .segwrap .seg{padding:0 11px}
+  .sseg .ssegb{padding:0 12px}
   .row{padding:10px;gap:9px}
-  .row .l1 .site{max-width:46%}
+  /* 一行放不下就别硬塞：域名和分组名让位，能力标签缩小，名字占满剩余宽度 */
+  .row .l1 .host,.row .l1 .gtag{display:none}
+  .row .l1 .site{flex:1;min-width:0;max-width:none}
+  .row .l1{gap:5px}
+  .row .cap{height:17px;padding:0 5px;font-size:9px}
+  .row .cap .m{font-size:10px}
+  .row .st{height:18px;padding:0 6px;font-size:9.5px}
+  .row .l2{flex-wrap:wrap;row-gap:3px}
+  .row .l2 .note{max-width:none;white-space:normal;flex-basis:100%;order:-1}
+  .row .l2 .strip{margin-left:0}
 }
 
 /* 加速器 Token 列表 */
@@ -502,11 +511,15 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
   box-shadow:var(--shadow)}
 .schedbar .sl{font-size:12px;font-weight:600;color:var(--ink)}
 .schedbar .sd{font-size:11.5px;color:var(--faint);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.segwrap{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line2);border-radius:9px;background:var(--card2)}
-.segwrap .seg{height:26px;padding:0 13px;font-size:12.5px;font-weight:600;border:0;border-radius:7px;
-  background:transparent;color:var(--muted);transition:.15s}
-.segwrap .seg.on{background:var(--brand);color:#fff;box-shadow:0 1px 5px rgba(37,99,235,.35)}
-.schedbar .lnk{margin-left:auto;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);
+/* 分段控件：整块一条，选中态铺满半边，不做「胶囊套胶囊」 */
+.sseg{display:inline-flex;align-items:stretch;border:1px solid var(--line2);border-radius:8px;
+  overflow:hidden;background:var(--card2)}
+.sseg .ssegb{display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 15px;
+  border:0;border-radius:0;background:transparent;color:var(--muted);font-size:12.5px;font-weight:600;
+  line-height:1;transition:background .15s,color .15s}
+.sseg .ssegb + .ssegb{border-left:1px solid var(--line2)}
+.sseg .ssegb.on{background:var(--brand);color:#fff}
+.schedbar .lnk{margin-left:auto;height:30px;padding:0 11px;border-radius:8px;border:1px solid var(--line);
   background:var(--card);font-size:12px;color:var(--ink)}
 .ordrow{display:flex;gap:6px;margin:6px 0 14px}
 .ordrow select{flex:1;min-width:0;height:38px;font-size:13px;padding:0 8px}
@@ -524,3 +537,24 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
   background:var(--ink);color:var(--bg);font-size:12px;line-height:1.6;box-shadow:0 10px 28px rgba(0,0,0,.22);
   opacity:0;pointer-events:none;transition:opacity .12s}
 #qtip.on{opacity:1}
+
+/* 手机端覆盖要放在最后：上面 .segwrap 的基础样式在后面定义，顺序错了会被盖掉 */
+@media(max-width:430px){
+  .sseg .ssegb{height:28px;padding:0 12px}
+  .schedbar .lnk{height:28px}
+}
+/* 他组节点：不给灰开关，给一个明确的「移入」 */
+.mmove{height:24px;padding:0 9px;border-radius:7px;border:1px solid var(--line2);background:var(--card);
+  color:var(--brand);font-size:11.5px;font-weight:600;flex:none}
+.mmove:active{background:var(--brand-soft)}
+
+/* 能力标签：桌面在第一行，手机挪到第二行 */
+.caps{display:inline-flex;align-items:center;gap:4px}
+.capsl2{display:none}
+@media(max-width:430px){
+  .row .l1 .caps{display:none}
+  .row .l2 .capsl2{display:inline-flex;flex:none}
+  /* 筛选和分组标签不再横向滚动，直接折行，避免右边切一半 */
+  .filters{flex-wrap:wrap;overflow:visible}
+  .gbar{overflow:visible}
+}

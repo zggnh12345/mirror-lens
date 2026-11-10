@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=12">
+<link rel="stylesheet" href="/app.css?v=13">
 </head>
 <body>
 <header>
@@ -96,9 +96,9 @@
 
   <div class="schedbar" id="schedbar">
     <span class="sl">调度方式</span>
-    <div class="segwrap" role="group" aria-label="调度方式">
-      <button class="seg" data-smode="auto" aria-pressed="true">自动</button>
-      <button class="seg" data-smode="manual" aria-pressed="false">手动</button>
+    <div class="sseg" role="group" aria-label="调度方式">
+      <button class="ssegb" data-smode="auto" aria-pressed="true">自动</button>
+      <button class="ssegb" data-smode="manual" aria-pressed="false">手动</button>
     </div>
     <span class="sd" id="schedDesc">按实时评分自动排</span>
     <button class="lnk" id="btnOrder">设置前 3 个源</button>
@@ -108,6 +108,7 @@
     <button class="btn primary grow" id="btnAdd">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>添加自定义加速
     </button>
+    <button class="btn" id="btnAddGrp" style="display:none">＋ 加到本组</button>
     <button class="btn" id="btnProbe">
       <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8z"/></svg>立即检测
     </button>
@@ -426,7 +427,7 @@ function rowHtml(x){
             + Math.round(SCORES[x.id]*100) + '</span>' : ''))
     + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '')
     + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
-    + capTags(x) + statusChip(x);
+    + '<span class="caps">' + capTags(x) + '</span>' + statusChip(x);
   var l2 = '';
   if (bad){
     var err = (best && !best.ok && best.error) || x.status_reason || '';
@@ -434,6 +435,8 @@ function rowHtml(x){
       + esc(errHuman(err)) + '<span class="edetail">' + esc(err) + '</span></span>';
   } else {
     var bits = [];
+    // 手机上能力标签挪到第二行，第一行只留名字、评分、状态
+    bits.push('<span class="caps capsl2">' + capTags(x) + '</span>');
     if (x.note) bits.push('<span class="note">' + esc(x.note) + '</span>');
     // 延迟只在有成功样本时显示：异常行挂 0ms 会误导成「很快就失败了」。
     if (best && best.ok && best.latency_ms) bits.push('<i>' + latText(best.latency_ms) + '</i>');
@@ -492,7 +495,6 @@ function gbarHtml(){
       + esc(g.name) + '<i>' + g.sources + '</i></button>';
   });
   h += '<button class="gchip' + (GFILTER === -1 ? ' on' : '') + '" data-gf="-1">未分组</button>';
-  if (GFILTER > 0) h += '<button class="gchip add" data-selstart="1">选节点</button>';
   h += '<button class="gchip add" data-gnew="1">＋ 分组</button>';
   h += '<button class="gchip mgr' + (GMANAGE ? ' on' : '') + '" data-gmgr="1">管理</button>';
   if (GMANAGE){
@@ -515,6 +517,8 @@ function gbarHtml(){
 function renderGroups(){
   var el = document.getElementById('gbar');
   if (el) el.innerHTML = gbarHtml();
+  var ag = $('#btnAddGrp');
+  if (ag) ag.style.display = GFILTER > 0 ? '' : 'none';
 }
 
 function visible(){
@@ -718,7 +722,7 @@ function renderMem(){
   var gid = MEM.gid, g = GROUPS.find(function(v){ return v.id === gid; }) || { name: '分组' };
   var n = DATA.filter(function(x){ return x.group_id === gid; }).length;
   $('#memTitle').textContent = g.name;
-  $('#memSub').textContent = n + ' 个源在本组 · 勾选后点「保存」生效；一个节点只能属于一个组';
+  $('#memSub').textContent = n + ' 个源在本组 · 勾选后点「完成」生效；一个节点只能属于一个组';
   var q = (MEM.q || '').toLowerCase();
   var rows = DATA.filter(function(x){
     return !q || (dispName(x) + ' ' + x.base_url).toLowerCase().indexOf(q) >= 0;
@@ -735,8 +739,9 @@ function renderMem(){
       + MAIN + L1 + '<b class="site">' + esc(dispName(x)) + '</b></div>'
       + L2 + '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>'
       + '<span class="memtag' + (on ? ' on' : '') + '">' + esc(tag) + '</span></div></div>'
-      + '<button class="mtog' + (on ? ' on' : '') + '" data-swt="' + x.id + '"' + (other ? ' disabled' : '')
-      + ' role="switch" aria-checked="' + on + '"></button>'
+      + (other ? '<button class="mmove" data-move="' + x.id + '">移入</button>'
+        : '<button class="mtog' + (on ? ' on' : '') + '" data-swt="' + x.id + '"'
+          + ' role="switch" aria-checked="' + on + '"></button>')
       + '</div>';
   }).join('');
 }
@@ -746,6 +751,23 @@ document.addEventListener('click', function(ev){
   openMem(GFILTER);
 });
 $('#memQ').addEventListener('input', function(){ if (MEM){ MEM.q = this.value; renderMem(); } });
+$('#btnAddGrp').addEventListener('click', function(){ if (GFILTER > 0) openMem(GFILTER); });
+$('#memList').addEventListener('click', async function(ev){
+  var mv = ev.target.closest('[data-move]');
+  if (!mv || !MEM) return;
+  var id = Number(mv.getAttribute('data-move'));
+  var x = DATA.filter(function(v){ return v.id === id; })[0];
+  var g = GROUPS.filter(function(v){ return v.id === MEM.gid; })[0] || { name: '本组' };
+  if (!confirm('从「' + ((x && x.group_name) || '其他组') + '」移到「' + g.name + '」？一个节点只能属于一个组。')) return;
+  try{
+    await api('/api/sources/' + id, {method:'PATCH', body: JSON.stringify({group_id: 0})});
+    await api('/api/sources/' + id, {method:'PATCH', body: JSON.stringify({group_id: MEM.gid})});
+    MEM.pick[id] = 1;
+    toast('已移入「' + g.name + '」');
+    await load(true);
+    renderMem();
+  }catch(e){ toast(e.message || '移动失败'); }
+});
 $('#memList').addEventListener('click', function(ev){
   var b = ev.target.closest('[data-swt]');
   if (!b || !MEM || b.disabled) return;
@@ -862,7 +884,7 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeS
 /* 调度：自动按评分排；手动固定每种协议前 3 个源，其余仍自动。 */
 function renderSched(){
   var on = SORDER.mode === 'manual';
-  document.querySelectorAll('#schedbar .seg').forEach(function(b){
+  document.querySelectorAll('#schedbar .ssegb').forEach(function(b){
     var hit = (b.dataset.smode === 'manual') === on;
     b.classList.toggle('on', hit);
     b.setAttribute('aria-pressed', hit ? 'true' : 'false');
