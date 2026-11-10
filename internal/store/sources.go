@@ -29,6 +29,10 @@ func sampleKind(kind string) string {
 	}
 }
 
+// proxySpeedMaxAgeSec 是真实速度样本的绝对寿命。72h 半衰期只是相对权重，
+// 加权平均会把共同衰减约掉，7 天前的样本照样能算出速度，所以必须有硬期限。
+const proxySpeedMaxAgeSec = 7 * 24 * 3600
+
 // SourceStat 是调度用的源画像。
 // 速度与延迟只取探测样本（checks.tier >= 2）；代理请求不写进 checks，
 // 否则「本机到源站」和「用户到本机」两段会混成一个数字。
@@ -244,8 +248,8 @@ func (s *Store) RecentLiveSpeeds(id int64, kind string, since int64, n int) []in
 // RecentProxySpeeds 返回最近 n 条真实单流下载速度（KB/s），新的在前。
 func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
-		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT ?`, id, sampleKind(kind), minProxySpeedBytes, n)
+		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ? AND ts >= ?
+		ORDER BY ts DESC LIMIT ?`, id, sampleKind(kind), minProxySpeedBytes, time.Now().Unix()-proxySpeedMaxAgeSec, n)
 	if err != nil {
 		return nil
 	}
@@ -264,8 +268,8 @@ func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 func (s *Store) proxySpeed(id int64, kind string) int64 {
 	kind = sampleKind(kind)
 	rows, err := s.db.Query(`SELECT bytes, ms, ts FROM proxy_speed
-		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT 20`, id, kind, minProxySpeedBytes)
+		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ? AND ts >= ?
+		ORDER BY ts DESC LIMIT 20`, id, kind, minProxySpeedBytes, time.Now().Unix()-proxySpeedMaxAgeSec)
 	if err != nil {
 		return 0
 	}
@@ -306,7 +310,10 @@ func (s *Store) samples(id int64, kind string, legacy bool) (n, ok int, lat, spd
 	args := []any{id}
 	switch {
 	case legacy:
-		q += ` AND (kind IS NULL OR kind = '')`
+		// 无 kind 的是 2.x 遗留行，同样受绝对寿命约束：
+		// 新数据过期后不能让更老的数据接替成为评分来源。
+		q += ` AND (kind IS NULL OR kind = '') AND ts >= ?`
+		args = append(args, time.Now().Unix()-proxySpeedMaxAgeSec)
 	case kind != "":
 		q += ` AND kind = ?`
 		args = append(args, kind)
