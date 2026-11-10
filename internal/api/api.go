@@ -35,7 +35,7 @@ import (
 )
 
 // Version 面板与 /api/me 显示的版本号。
-const Version = "3.3.3"
+const Version = "3.3.4"
 
 //go:embed web
 var webFS embed.FS
@@ -492,6 +492,7 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		// 评分与调度同源：直接复用 SourceCandidates 的样本和 scheduler 的公式，
 		// 避免前端自己算一套、和实际排序对不上。
 		scores := map[int64]float64{}
+		kindScores := map[int64]map[string]float64{}
 		if s.sch != nil {
 			cap := s.sch.SpeedCapKBps()
 			for _, kind := range []string{"docker", "ghcr", "github"} {
@@ -500,16 +501,30 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				for _, st := range sts {
-					if v := scheduler.ScoreOf(st, cap); v > scores[st.ID] {
-						scores[st.ID] = v
+					if kindScores[st.ID] == nil {
+						kindScores[st.ID] = map[string]float64{}
 					}
+					kindScores[st.ID][kind] = scheduler.ScoreOf(st, cap)
 				}
+			}
+			// 面板分是「综合分」：按该源支持的协议取平均，不是取最高。
+			// 取最高会让一台只在 Docker 上快的源顶着 90 分，却在 GitHub 排序里
+			// 排在 70 分的源后面，看起来像两套数对不上。
+			for id, m := range kindScores {
+				if len(m) == 0 {
+					continue
+				}
+				var sum float64
+				for _, v := range m {
+					sum += v
+				}
+				scores[id] = sum / float64(len(m))
 			}
 		}
 		sortByScore(list, scores)
 		writeJSON(w, 200, map[string]any{
 			"sources": list, "busy": s.eng.Busy(),
-			"recent_n": recentN, "scores": scores,
+			"recent_n": recentN, "scores": scores, "scores_kind": kindScores,
 		})
 	case http.MethodPost:
 		s.addSource(w, r)

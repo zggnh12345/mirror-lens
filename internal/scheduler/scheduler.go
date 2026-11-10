@@ -696,6 +696,14 @@ func ScoreOf(st store.SourceStat, speedCapKBps float64) float64 {
 	return score(st, speedCapKBps)
 }
 
+// DispatchCap 返回单源硬上限与普通派发上限（3.0 固定配额，AIMD 已下线）。
+func (s *Scheduler) DispatchCap() (hard, dispatch int) {
+	if s == nil {
+		return 0, 0
+	}
+	return s.cfg.caps()
+}
+
 // SpeedCapKBps 是当前速度项的饱和点。
 func (s *Scheduler) SpeedCapKBps() float64 {
 	if s == nil {

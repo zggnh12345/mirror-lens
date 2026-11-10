@@ -37,9 +37,13 @@ type RatioView struct {
 
 // ConcurrencyView 源站并发：在途占用、动态上限，以及占用最高的几台源。
 type ConcurrencyView struct {
-	Inflight uint64       `json:"inflight"`
-	Limit    uint64       `json:"limit"`
-	Top      []SourceConc `json:"top"`
+	// PerSource / Hard 是单源派发上限与硬上限（3.0 固定配额）。
+	// srclimit 只在已下线的 AIMD 路径里上报，所以面板不能只信 Limit。
+	PerSource int          `json:"per_source"`
+	Hard      int          `json:"hard"`
+	Inflight  uint64       `json:"inflight"`
+	Limit     uint64       `json:"limit"`
+	Top       []SourceConc `json:"top"`
 }
 
 // SourceConc 单台源的并发占用与上限。

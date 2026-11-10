@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=13">
+<link rel="stylesheet" href="/app.css?v=14">
 </head>
 <body>
 <header>
@@ -70,8 +70,8 @@
     </div>
 
     <div class="ovblock">
-      <div class="ovh">源站并发<small>在途回源占用的并发与动态上限</small></div>
-      <div class="ovbar"><div class="ob">在途 <b id="ovInflight">–</b></div><div class="ob">动态上限 <b id="ovLimit">–</b></div></div>
+      <div class="ovh">源站并发<small>在途回源与单源派发配额（3.0 起固定）</small></div>
+      <div class="ovbar"><div class="ob">在途 <b id="ovInflight">–</b></div><div class="ob">并发上限 <b id="ovLimit">–</b></div></div>
       <div id="ovConcList"></div>
       <div class="ovnote" id="ovConcNote"></div>
     </div>
@@ -214,7 +214,7 @@ var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
 var GROUPS = [], GFILTER = 0, GMANAGE = false, RENAME = null, GRPEDIT = null;
 var MEM = null;   // 成员抽屉：{gid, q}
-var SCORES = {}, SORDER = {mode:'auto', orders:{}};
+var SCORES = {}, KSCORES = {}, SORDER = {mode:'auto', orders:{}};
 // 行骨架只定义一次，主列表和成员抽屉复用同一套，避免两份模板各改各的。
 var L1 = '<div class="l1">', L2 = '<div class="l2">', MAIN = '<div class="main">';
 
@@ -423,7 +423,7 @@ function rowHtml(x){
       ? '<input class="renin" data-renin="' + x.id + '" value="' + esc(customName(x)) + '" maxlength="24"'
         + ' placeholder="' + esc(dispName(x)) + '" autocomplete="off" spellcheck="false">'
       : '<b class="site">' + esc(dispName(x)) + '</b>'
-        + (SCORES[x.id] ? '<span class="sc" title="综合评分：成功率 50% + 延迟 25% + 速度 25%">'
+        + (SCORES[x.id] ? '<span class="sc" title="综合评分：按该源支持的协议取平均（每项成功率 50% + 延迟 25% + 速度 25%）">'
             + Math.round(SCORES[x.id]*100) + '</span>' : ''))
     + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '')
     + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
@@ -461,6 +461,7 @@ function rowHtml(x){
           +   '<select class="gs" data-gs="' + x.id + '">' + groupOptions(x.group_id) + '</select>'
           + '</div>'
           + '<div class="detstats">' + detailStats(x) + '</div>'
+          + (kindScoreHtml(x) ? '<div class="ksc">' + kindScoreHtml(x) + '</div>' : '')
           + '<svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
           + '<div class="life">'
           +   (x.status === 'archived'
@@ -478,6 +479,17 @@ function rowHtml(x){
 }
 
 /* 分组：下拉选项 + 顶部条 + 管理面板 */
+/* 分协议分数：面板那一列是综合分（各协议平均），点开才看得到每条线的分。
+   否则「总分最高的源不是 GitHub 排序第一」永远像 bug。 */
+function kindScoreHtml(x){
+  var m = KSCORES[x.id] || {}, ord = [['docker','Docker'],['github','GitHub'],['ghcr','GHCR']], out = [];
+  ord.forEach(function(p){
+    if (typeof m[p[0]] === 'number') out.push('<i><em>' + p[1] + '</em> ' + Math.round(m[p[0]]*100) + '</i>');
+  });
+  if (!out.length) return '';
+  return '<span>分协议</span>' + out.join('');
+}
+
 function groupOptions(sel, plain){
   var h = '<option value="0"' + (!sel ? ' selected' : '') + '>' + (plain ? '不分组' : '未分组') + '</option>';
   GROUPS.forEach(function(g){
@@ -558,7 +570,7 @@ async function load(quiet){
     try{ GROUPS = (await api('/api/groups')).groups || []; }catch(e){}
     DATA = d.sources || [];
     RECENT_N = d.recent_n || RECENT_N;
-    SCORES = d.scores || {};
+    SCORES = d.scores || {}; KSCORES = d.scores_kind || {};
     try{ SORDER = await api('/api/sched-order'); }catch(e){}
     render();
   }catch(e){ if(!quiet) toast(e.message); }
@@ -915,10 +927,15 @@ function renderOrder(){
   h += '<div class="hint">按你选的顺序优先试；留「自动」的空位跳过。这 3 个之外的源仍按评分自动排。</div>';
   $('#orderBody').innerHTML = h;
 }
-document.querySelectorAll('#schedbar .seg').forEach(function(b){
+document.querySelectorAll('#schedbar .ssegb').forEach(function(b){
   b.addEventListener('click', async function(){
     if (b.dataset.smode === 'manual'){
-      renderOrder(); openSheet('sheetOrder'); return;
+      // 先切到手动再弹顺序面板：只弹面板不落库的话，点了像没反应。
+      try{
+        SORDER = await api('/api/sched-order', {method:'POST',
+          body: JSON.stringify({mode:'manual', orders: SORDER.orders || {}})});
+      }catch(e){ toast(e.message); return; }
+      renderSched(); renderOrder(); openSheet('sheetOrder'); return;
     }
     try{
       SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'auto', orders: SORDER.orders || {}})});
@@ -1032,16 +1049,18 @@ async function loadMetrics(){
     } else { $('#ovCache').textContent='—'; $('#ovCacheSub').textContent='监控未采集'; }
     if(m.concurrency){
       var inf=m.concurrency.inflight||0, lim=m.concurrency.limit||0;
+      var per=m.concurrency.per_source||0, hard=m.concurrency.hard||0;
       $('#ovConc').textContent = inf;
-      $('#ovConcSub').textContent = lim? ('上限 '+lim) : '无动态上限';
+      $('#ovConcSub').textContent = per? ('每源 '+per+' 路') : '';
       $('#ovInflight').textContent = inf;
       $('#ovLimit').textContent = lim||'—';
+      $('#ovLimit').title = per? ('单源派发 '+per+' 路 × 可用源；硬上限 '+hard+' 路/源') : '';
       var top = (m.concurrency.top||[]);
       if(top.length){
         var byId = {}; (DATA||[]).forEach(function(x){ byId[x.id]=x; });
         $('#ovConcList').innerHTML = top.map(function(t){
           var s = byId[t.id]||{}; var name = s.name||s.domain||('#'+t.id);
-          return '<div class="concrow"><span class="cn">'+esc(name)+'</span><span class="cv"><b>'+t.inflight+'</b> / '+(t.limit||'—')+'</span></div>';
+          return '<div class="concrow"><span class="cn">'+esc(name)+'</span><span class="cv"><b>'+t.inflight+'</b> / '+(t.limit||per||'—')+'</span></div>';
         }).join('');
         $('#ovConcNote').textContent = '仅显示在途最高的几个源';
       } else { $('#ovConcList').innerHTML = '<div class="hint">暂无在途回源</div>'; $('#ovConcNote').textContent=''; }

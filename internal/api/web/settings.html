@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=13">
+<link rel="stylesheet" href="/app.css?v=14">
 </head>
 <body>
 <header>
@@ -146,9 +146,9 @@
     <h2 style="margin-top:20px">信任加速站<span class="qi" data-tip="从已有源里选。选中的源在拉私有仓库（带 PAT）时会同时竞速，取最快的一个；全部失败回退官方。">?</span></h2>
     <div class="saverow" style="margin-top:0;flex-wrap:wrap">
       <select id="trGroup" style="flex:1;min-width:110px"></select>
-      <select id="trPick" style="flex:1;min-width:110px" disabled></select>
-      <button class="btn primary" id="trAdd" disabled>加入</button>
+      <button class="btn primary" id="trAdd" disabled>加入所选</button>
     </div>
+    <div class="trpick" id="trPick"></div>
     <div class="hint" id="trMsg"></div>
     <div class="tklist" id="trList"></div>
   </div>
@@ -624,13 +624,13 @@ function trFillGroups(){
   if (prev && $('#trGroup').querySelector('option[value="' + prev + '"]')) $('#trGroup').value = prev;
 }
 
+// 先选分组，再在组内勾选任意多个源（原来是单选下拉，只能一个一个加）。
 function trFillPick(){
   var gid = $('#trGroup').value;
   var pick = $('#trPick');
-  $('#trAdd').disabled = true;
+  trSyncAdd();
   if (!gid){
-    pick.innerHTML = '<option value="">先选分组</option>';
-    pick.disabled = true;
+    pick.innerHTML = '<div class="hint">先选分组</div>';
     return;
   }
   var id = gid.slice(1);
@@ -638,17 +638,19 @@ function trFillPick(){
     return String(x.group_id || 0) === id && !x.trusted && x.enabled;
   });
   if (!avail.length){
-    pick.innerHTML = '<option value="">该分组没有可选的源</option>';
-    pick.disabled = true;
+    pick.innerHTML = '<div class="hint">该分组没有可选的源</div>';
     return;
   }
-  pick.disabled = false;
-  var opts = ['<option value="">选择域名…</option>'];
-  avail.forEach(function(x){
+  pick.innerHTML = avail.map(function(x){
     var label = (x.name && x.name !== x.base_url) ? x.name + ' — ' + x.base_url : x.base_url;
-    opts.push('<option value="' + x.id + '">' + esc(label) + '</option>');
-  });
-  pick.innerHTML = opts.join('');
+    return '<label class="trrow"><input type="checkbox" value="' + x.id + '"><span>' + esc(label) + '</span></label>';
+  }).join('');
+}
+
+function trSyncAdd(){
+  var n = $('#trPick').querySelectorAll('input:checked').length;
+  $('#trAdd').disabled = !n;
+  $('#trAdd').textContent = n ? ('加入所选 (' + n + ')') : '加入所选';
 }
 
 var PIN_LABEL = {
@@ -754,19 +756,23 @@ async function loadTrusted(){
 }
 
 $('#trGroup').addEventListener('change', trFillPick);
-$('#trPick').addEventListener('change', function(){
-  $('#trAdd').disabled = !this.value;
-});
+$('#trPick').addEventListener('change', trSyncAdd);
 
 $('#trAdd').addEventListener('click', async function(){
-  var id = $('#trPick').value;
-  if (!id){ say($('#trMsg'), '先选分组和域名', 'bad'); return; }
-  try{
-    await api('/api/trusted/' + id, {method:'PATCH', body: JSON.stringify({trusted:true})});
-    say($('#trMsg'), '', '');
-    toast('已加入白名单，立即生效');
-    loadTrusted();
-  }catch(e){ say($('#trMsg'), e.message, 'bad'); }
+  var cbs = Array.prototype.slice.call($('#trPick').querySelectorAll('input:checked'));
+  if (!cbs.length){ say($('#trMsg'), '先勾选要信任的域名', 'bad'); return; }
+  var ok = 0, fail = [];
+  $('#trAdd').disabled = true;
+  for (var i = 0; i < cbs.length; i++){
+    try{
+      await api('/api/trusted/' + cbs[i].value, {method:'PATCH', body: JSON.stringify({trusted:true})});
+      ok++;
+    }catch(e){ fail.push(e.message); }
+  }
+  if (fail.length) say($('#trMsg'), '加入 ' + ok + ' 个，失败 ' + fail.length + ' 个：' + fail[0], 'bad');
+  else say($('#trMsg'), '', '');
+  if (ok) toast('已加入 ' + ok + ' 个，立即生效');
+  loadTrusted();
 });
 
 loadTrusted();

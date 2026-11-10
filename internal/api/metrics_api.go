@@ -30,5 +30,25 @@ func (s *Server) metricsView(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// 「源站并发上限」按 3.0 的固定配额算：单源 dispatch × 当前可用源数。
+	// 动态上限的 gauge 只在已下线的 AIMD 路径上报，重启后永远是空的，
+	// 面板画成「-」看起来像坏了。
+	if s.sch != nil {
+		hard, dispatch := s.sch.DispatchCap()
+		if dispatch > 0 && s.st != nil {
+			if list, err := s.st.ListSources(); err == nil {
+				var total uint64
+				for _, x := range list {
+					if !x.Enabled || (x.Status != "usable" && x.Status != "degraded") {
+						continue
+					}
+					total += uint64(dispatch)
+				}
+				view.Concurrency.Limit = total
+				view.Concurrency.PerSource = dispatch
+				view.Concurrency.Hard = hard
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, view)
 }
