@@ -12,6 +12,23 @@ import (
 // 16–64MiB 的样本永远读不到，等于白记。
 const minProxySpeedBytes = 16 << 20
 
+// sampleKind 把「实际请求协议」映射到「样本族」。
+//
+// 探针只覆盖 docker/ghcr/github 三类（runner.allKinds），而 raw 和 release
+// 都是走 GitHub 族代理取内容，能力判断也共用 github_cap。如果不映射，
+// 这两条路径永远查不到样本，Samples=0 时评分退化成 0.5 先验，等于不参与排序。
+//
+// git 不映射：它有自己的 git_cap，且 github 探针测的是 4MB raw 抓取，
+// 与 git smart HTTP 的吞吐口径不同，借用会污染解释。
+func sampleKind(kind string) string {
+	switch kind {
+	case "raw", "release":
+		return "github"
+	default:
+		return kind
+	}
+}
+
 // SourceStat 是调度用的源画像。
 // 速度与延迟只取探测样本（checks.tier >= 2）；代理请求不写进 checks，
 // 否则「本机到源站」和「用户到本机」两段会混成一个数字。
@@ -173,8 +190,10 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 // 按 kind 隔离；本协议无样本时只退回无 kind 的老行，不退回别的协议，
 // 否则只有 docker 样本的源查 raw 排名时会被 docker 数据带偏。
 func (s *Store) sourceSamples(id int64, kind string) (n, ok int, lat, spd, last int64, err error) {
-	n, ok, lat, spd, last, err = s.samples(id, kind, false)
-	if err == nil && n == 0 && kind != "" {
+	sk := sampleKind(kind)
+	n, ok, lat, spd, last, err = s.samples(id, sk, false)
+	// 本协议没样本时才整体退回无 kind 的老行；不和新数据合并，避免重复计入。
+	if err == nil && n == 0 && sk != "" {
 		return s.samples(id, "", true)
 	}
 	return n, ok, lat, spd, last, err
@@ -188,7 +207,7 @@ func (s *Store) AddProxySpeed(sourceID int64, kind string, bytes, ms int64) erro
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT INTO proxy_speed(source_id, kind, ts, bytes, ms) VALUES(?,?,?,?,?)`,
-		sourceID, kind, time.Now().Unix(), bytes, ms)
+		sourceID, sampleKind(kind), time.Now().Unix(), bytes, ms)
 	return err
 }
 
@@ -198,7 +217,7 @@ func (s *Store) AddLiveSpeed(sourceID int64, kind string, bytes int64, windowSec
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT INTO live_speed(source_id, kind, ts, bytes, window_s) VALUES(?,?,?,?,?)`,
-		sourceID, kind, time.Now().Unix(), bytes, windowSec)
+		sourceID, sampleKind(kind), time.Now().Unix(), bytes, windowSec)
 	return err
 }
 
@@ -206,7 +225,7 @@ func (s *Store) AddLiveSpeed(sourceID int64, kind string, bytes int64, windowSec
 func (s *Store) RecentLiveSpeeds(id int64, kind string, since int64, n int) []int64 {
 	rows, err := s.db.Query(`SELECT bytes, window_s FROM live_speed
 		WHERE source_id = ? AND kind = ? AND ts >= ? AND window_s > 0
-		ORDER BY ts DESC LIMIT ?`, id, kind, since, n)
+		ORDER BY ts DESC LIMIT ?`, id, sampleKind(kind), since, n)
 	if err != nil {
 		return nil
 	}
@@ -226,7 +245,7 @@ func (s *Store) RecentLiveSpeeds(id int64, kind string, since int64, n int) []in
 func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 	rows, err := s.db.Query(`SELECT bytes, ms FROM proxy_speed
 		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
-		ORDER BY ts DESC LIMIT ?`, id, kind, minProxySpeedBytes, n)
+		ORDER BY ts DESC LIMIT ?`, id, sampleKind(kind), minProxySpeedBytes, n)
 	if err != nil {
 		return nil
 	}
@@ -243,6 +262,7 @@ func (s *Store) RecentProxySpeeds(id int64, kind string, n int) []int64 {
 
 // proxySpeed 用最近的真实回源吞吐估这台源能跑多快（KB/s），没样本返回 0。
 func (s *Store) proxySpeed(id int64, kind string) int64 {
+	kind = sampleKind(kind)
 	rows, err := s.db.Query(`SELECT bytes, ms, ts FROM proxy_speed
 		WHERE source_id = ? AND kind = ? AND ms > 0 AND bytes >= ?
 		ORDER BY ts DESC LIMIT 20`, id, kind, minProxySpeedBytes)
