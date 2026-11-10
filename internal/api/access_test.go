@@ -93,3 +93,19 @@ func TestParseCIDRSingleIP(t *testing.T) {
 		t.Fatal("非法网段应报错")
 	}
 }
+
+func TestAccessPolicyReload(t *testing.T) {
+	s := &Server{}
+	cfg := config.Default()
+	cfg.Access = config.Access{Allow: []string{"10.1.1.0/24"}, Scope: "panel"}
+	s.cfg.Store(cfg)
+	if !s.accessPolicy().block(netip.MustParseAddr("203.0.113.7")) {
+		t.Fatal("白名单外应被拒")
+	}
+	// 面板保存后 cfg 指针替换，策略应立刻跟着变，不需要重启。
+	relaxed := config.Default()
+	s.cfg.Store(relaxed)
+	if s.accessPolicy().block(netip.MustParseAddr("203.0.113.7")) {
+		t.Fatal("清空名单后应立即放行")
+	}
+}
