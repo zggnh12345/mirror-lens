@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=11">
+<link rel="stylesheet" href="/app.css?v=12">
 </head>
 <body>
 <header>
@@ -40,21 +40,21 @@
   <div class="sec" style="margin-top:14px">
     <h2>账号<span class="qi" data-tip="改用户名和密码都要先验证当前密码。改完密码，其他设备上的登录会立即失效。">?</span></h2>
 
-    <label for="acUser">用户名</label>
+    <label for="acUser">用户名<span class="qi" data-tip="3-32 位，只能用字母、数字、下划线、短横线、点。改名不用重新登录。">?</span></label>
     <input type="text" id="acUser" autocomplete="username" spellcheck="false">
-    <div class="hint" id="acUserHint">3-32 位，只能用字母、数字、下划线、短横线、点。</div>
+    <div class="hint" id="acUserHint"></div>
 
     <div class="grid2" style="margin-top:2px">
       <div>
-        <label for="acOld">当前密码</label>
+        <label for="acOld">当前密码<span class="qi" data-tip="改用户名或密码都要先验证一次，防止别人拿到已登录的浏览器就改掉。">?</span></label>
         <input type="password" id="acOld" autocomplete="current-password" placeholder="必填">
       </div>
       <div>
-        <label for="acNew">新密码</label>
+        <label for="acNew">新密码<span class="qi" data-tip="至少 8 位。改完所有其他设备上的登录会立即失效，只有当前浏览器保持登录。">?</span></label>
         <input type="password" id="acNew" autocomplete="new-password" placeholder="不改就留空">
       </div>
     </div>
-    <label for="acNew2">再输一次新密码</label>
+    <label for="acNew2">再输一次新密码<span class="qi" data-tip="和新密码保持一致，防止手误。不改密码就留空。">?</span></label>
     <input type="password" id="acNew2" autocomplete="new-password" placeholder="不改就留空">
 
     <div class="saverow">
@@ -83,23 +83,23 @@
     <h2>探测节奏<span class="qi" data-tip="分三层跑：先探活，再验可用，最后测速和内容校验。数字越小越勤，也越费流量。">?</span></h2>
     <div class="grid2">
       <div>
-        <label for="setL1">探活间隔（分钟）</label>
+        <label for="setL1">探活间隔（分钟）<span class="qi" data-tip="最轻的一层：每隔多久 ping 一次源，判断它还活着。数字越小越勤，也越费流量。">?</span></label>
         <input type="number" id="setL1" min="1" max="1440">
       </div>
       <div>
-        <label for="setL2">可用性间隔（分钟）</label>
+        <label for="setL2">可用性间隔（分钟）<span class="qi" data-tip="探活通过后，每隔多久真拉一次文件，确认这个源确实能用。">?</span></label>
         <input type="number" id="setL2" min="2" max="1440">
       </div>
       <div>
-        <label for="setL3">测速与校验（分钟）</label>
+        <label for="setL3">测速与校验（分钟）<span class="qi" data-tip="最重的一层：下载样本测速度、算内容校验和。最费流量，不建议调太小。">?</span></label>
         <input type="number" id="setL3" min="10" max="10080">
       </div>
       <div>
-        <label for="setExp">导出条数上限</label>
+        <label for="setExp">导出条数上限<span class="qi" data-tip="导出订阅时最多带多少个源，1-20 个。">?</span></label>
         <input type="number" id="setExp" min="1" max="20">
       </div>
     </div>
-    <label for="setTTL">登录有效期（小时）</label>
+    <label for="setTTL">登录有效期（小时）<span class="qi" data-tip="登录后多久不用重新输密码，单位小时。改小更安全，改大更省事。">?</span></label>
     <input type="number" id="setTTL" min="1" max="8760">
     <div class="saverow">
       <button class="btn primary" id="btnSettings">保存设置</button>
@@ -131,7 +131,7 @@
       <span class="hint" id="purgeMsg"></span>
     </div>
 
-    <label for="tkName" style="margin-top:14px">新建 Token</label>
+    <label for="tkName" style="margin-top:14px">新建 Token<span class="qi" data-tip="给 Token 起个名字，方便以后认出是哪台设备在用。名字只是备注，不影响权限。">?</span></label>
     <div class="saverow" style="margin-top:0">
       <input type="text" id="tkName" placeholder="例如：我的笔记本" style="flex:1;min-width:0">
       <button class="btn primary" id="btnToken">创建</button>
@@ -514,8 +514,9 @@ function buildConfig(d){
         ? '<span class="rtag">重启生效</span>'
         : '<span class="rtag live">即时生效</span>';
       html += '<div class="cfgrow" data-key="' + f.key + '">' +
-        '<div class="cf"><div class="clabel">' + esc(f.label) + '</div>' +
-        (f.hint ? '<div class="chint">' + esc(f.hint) + '</div>' : '') + rtag + '</div>' +
+        '<div class="cf"><div class="clabel">' + esc(f.label) +
+        (f.hint ? '<span class="qi" data-tip="' + esc(f.hint) + '">?</span>' : '') +
+        '</div>' + rtag + '</div>' +
         '<div class="cc">' + cfgControl(f) + '</div></div>';
     });
     html += '</div>';

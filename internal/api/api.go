@@ -35,7 +35,7 @@ import (
 )
 
 // Version 面板与 /api/me 显示的版本号。
-const Version = "3.3.1"
+const Version = "3.3.2"
 
 //go:embed web
 var webFS embed.FS
@@ -506,6 +506,7 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		sortByScore(list, scores)
 		writeJSON(w, 200, map[string]any{
 			"sources": list, "busy": s.eng.Busy(),
 			"recent_n": recentN, "scores": scores,
@@ -515,6 +516,22 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method"})
 	}
+}
+
+// sortByScore 定面板列表顺序：★源最前，★源之间按综合分降序，其余也按
+// 综合分降序，同分按名字。死源/停用源没有分，自然沉底。
+func sortByScore(list []store.Source, scores map[int64]float64) {
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if a.Preferred != b.Preferred {
+			return a.Preferred
+		}
+		sa, sb := scores[a.ID], scores[b.ID]
+		if sa != sb {
+			return sa > sb
+		}
+		return a.Name < b.Name
+	})
 }
 
 func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {

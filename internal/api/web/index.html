@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=11">
+<link rel="stylesheet" href="/app.css?v=12">
 </head>
 <body>
 <header>
@@ -95,11 +95,12 @@
   <div class="gbar" id="gbar"></div>
 
   <div class="schedbar" id="schedbar">
-    <span class="sl">调度</span>
-    <div class="segwrap">
-      <button class="seg" data-smode="auto">自动</button>
-      <button class="seg" data-smode="manual">手动</button>
+    <span class="sl">调度方式</span>
+    <div class="segwrap" role="group" aria-label="调度方式">
+      <button class="seg" data-smode="auto" aria-pressed="true">自动</button>
+      <button class="seg" data-smode="manual" aria-pressed="false">手动</button>
     </div>
+    <span class="sd" id="schedDesc">按实时评分自动排</span>
     <button class="lnk" id="btnOrder">设置前 3 个源</button>
   </div>
 
@@ -862,8 +863,12 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeS
 function renderSched(){
   var on = SORDER.mode === 'manual';
   document.querySelectorAll('#schedbar .seg').forEach(function(b){
-    b.classList.toggle('on', (b.dataset.smode === 'manual') === on);
+    var hit = (b.dataset.smode === 'manual') === on;
+    b.classList.toggle('on', hit);
+    b.setAttribute('aria-pressed', hit ? 'true' : 'false');
   });
+  var d = $('#schedDesc');
+  if (d) d.textContent = on ? '前 3 个源固定优先，其余按评分' : '按实时评分自动排';
   $('#btnOrder').style.display = on ? '' : 'none';
 }
 function orderOptions(kind, sel){

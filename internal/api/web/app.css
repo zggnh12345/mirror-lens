@@ -67,7 +67,8 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 
 /* 统计卡 */
 .stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:14px 0}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 11px;box-shadow:var(--shadow)}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 8px;
+  box-shadow:var(--shadow);text-align:center}
 .stat b{display:block;font-size:19px;font-weight:680;letter-spacing:-.4px;line-height:1.25;
   font-variant-numeric:tabular-nums}
 .stat span{color:var(--muted);font-size:11px}
@@ -273,9 +274,19 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .card .btn.full{width:100%;height:42px;margin-top:18px}
 .err{color:var(--bad);font-size:12.5px;margin-top:10px;min-height:17px}
 @media(max-width:520px){
-  .stat{padding:7px 8px;border-radius:10px}
+  .stat{padding:7px 4px;border-radius:10px}
   .stat b{font-size:16px;letter-spacing:-.3px}
-  .stat span{font-size:9.5px;line-height:1.25;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat span{font-size:9px;line-height:1.25;display:block;white-space:normal;word-break:keep-all}
+}
+@media(max-width:430px){
+  .wrap{padding:0 11px calc(44px + env(safe-area-inset-bottom))}
+  .hbar{padding:calc(8px + env(safe-area-inset-top)) 11px 8px;gap:8px}
+  .stats{gap:5px;margin:12px 0}
+  .schedbar{flex-wrap:wrap;gap:6px;padding:6px 8px}
+  .schedbar .sd{display:none}
+  .segwrap .seg{padding:0 11px}
+  .row{padding:10px;gap:9px}
+  .row .l1 .site{max-width:46%}
 }
 
 /* 加速器 Token 列表 */
@@ -486,11 +497,15 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .memrow.locked .memtag{color:var(--muted)}
 
 /* 调度条：自动/手动 + 前 3 源 */
-.schedbar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
-.schedbar .sl{font-size:11.5px}
-.segwrap{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--card)}
-.segwrap .seg{height:28px;padding:0 12px;font-size:12px;border:0;background:transparent;color:var(--muted)}
-.segwrap .seg.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.schedbar{display:flex;align-items:center;gap:9px;margin:0 0 10px;padding:6px 9px;
+  border:1px solid var(--line);border-radius:11px;background:var(--card);font-size:12px;color:var(--muted);
+  box-shadow:var(--shadow)}
+.schedbar .sl{font-size:12px;font-weight:600;color:var(--ink)}
+.schedbar .sd{font-size:11.5px;color:var(--faint);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.segwrap{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line2);border-radius:9px;background:var(--card2)}
+.segwrap .seg{height:26px;padding:0 13px;font-size:12.5px;font-weight:600;border:0;border-radius:7px;
+  background:transparent;color:var(--muted);transition:.15s}
+.segwrap .seg.on{background:var(--brand);color:#fff;box-shadow:0 1px 5px rgba(37,99,235,.35)}
 .schedbar .lnk{margin-left:auto;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);
   background:var(--card);font-size:12px;color:var(--ink)}
 .ordrow{display:flex;gap:6px;margin:6px 0 14px}
