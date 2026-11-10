@@ -127,7 +127,7 @@ func (g GitHub) Token() string {
 func (g GitHub) HasToken() bool { return g.Token() != "" }
 
 // Network 控制回源的 IP 协议族选择。
-// auto = IPv4 优先、连不上再试 IPv6（默认）；v4/v6 = 只用该族。
+// auto = 双栈竞速，v6 先试、250ms 后并行 v4（默认）；v4/v6 = 只用该族。
 type Network struct {
 	IPFamily string `yaml:"ip_family"`
 }

@@ -449,7 +449,7 @@ function cfgControl(f){
     // 枚举值要给人看：配置里存 auto/v4/v6，按钮上写中文。
     var VAL_LBL = {
       'true': '开', 'false': '关',
-      'auto': '自动（v4 优先）', 'v4': '仅 IPv4', 'v6': '仅 IPv6',
+      'auto': '自动（双栈竞速）', 'v4': '仅 IPv4', 'v6': '仅 IPv6',
       'panel': '仅面板', 'all': '全部（含加速）'
     };
     var labels = opts.map(function(o){ return VAL_LBL[o] || o; });
