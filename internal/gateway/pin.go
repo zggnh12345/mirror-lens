@@ -69,20 +69,56 @@ func pinnedClient(t TrustedRelay) *http.Client {
 		if !strings.EqualFold(strings.TrimSuffix(strings.ToLower(host), "."), pinHost) {
 			return nil, fmt.Errorf("拨号目标 %q 与钉住的域名 %q 不符，拒绝", host, pinHost)
 		}
+		if len(ips) == 0 {
+			return nil, errRelayUnpinned
+		}
+		// 钉住的 IP 也一视同仁竞速：每 1ms 放一条，谁先握手成功用谁。
+		// 串行拨号会被一个丢包的 IP 拖住（实测 v4 卡 1.1s 才轮到 v6）。
+		cctx, cancel := context.WithCancel(ctx)
+		type out struct {
+			c   net.Conn
+			err error
+		}
+		ch := make(chan out, len(ips))
+		for i, ip := range ips {
+			if i > 0 {
+				select {
+				case <-cctx.Done():
+				case <-time.After(time.Millisecond):
+				}
+			}
+			go func(ip string) {
+				d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+				c, err := d.DialContext(cctx, "tcp", net.JoinHostPort(ip, port))
+				ch <- out{c: c, err: err}
+			}(ip)
+		}
 		var firstErr error
-		for _, ip := range ips {
-			d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-			c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
-			if err == nil {
-				return c, nil
+		for i := 0; i < len(ips); i++ {
+			var r out
+			select {
+			case <-ctx.Done():
+				cancel()
+				return nil, ctx.Err()
+			case r = <-ch:
+			}
+			if r.err == nil {
+				cancel()
+				// 取消后仍可能有一条刚好连上，收掉它，别漏连接。
+				go func(remaining int) {
+					for j := 0; j < remaining; j++ {
+						if o := <-ch; o.c != nil {
+							o.c.Close()
+						}
+					}
+				}(len(ips) - i - 1)
+				return r.c, nil
 			}
 			if firstErr == nil {
-				firstErr = err
-			}
-			if ctx.Err() != nil {
-				break
+				firstErr = r.err
 			}
 		}
+		cancel()
 		if firstErr == nil {
 			firstErr = errRelayUnpinned
 		}

@@ -312,3 +312,22 @@ func TestGitHubTokenEncryptedAtRest(t *testing.T) {
 		t.Fatal("清除后 token_enc 仍非空")
 	}
 }
+
+// 设置页每一项都要有说明：缺 Hint 的字段在页面上只剩一个标签，用户看不出作用。
+// 数值型还必须有单位，否则不知道填的是秒、MB 还是次数。
+func TestCfgSchemaHasHintAndUnit(t *testing.T) {
+	for _, f := range cfgSchema {
+		if strings.TrimSpace(f.Hint) == "" {
+			t.Errorf("%s (%s) 缺 Hint", f.Key, f.Label)
+		}
+		switch f.Kind {
+		case "int", "float":
+			if f.Unit == "" {
+				t.Errorf("%s (%s) 缺 Unit", f.Key, f.Label)
+			}
+		}
+		if f.Kind == "duration" && !strings.Contains(f.Hint, "时间格式") && !strings.Contains(f.Hint, "秒") {
+			t.Errorf("%s (%s) 时间类要写明格式或单位", f.Key, f.Label)
+		}
+	}
+}

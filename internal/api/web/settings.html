@@ -449,7 +449,7 @@ function cfgControl(f){
     // 枚举值要给人看：配置里存 auto/v4/v6，按钮上写中文。
     var VAL_LBL = {
       'true': '开', 'false': '关',
-      'auto': '自动（同时竞速）', 'v4': '仅 IPv4', 'v6': '仅 IPv6',
+      'auto': '自动（竞速）', 'v4': '仅 IPv4', 'v6': '仅 IPv6',
       'panel': '仅面板', 'all': '全部（含加速）'
     };
     var labels = opts.map(function(o){ return VAL_LBL[o] || o; });
@@ -477,7 +477,11 @@ function cfgControl(f){
   var attrs = '';
   if (f.hasMin) attrs += ' min="' + f.min + '"';
   if (f.hasMax) attrs += ' max="' + f.max + '"';
-  return '<input class="cfg-in" type="' + type + '"' + step + attrs + ' data-key="' + k + '" value="' + esc(f.value) + '">';
+  // 时间类配置存的是 30s/5m/2h 这种字符串，给个格式示例；其余数值把单位显示在输入框右边。
+  if (f.kind === 'duration') attrs += ' placeholder="例：30s / 5m / 2h"';
+  var inp = '<input class="cfg-in" type="' + type + '"' + step + attrs + ' data-key="' + k + '" value="' + esc(f.value) + '">';
+  if (!f.unit) return inp;
+  return '<span class="cfg-unit">' + inp + '<span class="cfg-unit-t">' + esc(f.unit) + '</span></span>';
 }
 function findFieldMeta(k){
   if (!CFG.data) return null;
@@ -518,9 +522,7 @@ function buildConfig(d){
         '<div class="cf"><div class="clabel">' + esc(f.label) +
         (f.hint ? '<span class="qi" data-tip="' + esc(f.hint) + '">?</span>' : '') +
         '</div>' + rtag + '</div>' +
-        '<div class="cc">' + cfgControl(f) +
-        (f.kind === 'list' && f.hint ? '<div class="hint" style="margin-top:6px;line-height:1.6">' + esc(f.hint) + '</div>' : '') +
-        '</div></div>';
+        '<div class="cc">' + cfgControl(f) + '</div></div>';
     });
     html += '</div>';
   });

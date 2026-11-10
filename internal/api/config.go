@@ -89,18 +89,18 @@ var cfgSchema = []cfgField{
 		Hint: "超过只透传、不落盘", Get: func(c *config.Config) string { return i64(c.Cache.MaxFileMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Cache.MaxFileMB, v, 0, 1<<20, true, false) }},
 	{Section: "缓存", Key: "cache.max_gb", Label: "缓存总量上限", Kind: "int", Unit: "GB", Min: 0, HasMin: true, Restart: true,
 		Hint: "0 = 不限，超了按最久未访问淘汰", Get: func(c *config.Config) string { return i64(c.Cache.MaxGB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Cache.MaxGB, v, 0, 1<<20, true, false) }},
-	{Section: "缓存", Key: "cache.warn_at", Label: "用量告警阈值", Kind: "float", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
-		Hint: "0~1 的比例，到这个值报一次警", Get: func(c *config.Config) string { return f2s(c.Cache.WarnAt) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Cache.WarnAt, v, 0, 1, true, true) }},
-	{Section: "缓存", Key: "cache.recover_at", Label: "告警复位阈值", Kind: "float", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
-		Hint: "必须 < 告警阈值，否则永不复位", Get: func(c *config.Config) string { return f2s(c.Cache.RecoverAt) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Cache.RecoverAt, v, 0, 1, true, true) }},
+	{Section: "缓存", Key: "cache.warn_at", Label: "用量告警阈值", Kind: "float", Unit: "0~1", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：缓存占用到这个比例时告警一次。用法：填 0~1 的小数，0.85 = 85%；要和下面的复位阈值拉开距离", Get: func(c *config.Config) string { return f2s(c.Cache.WarnAt) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Cache.WarnAt, v, 0, 1, true, true) }},
+	{Section: "缓存", Key: "cache.recover_at", Label: "告警复位阈值", Kind: "float", Unit: "0~1", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：占用降到这个比例以下时解除告警。用法：填 0~1 的小数，必须小于告警阈值，否则永不复位", Get: func(c *config.Config) string { return f2s(c.Cache.RecoverAt) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Cache.RecoverAt, v, 0, 1, true, true) }},
 
 	// 后台巡检
 	{Section: "后台巡检", Key: "janitor.interval", Label: "巡检间隔", Kind: "duration", Restart: true,
-		Hint: "容量、过期、半截文件、索引对账", Get: func(c *config.Config) string { return durStr(c.Janitor.Interval.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.Interval.Duration, v) }},
+		Hint: "作用：多久巡检一轮容量、过期项、半截文件和索引对账。用法：时间格式 30s / 5m / 2h，常用 2h", Get: func(c *config.Config) string { return durStr(c.Janitor.Interval.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.Interval.Duration, v) }},
 	{Section: "后台巡检", Key: "janitor.partial_ttl", Label: "半截文件保留", Kind: "duration", Restart: true,
-		Hint: "断了没续传的临时文件留多久", Get: func(c *config.Config) string { return durStr(c.Janitor.PartialTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.PartialTTL.Duration, v) }},
+		Hint: "作用：断了没续传的临时文件保留多久。用法：时间格式 30s / 5m / 1h；太长占空间，太短续传失效", Get: func(c *config.Config) string { return durStr(c.Janitor.PartialTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.PartialTTL.Duration, v) }},
 	{Section: "后台巡检", Key: "janitor.expired_grace", Label: "过期宽限", Kind: "duration", Restart: true,
-		Hint: "条目过期后还要等多久没人访问才删", Get: func(c *config.Config) string { return durStr(c.Janitor.ExpiredGrace.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.ExpiredGrace.Duration, v) }},
+		Hint: "作用：条目过期后再等多久没人访问才删。用法：时间格式 1m / 10m / 1h；给客户端留点余量", Get: func(c *config.Config) string { return durStr(c.Janitor.ExpiredGrace.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Janitor.ExpiredGrace.Duration, v) }},
 
 	// 数据库备份
 	{Section: "数据库备份", Key: "backup.enabled", Label: "每日快照", Kind: "bool", Restart: true,
@@ -122,13 +122,13 @@ var cfgSchema = []cfgField{
 
 	// 内容 TTL
 	{Section: "内容 TTL", Key: "raw.ttl", Label: "Raw 重新验证间隔", Kind: "duration", Restart: true,
-		Hint: "分支/标签；commit 永久缓存", Get: func(c *config.Config) string { return durStr(c.Raw.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Raw.TTL.Duration, v) }},
+		Hint: "作用：/raw/ 的分支、标签内容隔多久回源复验。用法：时间格式 30s / 5m / 1h；commit 永久缓存，不受此项影响", Get: func(c *config.Config) string { return durStr(c.Raw.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Raw.TTL.Duration, v) }},
 	{Section: "内容 TTL", Key: "git.ttl", Label: "Git info/refs 缓存", Kind: "duration", Restart: true,
-		Hint: "0 = 每次回源", Get: func(c *config.Config) string { return durStr(c.Git.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Git.TTL.Duration, v) }},
+		Hint: "作用：git info/refs 结果缓存多久。用法：时间格式 30s / 5m；0 = 每次回源", Get: func(c *config.Config) string { return durStr(c.Git.TTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Git.TTL.Duration, v) }},
 
 	// 网络
 	{Section: "网络", Key: "network.ip_family", Label: "回源 IP 协议族", Kind: "enum", Options: []string{"auto", "v4", "v6"}, Restart: true,
-		Hint: "auto = 双栈同时竞速：IPv6 和 IPv4 各发一条，谁先握手成功就用谁，另一条自动丢弃（失败的那条不计入日志与告警）；v4/v6 = 强制只用该族。信任中转已钉死 IP，不受影响",
+		Hint: "作用：决定回源拨号用 IPv4 还是 IPv6。用法：auto = 两族竞速，各发一条，谁先握手成功用谁，输的那条自动丢弃（不计日志与告警）；v4/v6 = 只解析并使用该族。信任中转钉死的 IP 也按同样规则竞速",
 		Get: func(c *config.Config) string {
 			if c.Network.IPFamily == "" {
 				return "auto"
@@ -149,9 +149,9 @@ var cfgSchema = []cfgField{
 	{Section: "Registry 加速", Key: "registry.upstream", Label: "上游主机", Kind: "string", Restart: true,
 		Hint: "只写主机名，不带 https:// 和路径", Get: func(c *config.Config) string { return c.Registry.Upstream }, Set: func(c *config.Config, v string) error { c.Registry.Upstream = strings.TrimSpace(v); return nil }},
 	{Section: "Registry 加速", Key: "registry.max_file_mb", Label: "layer 单文件上限", Kind: "int", Unit: "MB", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i64(c.Registry.MaxFileMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Registry.MaxFileMB, v, 0, 1<<20, true, false) }},
+		Hint: "作用：单个 layer 超过这个大小就不缓存，直接透传给客户端。用法：MB；0 = 不限制", Get: func(c *config.Config) string { return i64(c.Registry.MaxFileMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Registry.MaxFileMB, v, 0, 1<<20, true, false) }},
 	{Section: "Registry 加速", Key: "registry.tag_ttl", Label: "tag 重新验证", Kind: "duration", Restart: true,
-		Hint: "tag 可能被覆盖，过一会儿要复验", Get: func(c *config.Config) string { return durStr(c.Registry.TagTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Registry.TagTTL.Duration, v) }},
+		Hint: "作用：tag 可能被覆盖，隔多久回源复验一次。用法：时间格式 30s / 5m / 1h", Get: func(c *config.Config) string { return durStr(c.Registry.TagTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Registry.TagTTL.Duration, v) }},
 
 	// GitHub
 	{Section: "GitHub 加速", Key: "github.enabled", Label: "开启 GitHub 加速", Kind: "bool", Restart: true,
@@ -186,18 +186,19 @@ var cfgSchema = []cfgField{
 	// 多源调度
 	{Section: "多源调度", Key: "sources.enabled", Label: "开启多源调度", Kind: "bool", Restart: true,
 		Hint: "只影响回源；缓存命中不碰网络", Get: func(c *config.Config) string { return b2s(c.Sources.Enabled) }, Set: func(c *config.Config, v string) error { c.Sources.Enabled = parseBool(v); return nil }},
-	{Section: "多源调度", Key: "sources.max_candidates", Label: "最多试几个源", Kind: "int", Min: 1, Max: 10, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Sources.MaxCandidates) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.MaxCandidates, v, 1, 10, true, true) }},
+	{Section: "多源调度", Key: "sources.max_candidates", Label: "最多试几个源", Kind: "int", Unit: "个", Min: 1, Max: 10, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：一次请求最多试几个源。用法：1–10；越大越抗单源失败，坏源多时也更慢", Get: func(c *config.Config) string { return i32(c.Sources.MaxCandidates) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.MaxCandidates, v, 1, 10, true, true) }},
 	{Section: "多源调度", Key: "sources.sticky_ttl", Label: "成功源复用", Kind: "duration", Restart: true,
-		Get: func(c *config.Config) string { return durStr(c.Sources.StickyTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.StickyTTL.Duration, v) }},
+		Hint: "作用：成功过的源在这段时间内优先复用，少走重挑。用法：时间格式 30s / 5m / 2h；0 = 不复用",
+		Get:  func(c *config.Config) string { return durStr(c.Sources.StickyTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.StickyTTL.Duration, v) }},
 	{Section: "多源调度", Key: "sources.fail_cooldown", Label: "失败冷却", Kind: "duration", Restart: true,
-		Hint: "期间该源降权；遇 429+Retry-After 取较长者", Get: func(c *config.Config) string { return durStr(c.Sources.FailCooldown.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.FailCooldown.Duration, v) }},
-	{Section: "多源调度", Key: "sources.max_per_source", Label: "单源并发上限", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "0 取默认 4，负数不限", Get: func(c *config.Config) string { return i32(c.Sources.MaxPerSource) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.MaxPerSource, v, 0, 64, true, true) }},
+		Hint: "作用：源失败后降权多久。用法：时间格式 30s / 5m；遇 429 + Retry-After 取两者较长者", Get: func(c *config.Config) string { return durStr(c.Sources.FailCooldown.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.FailCooldown.Duration, v) }},
+	{Section: "多源调度", Key: "sources.max_per_source", Label: "单源并发上限", Kind: "int", Unit: "个", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：单台源同时在途的请求上限。用法：0 = 用默认 4；负数 = 不限", Get: func(c *config.Config) string { return i32(c.Sources.MaxPerSource) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Sources.MaxPerSource, v, 0, 64, true, true) }},
 	{Section: "多源调度", Key: "sources.dynamic", Label: "动态带宽调度", Kind: "bool", Restart: true,
 		Hint: "按实测吞吐自动调并发（AIMD）", Get: func(c *config.Config) string { return b2s(c.Sources.Dynamic) }, Set: func(c *config.Config, v string) error { c.Sources.Dynamic = parseBool(v); return nil }},
-	{Section: "多源调度", Key: "sources.headroom", Label: "普通派发余量", Kind: "float", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
-		Hint: "普通请求最多占到硬上限的这个比例，其余留给换源接管", Get: func(c *config.Config) string { return f2s(c.Sources.Headroom) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Sources.Headroom, v, 0, 1, false, false) }},
+	{Section: "多源调度", Key: "sources.headroom", Label: "普通派发余量", Kind: "float", Unit: "0~1", Min: 0, Max: 1, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：普通请求最多占到硬上限的比例，其余留给换源接管。用法：填 0~1 的小数，0.8 = 80%", Get: func(c *config.Config) string { return f2s(c.Sources.Headroom) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Sources.Headroom, v, 0, 1, false, false) }},
 	{Section: "多源调度", Key: "sources.admission", Label: "名额不足时", Kind: "enum", Options: []string{"wait_then_fallback", "blocking", "non_blocking", "observe"}, Restart: true,
 		Hint: "wait_then_fallback：最多等 wait_timeout 再换源（默认）", Get: func(c *config.Config) string {
 			if c.Sources.Admission == "" {
@@ -213,29 +214,29 @@ var cfgSchema = []cfgField{
 			return fmt.Errorf("admission 只支持 observe/blocking/wait_then_fallback/non_blocking")
 		}},
 	{Section: "多源调度", Key: "sources.wait_timeout", Label: "等名额上限", Kind: "duration", Restart: true,
-		Hint: "只有 wait_then_fallback 用；超时就不等了，换下一台源", Get: func(c *config.Config) string { return durStr(c.Sources.WaitTimeout.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.WaitTimeout.Duration, v) }},
-	{Section: "多源调度", Key: "sources.preflight_concurrency", Label: "预检并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "全局在途预检数，0 取默认 4；满了就跳过该源", Get: func(c *config.Config) string { return i32(c.Sources.PreflightConcurrency) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：名额不足时最多等多久。用法：时间格式 500ms / 2s；只在「名额不足时 = wait_then_fallback」生效，超时换源", Get: func(c *config.Config) string { return durStr(c.Sources.WaitTimeout.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Sources.WaitTimeout.Duration, v) }},
+	{Section: "多源调度", Key: "sources.preflight_concurrency", Label: "预检并发", Kind: "int", Unit: "个", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：全局同时在途的预检数。用法：0 = 默认 4；满了跳过该源，不排队", Get: func(c *config.Config) string { return i32(c.Sources.PreflightConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.PreflightConcurrency, v, 0, 64, true, true)
 		}},
-	{Section: "多源调度", Key: "sources.relay_concurrency", Label: "中转竞速上限", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "按排名截断参与竞速的站数，不排队", Get: func(c *config.Config) string { return i32(c.Sources.RelayConcurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "多源调度", Key: "sources.relay_concurrency", Label: "中转竞速上限", Kind: "int", Unit: "个", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：中转竞速最多几台一起上。用法：按排名截断，不排队；0 = 默认", Get: func(c *config.Config) string { return i32(c.Sources.RelayConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.RelayConcurrency, v, 0, 64, true, true)
 		}},
-	{Section: "多源调度", Key: "sources.git_concurrency", Label: "Git 回源并发", Kind: "int", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Hint: "upload-pack POST 前取名额，流结束才归还", Get: func(c *config.Config) string { return i32(c.Sources.GitConcurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "多源调度", Key: "sources.git_concurrency", Label: "Git 回源并发", Kind: "int", Unit: "个", Min: 0, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：git upload-pack 同时回源的连接数。用法：取名额后才发请求，流结束才归还；0 = 默认", Get: func(c *config.Config) string { return i32(c.Sources.GitConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.GitConcurrency, v, 0, 64, true, true)
 		}},
-	{Section: "多源调度", Key: "sources.archive_days", Label: "死源归档天数", Kind: "int", Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error {
+	{Section: "多源调度", Key: "sources.archive_days", Label: "死源归档天数", Kind: "int", Unit: "天", Restart: true,
+		Hint: "作用：源连续失败多久后归档，不再参与调度。用法：天；0 = 不归档", Get: func(c *config.Config) string { return i32(c.Sources.ArchiveDays) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.ArchiveDays, v, 0, 1<<20, false, false)
 		}},
-	{Section: "多源调度", Key: "sources.cleanup_days", Label: "归档后删除天数", Kind: "int", Restart: true,
-		Hint: "0/负 = 永不删", Get: func(c *config.Config) string { return i32(c.Sources.CleanupDays) }, Set: func(c *config.Config, v string) error {
+	{Section: "多源调度", Key: "sources.cleanup_days", Label: "归档后删除天数", Kind: "int", Unit: "天", Restart: true,
+		Hint: "作用：归档后多久从列表里彻底删掉。用法：天；0 或负数 = 永不删", Get: func(c *config.Config) string { return i32(c.Sources.CleanupDays) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.CleanupDays, v, 0, 1<<20, false, false)
 		}},
 	{Section: "多源调度", Key: "sources.recovery_minutes", Label: "死源恢复探测", Kind: "int", Unit: "分钟", Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Sources.RecoveryMinutes) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：死源隔多久重新探一次，活了就拉回调度。用法：分钟；0 = 不主动探测", Get: func(c *config.Config) string { return i32(c.Sources.RecoveryMinutes) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Sources.RecoveryMinutes, v, 0, 1<<20, false, false)
 		}},
 
@@ -243,11 +244,13 @@ var cfgSchema = []cfgField{
 	{Section: "分片并行", Key: "parallel.enabled", Label: "开启分片并行", Kind: "bool", Restart: true,
 		Hint: "只对带可信整份摘要的请求生效", Get: func(c *config.Config) string { return b2s(c.Parallel.Enabled) }, Set: func(c *config.Config, v string) error { c.Parallel.Enabled = parseBool(v); return nil }},
 	{Section: "分片并行", Key: "parallel.min_size_mb", Label: "最小分片尺寸", Kind: "int", Unit: "MB", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i64(c.Parallel.MinSizeMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.MinSizeMB, v, 0, 1<<20, true, false) }},
+		Hint: "作用：文件小于这个值就不分片，单连接直下。用法：MB；小文件分片反而更慢", Get: func(c *config.Config) string { return i64(c.Parallel.MinSizeMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.MinSizeMB, v, 0, 1<<20, true, false) }},
 	{Section: "分片并行", Key: "parallel.chunk_mb", Label: "单片大小", Kind: "int", Unit: "MB", Min: 1, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i64(c.Parallel.ChunkMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.ChunkMB, v, 1, 1<<20, true, false) }},
-	{Section: "分片并行", Key: "parallel.workers", Label: "同时下载片数", Kind: "int", Min: 2, Max: 16, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Parallel.Workers) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Parallel.Workers, v, 2, 16, true, true) }},
+		Hint: "作用：一个文件切成多大一片，片越小并行越细、连接越多。用法：常用 8–32；接近文件尾会自动收窄，不会超过文件本身",
+		Get:  func(c *config.Config) string { return i64(c.Parallel.ChunkMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.ChunkMB, v, 1, 1<<20, true, false) }},
+	{Section: "分片并行", Key: "parallel.workers", Label: "同时下载片数", Kind: "int", Unit: "个", Min: 2, Max: 16, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：同一个文件同时下几片。用法：2–16；源站限流时调小，带宽富裕时调大",
+		Get:  func(c *config.Config) string { return i32(c.Parallel.Workers) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Parallel.Workers, v, 2, 16, true, true) }},
 	{Section: "分片并行", Key: "parallel.degrade_mbps", Label: "星标源降级阈值", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
 		Hint: "星标源最近 3 次真实单流都低于此值才改走并行", Get: func(c *config.Config) string { return i64(c.Parallel.DegradeMBps) }, Set: func(c *config.Config, v string) error { return setInt(&c.Parallel.DegradeMBps, v, 1, 1024, true, true) }},
 	{Section: "分片并行", Key: "parallel.degrade_hold_min", Label: "降级后并行时长", Kind: "int", Unit: "分钟", Min: 1, Max: 1440, HasMin: true, HasMax: true, Restart: true,
@@ -260,7 +263,7 @@ var cfgSchema = []cfgField{
 			return setInt(&c.Parallel.WatchMBps, v, 1, 1024, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.watch_sec", Label: "判速窗口", Kind: "int", Unit: "秒", Min: 5, Max: 120, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Parallel.WatchSec) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：判断要不要换源时看多长的速率窗口。用法：秒；越短反应越快，也越容易误判", Get: func(c *config.Config) string { return i32(c.Parallel.WatchSec) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Parallel.WatchSec, v, 5, 120, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.switch_min_mbps", Label: "换源速度门槛", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
@@ -268,19 +271,20 @@ var cfgSchema = []cfgField{
 			return setInt(&c.Parallel.SwitchMinMBps, v, 1, 1024, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.switch_min_file_mib", Label: "换源最小文件", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinFileMiB) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：小于这个大小的文件不做换源。用法：MB；小文件换源收益低，还多一次握手", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinFileMiB) }, Set: func(c *config.Config, v string) error {
 			return setInt(&c.Parallel.SwitchMinFileMiB, v, 1, 102400, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.switch_max_sent_mib", Label: "换源已发上限", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
 		Hint: "已发给客户端的字节超过此值就不再换源", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMaxSentMiB) }, Set: func(c *config.Config, v string) error {
 			return setInt(&c.Parallel.SwitchMaxSentMiB, v, 1, 102400, true, true)
 		}},
-	{Section: "分片并行", Key: "parallel.switch_max", Label: "最多换源次数", Kind: "int", Min: 0, Max: 10, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Parallel.SwitchMax) }, Set: func(c *config.Config, v string) error {
+	{Section: "分片并行", Key: "parallel.switch_max", Label: "最多换源次数", Kind: "int", Unit: "次", Min: 0, Max: 10, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：一个请求最多换几次源。用法：0 = 不换源；次数越多越能绕开坏源，也越慢", Get: func(c *config.Config) string { return i32(c.Parallel.SwitchMax) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Parallel.SwitchMax, v, 0, 10, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.switch_gap_sec", Label: "换源最小间隔", Kind: "int", Unit: "秒", Min: 0, Max: 600, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Parallel.SwitchGapSec) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：两次换源之间至少隔多久，防止在两个源之间来回抖。用法：秒；0 = 不限制",
+		Get:  func(c *config.Config) string { return i32(c.Parallel.SwitchGapSec) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Parallel.SwitchGapSec, v, 0, 600, true, true)
 		}},
 
@@ -288,15 +292,17 @@ var cfgSchema = []cfgField{
 	{Section: "探测", Key: "probe.allow_private", Label: "允许探测内网源", Kind: "bool", Restart: true,
 		Hint: "源架在局域网时才开；开启等于关掉 SSRF 防护", Get: func(c *config.Config) string { return b2s(c.Probe.AllowPrivate) }, Set: func(c *config.Config, v string) error { c.Probe.AllowPrivate = parseBool(v); return nil }},
 	{Section: "探测", Key: "probe.interval_sec", Label: "探测轮询间隔", Kind: "int", Unit: "秒", Min: 5, Max: 86400, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Probe.IntervalSec) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：多久重新探测一轮全部源。用法：秒；常用 300–1800，源多时别设太小", Get: func(c *config.Config) string { return i32(c.Probe.IntervalSec) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Probe.IntervalSec, v, 5, 86400, true, true)
 		}},
-	{Section: "探测", Key: "probe.concurrency", Label: "探测并发", Kind: "int", Min: 1, Max: 64, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Probe.Concurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "探测", Key: "probe.concurrency", Label: "探测并发", Kind: "int", Unit: "个", Min: 1, Max: 64, HasMin: true, HasMax: true, Restart: true,
+		Hint: "作用：同时探测几个源。用法：源多、机器强可调大；过大会挤占出口带宽，影响正常回源",
+		Get:  func(c *config.Config) string { return i32(c.Probe.Concurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Probe.Concurrency, v, 1, 64, true, true)
 		}},
 	{Section: "探测", Key: "probe.timeout_sec", Label: "单源探测超时", Kind: "int", Unit: "秒", Min: 5, Max: 600, HasMin: true, HasMax: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Probe.TimeoutSec) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：单个源一轮探测最多等多久。用法：秒；跨境源建议 ≥ 15，太小会把慢源误判成死源",
+		Get:  func(c *config.Config) string { return i32(c.Probe.TimeoutSec) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Probe.TimeoutSec, v, 5, 600, true, true)
 		}},
 	{Section: "探测", Key: "probe.sample_mib", Label: "探测采样大小", Kind: "int", Unit: "MB", Min: 1, Max: 256, HasMin: true, HasMax: true, Restart: true,
@@ -308,13 +314,13 @@ var cfgSchema = []cfgField{
 	{Section: "访问控制", Key: "auth.require_token", Label: "代理路径需 Token", Kind: "bool", Restart: true,
 		Hint: "默认匿名放行；true 时非浏览器客户端必须带 Access Token", Get: func(c *config.Config) string { return b2s(c.Auth.RequireToken) }, Set: func(c *config.Config, v string) error { c.Auth.RequireToken = parseBool(v); return nil }},
 	{Section: "访问控制", Key: "access.allow_cidrs", Label: "允许来源（白名单）", Kind: "list",
-		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：10.1.1.0/24, 192.168.1.5。留空 = 不限来源；填了就只有这些网段能访问。保存前会弹风险提示",
+		Hint: "作用：只允许名单内的来源访问（默认不限）。用法：一行一个 IP 或网段，也可用逗号/空格隔开，例如 10.1.1.0/24, 192.168.1.5；留空 = 不限来源。保存前会弹风险提示",
 		Get:  func(c *config.Config) string { return strings.Join(c.Access.Allow, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Access.Allow = splitLines(v)
 			return nil
 		}},
 	{Section: "访问控制", Key: "access.deny_cidrs", Label: "拒绝来源（黑名单）", Kind: "list",
-		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：203.0.113.9, 198.51.100.0/24。优先于白名单，命中直接 403；留空 = 不拒绝任何人",
+		Hint: "作用：直接拒绝名单内的来源，优先级高于白名单。用法：一行一个 IP 或网段，逗号/空格隔开，例如 203.0.113.9, 198.51.100.0/24；留空 = 不拒绝任何人，命中返回 403",
 		Get:  func(c *config.Config) string { return strings.Join(c.Access.Deny, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Access.Deny = splitLines(v)
 			return nil
@@ -332,40 +338,50 @@ var cfgSchema = []cfgField{
 
 	// 入口限流
 	{Section: "入口限流", Key: "limits.enabled", Label: "开启限流", Kind: "bool", Restart: true,
-		Get: func(c *config.Config) string { return b2s(c.Limits.Enabled) }, Set: func(c *config.Config, v string) error { c.Limits.Enabled = parseBool(v); return nil }},
-	{Section: "入口限流", Key: "limits.global_rps", Label: "全局每秒请求", Kind: "float", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return f2s(c.Limits.GlobalRPS) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Limits.GlobalRPS, v, 0, 1e9, true, false) }},
-	{Section: "入口限流", Key: "limits.global_burst", Label: "全局突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.GlobalBurst) }, Set: func(c *config.Config, v string) error {
+		Hint: "作用：限制入站速率与并发，防止单个 IP/Token 刷量把带宽占满。用法：打开后下面各项生效；每项填 0 = 该项不限制",
+		Get:  func(c *config.Config) string { return b2s(c.Limits.Enabled) }, Set: func(c *config.Config, v string) error { c.Limits.Enabled = parseBool(v); return nil }},
+	{Section: "入口限流", Key: "limits.global_rps", Label: "全局每秒请求", Kind: "float", Unit: "次/秒", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：全站入口每秒放行多少个请求（所有来源合计）。用法：0 = 不限；瞬时超出部分看「全局突发」",
+		Get:  func(c *config.Config) string { return f2s(c.Limits.GlobalRPS) }, Set: func(c *config.Config, v string) error { return setFloat(&c.Limits.GlobalRPS, v, 0, 1e9, true, false) }},
+	{Section: "入口限流", Key: "limits.global_burst", Label: "全局突发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：允许瞬间超出每秒上限的请求数。用法：0 = 没有额外余量；抓取/并发高的客户端建议给 2–5 倍每秒值",
+		Get:  func(c *config.Config) string { return i32(c.Limits.GlobalBurst) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.GlobalBurst, v, 0, 1<<30, true, false)
 		}},
-	{Section: "入口限流", Key: "limits.global_concurrency", Label: "全局并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.GlobalConcurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "入口限流", Key: "limits.global_concurrency", Label: "全局并发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：全站同时在处理的上限。用法：0 = 不限；超出的请求排队，排队超时后返回 503",
+		Get:  func(c *config.Config) string { return i32(c.Limits.GlobalConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.GlobalConcurrency, v, 0, 1<<30, true, false)
 		}},
-	{Section: "入口限流", Key: "limits.ip_per_minute", Label: "单 IP 每分钟", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.IPPerMinute) }, Set: func(c *config.Config, v string) error {
+	{Section: "入口限流", Key: "limits.ip_per_minute", Label: "单 IP 每分钟", Kind: "int", Unit: "次/分钟", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个来源 IP 每分钟能发多少请求。用法：0 = 不限；反代后面要配合「可信代理」才能识别真实 IP",
+		Get:  func(c *config.Config) string { return i32(c.Limits.IPPerMinute) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.IPPerMinute, v, 0, 1<<30, true, false)
 		}},
-	{Section: "入口限流", Key: "limits.ip_burst", Label: "单 IP 突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.IPBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.IPBurst, v, 0, 1<<30, true, false) }},
-	{Section: "入口限流", Key: "limits.ip_concurrency", Label: "单 IP 并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.IPConcurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "入口限流", Key: "limits.ip_burst", Label: "单 IP 突发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个 IP 允许瞬间超出每分钟上限的请求数。用法：0 = 没有额外余量；多个容器同时拉镜像建议给足",
+		Get:  func(c *config.Config) string { return i32(c.Limits.IPBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.IPBurst, v, 0, 1<<30, true, false) }},
+	{Section: "入口限流", Key: "limits.ip_concurrency", Label: "单 IP 并发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个 IP 同时在处理的请求数上限。用法：0 = 不限；大文件下载会长时间占一个名额，别设太小",
+		Get:  func(c *config.Config) string { return i32(c.Limits.IPConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.IPConcurrency, v, 0, 1<<30, true, false)
 		}},
-	{Section: "入口限流", Key: "limits.token_per_minute", Label: "单 Token 每分钟", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.TokenPerMinute) }, Set: func(c *config.Config, v string) error {
+	{Section: "入口限流", Key: "limits.token_per_minute", Label: "单 Token 每分钟", Kind: "int", Unit: "次/分钟", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个 Access Token 每分钟能发多少请求。用法：0 = 不限；每台设备单独发 Token 时用它限制单机",
+		Get:  func(c *config.Config) string { return i32(c.Limits.TokenPerMinute) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.TokenPerMinute, v, 0, 1<<30, true, false)
 		}},
-	{Section: "入口限流", Key: "limits.token_burst", Label: "单 Token 突发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.TokenBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.TokenBurst, v, 0, 1<<30, true, false) }},
-	{Section: "入口限流", Key: "limits.token_concurrency", Label: "单 Token 并发", Kind: "int", Min: 0, HasMin: true, Restart: true,
-		Get: func(c *config.Config) string { return i32(c.Limits.TokenConcurrency) }, Set: func(c *config.Config, v string) error {
+	{Section: "入口限流", Key: "limits.token_burst", Label: "单 Token 突发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个 Token 的瞬时余量。用法：0 = 没有额外余量",
+		Get:  func(c *config.Config) string { return i32(c.Limits.TokenBurst) }, Set: func(c *config.Config, v string) error { return setIntI(&c.Limits.TokenBurst, v, 0, 1<<30, true, false) }},
+	{Section: "入口限流", Key: "limits.token_concurrency", Label: "单 Token 并发", Kind: "int", Unit: "个", Min: 0, HasMin: true, Restart: true,
+		Hint: "作用：单个 Token 同时在处理的请求数上限。用法：0 = 不限；CI 并发拉取时按流水线数给",
+		Get:  func(c *config.Config) string { return i32(c.Limits.TokenConcurrency) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Limits.TokenConcurrency, v, 0, 1<<30, true, false)
 		}},
 	// 信任中转：谁的话能被采信，以及中转 IP 的钉死/解析策略
 	{Section: "信任中转", Key: "limits.trusted_proxies", Label: "可信代理（XFF）", Kind: "list", Restart: true,
-		Hint: "一行一个 IP/网段，也可以逗号或空格隔开，例如：172.16.0.0/12, 10.1.1.0/24, 127.0.0.1。只有这些网段发来的 X-Forwarded-For 会被采信；默认 172.16.0.0/12 + fd00::/8 + 回环。放在反代后面时必须把反代网段写进来，否则白/黑名单会把所有请求当成同一个 IP。填 0.0.0.0/0 等于信任所有人，白名单会失效",
+		Hint: "作用：决定哪些中转（反代）发来的 X-Forwarded-For 可以采信，用错会让白/黑名单把所有请求当成同一个 IP。用法：一行一个 IP 或网段，逗号/空格隔开；默认 172.16.0.0/12 + fd00::/8 + 回环；放在反代后面时把反代网段写进来；填 0.0.0.0/0 等于信任所有人（白名单会失效）",
 		Get:  func(c *config.Config) string { return strings.Join(c.Limits.TrustedProxies, "\n") }, Set: func(c *config.Config, v string) error {
 			c.Limits.TrustedProxies = splitLines(v)
 			return nil
@@ -378,7 +394,7 @@ var cfgSchema = []cfgField{
 			return setIntI(&c.Relay.PinGraceHours, v, 0, 720, true, true)
 		}},
 	{Section: "信任中转", Key: "relay.resolver_timeout", Label: "DNS 解析超时", Kind: "duration", Restart: true,
-		Hint: "单次解析超时；解析结果会被钉住，后续拨号不再重新解析。0 = 5s",
+		Hint: "作用：中转域名单次解析最多等多久。用法：时间格式 3s / 5s，0 = 5s；结果会钉住，之后拨号不再解析",
 		Get:  func(c *config.Config) string { return durStr(c.Relay.ResolverTimeout.Duration) },
 		Set:  func(c *config.Config, v string) error { return setDur(&c.Relay.ResolverTimeout.Duration, v) }},
 
@@ -404,13 +420,13 @@ var cfgSchema = []cfgField{
 
 	// 指标
 	{Section: "指标", Key: "metrics.enabled", Label: "暴露 /metrics", Kind: "bool", Restart: true,
-		Get: func(c *config.Config) string { return b2s(c.Metrics.Enabled) }, Set: func(c *config.Config, v string) error { c.Metrics.Enabled = parseBool(v); return nil }},
+		Hint: "作用：给 Prometheus 之类监控抓指标。用法：开启后 /metrics 需要登录会话或 Access Token 才可抓取", Get: func(c *config.Config) string { return b2s(c.Metrics.Enabled) }, Set: func(c *config.Config, v string) error { c.Metrics.Enabled = parseBool(v); return nil }},
 	{Section: "指标", Key: "metrics.require_token", Label: "/metrics 需认证", Kind: "bool", Restart: true,
 		Hint: "公网部署建议打开", Get: func(c *config.Config) string { return b2s(c.Metrics.RequireToken) }, Set: func(c *config.Config, v string) error { c.Metrics.RequireToken = parseBool(v); return nil }},
 
 	// CDN
 	{Section: "CDN 边缘", Key: "cdn.enabled", Label: "开启边缘缓存语义", Kind: "bool", Restart: true,
-		Get: func(c *config.Config) string { return b2s(c.CDN.Enabled) }, Set: func(c *config.Config, v string) error { c.CDN.Enabled = parseBool(v); return nil }},
+		Hint: "作用：按 CDN 语义区分边缘与客户端的缓存头。用法：前面挂了 CDN/反代时开启，直连保持关闭", Get: func(c *config.Config) string { return b2s(c.CDN.Enabled) }, Set: func(c *config.Config, v string) error { c.CDN.Enabled = parseBool(v); return nil }},
 	{Section: "CDN 边缘", Key: "cdn.max_age", Label: "边缘 TTL 上限", Kind: "int", Unit: "秒", Min: 0, HasMin: true, Restart: true,
 		Hint: "0 = 沿用条目 TTL", Get: func(c *config.Config) string { return i32(c.CDN.MaxAge) }, Set: func(c *config.Config, v string) error { return setIntI(&c.CDN.MaxAge, v, 0, 1<<30, true, false) }},
 }

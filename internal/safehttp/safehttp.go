@@ -26,7 +26,7 @@ type Options struct {
 	MaxRedirects  int
 	AllowLoopback bool
 	AllowPrivate  bool
-	// IPFamily：auto = 双栈同时竞速（两族各发一条，先握手成功的赢）；
+	// IPFamily：auto = 双栈竞速（两族各发一条，先握手成功的赢）；
 	// v4/v6 = 只解析并拨该族。空值等同 auto。
 	IPFamily string
 	// FallbackDelay 覆盖竞速起跑差：0 = 默认 1ms（几乎同时）；负值在 Go
@@ -131,8 +131,8 @@ func (g *Guard) CheckIP(ip netip.Addr) error {
 // 否则就是绕过 Guard 的另一条路。
 func (g *Guard) Dialer() *net.Dialer {
 	return &net.Dialer{
-		Timeout:       g.o.DialTimeout,
-		KeepAlive:     30 * time.Second,
+		Timeout:   g.o.DialTimeout,
+		KeepAlive: 30 * time.Second,
 		FallbackDelay: func() time.Duration {
 			if g.o.FallbackDelay != 0 {
 				return g.o.FallbackDelay

@@ -119,3 +119,37 @@ func TestSetTrustedDropsPinnedClients(t *testing.T) {
 		t.Fatal("热更新后旧客户端应被丢弃")
 	}
 }
+
+// 钉住的多个 IP 必须一起竞速：串行拨号会被一个丢包的 IP 拖住（实测 v4 卡 1.1s 才轮到 v6）。
+// 这里第一个 IP 指向不可路由的 TEST-NET，正常应毫秒级由第二个 IP 接管。
+func TestPinnedClientRacesIPs(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "ok")
+	})}
+	go srv.Serve(l)
+	defer srv.Close()
+
+	relay := TrustedRelay{
+		ID: 3, Name: "race", PinHost: "relay.test",
+		PinIPv4:  "192.0.2.1", // TEST-NET-1，不可路由
+		PinIPv6:  "127.0.0.1",
+		PinState: "confirmed",
+	}
+	t0 := time.Now()
+	resp, err := pinnedClient(relay).Get("http://relay.test:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port) + "/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if string(b) != "ok" {
+		t.Fatalf("正文 %q", b)
+	}
+	if el := time.Since(t0); el > 2*time.Second {
+		t.Fatalf("拨号用了 %v，说明还在串行等第一个 IP", el)
+	}
+}
