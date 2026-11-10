@@ -66,6 +66,10 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	if err := f.Sync(); err != nil {
 		return nil, fmt.Errorf("同步密钥文件: %w", err)
 	}
+	// 创建时的 0600 在部分文件系统上不生效（实测落到 755），显式再收一次。
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("收紧密钥文件权限: %w", err)
+	}
 	return key, nil
 }
 

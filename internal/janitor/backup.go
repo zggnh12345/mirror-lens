@@ -68,6 +68,10 @@ func (j *Janitor) copyKey(dir string) {
 	if _, err := io.Copy(dst, src); err != nil {
 		logging.Errorf("janitor: 写 secret.key 失败: %v", err)
 	}
+	// 实测创建时的 mode 在这块盘上不生效（落到 705），收尾显式收紧。
+	if err := os.Chmod(dst.Name(), 0o600); err != nil {
+		logging.Errorf("janitor: 收紧 secret.key 权限失败: %v", err)
+	}
 }
 
 // pruneBackups 按文件名（日期）排序，只留最近 keep 份。
