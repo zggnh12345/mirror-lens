@@ -435,8 +435,6 @@ function rowHtml(x){
       + esc(errHuman(err)) + '<span class="edetail">' + esc(err) + '</span></span>';
   } else {
     var bits = [];
-    // 手机上能力标签挪到第二行，第一行只留名字、评分、状态
-    bits.push('<span class="caps capsl2">' + capTags(x) + '</span>');
     if (x.note) bits.push('<span class="note">' + esc(x.note) + '</span>');
     // 延迟只在有成功样本时显示：异常行挂 0ms 会误导成「很快就失败了」。
     if (best && best.ok && best.latency_ms) bits.push('<i>' + latText(best.latency_ms) + '</i>');
