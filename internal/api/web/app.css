@@ -66,7 +66,7 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .iconbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
 /* 统计卡 */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:14px 0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 11px;box-shadow:var(--shadow)}
 .stat b{display:block;font-size:19px;font-weight:680;letter-spacing:-.4px;line-height:1.25;
   font-variant-numeric:tabular-nums}
@@ -272,7 +272,11 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .card .sub{margin-bottom:18px}
 .card .btn.full{width:100%;height:42px;margin-top:18px}
 .err{color:var(--bad);font-size:12.5px;margin-top:10px;min-height:17px}
-@media(max-width:380px){.stats{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){
+  .stat{padding:7px 8px;border-radius:10px}
+  .stat b{font-size:16px;letter-spacing:-.3px}
+  .stat span{font-size:9.5px;line-height:1.25;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
 
 /* 加速器 Token 列表 */
 .btn.sm{height:28px;padding:0 9px;font-size:12px;border-radius:8px}
@@ -478,3 +482,30 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .mtog.on{background:var(--ok)}
 .mtog.on::after{transform:translateX(18px)}
 .mtog:disabled{opacity:.55}
+.memrow.locked{opacity:.62}
+.memrow.locked .memtag{color:var(--muted)}
+
+/* 调度条：自动/手动 + 前 3 源 */
+.schedbar{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
+.schedbar .sl{font-size:11.5px}
+.segwrap{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--card)}
+.segwrap .seg{height:28px;padding:0 12px;font-size:12px;border:0;background:transparent;color:var(--muted)}
+.segwrap .seg.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.schedbar .lnk{margin-left:auto;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);
+  background:var(--card);font-size:12px;color:var(--ink)}
+.ordrow{display:flex;gap:6px;margin:6px 0 14px}
+.ordrow select{flex:1;min-width:0;height:38px;font-size:13px;padding:0 8px}
+/* 综合评分：跟在站名后面，小号数字，不抢主信息 */
+.sc{display:inline-flex;align-items:center;height:18px;padding:0 5px;margin-left:5px;border-radius:5px;
+  font-size:10.5px;font-weight:650;font-variant-numeric:tabular-nums;
+  color:var(--brand);background:var(--brand-soft);border:1px solid color-mix(in srgb,var(--brand) 25%,transparent)}
+
+/* 说明收进问号：平时只留一个圆圈，点一下才显示原文，设置页不再堆长段落 */
+.qi{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;
+  border-radius:50%;border:1px solid var(--line);color:var(--muted);font-size:10.5px;font-weight:600;
+  vertical-align:1px;cursor:pointer;user-select:none;background:var(--card);font-style:normal}
+.qi:hover,.qi.on{border-color:var(--brand);color:var(--brand)}
+#qtip{position:fixed;z-index:90;max-width:min(300px,calc(100vw - 24px));padding:9px 11px;border-radius:10px;
+  background:var(--ink);color:var(--bg);font-size:12px;line-height:1.6;box-shadow:0 10px 28px rgba(0,0,0,.22);
+  opacity:0;pointer-events:none;transition:opacity .12s}
+#qtip.on{opacity:1}

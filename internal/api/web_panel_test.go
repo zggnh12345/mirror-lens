@@ -207,7 +207,7 @@ func TestPanelLiveContract(t *testing.T) {
 	if !strings.Contains(src, "loadLive(); }, 2000)") {
 		t.Error("实时区必须 2 秒一刷，否则进度条和速度看着是死的")
 	}
-	if !strings.Contains(src, "app.css?v=8") {
+	if !strings.Contains(src, "app.css?v=11") {
 		t.Error("改了样式却没升 app.css 版本号，浏览器会继续用旧缓存")
 	}
 	css, err := webFS.ReadFile("web/app.css")

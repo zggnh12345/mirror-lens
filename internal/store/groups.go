@@ -125,8 +125,18 @@ func (s *Store) DeleteGroup(id int64) error {
 }
 
 // SetSourceGroup 把一台源放进分组，0 表示移出分组。
+// ErrGroupConflict 表示节点已属于另一个分组：分组成员唯一，必须先移出再加入。
+var ErrGroupConflict = errors.New("这个节点已在其他分组，先从原组移出")
+
 func (s *Store) SetSourceGroup(id, groupID int64) error {
 	if groupID != 0 {
+		var cur int64
+		if err := s.db.QueryRow(`SELECT group_id FROM sources WHERE id=?`, id).Scan(&cur); err != nil {
+			return err
+		}
+		if cur != 0 && cur != groupID {
+			return ErrGroupConflict
+		}
 		var n int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM source_groups WHERE id=?`, groupID).Scan(&n); err != nil {
 			return err
@@ -162,33 +172,43 @@ func (s *Store) attachGroups(list []Source) error {
 }
 
 // SetGroupMembers 用「这一组最终应该有哪些源」的方式整组覆盖：
-// ids 里的源归入该组（从别的组移过来），该组里不在 ids 的源退回未分组。
+// ids 里的未分组源归入该组，已在别的组的源保持不变，该组里不在 ids 的源退回未分组。
 // 在同一个事务里做完，避免面板保存到一半被读到中间状态。
-func (s *Store) SetGroupMembers(gid int64, ids []int64) error {
+func (s *Store) SetGroupMembers(gid int64, ids []int64) (int, error) {
 	if gid == 0 {
-		return errors.New("分组 id 不能为 0")
+		return 0, errors.New("分组 id 不能为 0")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	var n int
 	if err := tx.QueryRow(`SELECT COUNT(1) FROM source_groups WHERE id=?`, gid).Scan(&n); err != nil {
-		return err
+		return 0, err
 	}
 	if n == 0 {
-		return errors.New("分组不存在")
+		return 0, errors.New("分组不存在")
 	}
 	if _, err := tx.Exec(`UPDATE sources SET group_id=0 WHERE group_id=?`, gid); err != nil {
-		return err
+		return 0, err
 	}
+	// 只接收未分组的源：已在别的组的节点不能被这里悄悄搬走。
+	moved := 0
 	if len(ids) > 0 {
-		q := `UPDATE sources SET group_id=? WHERE id IN (` + mark(len(ids)) + `)`
+		q := `UPDATE sources SET group_id=? WHERE id IN (` + mark(len(ids)) + `) AND (group_id=0 OR group_id=?)`
 		args := append([]any{gid}, intsToAny(ids)...)
-		if _, err := tx.Exec(q, args...); err != nil {
-			return err
+		args = append(args, gid)
+		res, err := tx.Exec(q, args...)
+		if err != nil {
+			return 0, err
+		}
+		if k, err := res.RowsAffected(); err == nil {
+			moved = int(k)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return moved, nil
 }

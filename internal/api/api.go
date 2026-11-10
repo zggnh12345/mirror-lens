@@ -35,7 +35,7 @@ import (
 )
 
 // Version 面板与 /api/me 显示的版本号。
-const Version = "3.2.10"
+const Version = "3.3.1"
 
 //go:embed web
 var webFS embed.FS
@@ -208,6 +208,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/trusted", guard(csrf(s.trusted)))
 	mux.HandleFunc("/api/trusted/", guard(csrf(s.trustedItem)))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
+	mux.HandleFunc("/api/sched-order", guard(csrf(s.schedOrder)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))
 	mux.HandleFunc("/api/group-members", guard(csrf(s.groupMembers)))
 	mux.HandleFunc("/api/groups/", guard(csrf(s.groupItem)))
@@ -488,9 +489,26 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		for i := range list {
 			list[i].Recent = recent[list[i].ID]
 		}
+		// 评分与调度同源：直接复用 SourceCandidates 的样本和 scheduler 的公式，
+		// 避免前端自己算一套、和实际排序对不上。
+		scores := map[int64]float64{}
+		if s.sch != nil {
+			cap := s.sch.SpeedCapKBps()
+			for _, kind := range []string{"docker", "ghcr", "github"} {
+				sts, err := s.st.SourceCandidates(kind)
+				if err != nil {
+					continue
+				}
+				for _, st := range sts {
+					if v := scheduler.ScoreOf(st, cap); v > scores[st.ID] {
+						scores[st.ID] = v
+					}
+				}
+			}
+		}
 		writeJSON(w, 200, map[string]any{
 			"sources": list, "busy": s.eng.Busy(),
-			"recent_n": recentN,
+			"recent_n": recentN, "scores": scores,
 		})
 	case http.MethodPost:
 		s.addSource(w, r)
@@ -627,13 +645,14 @@ func (s *Server) groupMembers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 		return
 	}
-	if err := s.st.SetGroupMembers(in.GroupID, in.IDs); err != nil {
+	moved, err := s.st.SetGroupMembers(in.GroupID, in.IDs)
+	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
 	s.eng.Changed()
 	s.audit(r, "group_members", strconv.FormatInt(in.GroupID, 10), "", true)
-	writeJSON(w, 200, map[string]any{"ok": true, "n": len(in.IDs)})
+	writeJSON(w, 200, map[string]any{"ok": true, "n": moved, "skipped": len(in.IDs) - moved})
 }
 
 func (s *Server) reorderGroups(w http.ResponseWriter, r *http.Request) {
@@ -766,6 +785,10 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.GroupID != nil {
 			if err := s.st.SetSourceGroup(id, *in.GroupID); err != nil {
+				if errors.Is(err, store.ErrGroupConflict) {
+					writeJSON(w, 409, map[string]string{"error": err.Error()})
+					return
+				}
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}

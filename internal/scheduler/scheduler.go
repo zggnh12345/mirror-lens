@@ -133,6 +133,10 @@ type Scheduler struct {
 	lists  map[string]listEntry
 	sticky map[string]stickyPick
 	brk    map[string]*breaker // "kind|id"
+	// 手动调度：manual 是每种协议的前 3 个源（有序），manualMode=manual 才生效。
+	// 与候选列表同生命周期刷新（30s），改设置时 API 会主动失效缓存。
+	manualMode string
+	manual     map[string][]int64
 
 	loadMu sync.Mutex
 	gates  map[int64]*gate // 源 id → 并发闸门（容量可动态调整）
@@ -254,6 +258,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 		return nil
 	}
 	cooling, cerr := s.st.SourceFailedRecently(kind, s.now().Add(-s.cfg.FailCooldown).Unix())
+	mo := s.st.GetSchedOrder()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,6 +275,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 			}
 		}
 	}
+	s.manualMode, s.manual = mo.Mode, mo.Orders
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
 		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps})
@@ -326,7 +332,26 @@ func (s *Scheduler) orderN(kind string, in []Candidate, limit int) []Candidate {
 	for _, c := range out {
 		capAt[c.ID] = s.atCap(c.ID)
 	}
+	// 手动名次：用户设定的前 3 个源排在所有自动排序之前，其余统一给 3。
+	manualRank := map[int64]int{}
+	if s.manualMode == "manual" {
+		for i, id := range s.manual[store.SchedKind(kind)] {
+			if i >= 3 {
+				break
+			}
+			manualRank[id] = i
+		}
+	}
+	mrank := func(id int64) int {
+		if r, ok := manualRank[id]; ok {
+			return r
+		}
+		return 3
+	}
 	sort.SliceStable(out, func(i, j int) bool {
+		if mi, mj := mrank(out[i].ID), mrank(out[j].ID); mi != mj {
+			return mi < mj
+		}
 		if gi, gj := groupKey(out[i].GroupRank), groupKey(out[j].GroupRank); gi != gj {
 			return gi < gj
 		}
@@ -664,4 +689,27 @@ func score(st store.SourceStat, speedCapKBps float64) float64 {
 		spd = math.Min(float64(st.SpeedKBps)/speedCapKBps, 1)
 	}
 	return 0.5*okRate + 0.25*lat + 0.25*spd
+}
+
+// ScoreOf 暴露调度用的评分公式，供面板显示，保证两边是同一份数。
+func ScoreOf(st store.SourceStat, speedCapKBps float64) float64 {
+	return score(st, speedCapKBps)
+}
+
+// SpeedCapKBps 是当前速度项的饱和点。
+func (s *Scheduler) SpeedCapKBps() float64 {
+	if s == nil {
+		return 12000
+	}
+	return s.cfg.SpeedCapKBps
+}
+
+// InvalidateLists 丢掉候选缓存，改完调度设置后立刻生效。
+func (s *Scheduler) InvalidateLists() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.lists = map[string]listEntry{}
+	s.mu.Unlock()
 }

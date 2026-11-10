@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=8">
+<link rel="stylesheet" href="/app.css?v=11">
 </head>
 <body>
 <header>
@@ -94,6 +94,15 @@
 
   <div class="gbar" id="gbar"></div>
 
+  <div class="schedbar" id="schedbar">
+    <span class="sl">调度</span>
+    <div class="segwrap">
+      <button class="seg" data-smode="auto">自动</button>
+      <button class="seg" data-smode="manual">手动</button>
+    </div>
+    <button class="lnk" id="btnOrder">设置前 3 个源</button>
+  </div>
+
   <div class="actions">
     <button class="btn primary grow" id="btnAdd">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>添加自定义加速
@@ -166,6 +175,18 @@
   </div>
 </div>
 
+<!-- 手动调度：每种协议前 3 个源 -->
+<div class="sheet" id="sheetOrder">
+  <div class="panel">
+    <div class="phead">
+      <h2>手动调度</h2>
+      <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div id="orderBody"></div>
+    <button class="btn primary full" id="btnOrderGo">保存并切到手动</button>
+  </div>
+</div>
+
 <!-- 导出 -->
 <div class="sheet" id="sheetExp">
   <div class="panel">
@@ -191,6 +212,7 @@ var $ = function(s){ return document.querySelector(s); };
 var DATA = [], FILTER = 'all', Q = '', OPEN = null;
 var GROUPS = [], GFILTER = 0, GMANAGE = false, RENAME = null, GRPEDIT = null;
 var MEM = null;   // 成员抽屉：{gid, q}
+var SCORES = {}, SORDER = {mode:'auto', orders:{}};
 // 行骨架只定义一次，主列表和成员抽屉复用同一套，避免两份模板各改各的。
 var L1 = '<div class="l1">', L2 = '<div class="l2">', MAIN = '<div class="main">';
 
@@ -295,7 +317,7 @@ function capTags(x){
   var out = '';
   if (x.docker_cap === 1) out += '<span class="cap on dk">HUB</span>';
   if (x.github_cap === 1) out += '<span class="cap on gh">RAW</span>';
-  if (x.ghcr_cap === 1) out += '<span class="cap on gc">GCR</span>';
+  if (x.ghcr_cap === 1) out += '<span class="cap on gc">GHCR</span>';
   return out;
 }
 
@@ -398,7 +420,9 @@ function rowHtml(x){
   var l1 = (RENAME === x.id
       ? '<input class="renin" data-renin="' + x.id + '" value="' + esc(customName(x)) + '" maxlength="24"'
         + ' placeholder="' + esc(dispName(x)) + '" autocomplete="off" spellcheck="false">'
-      : '<b class="site">' + esc(dispName(x)) + '</b>')
+      : '<b class="site">' + esc(dispName(x)) + '</b>'
+        + (SCORES[x.id] ? '<span class="sc" title="综合评分：成功率 50% + 延迟 25% + 速度 25%">'
+            + Math.round(SCORES[x.id]*100) + '</span>' : ''))
     + (x.group_name ? '<span class="gtag">' + esc(x.group_name) + '</span>' : '')
     + '<span class="host">' + esc(domainOf(x.base_url)) + '</span>'
     + capTags(x) + statusChip(x);
@@ -516,6 +540,7 @@ function render(){
   $('#sGithub').textContent = DATA.filter(function(x){return x.github_cap===1;}).length;
   $('#sGhcr').textContent = DATA.filter(function(x){return x.ghcr_cap===1;}).length;
   renderGroups();
+  renderSched();
   if (MEM && $('#sheetMem').classList.contains('on')) renderMem();
   $('#list').innerHTML = list.length ? list.map(rowHtml).join('')
     : '<div class="empty"><b>没有匹配的源</b>换个关键词，或者点上面「添加自定义加速」</div>';
@@ -528,6 +553,8 @@ async function load(quiet){
     try{ GROUPS = (await api('/api/groups')).groups || []; }catch(e){}
     DATA = d.sources || [];
     RECENT_N = d.recent_n || RECENT_N;
+    SCORES = d.scores || {};
+    try{ SORDER = await api('/api/sched-order'); }catch(e){}
     render();
   }catch(e){ if(!quiet) toast(e.message); }
 }
@@ -647,7 +674,6 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
   if (f){
     GFILTER = Number(f.getAttribute('data-gf'));
     render();
-    if (GFILTER > 0) openMem(GFILTER);
     return;
   }
   if (ev.target.closest('[data-gmgr]')){ GMANAGE = !GMANAGE; render(); return; }
@@ -680,7 +706,8 @@ document.getElementById('gbar').addEventListener('click', async function(ev){
 /* 分组成员：点分组名就开这张抽屉，右侧开关即加入/移出。
    单个开关走 PATCH /api/sources/:id（改一个源），全选/全不选走 /api/group-members（整组覆盖）。 */
 function openMem(gid){
-  MEM = { gid: gid, q: '' };
+  MEM = { gid: gid, q: '', pick: {} };
+  DATA.forEach(function(x){ if (x.group_id === gid) MEM.pick[x.id] = 1; });
   var q = $('#memQ'); if (q) q.value = '';
   renderMem();
   openSheet('sheetMem');
@@ -690,7 +717,7 @@ function renderMem(){
   var gid = MEM.gid, g = GROUPS.find(function(v){ return v.id === gid; }) || { name: '分组' };
   var n = DATA.filter(function(x){ return x.group_id === gid; }).length;
   $('#memTitle').textContent = g.name;
-  $('#memSub').textContent = n + ' / ' + DATA.length + ' 个源在这个组 · 点开关就加入或移出';
+  $('#memSub').textContent = n + ' 个源在本组 · 勾选后点「保存」生效；一个节点只能属于一个组';
   var q = (MEM.q || '').toLowerCase();
   var rows = DATA.filter(function(x){
     return !q || (dispName(x) + ' ' + x.base_url).toLowerCase().indexOf(q) >= 0;
@@ -698,48 +725,59 @@ function renderMem(){
   var box = $('#memList');
   if (!rows.length){ box.innerHTML = '<div class="empty"><b>没有匹配的源</b>换个关键词试试</div>'; return; }
   box.innerHTML = rows.map(function(x){
-    var on = x.group_id === gid;
-    var tag = on ? '已在本组' : (x.group_name ? '现在在 ' + x.group_name : '未分组');
-    return '<div class="memrow ' + rowClass(x) + '">'
+    var other = (x.group_id && x.group_id !== gid) ? (x.group_name || '其他组') : '';
+    var on = !!MEM.pick[x.id];
+    var tag = other ? ('在 ' + other)
+      : (on ? (x.group_id === gid ? '本组' : '将加入') : (x.group_id === gid ? '将移出' : '未分组'));
+    return '<div class="memrow ' + rowClass(x) + (other ? ' locked' : '') + '">'
       + '<span class="dot"></span>'
       + MAIN + L1 + '<b class="site">' + esc(dispName(x)) + '</b></div>'
       + L2 + '<span class="host">' + esc(domainOf(x.base_url || '')) + '</span>'
       + '<span class="memtag' + (on ? ' on' : '') + '">' + esc(tag) + '</span></div></div>'
-      + '<button class="mtog' + (on ? ' on' : '') + '" data-swt="' + x.id + '" role="switch" aria-checked="' + on + '"></button>'
+      + '<button class="mtog' + (on ? ' on' : '') + '" data-swt="' + x.id + '"' + (other ? ' disabled' : '')
+      + ' role="switch" aria-checked="' + on + '"></button>'
       + '</div>';
   }).join('');
 }
-$('#memQ').addEventListener('input', function(){ if (MEM){ MEM.q = this.value; renderMem(); } });
-$('#memList').addEventListener('click', async function(ev){
-  var b = ev.target.closest('[data-swt]');
-  if (!b || !MEM) return;
-  var id = Number(b.getAttribute('data-swt'));
-  var x = DATA.find(function(v){ return v.id === id; });
-  if (!x) return;
-  var gid = MEM.gid, on = x.group_id !== gid, st = this.scrollTop;
-  b.disabled = true;
-  try{
-    await api('/api/sources/' + id, {method:'PATCH', body: JSON.stringify({group_id: on ? gid : 0})});
-    x.group_id = on ? gid : 0;
-    x.group_name = on ? ((GROUPS.find(function(g){ return g.id === gid; }) || {}).name || '') : '';
-    GROUPS.forEach(function(g){ g.sources = DATA.filter(function(v){ return v.group_id === g.id; }).length; });
-    render();
-    this.scrollTop = st;   // 开关一格不该把列表弹回顶部
-  }catch(e){ toast(e.message); }
-  b.disabled = false;
+document.addEventListener('click', function(ev){
+  var b = ev.target.closest('[data-selstart]');
+  if (!b || GFILTER <= 0) return;
+  openMem(GFILTER);
 });
-async function memBulk(all){
+$('#memQ').addEventListener('input', function(){ if (MEM){ MEM.q = this.value; renderMem(); } });
+$('#memList').addEventListener('click', function(ev){
+  var b = ev.target.closest('[data-swt]');
+  if (!b || !MEM || b.disabled) return;
+  var id = Number(b.getAttribute('data-swt'));
+  if (MEM.pick[id]) delete MEM.pick[id]; else MEM.pick[id] = 1;
+  renderMem();
+});
+$('#memAll').addEventListener('click', function(){
   if (!MEM) return;
-  var ids = all ? DATA.map(function(x){ return x.id; }) : [];
+  DATA.forEach(function(x){ if (!x.group_id || x.group_id === MEM.gid) MEM.pick[x.id] = 1; });
+  renderMem();
+});
+$('#memNone').addEventListener('click', function(){ if (MEM){ MEM.pick = {}; renderMem(); } });
+$('#memDone').addEventListener('click', async function(){
+  if (!MEM) return;
+  var gid = MEM.gid, adds = [], dels = [], btn = this;
+  DATA.forEach(function(x){
+    var was = x.group_id === gid, now = !!MEM.pick[x.id];
+    if (now && !was) adds.push(x.id);
+    if (!now && was) dels.push(x.id);
+  });
+  btn.disabled = true;
   try{
-    await api('/api/group-members', {method:'POST', body: JSON.stringify({group_id: MEM.gid, ids: ids})});
-    toast(all ? '全部源都放进这个组了' : '这个组清空了，源都回到未分组');
+    for (var i = 0; i < adds.length; i++)
+      await api('/api/sources/' + adds[i], {method:'PATCH', body: JSON.stringify({group_id: gid})});
+    for (var j = 0; j < dels.length; j++)
+      await api('/api/sources/' + dels[j], {method:'PATCH', body: JSON.stringify({group_id: 0})});
+    closeSheets();
+    if (adds.length || dels.length) toast('已加入 ' + adds.length + ' 个，移出 ' + dels.length + ' 个');
     load(true);
   }catch(e){ toast(e.message); }
-}
-$('#memAll').addEventListener('click', function(){ memBulk(true); });
-$('#memNone').addEventListener('click', function(){ memBulk(false); });
-$('#memDone').addEventListener('click', function(){ closeSheets(); });
+  btn.disabled = false;
+});
 
 /* 新建/重命名分组共用一个小对话框，样式和「添加自定义加速」一致 */
 function openGroup(id){
@@ -820,6 +858,62 @@ document.querySelectorAll('.sheet').forEach(function(s){
 });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeSheets(); });
 
+/* 调度：自动按评分排；手动固定每种协议前 3 个源，其余仍自动。 */
+function renderSched(){
+  var on = SORDER.mode === 'manual';
+  document.querySelectorAll('#schedbar .seg').forEach(function(b){
+    b.classList.toggle('on', (b.dataset.smode === 'manual') === on);
+  });
+  $('#btnOrder').style.display = on ? '' : 'none';
+}
+function orderOptions(kind, sel){
+  var h = '<option value="0">自动</option>';
+  DATA.filter(function(x){
+    return x.enabled && (kind === 'docker' ? x.docker_cap === 1 : x.github_cap === 1);
+  }).forEach(function(x){
+    h += '<option value="' + x.id + '"' + (sel === x.id ? ' selected' : '') + '>' + esc(dispName(x)) + '</option>';
+  });
+  return h;
+}
+function renderOrder(){
+  var h = '', kinds = [{k:'docker', n:'Docker'}, {k:'github', n:'GitHub'}];
+  kinds.forEach(function(kd){
+    h += '<label>' + kd.n + ' 前 3 个源</label><div class="ordrow">';
+    for (var i = 0; i < 3; i++){
+      var cur = ((SORDER.orders || {})[kd.k] || [])[i] || 0;
+      h += '<select data-okind="' + kd.k + '" data-opos="' + i + '">' + orderOptions(kd.k, cur) + '</select>';
+    }
+    h += '</div>';
+  });
+  h += '<div class="hint">按你选的顺序优先试；留「自动」的空位跳过。这 3 个之外的源仍按评分自动排。</div>';
+  $('#orderBody').innerHTML = h;
+}
+document.querySelectorAll('#schedbar .seg').forEach(function(b){
+  b.addEventListener('click', async function(){
+    if (b.dataset.smode === 'manual'){
+      renderOrder(); openSheet('sheetOrder'); return;
+    }
+    try{
+      SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'auto', orders: SORDER.orders || {}})});
+      toast('已切回自动调度'); load(true);
+    }catch(e){ toast(e.message); }
+  });
+});
+$('#btnOrder').addEventListener('click', function(){ renderOrder(); openSheet('sheetOrder'); });
+$('#btnOrderGo').addEventListener('click', async function(){
+  var orders = {docker: [], github: []};
+  document.querySelectorAll('#orderBody select').forEach(function(sel){
+    var v = Number(sel.value); if (!v) return;
+    var arr = orders[sel.dataset.okind];
+    if (arr.indexOf(v) < 0 && arr.length < 3) arr.push(v);
+  });
+  if (!orders.docker.length && !orders.github.length){ toast('至少给一种协议选一个源'); return; }
+  try{
+    SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'manual', orders: orders})});
+    closeSheets(); toast('已切到手动调度'); load(true);
+  }catch(e){ toast(e.message); }
+});
+
 $('#btnAdd').addEventListener('click', function(){
   $('#addMsg').textContent = ''; $('#addMsg').className = 'hint';
   $('#addGroup').innerHTML = groupOptions(0, true);   // 每次都按当前分组刷新
@@ -830,31 +924,16 @@ $('#btnAdd').addEventListener('click', function(){
 $('#btnAddGo').addEventListener('click', async function(){
   var url = $('#addUrl').value.trim(), msg = $('#addMsg'), btn = $('#btnAddGo');
   if (!url){ msg.className = 'hint bad'; msg.textContent = '先填个地址'; return; }
-  btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在识别这个地址支持什么…';
+  btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在加入…';
   try{
     var d = await api('/api/sources', {method:'POST', body: JSON.stringify({url: url, name: $('#addName').value.trim()})});
     var gsel = Number($('#addGroup').value || 0);
     if (gsel) await api('/api/sources/'+d.id, {method:'PATCH', body: JSON.stringify({group_id: gsel})});
-    var n = 0, found = null;
-    while (n++ < 25){
-      await new Promise(function(r){ setTimeout(r, 1500); });
-      var all = await api('/api/sources');
-      DATA = all.sources || [];
-      found = DATA.find(function(x){ return x.id === d.id; });
-      if (found && found.docker_cap !== -1 && found.github_cap !== -1 && found.ghcr_cap !== -1) break;
-    }
-    render();
-    if (found){
-      var tags = [];
-      if (found.docker_cap === 1) tags.push('Docker Hub');
-      if (found.github_cap === 1) tags.push('GitHub');
-      if (found.ghcr_cap === 1) tags.push('GHCR');
-      msg.className = tags.length ? 'hint ok' : 'hint bad';
-      msg.textContent = tags.length ? ('识别完成：支持 ' + tags.join(' + ')) : '两种加速都不通，先留在列表里等复测';
-    } else { msg.className = 'hint'; msg.textContent = '已添加，识别还在后台跑'; }
     $('#addUrl').value = ''; $('#addName').value = ''; $('#addGroup').value = '0';
-    setTimeout(function(){ closeSheets(); load(true); }, 1100);
-  }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; }
+    closeSheets();
+    toast('已加入，正在后台识别支持的协议');
+    load(true);
+  }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; btn.disabled = false; return; }
   btn.disabled = false;
 });
 $('#addUrl').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('#btnAddGo').click(); });
