@@ -203,11 +203,4 @@ func errStr(err error) string {
 	return s
 }
 
-func statusOf(resp *http.Response) int {
-	if resp == nil {
-		return 0
-	}
-	return resp.StatusCode
-}
-
 var _ = fmt.Sprintf

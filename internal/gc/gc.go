@@ -5,7 +5,7 @@
 package gc
 
 import (
-	"log"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"os"
 	"time"
 
@@ -73,7 +73,7 @@ func (g *GC) dropBlob(sha string) (n int, freed int64, err error) {
 		freed = fi.Size()
 	}
 	if err := g.cs.Remove(sha); err != nil {
-		log.Printf("删缓存文件失败 %s: %v（已排队重试）", sha, err)
+		logging.Errorf("删缓存文件失败 %s: %v（已排队重试）", sha, err)
 		_ = g.st.PendingBlobAdd(sha)
 		return 0, 0, err
 	}

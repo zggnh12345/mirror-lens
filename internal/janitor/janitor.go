@@ -4,6 +4,7 @@ package janitor
 
 import (
 	"context"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"log"
 	"sync"
 
@@ -29,6 +30,11 @@ type Options struct {
 	RecoverAt     float64
 	// Evict 由 gateway 提供，保证与写后触发的淘汰是同一套逻辑。
 	Evict func(limit int64) (int64, error)
+	// BackupDir 为空表示不备份；BackupKeep 是保留份数。
+	BackupDir  string
+	BackupKeep int
+	// BackupKey 是 secret.key 的路径，随快照一起复制（可为空）。
+	BackupKey string
 }
 
 type Stats struct {
@@ -96,7 +102,7 @@ func (j *Janitor) Once() Stats {
 
 	// 1. 临时文件：下载中断留下的，1 小时足够久
 	if n, err := j.cs.SweepTemp(now.Add(-tmpTTL).Unix()); err != nil {
-		log.Printf("janitor: 清临时文件失败: %v", err)
+		logging.Errorf("janitor: 清临时文件失败: %v", err)
 	} else {
 		s.TmpFiles = n
 	}
@@ -105,7 +111,7 @@ func (j *Janitor) Once() Stats {
 	if j.opt.PartialTTL > 0 {
 		n, freed, err := j.cs.SweepPartial(now.Add(-j.opt.PartialTTL).Unix())
 		if err != nil {
-			log.Printf("janitor: 清半截文件失败: %v", err)
+			logging.Errorf("janitor: 清半截文件失败: %v", err)
 		}
 		s.Partials = n
 		s.Freed += freed
@@ -115,11 +121,11 @@ func (j *Janitor) Once() Stats {
 	if j.opt.ExpiredGrace > 0 {
 		olds, err := j.st.CacheExpired(now.Unix(), int64(j.opt.ExpiredGrace.Seconds()), 500)
 		if err != nil {
-			log.Printf("janitor: 查过期条目失败: %v", err)
+			logging.Errorf("janitor: 查过期条目失败: %v", err)
 		} else if len(olds) > 0 {
 			res, err := j.gc.DeleteKeys(keysOf(olds))
 			if err != nil {
-				log.Printf("janitor: 删过期条目失败: %v", err)
+				logging.Errorf("janitor: 删过期条目失败: %v", err)
 			}
 			s.Expired = res.Entries
 			s.Freed += res.Bytes
@@ -130,7 +136,7 @@ func (j *Janitor) Once() Stats {
 	// 4. 索引在、文件不在 → 删索引，否则命中后 502
 	all, err := j.st.CacheAll(0)
 	if err != nil {
-		log.Printf("janitor: 读索引失败: %v", err)
+		logging.Errorf("janitor: 读索引失败: %v", err)
 	} else if miss := j.gc.MissingFiles(all); len(miss) > 0 {
 		if res, err := j.gc.DeleteKeys(miss); err == nil {
 			s.Missing = res.Entries
@@ -140,7 +146,7 @@ func (j *Janitor) Once() Stats {
 
 	// 5. 对账：文件在、没有索引引用 → 删文件
 	if res, err := j.gc.Orphans(); err != nil {
-		log.Printf("janitor: 清孤儿文件失败: %v", err)
+		logging.Errorf("janitor: 清孤儿文件失败: %v", err)
 	} else {
 		s.Orphans = res.Blobs
 		s.Freed += res.Bytes
@@ -157,7 +163,7 @@ func (j *Janitor) Once() Stats {
 	if j.opt.CacheMaxBytes > 0 && j.opt.Evict != nil {
 		if used, err := j.cs.TotalSize(); err == nil && used > j.opt.CacheMaxBytes {
 			if freed, err := j.opt.Evict(j.opt.CacheMaxBytes); err != nil {
-				log.Printf("janitor: 容量淘汰失败: %v", err)
+				logging.Errorf("janitor: 容量淘汰失败: %v", err)
 			} else {
 				s.Evicted = freed
 				s.Freed += freed
@@ -171,6 +177,9 @@ func (j *Janitor) Once() Stats {
 		j.checkWatermark(used, &s)
 	}
 	s.Pending += j.pendingCount()
+
+	// 9. 数据库每日快照：放在缓存巡检之后，备份慢不耽误清理。
+	j.backupDaily(now)
 
 	j.mu.Lock()
 	j.last = s

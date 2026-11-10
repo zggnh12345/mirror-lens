@@ -97,10 +97,7 @@ func (g *Gateway) serveGitCached(w http.ResponseWriter, r *http.Request, e *stor
 		log.Printf("回写 git 响应中断 %s: %v", e.Key, logging.SafeErr(err))
 	}
 	if fromCache {
-		g.st.CacheHit(e.Key)
-		if cw.n > 0 {
-			g.st.RecordTraffic(store.TrafficHit, store.KindGit, cw.n)
-		}
+		g.st.CacheHitTraffic(e.Key, store.KindGit, cw.n)
 	}
 }
 

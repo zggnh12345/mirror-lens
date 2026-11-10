@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter"
+	"github.com/zggnh12345/mirror-lens/internal/alert"
 	"github.com/zggnh12345/mirror-lens/internal/api"
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
@@ -83,7 +84,11 @@ func main() {
 		log.Fatalf("配置不合法: %v", err)
 	}
 	// 日志要最先初始化，否则最早的几条还是默认样式。
-	if err := logging.Setup(cfg.Logging); err != nil {
+	// 告警环只收 error 级：单个请求的回源失败仍留在普通日志里。
+	alerts := alert.New(200)
+	if err := logging.SetupWith(cfg.Logging, func(h slog.Handler) slog.Handler {
+		return alert.Wrap(h, alerts)
+	}); err != nil {
 		log.Fatalf("初始化日志: %v", err)
 	}
 
@@ -133,14 +138,14 @@ func main() {
 
 	if !cfg.NoSeed {
 		if n, err := discover.Seed(st); err != nil {
-			log.Printf("写入候选池失败: %v", err)
+			logging.Errorf("写入候选池失败: %v", err)
 		} else if n > 0 {
 			log.Printf("已写入 %d 个内置候选源", n)
 		}
 	}
 	// 老库升级出 site_name 列后是空串：按内置映射补一次名字，面板才有的显示。
 	if n, err := discover.BackfillSiteNames(st); err != nil {
-		log.Printf("补站点名失败: %v", err)
+		logging.Errorf("补站点名失败: %v", err)
 	} else if n > 0 {
 		log.Printf("已补 %d 个源的站点名", n)
 	}
@@ -260,6 +265,20 @@ func main() {
 	defer stop()
 	go eng.Loop(ctx)
 
+	// 数据库快照目录：留空跟 data 走，宿主上就是 <挂载目录>/backup。
+	backupDir := ""
+	backupKeep := cfg.Backup.Keep
+	if backupKeep <= 0 {
+		backupKeep = 7
+	}
+	if cfg.Backup.Enabled {
+		backupDir = cfg.Backup.Dir
+		if backupDir == "" {
+			backupDir = filepath.Join(cfg.Data, "backup")
+		}
+		log.Printf("数据库每日快照: %s（保留 %d 份）", backupDir, backupKeep)
+	}
+
 	// 缓存巡检：容量、过期、半截文件、索引对账。
 	// 淘汰入口用 gw.EvictTo，与写后触发走同一份代码。
 	jan := janitor.New(st, cstore, gw.GC(), janitor.Options{
@@ -270,6 +289,9 @@ func main() {
 		WarnAt:        cfg.Cache.WarnAt,
 		RecoverAt:     cfg.Cache.RecoverAt,
 		Evict:         gw.EvictTo,
+		BackupDir:     backupDir,
+		BackupKeep:    backupKeep,
+		BackupKey:     filepath.Join(cfg.Data, "secret.key"),
 	})
 	if cfg.Cache.MaxGB > 0 {
 		msg := fmt.Sprintf("缓存上限 %d GB", cfg.Cache.MaxGB)
@@ -284,7 +306,7 @@ func main() {
 	go func() {
 		scan := func() {
 			if n, err := discover.Scan(ctx, st); err != nil {
-				log.Printf("发现新源失败: %v", err)
+				logging.Errorf("发现新源失败: %v", err)
 			} else if n > 0 {
 				log.Printf("发现 %d 个新候选", n)
 				eng.Run(2)
@@ -331,8 +353,13 @@ func main() {
 		ErrorLog: log.New(logging.Writer(slog.Default(), slog.LevelWarn), "", 0),
 		Handler: metrics.Middleware(lim.Wrap(api.New(st, eng, gw, jan, sched,
 			api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken),
-			api.WithConfig(cfg, path)))),
+			api.WithConfig(cfg, path), api.WithAlerts(alerts)))),
 		ReadHeaderTimeout: 10 * time.Second,
+		// 默认 1MB 头部足够被慢速客户端刷爆；面板与代理的头部都很小。
+		MaxHeaderBytes: 64 << 10,
+		// Go 的零值回落到 ReadHeaderTimeout（10s），突发拉取会反复重连；
+		// 90s 与常见反代的 keep-alive 对齐。
+		IdleTimeout: 90 * time.Second,
 	}
 	go func() {
 		log.Printf("Mirror Lens 已启动: http://%s", cfg.Addr)
@@ -370,11 +397,4 @@ func applyOverrides(cfg *config.Config, set func(string) bool, getenv func(strin
 	if set("no-seed") {
 		cfg.NoSeed = noSeed
 	}
-}
-
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
 }

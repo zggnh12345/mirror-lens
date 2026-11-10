@@ -24,9 +24,17 @@ type Config struct {
 
 // Setup 初始化全局 logger 并接管标准库 log。
 // 仓库里还有大量 log.Printf 没迁移，接管后立刻统一格式，不必一次性大改。
-func Setup(c Config) error { return setupTo(c, os.Stdout) }
+func Setup(c Config) error { return setupToWith(c, os.Stdout, nil) }
 
-func setupTo(c Config, w io.Writer) error {
+// SetupWith 与 Setup 相同，额外允许包装 Handler。
+// 目前用于把 error 级日志接进面板的告警环。
+func SetupWith(c Config, wrap func(slog.Handler) slog.Handler) error {
+	return setupToWith(c, os.Stdout, wrap)
+}
+
+func setupTo(c Config, w io.Writer) error { return setupToWith(c, w, nil) }
+
+func setupToWith(c Config, w io.Writer, wrap func(slog.Handler) slog.Handler) error {
 	lvl, err := parseLevel(c.Level)
 	if err != nil {
 		return err
@@ -47,6 +55,9 @@ func setupTo(c Config, w io.Writer) error {
 		return fmt.Errorf("logging.format 只支持 text/json，收到 %q", c.Format)
 	}
 
+	if wrap != nil {
+		h = wrap(h)
+	}
 	logger := slog.New(h)
 	slog.SetDefault(logger)
 
@@ -129,4 +140,11 @@ func SanitizeURL(raw string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// Errorf 记录 error 级日志。与 log.Printf 的区别只在于级别：
+// 这类事件（备份失败、索引损坏、鉴权被停用）需要进告警环，被面板铃铛统计；
+// 单个请求的回源失败仍走 log.Printf，否则一次上游抖动就能刷满铃声。
+func Errorf(format string, a ...any) {
+	slog.Error(fmt.Sprintf(format, a...))
 }

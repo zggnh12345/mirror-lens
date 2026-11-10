@@ -352,9 +352,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			cancel()
 			resp.Body.Close()
 			releaseLease(l)
-			if rerr == nil {
-				rerr = io.ErrNoProgress
-			}
+			_ = rerr // n<=0 时读错误已无意义，下面直接换源
 			continue
 		}
 		wrapped, werr := wrapLease(resp, l)

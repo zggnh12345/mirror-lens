@@ -138,10 +138,9 @@ func (e *tokenError) Error() string {
 // bearerTransport 只对指定上游生效：401 + Bearer 挑战时换 token 重发。
 // 其他 401（如 GitHub 的 Basic）原样返回。
 type bearerTransport struct {
-	base     http.RoundTripper
-	host     string
-	tokens   *tokenCache
-	maxRetry int
+	base   http.RoundTripper
+	host   string
+	tokens *tokenCache
 }
 
 func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {

@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/alert"
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/config"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
@@ -32,21 +33,23 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/tuning"
+	"github.com/zggnh12345/mirror-lens/internal/version"
 )
 
-// Version 面板与 /api/me 显示的版本号。
-const Version = "3.3.5"
+// Version 供面板与出站 UA 使用，定义在 internal/version。
+const Version = version.Version
 
 //go:embed web
 var webFS embed.FS
 
 type Server struct {
-	st  *store.Store
-	eng *runner.Engine
-	gw  *gateway.Gateway
-	gc  *gc.GC
-	jan *janitor.Janitor
-	sch *scheduler.Scheduler
+	st     *store.Store
+	eng    *runner.Engine
+	gw     *gateway.Gateway
+	gc     *gc.GC
+	jan    *janitor.Janitor
+	sch    *scheduler.Scheduler
+	alerts *alert.Ring
 
 	metricsOn    bool
 	metricsToken bool
@@ -60,6 +63,11 @@ type Server struct {
 type Option func(*Server)
 
 // WithMetrics 打开 /metrics；requireToken 时要求登录或 Access Token。
+// WithAlerts 挂上日志告警环（面板铃铛的数据源）。
+func WithAlerts(r *alert.Ring) Option {
+	return func(s *Server) { s.alerts = r }
+}
+
 func WithMetrics(enabled, requireToken bool) Option {
 	return func(s *Server) {
 		s.metricsOn = enabled
@@ -76,7 +84,7 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	if gw != nil {
 		s.gc = gw.GC()
 		if err := s.syncTrusted(); err != nil {
-			log.Printf("api: 载入信任中转白名单失败: %v", err)
+			logging.Errorf("api: 载入信任中转白名单失败: %v", err)
 		}
 	}
 	sub, _ := fs.Sub(webFS, "web")
@@ -203,6 +211,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/logout", authed(csrf(s.logout)))
 	mux.HandleFunc("/api/me", guard(s.me))
 	mux.HandleFunc("/api/health", guard(s.health))
+	mux.HandleFunc("/api/alerts", guard(s.alertsList))
+	mux.HandleFunc("/api/alerts/seen", guard(csrf(s.alertsSeen)))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
 	mux.HandleFunc("/api/trusted", guard(csrf(s.trusted)))
@@ -483,7 +493,7 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		recentN := store.RecentN
 		recent, rerr := s.st.RecentSummaries(recentN)
 		if rerr != nil {
-			log.Printf("api/sources: 读最近探测失败: %v", rerr)
+			logging.Errorf("api/sources: 读最近探测失败: %v", rerr)
 			recent = nil
 		}
 		for i := range list {

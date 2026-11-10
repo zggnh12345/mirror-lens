@@ -7,6 +7,7 @@ package runner
 
 import (
 	"context"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"log"
 	"strconv"
 	"sync"
@@ -669,13 +670,13 @@ func (e *Engine) Loop(ctx context.Context) {
 // 每小时一次，纯 SQL，代价可忽略。
 func (e *Engine) maintain(now time.Time) {
 	if n, err := e.st.ArchiveStale(now.Add(-e.opt.ArchiveAfter).Unix()); err != nil {
-		log.Printf("runner: 归档失败: %v", err)
+		logging.Errorf("runner: 归档失败: %v", err)
 	} else if n > 0 {
 		log.Printf("runner: 归档 %d 个长期不可用的源", n)
 	}
 	if e.opt.CleanupAfter > 0 {
 		if n, err := e.st.CleanupArchived(now.Add(-e.opt.CleanupAfter).Unix()); err != nil {
-			log.Printf("runner: 清理归档源失败: %v", err)
+			logging.Errorf("runner: 清理归档源失败: %v", err)
 		} else if n > 0 {
 			log.Printf("runner: 清理 %d 个归档超期的源", n)
 		}

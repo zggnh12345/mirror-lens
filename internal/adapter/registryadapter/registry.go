@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -361,20 +360,6 @@ func UpstreamAccept(client string, foreign bool) string {
 		return DefaultAccept
 	}
 	return strings.Join(keep, ",")
-}
-
-// normalizeAccept 排序去空格：同一 tag 下 Accept 不同拿到的字节不同
-// （索引 vs 单平台清单），缓存键必须带上这层差异。
-func normalizeAccept(s string) string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return strings.Join(out, ",")
 }
 
 // shortDigest 把 sha256:xxxx... 缩成面板能放下的一小段。

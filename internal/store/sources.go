@@ -305,15 +305,16 @@ func (s *Store) proxySpeed(id int64, kind string) int64 {
 }
 
 func (s *Store) samples(id int64, kind string, legacy bool) (n, ok int, lat, spd, last int64, err error) {
+	// 绝对寿命对两种来源都生效：样本窗口只限条数，不设下限的话，
+	// 停更半年的源仍会拿旧数据参与评分。
 	q := `SELECT ts, ok, latency_ms, speed_kbps FROM checks
-		WHERE source_id = ? AND tier >= 2`
-	args := []any{id}
+		WHERE source_id = ? AND tier >= 2 AND ts >= ?`
+	args := []any{id, time.Now().Unix() - proxySpeedMaxAgeSec}
 	switch {
 	case legacy:
 		// 无 kind 的是 2.x 遗留行，同样受绝对寿命约束：
 		// 新数据过期后不能让更老的数据接替成为评分来源。
-		q += ` AND (kind IS NULL OR kind = '') AND ts >= ?`
-		args = append(args, time.Now().Unix()-proxySpeedMaxAgeSec)
+		q += ` AND (kind IS NULL OR kind = '')`
 	case kind != "":
 		q += ` AND kind = ?`
 		args = append(args, kind)

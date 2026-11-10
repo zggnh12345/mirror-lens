@@ -37,9 +37,11 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/version"
 )
 
-const Version = "3.3.5"
+// Version 供面板与出站 UA 使用，定义在 internal/version。
+const Version = version.Version
 
 type Gateway struct {
 	st      *store.Store
@@ -66,6 +68,7 @@ type Gateway struct {
 	fillMu        sync.Mutex
 	fillFlights   map[string]chan struct{} // cacheKey -> 正在回源的流式填充
 	verifyFail    atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
+	bufs          sync.Pool                // 64KB 转发缓冲，避免每块重新分配
 	par           ParOptions
 	preSem        chan struct{}
 	gitSem        chan struct{}
@@ -226,6 +229,7 @@ func New(st *store.Store, o Options) *Gateway {
 		priv:          o.Private,
 		privClient:    newPrivClient(),
 	}
+	gw.bufs.New = func() any { b := make([]byte, 64<<10); return &b }
 	if n := o.Private.FallbackSem; n > 0 {
 		gw.privSem = make(chan struct{}, n)
 	}
@@ -1238,10 +1242,7 @@ func (g *Gateway) serveCached(w http.ResponseWriter, r *http.Request, plan *adap
 	http.ServeContent(cw, r, path.Base(e.Key), time.Unix(e.CreatedAt, 0), f)
 	if fromCache && task == nil {
 		g.tasks.addThrough(cw.n)
-		g.st.CacheHit(e.Key)
-		if cw.n > 0 {
-			g.st.RecordTraffic(store.TrafficHit, store.KindOfKey(e.Key), cw.n)
-		}
+		g.st.CacheHitTraffic(e.Key, store.KindOfKey(e.Key), cw.n)
 	}
 }
 

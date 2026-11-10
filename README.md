@@ -164,7 +164,7 @@ Docker 镜像走同一端口的 `/v2/`：
 docker pull 192.0.2.10:8080/library/alpine:3.20
 ```
 
-只读，一个实例对一个上游（默认 Docker Hub，要 ghcr 就再起一个实例改 `registry.upstream`）；layer 按 digest 缓存并边下边校验 SHA-256，tag 5 分钟重验、digest 永久。
+只读，一个实例同时服务 Docker Hub 与 GHCR：裸镜像名走 Hub，`ghcr.io/...` 前缀走 GHCR（`registry.ghcr_enabled` 控制后者）。layer 按 digest 缓存并边下边校验 SHA-256，tag 5 分钟重验、digest 永久。
 
 细节和已知限制见 [docs/accelerator.md](docs/accelerator.md)。
 
@@ -374,6 +374,29 @@ B 档（官方源、信任中转、Git upload-pack）和预检有各自独立配
 观测：`mirrorlens_source_concurrency_limit{source_id="12"}` 是当前上限，和 `mirrorlens_source_inflight` 一起看——上限贴着占用说明在扩容，上限掉到 1 说明这台源最近在挨打。
 
 3.0 默认 `dynamic: false`：容量由 `headroom` 固定换算，AIMD 不再参与派发。需要旧的自适应行为可以显式打开。
+
+## 备份与恢复
+
+数据库（源列表、缓存索引、统计）每天自动做一份快照：`VACUUM INTO` 出一个独立文件，落在 `<data>/backup/mirror-lens-YYYYMMDD.db`，按日期保留最近 `backup.keep` 份（默认 7）。`secret.key` 会一起复制——库里的源凭据用它加密，只恢复数据库而丢了 key，token 就解不开了。
+
+```yaml
+backup:
+  enabled: true   # 默认开
+  keep: 7         # 份数自己定
+  dir: ""         # 留空 = <data>/backup
+```
+
+恢复（会丢快照之后的新数据，先停容器）：
+
+```bash
+docker compose stop
+mv data/mirror-lens.db data/mirror-lens.db.bad
+cp data/backup/mirror-lens-20261110.db data/mirror-lens.db
+rm -f data/mirror-lens.db-wal data/mirror-lens.db-shm   # 必须删，否则会回放旧事务
+docker compose start
+```
+
+这是防误删、迁移失败、索引损坏的。备份和数据库在同一块盘上，**不防磁盘故障**——那一层靠 NAS 的 RAID/快照，把整个 `data/` 目录纳入快照即可。
 
 ## 监控
 

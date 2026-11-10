@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"log"
 	"net"
 	"net/netip"
@@ -81,7 +82,7 @@ func (s *Server) ensurePins(list []store.TrustedRelay) {
 		case "unresolved":
 			if r.PinGraceUntil > 0 && !now.Before(time.Unix(r.PinGraceUntil, 0)) {
 				if err := s.st.SetRelayPin(r.ID, "expired", r.PinIPv4, r.PinIPv6, r.PinGraceUntil); err != nil {
-					log.Printf("api: 信任中转 %s 标记 expired 失败: %v", r.Name, err)
+					logging.Errorf("api: 信任中转 %s 标记 expired 失败: %v", r.Name, err)
 				}
 				log.Printf("信任中转 %s 迁移窗口已过仍未解析成功，停止拨号（expired）", r.Name)
 				continue
@@ -94,23 +95,23 @@ func (s *Server) ensurePins(list []store.TrustedRelay) {
 			v4, v6, err := resolveRelayHost(r.PinHost, timeout)
 			if err == nil {
 				if e := s.st.SetRelayPin(r.ID, "pending", strings.Join(v4, ","), strings.Join(v6, ","), 0); e != nil {
-					log.Printf("api: 信任中转 %s 保存钉住结果失败: %v", r.Name, e)
+					logging.Errorf("api: 信任中转 %s 保存钉住结果失败: %v", r.Name, e)
 					return
 				}
 				log.Printf("信任中转 %s 已钉住解析结果：v4=%v v6=%v", r.Name, v4, v6)
 				return
 			}
 			if r.PinState == "unresolved" {
-				log.Printf("信任中转 %s 仍解析失败：%v；继续沿用系统解析至 %s",
+				logging.Errorf("信任中转 %s 仍解析失败：%v；继续沿用系统解析至 %s",
 					r.Name, err, time.Unix(r.PinGraceUntil, 0).Format("2006-01-02 15:04"))
 				return
 			}
 			until := now.Add(grace)
 			if e := s.st.SetRelayPin(r.ID, "unresolved", "", "", until.Unix()); e != nil {
-				log.Printf("api: 信任中转 %s 保存过渡状态失败: %v", r.Name, e)
+				logging.Errorf("api: 信任中转 %s 保存过渡状态失败: %v", r.Name, e)
 				return
 			}
-			log.Printf("信任中转 %s 首次解析失败：%v；%s 内沿用系统解析（未钉住，高危）",
+			logging.Errorf("信任中转 %s 首次解析失败：%v；%s 内沿用系统解析（未钉住，高危）",
 				r.Name, err, grace)
 		}(r)
 	}

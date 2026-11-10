@@ -130,7 +130,7 @@ func (s *Store) SweepPartial(olderThan int64) (files int, freed int64, err error
 		// 并行填充本来就不写 meta，客户端中断后留下的孤儿就是这种形态，
 		// 等 partial_ttl 纯属白占盘，直接清（照样只删抢得到锁的）。
 		if _, e := os.Stat(meta); os.IsNotExist(e) {
-			if n, sz, ok := s.dropPartialLocked(base, part, meta); ok {
+			if n, sz, ok := s.dropPartialLocked(part, meta); ok {
 				files += n
 				freed += sz
 			}
@@ -139,7 +139,7 @@ func (s *Store) SweepPartial(olderThan int64) (files int, freed int64, err error
 		if !s.stalePartial(part, meta, olderThan) {
 			continue
 		}
-		n, sz, ok := s.dropPartialLocked(base, part, meta)
+		n, sz, ok := s.dropPartialLocked(part, meta)
 		if ok {
 			files += n
 			freed += sz
@@ -166,8 +166,9 @@ func (s *Store) stalePartial(part, meta string, olderThan int64) bool {
 // dropPartialLocked 抢到锁才删；抢不到说明有进程在续传，跳过。
 // 顺序固定：先文件锁（挡住已打开的写入者），再 fills 互斥锁（挡住
 // 「已拿到 Lease、还没打开文件」的填充），检查与删除在同一段锁内完成。
-func (s *Store) dropPartialLocked(base, part, meta string) (files int, freed int64, ok bool) {
-	base = filepath.Base(part)
+func (s *Store) dropPartialLocked(part, meta string) (files int, freed int64, ok bool) {
+	// 锁键统一用 base：和 BeginFill 登记的键保持一致。
+	base := filepath.Base(part)
 	f, err := os.OpenFile(part, os.O_RDWR, 0o644)
 	if err != nil {
 		if !os.IsNotExist(err) {

@@ -1,6 +1,10 @@
 package gateway
 
-import "log"
+import (
+	"log"
+
+	"github.com/zggnh12345/mirror-lens/internal/logging"
+)
 
 // enforceQuota 异步跑容量检查：淘汰是后台活儿，不放请求路径上。
 func (g *Gateway) enforceQuota() {
@@ -9,7 +13,7 @@ func (g *Gateway) enforceQuota() {
 	}
 	go func() {
 		if _, err := g.EvictTo(g.cacheMaxBytes); err != nil {
-			log.Printf("缓存淘汰失败: %v", err)
+			logging.Errorf("缓存淘汰失败: %v", err)
 		}
 	}()
 }

@@ -164,7 +164,7 @@ func (s *Store) Ready(ctx context.Context) error {
 func Open(path string) (*Store, error) {
 	// foreign_keys 必须显式打开，否则 checks 的 ON DELETE CASCADE 失效，
 	// 删源后检测记录会留成孤儿。
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +238,8 @@ CREATE TABLE IF NOT EXISTS checks (
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_checks_src_ts ON checks(source_id, ts DESC);
+-- 信任度/可用率按 kind 取最近窗口，没有它就得全表扫后排序。
+CREATE INDEX IF NOT EXISTS idx_checks_kind_ts ON checks(kind, ts DESC);
 CREATE TABLE IF NOT EXISTS proxy_speed (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

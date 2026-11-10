@@ -117,7 +117,7 @@ docker pull 192.0.2.10:8080/library/alpine:3.20
 ```
 
 - 没有域名就没有证书，docker 对裸 IP 一律按 HTTPS 连，绕不过去，只能在客户端写一行 `insecure-registries`。想用域名 + 真证书，自己在前面套 nginx / caddy 即可——服务不看 `Host` 头，怎么反代都不影响。
-- **一个实例对一个上游**（`registry.upstream`，默认 Docker Hub）。要 ghcr 就再起一个实例改参数：docker 客户端只会拼 `/v2/<name>/...`，路径里没有位置标"我要哪个 registry"，硬塞进去就成了不合规范的写法。
+- **一个实例同时服务 Docker Hub 与 GHCR**：裸镜像名（`nginx`、`jc21/nginx-proxy-manager`）走上游 `registry.upstream`（默认 Docker Hub）；带站前缀的 `ghcr.io/<owner>/<image>` 走 GHCR，由 `registry.ghcr_enabled` 单独开关。客户端仍然只拼 `/v2/<name>/...`，站前缀本身就是合法仓库名的一部分。
 - **只读**：`GET` / `HEAD` 之外的写操作（push / delete / upload）一律 405。
 - **Blob 按 digest 缓存**：键就是 `docker:blob:sha256:...`。边下边算 SHA-256，落盘前和 digest 比对，对不上就丢弃、不入缓存。digest 本身是内容哈希，命中即永久有效，不需要 TTL 也不需要 ETag。
 - **Manifest 的键带 `Accept`**：同一个 tag，客户端要的是多架构索引还是单平台清单，返回字节不同，不分开存就会串味。tag 5 分钟重验（`registry.tag_ttl`），digest 永久。

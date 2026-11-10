@@ -69,6 +69,7 @@ func TestMiddlewareRejectsBadID(t *testing.T) {
 }
 
 func TestRequestIDOnPlainContext(t *testing.T) {
+	//lint:ignore SA1012 故意传 nil，验证这个函数对 nil context 是安全的
 	if RequestID(nil) != "" {
 		t.Fatal("nil context 应返回空串")
 	}

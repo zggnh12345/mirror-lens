@@ -58,11 +58,19 @@ header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 8
 h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{color:var(--muted);font-size:11.5px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1}
-.iconbtn{width:34px;height:34px;flex:none;border-radius:10px;border:1px solid var(--line);
+.iconbtn{width:34px;height:34px;flex:none;border-radius:10px;border:1px solid var(--line);position:relative;
   background:var(--card);display:grid;place-items:center;color:var(--muted);
   transition:border-color .15s,color .15s,transform .12s}
 .iconbtn:hover{color:var(--ink);border-color:var(--line2)}
 .iconbtn:active{transform:scale(.94)}
+.badge{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;
+  background:var(--bad);color:#fff;font-size:10px;font-weight:700;font-style:normal;line-height:16px;
+  text-align:center;box-shadow:0 0 0 2px var(--card)}
+.badge[hidden]{display:none}
+.alist{max-height:min(52vh,420px);overflow:auto;margin:0 -2px}
+.aItem{padding:10px 2px;border-top:1px solid var(--line)}
+.aMeta{font-size:10.5px;color:var(--muted);letter-spacing:.2px}
+.aMsg{font-size:12.5px;line-height:1.55;margin-top:3px;word-break:break-word}
 .iconbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
 /* 统计卡 */

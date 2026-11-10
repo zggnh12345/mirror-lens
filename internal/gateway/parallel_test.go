@@ -256,8 +256,8 @@ func TestParallelAssemblesInOrder(t *testing.T) {
 	if !cs.Has(plan.ExpectSHA) {
 		t.Fatalf("blob 应已发布")
 	}
-	if _, err := cs.Open(plan.ExpectSHA); err == nil {
-		// 正常
+	if _, err := cs.Open(plan.ExpectSHA); err != nil {
+		t.Fatalf("blob 应能打开: %v", err)
 	}
 	if _, ok := cs.ReadPartial("docker:blob:abc"); ok {
 		t.Fatalf(".part 应已清理")
@@ -323,8 +323,11 @@ func TestStarTooSlowAndCooldown(t *testing.T) {
 	if !g.starTooSlow(plan, c) {
 		t.Fatal("最近 3 次都是 2MB/s，应判慢")
 	}
-	if !g.allowParallelNow(id) || !g.allowParallelNow(id) {
-		t.Fatal("判慢后应允许并行，且冷却期内继续并行")
+	if !g.allowParallelNow(id) {
+		t.Fatal("判慢后应允许并行")
+	}
+	if !g.allowParallelNow(id) {
+		t.Fatal("冷却期内应继续保持并行")
 	}
 	g.degradeMu.Lock()
 	g.degradeAt[id] = time.Now().Add(-40 * time.Minute)

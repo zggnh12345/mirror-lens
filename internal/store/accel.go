@@ -511,6 +511,29 @@ func (s *Store) CacheHit(key string) {
 	_, _ = s.db.Exec(`UPDATE cache_entries SET hits=hits+1, last_hit=? WHERE key=?`, time.Now().Unix(), key)
 }
 
+// CacheHitTraffic 把命中计数与流量统计并进一个事务。
+// 分开写是两条自动提交，WAL 下各要一次 fsync；合并后命中热路径只剩一次落盘。
+func (s *Store) CacheHitTraffic(key, kind string, nbytes int64) {
+	now := time.Now()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return
+	}
+	if _, err = tx.Exec(`UPDATE cache_entries SET hits=hits+1, last_hit=? WHERE key=?`, now.Unix(), key); err != nil {
+		_ = tx.Rollback()
+		return
+	}
+	if nbytes > 0 {
+		if _, err = tx.Exec(`INSERT INTO traffic_stats(day, traffic, kind, n, bytes) VALUES(?,?,?,1,?)
+			ON CONFLICT(day, traffic, kind) DO UPDATE SET n=n+1, bytes=bytes+excluded.bytes`,
+			now.Format("2006-01-02"), TrafficHit, kind, nbytes); err != nil {
+			_ = tx.Rollback()
+			return
+		}
+	}
+	_ = tx.Commit()
+}
+
 // CacheRefresh 用于 304：内容没变，TTL 重新计时。
 func (s *Store) CacheRefresh(key string) {
 	_, _ = s.db.Exec(`UPDATE cache_entries SET created_at=? WHERE key=?`, time.Now().Unix(), key)

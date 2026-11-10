@@ -73,7 +73,6 @@ type Limiter struct {
 	mu    sync.Mutex
 	buck  map[string]*bucket
 	conc  map[string]int
-	glob  int
 	hits  map[string]int64 // 各层拒绝次数（面板/指标用）
 	sweep time.Time
 }
@@ -87,13 +86,9 @@ type bucket struct {
 }
 
 func New(cfg Config) *Limiter {
+	// Enabled 由 config.Load 的 Default() 预填为 true；用户显式写 false 时
+	// 保持关闭。这里不再赋值，否则会覆盖显式关闭。
 	d := Default()
-	if !cfg.Enabled {
-		// 显式 false 保持关闭；其余字段仍填默认值便于日志展示。
-		cfg.Enabled = false
-	} else {
-		cfg.Enabled = true
-	}
 	if cfg.GlobalRPS <= 0 {
 		cfg.GlobalRPS = d.GlobalRPS
 	}
@@ -186,6 +181,7 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 		}
 		// 2. 全局并发：传输中的大文件也一直占名额。
 		if !l.enter("g:", l.cfg.GlobalConcurrency) {
+			l.refund(now, "g:")
 			l.reject(w, "global", 0)
 			return
 		}
@@ -199,6 +195,7 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 		}
 		// 4. 客户端并发：名额占到响应写完。
 		if !l.enter("ip:"+ip, l.cfg.IPConcurrency) {
+			l.refund(now, "ip:"+ip, "g:")
 			l.reject(w, "ip", 0)
 			return
 		}
@@ -214,6 +211,7 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 				return
 			}
 			if !l.enter(k, l.cfg.TokenConcurrency) {
+				l.refund(now, k, "ip:"+ip, "g:")
 				l.reject(w, "token", 0)
 				return
 			}
@@ -297,6 +295,23 @@ func (l *Limiter) take(key string, rate, burst float64, now time.Time) bool {
 }
 
 // enter 占一个并发名额。
+// refund 归还本次请求已扣的令牌。只在并发名额不足时调用：
+// 请求根本没被服务，却把速率额度算掉，等于让高峰期的客户端额度
+// 提前耗尽。归还上限是 burst，不能攒出超额。
+func (l *Limiter) refund(now time.Time, keys ...string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, key := range keys {
+		if b := l.buck[key]; b != nil {
+			if b.tokens < b.burst {
+				b.tokens++
+			}
+			b.last = now
+			b.seen = now
+		}
+	}
+}
+
 func (l *Limiter) enter(key string, max int) bool {
 	if max <= 0 {
 		return true

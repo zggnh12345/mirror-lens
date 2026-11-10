@@ -98,7 +98,7 @@ func TestApplyConfigValuesValidAndInvalid(t *testing.T) {
 	c := config.Default()
 
 	// 合法：改 max_gb 与日志级别
-	changed, field, err := applyConfigValues(c, map[string]string{
+	changed, _, err := applyConfigValues(c, map[string]string{
 		"cache.max_gb":  "120",
 		"logging.level": "debug",
 	})
@@ -113,6 +113,7 @@ func TestApplyConfigValuesValidAndInvalid(t *testing.T) {
 	}
 
 	// 非法：warn_at 超出 0~1
+	var field string
 	c2 := config.Default()
 	_, field, err = applyConfigValues(c2, map[string]string{"cache.warn_at": "2"})
 	if err == nil || field != "cache.warn_at" {

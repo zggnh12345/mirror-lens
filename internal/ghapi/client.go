@@ -15,8 +15,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -127,7 +127,7 @@ func (c *Client) AssetDigest(ctx context.Context, owner, repo, tag, file string)
 	d := c.sf.Do(key, func() Digest { return c.fetch(ctx, owner, repo, tag, file) })
 	if d.Result == ResultAuthFailed {
 		if c.authFails.Add(1) >= authFailLimit && c.disabled.CompareAndSwap(false, true) {
-			log.Printf("GitHub Token 连续 %d 次鉴权失败（401），已停用 Release 摘要 API；下载不受影响，改配置或重启后恢复", authFailLimit)
+			logging.Errorf("GitHub Token 连续 %d 次鉴权失败（401），已停用 Release 摘要 API；下载不受影响，改配置或重启后恢复", authFailLimit)
 		}
 	} else {
 		c.authFails.Store(0)

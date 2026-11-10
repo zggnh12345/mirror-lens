@@ -35,6 +35,8 @@ cache:
   # 用量到这个比例报一次警，回落到 recover_at 以下才允许再报
   warn_at: 0.9
   recover_at: 0.85
+  # 磁盘剩余低于这个 GB 数就只透传、不落盘；0 = 不设底线
+  min_free_gb: 10
 
 # ── 后台巡检 ────────────────────────────────────────────
 
@@ -44,6 +46,16 @@ janitor:
   partial_ttl: 24h
   # 条目过期后还要再等多久没人访问才删，避免低频资源反复回源
   expired_grace: 72h
+
+# ── 数据库快照 ──────────────────────────────────────────
+# 每天用 VACUUM INTO 出一份独立文件，防误删/迁移失败/索引损坏。
+# 目录默认 <data>/backup，恢复时替换 mirror-lens.db 并删掉 -wal / -shm。
+backup:
+  enabled: true
+  # 保留份数，按日期滚动删除更早的
+  keep: 7
+  # 留空 = <data>/backup
+  dir: ""
 
 # ── 内容 TTL ────────────────────────────────────────────
 
@@ -106,9 +118,18 @@ sources:
   # 每台源同时进行的回源请求上限（预检与分片）。0 取默认 4，负数不限；
   # 动态模式下这是天花板。
   max_per_source: 4
-  # 动态带宽调度：按实测吞吐在 1..max_per_source 之间自动调整并发。
-  # 慢源少开几路（避免互抢），快源加路；失败或 429 立刻减半。
-  dynamic: true
+  # 3.0 起失效：AIMD 动态并发不再参与派发，写 true 也会被强制关掉。
+  dynamic: false
+  # 普通派发相对硬上限的比例，剩下的名额留给换源/中途接管
+  headroom: 0.8
+  # 准入模式：observe / blocking / wait_then_fallback / non_blocking
+  admission: wait_then_fallback
+  # wait_then_fallback 的最长等待，超时后组内换源
+  wait_timeout: 2s
+  # 预检 / 中转 / Git 的独立并发配额（不进 max_per_source 账本），0 取 4
+  preflight_concurrency: 4
+  relay_concurrency: 4
+  git_concurrency: 4
   # 源站生命周期：dead/blocked 维持 archive_days 天自动归档（不再探测、不参与
   # 调度，记录保留）；归档再满 cleanup_days 天彻底删除（0 或负数 = 永不删）。
   archive_days: 14

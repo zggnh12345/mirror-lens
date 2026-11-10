@@ -8,6 +8,7 @@ import "gopkg.in/yaml.v3"
 var fieldDocs = map[string]string{
 	"cache":                         "缓存策略：容量、淘汰、磁盘保护",
 	"janitor":                       "后台清理任务",
+	"backup":                        "数据库每日快照（VACUUM INTO）",
 	"raw":                           "raw 文件缓存",
 	"git":                           "git 智能协议元数据缓存",
 	"registry":                      "Docker Registry 加速",
@@ -33,6 +34,9 @@ var fieldDocs = map[string]string{
 	"janitor.interval":              "执行周期，建议 10m~1h",
 	"janitor.partial_ttl":           "未完成的分片文件保留时长，超时删除",
 	"janitor.expired_grace":         "过期缓存的宽限期，到期后才真正删除",
+	"backup.enabled":                "是否每天生成一份数据库快照",
+	"backup.keep":                   "保留几份（按日期滚动删除更早的）",
+	"backup.dir":                    "快照目录，留空用 <data>/backup",
 	"raw.ttl":                       "raw 原始文件缓存时长，0 表示不缓存",
 	"git.ttl":                       "git 元数据（refs、info）缓存时长",
 	"registry.enabled":              "Registry 加速总开关，关闭后 /v2/ 整体不可用",

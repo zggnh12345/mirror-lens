@@ -150,7 +150,7 @@ var cfgSchema = []cfgField{
 				return nil
 			}
 			if len(v) < 20 || strings.ContainsAny(v, " 	\r\n") {
-				return fmt.Errorf("Token 格式不对：长度至少 20，且不能含空白")
+				return fmt.Errorf("token 格式不对：长度至少 20，且不能含空白")
 			}
 			key, err := secret.LoadOrCreateKey(filepath.Join(c.Data, "secret.key"))
 			if err != nil {
@@ -701,15 +701,6 @@ func mergeMapping(dst, src *yaml.Node) {
 		v.HeadComment, v.LineComment, v.FootComment = old.HeadComment, old.LineComment, old.FootComment
 		*old = *v
 	}
-}
-
-func findField(key string) *cfgField {
-	for i := range cfgSchema {
-		if cfgSchema[i].Key == key {
-			return &cfgSchema[i]
-		}
-	}
-	return nil
 }
 
 // saveConfig 在写锁内完成「读盘 → 校验 → 原子落盘 → 发布运行态」。

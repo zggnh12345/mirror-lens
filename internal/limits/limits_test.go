@@ -293,3 +293,18 @@ func TestSweepDropsIdleBuckets(t *testing.T) {
 		}
 	}
 }
+
+func TestRefundRestoresGlobalToken(t *testing.T) {
+	l := New(Config{GlobalRPS: 1, GlobalBurst: 1})
+	now := time.Now()
+	if !l.take("g:", 1, 1, now) {
+		t.Fatal("首个请求应放行")
+	}
+	if l.take("g:", 1, 1, now) {
+		t.Fatal("burst 用完应拒绝")
+	}
+	l.refund(now, "g:")
+	if !l.take("g:", 1, 1, now) {
+		t.Fatal("归还后应能再放行一次")
+	}
+}

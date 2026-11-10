@@ -259,8 +259,19 @@ type Config struct {
 	Auth     Auth           `yaml:"auth"`
 	Limits   limits.Config  `yaml:"limits"`
 	Metrics  Metrics        `yaml:"metrics"`
+	Backup   Backup         `yaml:"backup"`
 	CDN      CDN            `yaml:"cdn"`
 	Logging  logging.Config `yaml:"logging"`
+}
+
+// Backup 是数据库的每日快照：VACUUM INTO 出一个独立文件，
+// 防的是误删、迁移失败、索引损坏，不是磁盘故障（那层靠 RAID/快照）。
+type Backup struct {
+	Enabled bool `yaml:"enabled"`
+	// Keep 是保留份数，按日期滚动删除更早的。
+	Keep int `yaml:"keep"`
+	// Dir 为空时用 <data>/backup。
+	Dir string `yaml:"dir"`
 }
 
 // CDN 控制边缘缓存语义。默认关闭时只发 60 秒保守 TTL，
@@ -372,6 +383,7 @@ func Default() *Config {
 			IntervalSec: 30, Concurrency: 8, TimeoutSec: 45, SampleMiB: 4},
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),
+		Backup:  Backup{Enabled: true, Keep: 7},
 		Metrics: Metrics{Enabled: true},
 		CDN:     CDN{Enabled: false, MaxAge: 300},
 	}

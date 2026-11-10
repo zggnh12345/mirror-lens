@@ -733,7 +733,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			for {
 				n, err := resp.Body.Read(b)
 				if n > 0 {
-					c := make([]byte, n)
+					// 4GB 的层按 64KB 切是 6.5 万次分配，每块都新申请会把
+					// GC 推得很勤；从池里取，写完立刻归还。
+					c := g.getBuf()[:n]
 					copy(c, b[:n])
 					select {
 					case ch <- upChunk{b: c}:
@@ -770,15 +772,18 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				break
 			}
 			if len(ck.b) > 0 {
+				ln := len(ck.b)
 				tw := time.Now()
 				werr := writeChunk(ck.b)
+				// writeChunk 同步写完才返回，此刻归还缓冲是安全的。
+				g.putBuf(ck.b)
 				// 写客户端/落盘的阻塞不是源站慢，从测速窗口里扣掉。
 				sw.addWrite(time.Since(tw))
 				if werr != nil && !errors.Is(werr, errOverrun) {
 					return
 				}
 				keep := werr == nil
-				sw.add(int64(len(ck.b)))
+				sw.add(int64(ln))
 				if keep && sw.slow(sent, total) {
 					onSlow()
 					if finished {
@@ -1040,7 +1045,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 
 	copyHeader(w.Header(), resp.Header, "Content-Type", "Content-Length", "Content-Range",
 		"Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Cache-Control", "Retry-After",
-		"Docker-Content-Digest", "Docker-Distribution-Api-Version")
+		"Docker-Content-Digest", "Docker-Distribution-Api-Version",
+		// 上游偶尔无视 Accept-Encoding: identity；不转发这个头，客户端会把
+		// 压缩体当原文件写盘，拉取直接失败。
+		"Content-Encoding")
 	// 307 到 CDN 后落地响应常缺 Docker-Content-Digest，按请求路径补。
 	// 这不是校验结果：X-ML-Digest: request 标明来源，
 	// 免得把「补齐」读成「已验证」。
@@ -1167,4 +1175,21 @@ func oneSource(t *fetchTarget) []string {
 		return []string{"官方"}
 	}
 	return []string{t.c.Name}
+}
+
+// getBuf 取一块 64KB 缓冲。池可能没初始化（测试里直接构造 Gateway），
+// 那时退化成一次分配，不能 Get 出 nil 再断言。
+func (g *Gateway) getBuf() []byte {
+	if v := g.bufs.Get(); v != nil {
+		return *v.(*[]byte)
+	}
+	return make([]byte, 64<<10)
+}
+
+// putBuf 归还转发缓冲。池里的切片长度固定 64KB，写入方只借 len 前缀。
+func (g *Gateway) putBuf(b []byte) {
+	if cap(b) >= 64<<10 {
+		b = b[:cap(b)]
+		g.bufs.Put(&b) // 存指针，避免 Put 时把切片装箱分配
+	}
 }
