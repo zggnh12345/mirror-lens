@@ -811,9 +811,24 @@ func (g *Gateway) decline(reason string) {
 }
 
 func (g *Gateway) reportSource(kind string, t fetchTarget, ok bool, d time.Duration, hints ...scheduler.Hint) {
-	if t.c != nil {
-		g.sched.Report(kind, *t.c, ok, d, hints...)
+	if t.c == nil {
+		return
 	}
+	o := scheduler.OutcomeFail
+	if ok {
+		o = scheduler.OutcomeOK
+	}
+	// 中性结果：404/410 是「没这个文件」，401/403 是「没资格问」。
+	// 它们既不是成功也不是源故障——照旧换源，但不建粘性、不进冷却、不进 429 率分母。
+	if ok && len(hints) > 0 {
+		switch code := hints[0].Code; {
+		case isMiss(code):
+			o = scheduler.OutcomeMiss
+		case isAuthDenied(code):
+			o = scheduler.OutcomeAuth
+		}
+	}
+	g.sched.ReportOutcome(kind, *t.c, o, d, hints...)
 }
 
 // parChunk 取一段写进 .part。顺序是：分到的源 → 其它参与分片的镜像源 → 官方源。

@@ -280,22 +280,42 @@ func HTTP(scene, method string, code int, d time.Duration, bytes int64, cache st
 	}
 }
 
+// SourceResultKind 把回源结果分成三种统计语义。
+//
+// 中性结果（404/410、401/403）既不进成功计数，也不进失败计数，
+// 也不进 429 率分母——它们说明「这个源答得正常」，只是没内容或没资格。
+type SourceResultKind int
+
+const (
+	SourceOK SourceResultKind = iota
+	SourceNeutral
+	SourceFail
+)
+
+func (k SourceResultKind) label() string {
+	switch k {
+	case SourceOK:
+		return "ok"
+	case SourceNeutral:
+		return "neutral"
+	default:
+		return "fail"
+	}
+}
+
 // SourceResult 记一次实际回源结果。
-func SourceResult(kind string, ok bool, code int, mode string, d time.Duration) {
+func SourceResult(kind string, res SourceResultKind, code int, mode string, d time.Duration) {
 	r := current.Load()
 	if r == nil {
 		return
 	}
-	res := "fail"
-	if ok {
-		res = "ok"
-	}
+	label := res.label()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.srcReq[srcKey{kind, res}]++
-	// 只有收到响应才进 429 率分母：连不上/超时没有状态码，
-	// 算进分母只会把比率稀释成一个好看的数字。
-	if code > 0 {
+	r.srcReq[srcKey{kind, label}]++
+	// 只有拿到真实上游响应、且这次结果有成功/失败语义时才进 429 率分母：
+	// 连不上/超时没有状态码，404/410、401/403 又答得正常，算进分母只会稀释比率。
+	if code > 0 && res != SourceNeutral {
 		r.srcResp[kind]++
 	}
 	if code == http.StatusTooManyRequests {

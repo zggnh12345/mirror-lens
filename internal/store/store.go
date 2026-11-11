@@ -613,12 +613,14 @@ func (s *Store) ListSources() ([]Source, error) {
 		}
 	}
 
-	// 限流比例：同一窗口内该源的 429 占比。分母只数 code 100–599 的真实响应，
-	// code=0（DNS/连接/超时）不算，否则用「网络不通」稀释「被限流」。
+	// 限流比例：同一窗口内该源的 429 占比。分母只数真实响应，且排除中性结果：
+	// code=0（DNS/连接/超时）不算，404/410（没这个文件）、401/403（没资格问）也不算——
+	// 它们不是限流，算进分母只会把比率稀释成一个好看的数字。
 	type rate struct{ all, c429 int64 }
 	rates := map[key]*rate{}
 	erows, err := s.db.Query(`SELECT source_id,kind,COUNT(*),SUM(code=429) FROM source_events
-		WHERE ts>=? AND code BETWEEN 100 AND 599 GROUP BY source_id,kind`, since)
+		WHERE ts>=? AND code BETWEEN 100 AND 599
+		  AND code NOT IN (401,403,404,410) GROUP BY source_id,kind`, since)
 	if err == nil {
 		for erows.Next() {
 			var k key

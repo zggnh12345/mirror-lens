@@ -85,9 +85,9 @@ func TestHistogramCumulative(t *testing.T) {
 
 func TestSourceMetrics(t *testing.T) {
 	setup(t)
-	SourceResult("docker", true, 200, "single", 120*time.Millisecond)
-	SourceResult("docker", false, 429, "single", 30*time.Millisecond)
-	SourceResult("github", true, 206, "chunk", 50*time.Millisecond)
+	SourceResult("docker", SourceOK, 200, "single", 120*time.Millisecond)
+	SourceResult("docker", SourceFail, 429, "single", 30*time.Millisecond)
+	SourceResult("github", SourceOK, 206, "chunk", 50*time.Millisecond)
 	SourceInflight(7, 1)
 	SourceInflight(7, 1)
 	SourceInflight(7, -1)
@@ -114,9 +114,9 @@ func TestSourceMetrics(t *testing.T) {
 // 429 率的分母只能是「真的收到响应」的次数：连不上/超时不该稀释它。
 func Test429DenominatorCountsOnlyRealResponses(t *testing.T) {
 	setup(t)
-	SourceResult("docker", false, 429, "single", 0)
-	SourceResult("docker", false, 0, "single", 0) // 连接失败，没有状态码
-	SourceResult("docker", false, 0, "single", 0)
+	SourceResult("docker", SourceFail, 429, "single", 0)
+	SourceResult("docker", SourceFail, 0, "single", 0) // 连接失败，没有状态码
+	SourceResult("docker", SourceFail, 0, "single", 0)
 	out := string(Get().render())
 	if !strings.Contains(out, `source_429_total{kind="docker"} 1`) {
 		t.Fatalf("429 计数不对：\n%s", out)
@@ -161,7 +161,7 @@ func TestRateLimitedCounter(t *testing.T) {
 func TestDisabledIsNoop(t *testing.T) {
 	Disable()
 	HTTP("docker", "GET", 200, time.Second, 1, "hit")
-	SourceResult("docker", true, 200, "single", time.Second)
+	SourceResult("docker", SourceOK, 200, "single", time.Second)
 	SourceInflight(1, 1)
 	RateLimited("ip")
 	if Get() != nil {

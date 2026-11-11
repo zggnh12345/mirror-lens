@@ -265,7 +265,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
 			metrics.SourceMiss(plan.Kind, resp.StatusCode)
-			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
+			g.reportSource(plan.Sched(), t, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", t.c.Name, "status", resp.StatusCode)
 			lastErr = &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 			continue
@@ -275,7 +275,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			resp.Body.Close()
 			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它。
-			g.sched.Report(plan.Sched(), *t.c, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
+			g.reportSource(plan.Sched(), t, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
 				loggw(slog.LevelInfo, "源限流，换下一个", ctx, plan, logging.UpstreamRateLimited, nil, "source", t.c.Name, "status", resp.StatusCode, "retry_after_s", int(ue.RetryAfter.Seconds()))
 			} else {

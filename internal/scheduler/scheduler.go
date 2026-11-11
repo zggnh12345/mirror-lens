@@ -231,6 +231,17 @@ func (s *Scheduler) isGone(id int64) bool {
 // deleted 是 isGone 的别名，给不持有 s.mu 的调用方用。
 func (s *Scheduler) deleted(id int64) bool { return s.isGone(id) }
 
+// StickyFor 返回该调度维度当前的粘性源，0 表示没有。
+// 只读，不触发排序或加载，给诊断和测试确认「谁被粘住了」。
+func (s *Scheduler) StickyFor(kind string) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sticky[kind].cand.ID
+}
+
 // Candidates 返回按优先级排好的源，最多 MaxCandidates 个。
 func (s *Scheduler) Candidates(kind string) []Candidate {
 	return s.CandidatesN(kind, s.cfg.MaxCandidates)
@@ -623,9 +634,36 @@ type Hint struct {
 	RetryAfter time.Duration
 }
 
-// Report 记录一次实际回源结果：成功闭合熔断并加粘性，失败进冷却（逐次翻倍）。
-// 带 Retry-After 时取 max(本地退避, Retry-After) 再夹到 MaxCooldown。
+// Outcome 是一次回源的调度语义。Miss/Auth 是中性结果：既不是成功，
+// 也不是源故障，所以既不建粘性也不进冷却，只留事件备查。
+type Outcome int
+
+const (
+	// OutcomeOK 拿到了内容。
+	OutcomeOK Outcome = iota
+	// OutcomeMiss 是 404/410：源答得很正常，只是没有这个资源。
+	OutcomeMiss
+	// OutcomeAuth 是 401/403：源要求认证，换源不一定能解决，但不代表源坏。
+	OutcomeAuth
+	// OutcomeFail 是 429/5xx/网络失败：源本身有问题，按故障策略处理。
+	OutcomeFail
+)
+
+// Report 兼容旧调用：true=成功，false=失败。
 func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, hints ...Hint) {
+	o := OutcomeFail
+	if ok {
+		o = OutcomeOK
+	}
+	s.ReportOutcome(kind, c, o, d, hints...)
+}
+
+// ReportOutcome 记录一次实际回源结果。
+//
+//   - OutcomeOK：闭合熔断、刷新粘性、计成功样本；
+//   - OutcomeMiss / OutcomeAuth：中性，不动熔断与粘性，事件照记；
+//   - OutcomeFail：进冷却（逐次翻倍），带 Retry-After 时取 max(本地退避, Retry-After)。
+func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Duration, hints ...Hint) {
 	if s == nil || c.ID == 0 {
 		return
 	}
@@ -636,10 +674,14 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 		s.mu.Unlock()
 		return
 	}
-	if ok {
+	switch o {
+	case OutcomeOK:
 		delete(s.brk, k)
 		s.sticky[kind] = stickyPick{cand: c, at: s.now()}
-	} else {
+	case OutcomeMiss, OutcomeAuth:
+		// 中性结果：不建粘性、不清熔断、不进冷却。
+		// 已有粘性也不动——它是这台源上一次「真拿到内容」的证明。
+	default:
 		b := s.brk[k]
 		if b == nil {
 			b = &breaker{}
@@ -663,7 +705,7 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	s.mu.Unlock()
 
 	// git 能通说明实现了 smart HTTP，记下来下次不用再试错。
-	if ok && kind == "git" {
+	if o == OutcomeOK && kind == "git" {
 		_ = s.st.SetGitCap(c.ID, true)
 	}
 	code, mode := 0, ""
@@ -673,8 +715,15 @@ func (s *Scheduler) Report(kind string, c Candidate, ok bool, d time.Duration, h
 	if mode == "" {
 		mode = "other"
 	}
-	metrics.SourceResult(kind, ok, code, mode, d)
-	s.st.RecordSourceEvent(c.ID, kind, ok, d.Milliseconds(), code)
+	res := metrics.SourceNeutral
+	switch o {
+	case OutcomeOK:
+		res = metrics.SourceOK
+	case OutcomeFail:
+		res = metrics.SourceFail
+	}
+	metrics.SourceResult(kind, res, code, mode, d)
+	s.st.RecordSourceEvent(c.ID, kind, o != OutcomeFail, d.Milliseconds(), code)
 }
 
 // Snapshot 给面板看：每个协议当前的顺序与分数。

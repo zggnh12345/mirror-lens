@@ -720,11 +720,11 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 		return settleAbort, nil, false, err
 	}
 	// 404/410 是缺文件不是源坏了：按故障处理会误伤冷却，记 Miss 后继续换源。
+	// Miss 是中性结果：留事件，但不建粘性、不进冷却、不进 429 率分母。
 	var ue *upstreamError
 	if errors.As(err, &ue) && isMiss(ue.Code) {
 		if t.c != nil {
-			// 404/410 也进 429 率分母并按成功计：它答得很正常，只是没这个文件。
-			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			g.sched.ReportOutcome(plan.Sched(), *t.c, scheduler.OutcomeMiss, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
 		}
 		metrics.SourceMiss(plan.Kind, ue.Code)
 		name := t.u.Host
@@ -735,9 +735,10 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 		return settleNext, nil, false, err
 	}
 	// 401/403 是「没资格问」：换源但不罚源，也不进 Miss 统计。
+	// Auth 同样是中性结果：留事件，但不建粘性、不进冷却、不稀释 429 率。
 	if errors.As(err, &ue) && isAuthDenied(ue.Code) {
 		if t.c != nil {
-			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			g.sched.ReportOutcome(plan.Sched(), *t.c, scheduler.OutcomeAuth, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
 		}
 		name := t.u.Host
 		if t.c != nil {
@@ -963,12 +964,18 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 				hint.Code = code
 				hint.RetryAfter = retryAfterHeader(r.up.resp.Header)
 				drop(r)
-				// 404/410/401/403 答得正常、只是没文件/没资格，按成功记；
-				// 429/5xx 才是源站问题，记失败并带上 Retry-After。
-				ok := isMiss(code) || isAuthDenied(code)
+				// 404/410、401/403 是中性结果：答得正常，只是没文件/没资格。
+				// 按成功记会让它们建立粘性；按失败记会误冷却好源——两者都不对。
+				o := scheduler.OutcomeFail
+				switch {
+				case isMiss(code):
+					o = scheduler.OutcomeMiss
+				case isAuthDenied(code):
+					o = scheduler.OutcomeAuth
+				}
 				if t := targets[r.idx]; t.c != nil {
-					g.sched.Report(plan.Sched(), *t.c, ok, time.Since(r.start), hint)
-					if !ok {
+					g.sched.ReportOutcome(plan.Sched(), *t.c, o, time.Since(r.start), hint)
+					if o == scheduler.OutcomeFail {
 						g.sched.Observe(t.c.ID, 0, 0, false, code)
 					}
 				}
