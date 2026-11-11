@@ -351,6 +351,14 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		if out.Cap == probe.CapYes {
 			log.Printf("Host %s 验证通过（%s）", j.Host, out.Selected)
 		}
+		// 健康度按 Host 记：这一条只影响 (源, registry, 本 Host) 的候选资格，
+		// 不牵连同一来源在其他 Registry 的调度。明确「不支持」是能力问题，
+		// 已经写进 registry_cap，不再记成健康失败。
+		if out.Cap == probe.CapYes || out.Cap == probe.CapUnknown {
+			if err := r.o.Store.NoteProbeScoped(j.SourceID, "registry", j.Host, out.Cap == probe.CapYes); err != nil {
+				log.Printf("记 %s 的 Host 健康失败: %v", j.Host, err)
+			}
+		}
 	case store.HostCapsStaleSnapshot:
 		// 不写错误、不计失败，退避后重新取快照。
 		retry = true

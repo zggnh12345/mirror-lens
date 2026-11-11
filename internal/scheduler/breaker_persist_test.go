@@ -20,6 +20,16 @@ func brkOf(s *Scheduler, kind string, id int64) *breaker {
 	return s.brk[pkey(kind, id)]
 }
 
+// brkFails 在锁内取副本：并发测试里不能拿指针到锁外读字段。
+func brkFails(s *Scheduler, kind string, id int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b := s.brk[pkey(kind, id)]; b != nil {
+		return b.fails
+	}
+	return 0
+}
+
 // 429 之后再来一条 404，重启后仍然熔断：中性事件不能盖掉最后一次有效失败。
 func TestBreakerSurvivesMissAcrossRestart(t *testing.T) {
 	st := newStore(t)
@@ -570,7 +580,7 @@ func TestFlushKeepsOrderWhenBlocked(t *testing.T) {
 	// 只启动 goroutine 不等于时序已建立。
 	deadline2 := time.Now().Add(2 * time.Second)
 	for {
-		if b := brkOf(s, "docker", id); b != nil && b.fails == 2 {
+		if brkFails(s, "docker", id) == 2 {
 			break
 		}
 		if time.Now().After(deadline2) {

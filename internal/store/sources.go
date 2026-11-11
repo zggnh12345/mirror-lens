@@ -101,7 +101,36 @@ func Family(kind string) string {
 // NoteProbe 记一次协议族探测结果：成功清零并记时间，失败累加。
 // 与源站整体 status 分开：那边答「这台还活着吗」，这里答「这个协议还灵吗」。
 func (s *Store) NoteProbe(id int64, family string, ok bool) error {
+	return s.NoteProbeScoped(id, family, "", ok)
+}
+
+// NoteProbeScoped 记录一次探测结果。scope 为空时沿用按协议族的旧表；
+// registry 用规范化 Host 作为 scope，写独立维度表——一个 Host 的连续失败
+// 不能摘掉同一来源在其他 Host 的候选资格。
+func (s *Store) NoteProbeScoped(id int64, family, scope string, ok bool) error {
 	now := time.Now().Unix()
+	// scope 为空时保持旧语义（按 family 聚合），留给尚未接入 Host 维度的调用方。
+	if family == "registry" && scope != "" {
+		h, err := registryhost.Check(scope)
+		if err != nil {
+			return err
+		}
+		scope = h
+		if scope != "" {
+			if ok {
+				_, err := s.db.Exec(`INSERT INTO source_health_scope(source_id, family, scope, fails, ok_at, last_at)
+					VALUES(?,?,?,0,?,?)
+					ON CONFLICT(source_id, family, scope) DO UPDATE SET fails=0, ok_at=excluded.ok_at, last_at=excluded.last_at`,
+					id, family, scope, now, now)
+				return err
+			}
+			_, err := s.db.Exec(`INSERT INTO source_health_scope(source_id, family, scope, fails, last_at)
+				VALUES(?,?,?,1,?)
+				ON CONFLICT(source_id, family, scope) DO UPDATE SET fails=fails+1, last_at=excluded.last_at`,
+				id, family, scope, now)
+			return err
+		}
+	}
 	if ok {
 		_, err := s.db.Exec(`INSERT INTO source_health(source_id, family, fails, ok_at, last_at)
 			VALUES(?,?,0,?,?)
@@ -114,6 +143,26 @@ func (s *Store) NoteProbe(id int64, family string, ok bool) error {
 		ON CONFLICT(source_id, family) DO UPDATE SET fails=fails+1, last_at=excluded.last_at`,
 		id, family, now)
 	return err
+}
+
+// ScopedHealthOf 返回某个源按 (family,scope) 的连续失败次数，目前只有
+// registry 的 Host 维度会产生记录。key 形如 "registry@ghcr.example"。
+func (s *Store) ScopedHealthOf(id int64) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT family, scope, fails FROM source_health_scope WHERE source_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var f, sc string
+		var n int
+		if err := rows.Scan(&f, &sc, &n); err != nil {
+			return nil, err
+		}
+		out[f+"@"+sc] = n
+	}
+	return out, rows.Err()
 }
 
 // HealthOf 返回某个源各协议族的连续失败次数，面板/排查用。
@@ -227,8 +276,15 @@ func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
 		  AND s.registry_cap = 1 AND s.repo_host = ?
 		  AND s.registry_path_mode IN ('native','host_prefix')
-		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = 'registry' AND fails >= ?)
-		ORDER BY s.id`, host, HealthFails)
+		  AND NOT (
+		    EXISTS (SELECT 1 FROM source_health_scope z
+		            WHERE z.source_id = s.id AND z.family = 'registry' AND z.scope = ? AND z.fails >= ?)
+		    OR (NOT EXISTS (SELECT 1 FROM source_health_scope z2
+		                    WHERE z2.source_id = s.id AND z2.family = 'registry' AND z2.scope = ?)
+		        AND EXISTS (SELECT 1 FROM source_health h
+		                    WHERE h.source_id = s.id AND h.family = 'registry' AND h.fails >= ?))
+		  )
+		ORDER BY s.id`, host, host, HealthFails, host, HealthFails)
 	if err != nil {
 		return nil, err
 	}

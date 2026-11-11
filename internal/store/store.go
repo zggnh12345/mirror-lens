@@ -299,6 +299,15 @@ CREATE TABLE IF NOT EXISTS source_health (
   last_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(source_id, family)
 );
+CREATE TABLE IF NOT EXISTS source_health_scope (
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  family TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  fails INTEGER NOT NULL DEFAULT 0,
+  ok_at INTEGER NOT NULL DEFAULT 0,
+  last_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(source_id, family, scope)
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
