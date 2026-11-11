@@ -460,3 +460,126 @@ func TestLegacyFallbackRunsOnce(t *testing.T) {
 		t.Fatalf("兜底应只执行一次，实际又恢复了 %+v", b)
 	}
 }
+
+// 中性事件成功落库不能把还没写盘的熔断状态从重试队列里挤掉。
+func TestNeutralDoesNotDiscardPendingBreakerState(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	c := candOf(id, "a")
+	real := s.persistFn
+	var mu sync.Mutex
+	broken := true
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		fail := broken && r.Breaker != nil
+		mu.Unlock()
+		if fail {
+			return errors.New("db down")
+		}
+		return real(r)
+	}
+	s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.ReportOutcome("docker", c, OutcomeMiss, time.Millisecond, Hint{Code: 404})
+	mu.Lock()
+	broken = false
+	mu.Unlock()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, _ := st.LoadBreakerStates()
+		if len(rows) == 1 && rows[0].Fails == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("熔断状态被中性事件挤掉，rows=%+v", rows)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	codes, _ := st.SourceEventCodes(id, 10)
+	if len(codes) != 2 {
+		t.Fatalf("两条事件都应落库，实际 %v", codes)
+	}
+}
+
+// 队列里有多条时，旧的一条写成功后必须继续调度后面的，不能停在 retryBusy。
+func TestFlushReschedulesNewerPending(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	c := candOf(id, "a")
+	real := s.persistFn
+	var mu sync.Mutex
+	broken := true
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		fail := broken
+		mu.Unlock()
+		if fail {
+			return errors.New("db down")
+		}
+		return real(r)
+	}
+	for i := 0; i < 3; i++ {
+		s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	}
+	mu.Lock()
+	broken = false
+	mu.Unlock()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, _ := st.LoadBreakerStates()
+		codes, _ := st.SourceEventCodes(id, 10)
+		if len(rows) == 1 && rows[0].Fails == 3 && len(codes) == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("较新的 pending 停滞，rows=%+v codes=%v", rows, codes)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+}
+
+// 持久化被慢写入挡住时新结果仍要按 rev 顺序落库，旧结果不能覆盖新状态。
+func TestFlushKeepsOrderWhenBlocked(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	c := candOf(id, "a")
+	real := s.persistFn
+	var mu sync.Mutex
+	block := true
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		b := block
+		block = false
+		mu.Unlock()
+		if b {
+			entered <- struct{}{}
+			<-release
+		}
+		return real(r)
+	}
+	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	<-entered
+	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 500})
+	close(release)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, _ := st.LoadBreakerStates()
+		codes, _ := st.SourceEventCodes(id, 10)
+		if len(rows) == 1 && rows[0].Fails == 2 && len(codes) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("并写入未收敛，rows=%+v codes=%v", rows, codes)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+}

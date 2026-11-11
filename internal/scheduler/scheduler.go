@@ -163,18 +163,26 @@ type Scheduler struct {
 	// persistFn 可注入，故障测试用来模拟写库失败。
 	persistFn func(store.OutcomeRecord) error
 
-	// 写库失败后的待重试队列：每个 (kind,id) 只保留 rev 最大的那份，
-	// 退避重试直到成功；跨代次的旧写入直接丢弃。
+	// 写库失败后的待重试队列：每个 (kind,id) 一条 FIFO，事件按产生顺序
+	// 补写（有上限），熔断状态靠 rev 守卫只前进不后退；跨代次的旧写入丢弃。
 	retryMu   sync.Mutex
-	pending   map[string]pendingWrite
+	pending   map[string][]pendingWrite
 	retryBusy map[string]bool
 	retryWait map[string]time.Duration
 
 	// legacyDone 记录已经做过老库事件兜底的协议：窗口函数只跑一次。
 	legacyDone map[string]bool
+
+	// rl 是每个协议一把刷新锁：候选列表重建（含两条查询）同一时刻只跑一个，
+	// 避免并发刷新重复扫事件表，也避免后到者覆盖先到的列表。
+	rl sync.Map // kind → *sync.Mutex
 }
 
-// pendingWrite 是一份等待重新落库的结果。
+// pendingCap 是单个 (kind,id) 待重试队列上限。数据库长时间不可写时丢弃
+// 最旧的事件，保证内存有界；熔断状态永远保留最新一份。
+const pendingCap = 64
+
+// pendingWrite 是一份等待重新落库的结果，按到达顺序排队。
 type pendingWrite struct {
 	rec store.OutcomeRecord
 	gen uint64
@@ -200,7 +208,7 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		leases: newLeaseManager(),
 		gen:    map[int64]uint64{},
 
-		pending:    map[string]pendingWrite{},
+		pending:    map[string][]pendingWrite{},
 		retryBusy:  map[string]bool{},
 		retryWait:  map[string]time.Duration{},
 		legacyDone: map[string]bool{},
@@ -306,14 +314,7 @@ func (s *Scheduler) Forget(id int64) {
 	//
 	// 先拿 pmu 等在飞写入结束，再删库，顺序反了会被迟到的写入塞回来。
 	// 注意这里已经放开 s.mu，不会和上报路径形成 mu→pmu 的反向锁序。
-	if s.st != nil {
-		s.pmu.Lock()
-		err := s.st.ClearBreakerStates(id)
-		s.pmu.Unlock()
-		if err != nil {
-			log.Printf("调度：清理源 %d 的持久化熔断失败: %v", id, err)
-		}
-	}
+	s.clearBreakerState(id, s.genSnapshot(id), 0)
 	// 队列里属于这个源的待重试项也一并丢掉。
 	s.retryMu.Lock()
 	for k := range s.pending {
@@ -325,6 +326,43 @@ func (s *Scheduler) Forget(id int64) {
 	}
 	s.retryMu.Unlock()
 	metrics.ForgetSource(id)
+}
+
+// genSnapshot 读当前代次，给清理任务做「还是同一代」的校验。
+func (s *Scheduler) genSnapshot(id int64) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gen[id]
+}
+
+// clearBreakerState 删除持久化熔断状态，失败按 200ms/400ms/800ms/1.6s
+// 重试 4 次；仍失败就明确记录「已放弃」，而不是静默当作清干净。
+//
+// 每次删除前校验代次：源被快速删掉又新建时，新源自己的状态不能被这次
+// 迟到的清理连带删掉。
+func (s *Scheduler) clearBreakerState(id int64, gen uint64, attempt int) {
+	if s.st == nil {
+		return
+	}
+	s.pmu.Lock()
+	s.mu.Lock()
+	same := s.gen[id] == gen
+	s.mu.Unlock()
+	var err error
+	if same {
+		err = s.st.ClearBreakerStates(id)
+	}
+	s.pmu.Unlock()
+	if err == nil || !same {
+		return
+	}
+	if attempt >= 4 {
+		log.Printf("调度：源 %d 的持久化熔断清理连续失败，已放弃（重启可能恢复旧状态）: %v", id, err)
+		return
+	}
+	d := time.Duration(1<<uint(attempt)) * 200 * time.Millisecond
+	log.Printf("调度：清理源 %d 的持久化熔断失败，%v 后重试: %v", id, d, err)
+	time.AfterFunc(d, func() { s.clearBreakerState(id, gen, attempt+1) })
 }
 
 // Revive 撤销删除墓碑。id 正常不会复用，这里是防御性的：
@@ -367,13 +405,17 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if !s.Enabled() {
 		return nil
 	}
-	s.mu.Lock()
-	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
-		out := s.orderN(kind, le.items, limit)
-		s.mu.Unlock()
+	if out, ok := s.cached(kind, limit); ok {
 		return out
 	}
-	s.mu.Unlock()
+	// 同一个协议的重建串行化：两条查询 + 一次老库兜底只跑一遍，
+	// 并发请求不会各自扫一遍事件表，也不会后到覆盖先到。
+	lk := s.refreshLock(kind)
+	lk.Lock()
+	defer lk.Unlock()
+	if out, ok := s.cached(kind, limit); ok {
+		return out
+	}
 
 	// 查库不能在 s.mu 里：这里两条 SQL，慢查询的时候 Observe/Acquire
 	// 全被堵住，表现是「所有源一起变慢」，还会被 AIMD 记到源头上。
@@ -385,10 +427,9 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if err != nil {
 		return nil
 	}
-	// 老库兜底只做一次：窗口函数要扫历史事件，不能挂在每次候选刷新上。
-	// 没有持久化状态时它才有意义；一旦跑过就置位，后续刷新直接跳过。
+	// 老库兜底只在真正重建列表时做，且每协议一次；失败不置位，下次刷新再试。
 	s.mu.Lock()
-	needFallback := !s.legacyDone[kind]
+	needFallback := s.st != nil && !s.legacyDone[kind]
 	s.mu.Unlock()
 	var runs map[int64]store.FailureRun
 	var cerr error
@@ -399,17 +440,12 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// 等锁期间别人可能已经填好，直接用，别重复查库也避免覆盖更新的列表。
-	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
-		return s.orderN(kind, le.items, limit)
-	}
 	// 老库还没有 breaker_state（升级后的第一次启动）：从事件表兜底。
 	//
 	// 旧版本没有持久化 fails/until，也没记当时的 Retry-After，所以这里只能
 	// 按事件顺序还原「连续失败次数」，再用基础退避公式推算截止时间；这是
 	// 近似恢复，不是精确恢复。截止时间仍以最后一条失败事件为基准，不按
 	// 「现在 + 一个周期」重算，否则剩余 10 秒的冷却会被拉长成 5 分钟。
-	// 查询失败不置位，下次刷新再试。
 	if needFallback && cerr == nil {
 		s.legacyDone[kind] = true
 		for _, st := range stats {
@@ -442,6 +478,27 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.orderN(kind, items, limit)
+}
+
+// cached 返回仍在 TTL 内的候选列表。
+func (s *Scheduler) cached(kind string, limit int) ([]Candidate, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	le, ok := s.lists[kind]
+	if !ok || s.now().Sub(le.at) >= s.cfg.ListTTL {
+		return nil, false
+	}
+	return s.orderN(kind, le.items, limit), true
+}
+
+// refreshLock 返回协议级的重建锁。
+func (s *Scheduler) refreshLock(kind string) *sync.Mutex {
+	if v, ok := s.rl.Load(kind); ok {
+		return v.(*sync.Mutex)
+	}
+	m := &sync.Mutex{}
+	v, _ := s.rl.LoadOrStore(kind, m)
+	return v.(*sync.Mutex)
 }
 
 // groupKey 把「未分组」归到最后一档：0 表示没有分组，组 rank 从 1 起。
@@ -899,60 +956,61 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 }
 
 // persist 把结果写进库。写失败时不能回滚内存——可能已经有更高 rev 的
-// 后续结果——而是把这份结果挂进重试队列，按 key 只保留最新一份，退避
-// 重试直到成功；retry 里的 rev 守卫保证即便乱序也不会用旧状态覆盖新状态。
+// 后续结果——而是把这份结果追加到该 key 的待重试队列，按 FIFO 顺序退避
+// 重试。队列保留每一条事件（有上限），所以中性事件成功落库不会顺手把
+// 尚未写盘、且 rev 更小的失败状态淘汰掉。
 func (s *Scheduler) persist(gen uint64, rec store.OutcomeRecord) {
-	k := pkey(rec.Kind, rec.SourceID)
 	if s.persistFn == nil {
 		return
 	}
+	if s.write(rec, gen) {
+		return
+	}
+	s.enqueue(pkey(rec.Kind, rec.SourceID), gen, rec)
+}
+
+// write 落盘一条记录。返回 true 表示已处理（写入成功，或代次已过期而
+// 主动丢弃）；false 表示失败、需要重试。
+//
+// 持 pmu 再校验代次：Forget 是「gen++ → 放 mu → 拿 pmu → 删库」，所以
+// 这里若看到代次已变，说明清理已经发生，这份写入必须放弃。
+func (s *Scheduler) write(rec store.OutcomeRecord, gen uint64) bool {
 	s.pmu.Lock()
-	// 持 pmu 再校验代次：Forget 是「gen++ → 放 mu → 拿 pmu → 删库」，
-	// 所以这里看到的代次若已变，说明清理已经发生，这份写入必须放弃。
+	defer s.pmu.Unlock()
 	s.mu.Lock()
 	stale := s.isGone(rec.SourceID) || s.gen[rec.SourceID] != gen
 	s.mu.Unlock()
 	if stale {
-		s.pmu.Unlock()
-		return
+		return true
 	}
-	err := s.persistFn(rec)
-	s.pmu.Unlock()
-	if err == nil {
-		s.retryMu.Lock()
-		more := false
-		if p, ok := s.pending[k]; ok {
-			if p.rec.Rev <= rec.Rev {
-				delete(s.pending, k)
-			} else {
-				more = true
-			}
-		}
-		s.retryMu.Unlock()
-		if more {
-			s.schedulePending(k, 200*time.Millisecond)
-		}
-		return
+	if err := s.persistFn(rec); err != nil {
+		log.Printf("调度：写回源结果失败（源 %d/%s rev=%d）: %v", rec.SourceID, rec.Kind, rec.Rev, err)
+		return false
 	}
-	// 事务是原子的：返回错误时事件和状态都没落库，重试不会重复写事件。
-	log.Printf("调度：写回源结果失败（源 %d/%s rev=%d），进入重试: %v", rec.SourceID, rec.Kind, rec.Rev, err)
-	s.enqueue(k, gen, rec)
+	return true
 }
 
 func (s *Scheduler) enqueue(k string, gen uint64, rec store.OutcomeRecord) {
 	s.retryMu.Lock()
-	if old, ok := s.pending[k]; ok && old.rec.Rev >= rec.Rev {
+	q := s.pending[k]
+	if n := len(q); n > 0 && q[n-1].rec.Rev >= rec.Rev {
 		s.retryMu.Unlock()
 		return
 	}
-	s.pending[k] = pendingWrite{rec: rec, gen: gen}
+	q = append(q, pendingWrite{rec: rec, gen: gen})
+	if len(q) > pendingCap {
+		drop := len(q) - pendingCap
+		log.Printf("调度：%s 待重试队列已满，丢弃 %d 条较旧结果", k, drop)
+		q = q[drop:]
+	}
+	s.pending[k] = q
 	s.retryMu.Unlock()
 	s.schedulePending(k, 200*time.Millisecond)
 }
 
 func (s *Scheduler) schedulePending(k string, d time.Duration) {
 	s.retryMu.Lock()
-	if _, ok := s.pending[k]; !ok {
+	if len(s.pending[k]) == 0 {
 		s.retryBusy[k] = false
 		s.retryMu.Unlock()
 		return
@@ -962,9 +1020,6 @@ func (s *Scheduler) schedulePending(k string, d time.Duration) {
 		return
 	}
 	s.retryBusy[k] = true
-	if d < 200*time.Millisecond {
-		d = 200 * time.Millisecond
-	}
 	s.retryWait[k] = d
 	s.retryMu.Unlock()
 	time.AfterFunc(d, func() { s.flushPending(k) })
@@ -972,46 +1027,49 @@ func (s *Scheduler) schedulePending(k string, d time.Duration) {
 
 func (s *Scheduler) flushPending(k string) {
 	s.retryMu.Lock()
-	p, ok := s.pending[k]
+	q := s.pending[k]
+	if len(q) == 0 {
+		s.retryBusy[k] = false
+		delete(s.retryWait, k)
+		s.retryMu.Unlock()
+		return
+	}
+	p := q[0]
 	s.retryMu.Unlock()
-	if !ok {
-		s.schedulePending(k, 0)
-		return
-	}
-	s.pmu.Lock()
-	// 跨代次的旧写入（源被删/换地址）直接丢弃，不能清完再写回来。
-	s.mu.Lock()
-	stale := s.isGone(p.rec.SourceID) || s.gen[p.rec.SourceID] != p.gen
-	s.mu.Unlock()
-	if stale {
-		s.pmu.Unlock()
-		s.retryMu.Lock()
-		delete(s.pending, k)
-		s.retryBusy[k] = false
-		delete(s.retryWait, k)
-		s.retryMu.Unlock()
-		return
-	}
-	err := s.persistFn(p.rec)
-	s.pmu.Unlock()
-	if err == nil {
-		s.retryMu.Lock()
-		if cur, still := s.pending[k]; still && cur.rec.Rev <= p.rec.Rev {
-			delete(s.pending, k)
-		}
-		s.retryBusy[k] = false
-		delete(s.retryWait, k)
-		s.retryMu.Unlock()
-		return
-	}
+
+	ok := s.write(p.rec, p.gen)
+
 	s.retryMu.Lock()
-	d := s.retryWait[k] * 2
-	if d > 30*time.Second {
-		d = 30 * time.Second
+	// 只有写成功才出队；失败时保留队首，退避后重写同一条。
+	if ok {
+		if n := len(s.pending[k]); n > 0 && s.pending[k][0].rec.Rev == p.rec.Rev && s.pending[k][0].gen == p.gen {
+			s.pending[k] = s.pending[k][1:]
+		}
+	}
+	empty := len(s.pending[k]) == 0
+	d := s.retryWait[k]
+	if empty {
+		delete(s.pending, k)
+		delete(s.retryWait, k)
 	}
 	s.retryBusy[k] = false
 	s.retryMu.Unlock()
-	log.Printf("调度：重试写回仍失败（源 %d/%s）：%v", p.rec.SourceID, p.rec.Kind, err)
+
+	if ok {
+		// 队列里还有积压：立刻取下一条，不要等下一次上报来唤醒。
+		if !empty {
+			s.schedulePending(k, 5*time.Millisecond)
+		}
+		return
+	}
+	d *= 2
+	if d < 200*time.Millisecond {
+		d = 200 * time.Millisecond
+	}
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	log.Printf("调度：重试写回仍失败（源 %d/%s），%v 后再试", p.rec.SourceID, p.rec.Kind, d)
 	s.schedulePending(k, d)
 }
 
