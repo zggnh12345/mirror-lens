@@ -597,6 +597,9 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 			u.Path = base.Path
 		case "host_prefix":
 			u.Path = "/v2/" + host + strings.TrimPrefix(base.Path, "/v2")
+			// 路径已经换过，base 的 RawPath 描述的是旧路径：留着会让 String()
+			// 在「旧 RawPath 恰好仍是新 Path 的合法编码」时输出错误转义，必须清空。
+			u.RawPath = ""
 		default:
 			// 空值/未知模式一律拒绝，绝不猜一条路径出来。
 			return nil, false
