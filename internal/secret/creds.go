@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -389,10 +390,22 @@ func (s *Store) readValidated() (*credsDoc, error) {
 	if doc.Revoked == nil {
 		doc.Revoked = map[string]bool{}
 	}
+	// 同一 Host 不能既是有效记录又是删除标记：两种解释同时成立时，
+	// 无论取哪个都可能误删或误用凭据，直接判文件损坏。
+	for host := range doc.Revoked {
+		if _, ok := doc.Hosts[host]; ok {
+			return nil, fmt.Errorf("%w: %s 同时存在密文记录与删除标记", ErrCorrupt, host)
+		}
+	}
 	for host := range doc.Revoked {
 		norm, err := credentialHost(host)
 		if err != nil || norm != host {
 			return nil, fmt.Errorf("%w: 已删除记录里的 Host %q 不合法", ErrCorrupt, host)
+		}
+		// 同一 Host 不能既是有效记录又是删除标记：两种解释同时成立时，
+		// 无论按哪个处理都可能误删或误用凭据。
+		if _, ok := doc.Hosts[host]; ok {
+			return nil, fmt.Errorf("%w: %s 同时存在密文记录与删除标记", ErrCorrupt, host)
 		}
 	}
 	for host, rec := range doc.Hosts {
@@ -474,14 +487,35 @@ func (s *Store) lockFile() (func(), error) {
 
 // recordDigest 是「该 Host 当前凭据记录」的摘要：包含 Host 名，逐 Host 独立。
 // 只改 B 的凭据不会影响 A 的摘要。
+//
+// 摘要输入用「长度前缀 + 字段」编码，不依赖 JSON 的序列化结果，也不靠
+// 分隔符去切分：字段长度先写进去，任何字段内容（哪怕含分隔符）都不会
+// 让两条不同记录拼出同一段字节。
 func recordDigest(host string, r cipherRecord) string {
-	sum := sha256.Sum256([]byte(digestPrefix + host + "|" + r.Nonce + "|" + r.CT))
+	var b bytes.Buffer
+	b.WriteString(digestPrefix)
+	writeField(&b, "record")
+	writeField(&b, host)
+	writeField(&b, r.Nonce)
+	writeField(&b, r.CT)
+	sum := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(sum[:])
 }
 
 // emptyDigest 是「显式删除」的固定摘要。对账看到它，就知道文件里缺这条
-// 记录是用户删除的结果，而不是文件损坏或丢失。
+// 记录是用户删除的结果，而不是文件损坏或丢失。标签与 recordDigest 不同，
+// 两者不可能撞到同一段输入。
 func emptyDigest(host string) string {
-	sum := sha256.Sum256([]byte(digestPrefix + host + "|empty"))
+	var b bytes.Buffer
+	b.WriteString(digestPrefix)
+	writeField(&b, "empty")
+	writeField(&b, host)
+	sum := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(sum[:])
+}
+
+// writeField 写「十进制长度:内容」，是摘要编码里唯一的字段边界来源。
+func writeField(b *bytes.Buffer, s string) {
+	fmt.Fprintf(b, "%d:", len(s))
+	b.WriteString(s)
 }

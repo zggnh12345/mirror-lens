@@ -429,6 +429,40 @@ func TestSetHostCapsNeedsCurrentDigest(t *testing.T) {
 	}
 }
 
+// 摘要编码是契约的一部分：长度前缀、字段顺序、标签都不能悄悄变，
+// 否则已提交的 digest 会全部错位，触发一次无意义的 gen 递增。
+func TestDigestEncodingIsLocked(t *testing.T) {
+	got := recordDigest("quay.io", cipherRecord{Nonce: "AAAA", CT: "BBBB"})
+	want := "1989397636c2a5d15956cd839db8ea3b5eee11363b6e2b99b3729b10369b6e31"
+	if got != want {
+		t.Fatalf("摘要编码变了: %s != %s", got, want)
+	}
+	if e := emptyDigest("quay.io"); e != "58e395ca06ae9d5522c703183e552e1afba9a626a4bb15c9a6b700cc23691adf" {
+		t.Fatalf("空摘要编码变了: %s", e)
+	}
+	// 长度前缀必须挡住「字段边界挪一格」的碰撞：
+	// 朴素拼接 host|a|b|c 与 host|a|b|c 无法区分下面两条记录。
+	a := recordDigest("quay.io", cipherRecord{Nonce: "a|b", CT: "c"})
+	b := recordDigest("quay.io", cipherRecord{Nonce: "a", CT: "b|c"})
+	if a == b {
+		t.Fatal("不同字段切分拼出了同一段摘要输入")
+	}
+}
+
+func TestCredsRecordAndRevokedConflict(t *testing.T) {
+	f := newCredFixture(t, "quay.io")
+	if _, err := f.cs.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	f.mustPut(t, "quay.io", "u", "p")
+	tamper(t, f.path, func(doc map[string]any) {
+		doc["revoked"] = map[string]any{"quay.io": true}
+	})
+	if _, err := f.cs.Reconcile(); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("同时存在密文与删除标记应判损坏，得到 %v", err)
+	}
+}
+
 type failingDB struct{ DB }
 
 func (f *failingDB) ApplyCredChanges([]store.CredChange) error {
