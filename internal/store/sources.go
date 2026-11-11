@@ -475,7 +475,8 @@ type FailureRun struct {
 // 额外冷却无法恢复，调用方不能把结果说成精确恢复。
 //
 // 中性事件不算失败也不算成功：3.5.1 之后看 neutral 列，之前的事件按状态码
-// 判定（401/403/404/410 视为中性）。
+// 判定（401/403/404/410 视为中性）。注意状态码过滤在 SQL 里无条件生效——
+// 旧版可能把 404 写成 ok=0，不能因为 ok=0 就把它算进失败连击。
 func (s *Store) SourceFailureRuns(kind string, perSource int) (map[int64]FailureRun, error) {
 	if perSource <= 0 {
 		perSource = 64
@@ -485,7 +486,7 @@ func (s *Store) SourceFailureRuns(kind string, perSource int) (map[int64]Failure
 			SELECT source_id, ts, ok,
 			       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY id DESC) AS rn
 			FROM source_events
-			WHERE kind=? AND neutral=0 AND (ok=0 OR code NOT IN (401,403,404,410))
+			WHERE kind=? AND neutral=0 AND code NOT IN (401,403,404,410)
 		) WHERE rn <= ?
 		ORDER BY source_id, rn`, kind, perSource)
 	if err != nil {
@@ -539,6 +540,8 @@ type OutcomeRecord struct {
 	Code     int
 	MS       int64
 	Breaker  *BreakerState
+	// Rev 仅用于日志/排障时对账，真正的版本号在 Breaker.Rev 里。
+	Rev int64
 }
 
 // RecordOutcome 原子地记录一次回源结果，并按需更新熔断状态。
@@ -615,13 +618,24 @@ func (s *Store) LoadBreakerStates() ([]BreakerState, error) {
 	return out, rows.Err()
 }
 
-// ClearBreakerStates 在源被删除或改地址时清掉持久化状态：
-// 同一个 id 换了一台服务器，旧熔断不该继续生效。
-func (s *Store) ClearBreakerStates(sourceID int64) {
-	if sourceID == 0 {
-		return
+// neutralCode 是历史事件的兼容判定：这些状态码在旧版本里也可能写成 ok=0。
+func neutralCode(code int) bool {
+	switch code {
+	case 401, 403, 404, 410:
+		return true
 	}
-	_, _ = s.db.Exec(`DELETE FROM breaker_state WHERE source_id=?`, sourceID)
+	return false
+}
+
+// ClearBreakerStates 在源被删除或改地址时清掉持久化状态：
+// 同一个 id 换了一台服务器，旧熔断不该继续生效。删除失败要交给调用方，
+// 不能吞掉——否则内存已清、库里还留着，重启就复活。
+func (s *Store) ClearBreakerStates(sourceID int64) error {
+	if sourceID == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM breaker_state WHERE source_id=?`, sourceID)
+	return err
 }
 
 // RecordSourceEvent 兼容旧调用：只记事件，不动熔断状态。
@@ -658,12 +672,15 @@ func (s *Store) PruneSourceEvents() {
 
 // SourceEvents 返回某个源最近事件的三态计数，供面板/排障使用。
 // 成功 = ok 且非中性；中性 = 404/401 这类「源没坏、只是没给内容」；
-// 失败 = ok=0。三者相加等于样本数，别把中性并进成功。
+// 失败 = ok=0 且非中性状态码。三者相加等于样本数，别把中性并进成功。
+//
+// 升级前的历史事件没有 neutral 列（默认 0），只能按状态码兼容：
+// 401/403/404/410 一律算中性，不论当时 ok 写的是 0 还是 1。
 func (s *Store) SourceEvents(sourceID int64, limit int) (ok, neutral, fail int, lastErrAt int64, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.Query(`SELECT ts, ok, neutral FROM source_events
+	rows, err := s.db.Query(`SELECT ts, ok, neutral, code FROM source_events
 		WHERE source_id = ? ORDER BY ts DESC LIMIT ?`, sourceID, limit)
 	if err != nil {
 		return
@@ -671,12 +688,12 @@ func (s *Store) SourceEvents(sourceID int64, limit int) (ok, neutral, fail int, 
 	defer rows.Close()
 	for rows.Next() {
 		var ts int64
-		var o, n int
-		if err = rows.Scan(&ts, &o, &n); err != nil {
+		var o, n, code int
+		if err = rows.Scan(&ts, &o, &n, &code); err != nil {
 			return
 		}
 		switch {
-		case n == 1:
+		case n == 1 || (n == 0 && neutralCode(code)):
 			neutral++
 		case o == 1:
 			ok++

@@ -152,6 +152,32 @@ type Scheduler struct {
 	// gone 是已删除源的墓碑，挡住迟到回调把状态重建出来。
 	// 用 sync.Map 避开与 Forget（s.mu → loadMu）的反向锁序。
 	gone sync.Map // int64 → struct{}
+
+	// gen 是源的身份代次：删源/改地址时递增。上报在锁内取号，落库前
+	// 再校验一次，跨越 Forget 边界的旧写入会被丢弃。
+	gen map[int64]uint64
+
+	// pmu 串行化所有持久化写入，并让 Forget 能等在飞写入结束再清库。
+	// 只在刷盘时持有，绝不与 s.mu 形成「先 mu 后 pmu」的持锁顺序。
+	pmu sync.Mutex
+	// persistFn 可注入，故障测试用来模拟写库失败。
+	persistFn func(store.OutcomeRecord) error
+
+	// 写库失败后的待重试队列：每个 (kind,id) 只保留 rev 最大的那份，
+	// 退避重试直到成功；跨代次的旧写入直接丢弃。
+	retryMu   sync.Mutex
+	pending   map[string]pendingWrite
+	retryBusy map[string]bool
+	retryWait map[string]time.Duration
+
+	// legacyDone 记录已经做过老库事件兜底的协议：窗口函数只跑一次。
+	legacyDone map[string]bool
+}
+
+// pendingWrite 是一份等待重新落库的结果。
+type pendingWrite struct {
+	rec store.OutcomeRecord
+	gen uint64
 }
 
 func New(st *store.Store, cfg Config) *Scheduler {
@@ -172,6 +198,15 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		gates:  map[int64]*gate{},
 		dyn:    map[int64]*dynState{},
 		leases: newLeaseManager(),
+		gen:    map[int64]uint64{},
+
+		pending:    map[string]pendingWrite{},
+		retryBusy:  map[string]bool{},
+		retryWait:  map[string]time.Duration{},
+		legacyDone: map[string]bool{},
+	}
+	if st != nil {
+		s.persistFn = st.RecordOutcome
 	}
 	s.restoreBreakers()
 	return s
@@ -207,12 +242,21 @@ func (s *Scheduler) restoreBreakers() {
 		if b.Fails <= 0 {
 			continue
 		}
-		until := time.Unix(b.Until, 0)
-		if until.After(now.Add(s.cfg.MaxCooldown)) {
-			until = now.Add(s.cfg.MaxCooldown)
-		}
+		until := capUntil(time.Unix(b.Until, 0), now, s.cfg.MaxCooldown)
 		s.brk[k] = &breaker{fails: b.Fails, until: until}
 	}
+}
+
+// capUntil 把截止时间压到 now+max 之内。时钟异常可能让旧事件时间落在
+// 未来，光限制冷却时长不够，这里限制的是最终时刻。
+func capUntil(u, now time.Time, max time.Duration) time.Time {
+	if max <= 0 {
+		return u
+	}
+	if lim := now.Add(max); u.After(lim) {
+		return lim
+	}
+	return u
 }
 
 func (s *Scheduler) Enabled() bool { return s != nil && s.cfg.Enabled }
@@ -239,6 +283,8 @@ func (s *Scheduler) Forget(id int64) {
 	s.mu.Lock()
 	// 先立墓碑再清状态：晚到的回调看到墓碑才不会再写回来。
 	s.gone.Store(id, struct{}{})
+	// 代次加一：已经取号但还没落库的上报，落库前会发现代次变了而放弃。
+	s.gen[id]++
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.brk, k)
@@ -257,9 +303,27 @@ func (s *Scheduler) Forget(id int64) {
 
 	// 持久化状态也要清：id 可能被新源复用，或者同一 id 换了地址，
 	// 旧熔断不该跟着到下一台服务器上。
+	//
+	// 先拿 pmu 等在飞写入结束，再删库，顺序反了会被迟到的写入塞回来。
+	// 注意这里已经放开 s.mu，不会和上报路径形成 mu→pmu 的反向锁序。
 	if s.st != nil {
-		s.st.ClearBreakerStates(id)
+		s.pmu.Lock()
+		err := s.st.ClearBreakerStates(id)
+		s.pmu.Unlock()
+		if err != nil {
+			log.Printf("调度：清理源 %d 的持久化熔断失败: %v", id, err)
+		}
 	}
+	// 队列里属于这个源的待重试项也一并丢掉。
+	s.retryMu.Lock()
+	for k := range s.pending {
+		if strings.HasSuffix(k, suffix) {
+			delete(s.pending, k)
+			delete(s.retryWait, k)
+			delete(s.retryBusy, k)
+		}
+	}
+	s.retryMu.Unlock()
 	metrics.ForgetSource(id)
 }
 
@@ -321,7 +385,16 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if err != nil {
 		return nil
 	}
-	runs, cerr := s.st.SourceFailureRuns(kind, 64)
+	// 老库兜底只做一次：窗口函数要扫历史事件，不能挂在每次候选刷新上。
+	// 没有持久化状态时它才有意义；一旦跑过就置位，后续刷新直接跳过。
+	s.mu.Lock()
+	needFallback := !s.legacyDone[kind]
+	s.mu.Unlock()
+	var runs map[int64]store.FailureRun
+	var cerr error
+	if needFallback {
+		runs, cerr = s.st.SourceFailureRuns(kind, 64)
+	}
 	mo := s.st.GetSchedOrder()
 
 	s.mu.Lock()
@@ -336,7 +409,9 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	// 按事件顺序还原「连续失败次数」，再用基础退避公式推算截止时间；这是
 	// 近似恢复，不是精确恢复。截止时间仍以最后一条失败事件为基准，不按
 	// 「现在 + 一个周期」重算，否则剩余 10 秒的冷却会被拉长成 5 分钟。
-	if cerr == nil {
+	// 查询失败不置位，下次刷新再试。
+	if needFallback && cerr == nil {
+		s.legacyDone[kind] = true
 		for _, st := range stats {
 			k := pkey(kind, st.ID)
 			r, bad := runs[st.ID]
@@ -353,7 +428,11 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 			if cool > s.cfg.MaxCooldown {
 				cool = s.cfg.MaxCooldown
 			}
-			s.brk[k] = &breaker{fails: r.Fails, until: time.Unix(r.LastTS, 0).Add(cool)}
+			until := time.Unix(r.LastTS, 0).Add(cool)
+			// 旧事件的时间戳可能因为时钟异常落在未来，和持久化恢复一样
+			// 加一道绝对上限，避免造出一个远超 MaxCooldown 的冷却。
+			until = capUntil(until, s.now(), s.cfg.MaxCooldown)
+			s.brk[k] = &breaker{fails: r.Fails, until: until}
 		}
 	}
 	s.manualMode, s.manual = mo.Mode, mo.Orders
@@ -788,15 +867,18 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 			Until: b.until.Unix(), UpdatedAt: now.UnixNano(),
 		}
 	}
+	// 版本号在锁内递增：内存里谁后改，谁的号就大。中性事件不写状态行，
+	// 但也要取号，保证它在重试队列里和失败/成功事件保持同一顺序。
+	s.brev[k]++
+	rev := s.brev[k]
 	if brk != nil {
-		// 版本号在锁内递增：内存里谁后改，谁的号就大。
-		s.brev[k]++
-		brk.Rev = s.brev[k]
+		brk.Rev = rev
 	}
+	gen := s.gen[c.ID]
 	s.mu.Unlock()
 
 	// git 能通说明实现了 smart HTTP，记下来下次不用再试错。
-	if o == OutcomeOK && kind == "git" {
+	if o == OutcomeOK && kind == "git" && s.st != nil {
 		_ = s.st.SetGitCap(c.ID, true)
 	}
 	res := metrics.SourceNeutral
@@ -811,11 +893,126 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 	rec := store.OutcomeRecord{
 		SourceID: c.ID, Kind: kind, OK: o == OutcomeOK,
 		Neutral: o == OutcomeMiss || o == OutcomeAuth,
-		Code:    code, MS: d.Milliseconds(), Breaker: brk,
+		Code:    code, MS: d.Milliseconds(), Breaker: brk, Rev: rev,
 	}
-	if err := s.st.RecordOutcome(rec); err != nil {
-		log.Printf("调度：写回源结果失败（源 %d/%s）: %v", c.ID, kind, err)
+	s.persist(gen, rec)
+}
+
+// persist 把结果写进库。写失败时不能回滚内存——可能已经有更高 rev 的
+// 后续结果——而是把这份结果挂进重试队列，按 key 只保留最新一份，退避
+// 重试直到成功；retry 里的 rev 守卫保证即便乱序也不会用旧状态覆盖新状态。
+func (s *Scheduler) persist(gen uint64, rec store.OutcomeRecord) {
+	k := pkey(rec.Kind, rec.SourceID)
+	if s.persistFn == nil {
+		return
 	}
+	s.pmu.Lock()
+	// 持 pmu 再校验代次：Forget 是「gen++ → 放 mu → 拿 pmu → 删库」，
+	// 所以这里看到的代次若已变，说明清理已经发生，这份写入必须放弃。
+	s.mu.Lock()
+	stale := s.isGone(rec.SourceID) || s.gen[rec.SourceID] != gen
+	s.mu.Unlock()
+	if stale {
+		s.pmu.Unlock()
+		return
+	}
+	err := s.persistFn(rec)
+	s.pmu.Unlock()
+	if err == nil {
+		s.retryMu.Lock()
+		more := false
+		if p, ok := s.pending[k]; ok {
+			if p.rec.Rev <= rec.Rev {
+				delete(s.pending, k)
+			} else {
+				more = true
+			}
+		}
+		s.retryMu.Unlock()
+		if more {
+			s.schedulePending(k, 200*time.Millisecond)
+		}
+		return
+	}
+	// 事务是原子的：返回错误时事件和状态都没落库，重试不会重复写事件。
+	log.Printf("调度：写回源结果失败（源 %d/%s rev=%d），进入重试: %v", rec.SourceID, rec.Kind, rec.Rev, err)
+	s.enqueue(k, gen, rec)
+}
+
+func (s *Scheduler) enqueue(k string, gen uint64, rec store.OutcomeRecord) {
+	s.retryMu.Lock()
+	if old, ok := s.pending[k]; ok && old.rec.Rev >= rec.Rev {
+		s.retryMu.Unlock()
+		return
+	}
+	s.pending[k] = pendingWrite{rec: rec, gen: gen}
+	s.retryMu.Unlock()
+	s.schedulePending(k, 200*time.Millisecond)
+}
+
+func (s *Scheduler) schedulePending(k string, d time.Duration) {
+	s.retryMu.Lock()
+	if _, ok := s.pending[k]; !ok {
+		s.retryBusy[k] = false
+		s.retryMu.Unlock()
+		return
+	}
+	if s.retryBusy[k] {
+		s.retryMu.Unlock()
+		return
+	}
+	s.retryBusy[k] = true
+	if d < 200*time.Millisecond {
+		d = 200 * time.Millisecond
+	}
+	s.retryWait[k] = d
+	s.retryMu.Unlock()
+	time.AfterFunc(d, func() { s.flushPending(k) })
+}
+
+func (s *Scheduler) flushPending(k string) {
+	s.retryMu.Lock()
+	p, ok := s.pending[k]
+	s.retryMu.Unlock()
+	if !ok {
+		s.schedulePending(k, 0)
+		return
+	}
+	s.pmu.Lock()
+	// 跨代次的旧写入（源被删/换地址）直接丢弃，不能清完再写回来。
+	s.mu.Lock()
+	stale := s.isGone(p.rec.SourceID) || s.gen[p.rec.SourceID] != p.gen
+	s.mu.Unlock()
+	if stale {
+		s.pmu.Unlock()
+		s.retryMu.Lock()
+		delete(s.pending, k)
+		s.retryBusy[k] = false
+		delete(s.retryWait, k)
+		s.retryMu.Unlock()
+		return
+	}
+	err := s.persistFn(p.rec)
+	s.pmu.Unlock()
+	if err == nil {
+		s.retryMu.Lock()
+		if cur, still := s.pending[k]; still && cur.rec.Rev <= p.rec.Rev {
+			delete(s.pending, k)
+		}
+		s.retryBusy[k] = false
+		delete(s.retryWait, k)
+		s.retryMu.Unlock()
+		return
+	}
+	s.retryMu.Lock()
+	d := s.retryWait[k] * 2
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	s.retryBusy[k] = false
+	s.retryMu.Unlock()
+	log.Printf("调度：重试写回仍失败（源 %d/%s）：%v", p.rec.SourceID, p.rec.Kind, err)
+	s.schedulePending(k, d)
 }
 
 // Snapshot 给面板看：每个协议当前的顺序与分数。

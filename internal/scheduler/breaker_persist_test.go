@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -365,5 +366,97 @@ func TestTombstoneBlocksLegacyFallback(t *testing.T) {
 	s2.ReportOutcome(kind, c, OutcomeFail, time.Millisecond, Hint{Code: 429})
 	if b := brkOf(New(st, cfg), kind, id); b == nil || b.fails != 1 {
 		t.Fatalf("重启后新失败应写入，实际 %+v", b)
+	}
+}
+
+// 旧库里 ok=0 的 404/401/403/410 同样是中性，不能算失败连击。
+func TestLegacyNeutralCodesNeverFail(t *testing.T) {
+	for _, code := range []int{401, 403, 404, 410} {
+		st := newStore(t)
+		id := addSource(t, st, "https://a.example", true, 100, 1000)
+		st.RecordSourceEvent(id, "docker", false, 5, code)
+		s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+		s.Candidates("docker")
+		if b := brkOf(s, "docker", id); b != nil {
+			t.Fatalf("旧库 ok=0 code=%d 不该恢复熔断，实际 %+v", code, b)
+		}
+	}
+}
+
+// 写库失败的当前结果必须靠重试收敛，不能内存恢复、库里还熔断。
+func TestPersistFailureConverges(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	cfg := Config{Enabled: true, FailCooldown: time.Minute}
+	s := New(st, cfg)
+	c := candOf(id, "a")
+	real := s.persistFn
+	var mu sync.Mutex
+	fails := 2
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		n := fails
+		if fails > 0 {
+			fails--
+		}
+		mu.Unlock()
+		if n > 0 {
+			return errors.New("disk full")
+		}
+		return real(r)
+	}
+	s.ReportOutcome("docker", c, OutcomeOK, time.Millisecond, Hint{Code: 200})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, _ := st.LoadBreakerStates()
+		if len(rows) == 1 && rows[0].Fails == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("重试未收敛，rows=%+v", rows)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Forget 期间在飞的写入不能在清理之后把旧状态写回来。
+func TestForgetDropsPendingRetry(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	cfg := Config{Enabled: true, FailCooldown: time.Minute}
+	s := New(st, cfg)
+	s.persistFn = func(store.OutcomeRecord) error { return errors.New("down") }
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.Forget(id)
+	time.Sleep(600 * time.Millisecond)
+	rows, _ := st.LoadBreakerStates()
+	if len(rows) != 0 {
+		t.Fatalf("Forget 之后不该再有持久化状态，实际 %+v", rows)
+	}
+}
+
+// 截止时间上限：旧事件时间戳落在未来时也不能超过 now+MaxCooldown。
+func TestCapUntil(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if got := capUntil(now.Add(24*time.Hour), now, time.Hour); !got.Equal(now.Add(time.Hour)) {
+		t.Fatalf("应截到 now+MaxCooldown，实际 %v", got)
+	}
+	if got := capUntil(now.Add(10*time.Minute), now, time.Hour); !got.Equal(now.Add(10 * time.Minute)) {
+		t.Fatalf("未超限不该改，实际 %v", got)
+	}
+}
+
+// 老库兜底每个协议只跑一次，后续刷新不再扫历史事件。
+func TestLegacyFallbackRunsOnce(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	s.Candidates("docker")
+	// 第一次之后的旧事件不应再被应用。
+	st.RecordSourceEvent(id, "docker", false, 10, 429)
+	s.Invalidate()
+	s.Candidates("docker")
+	if b := brkOf(s, "docker", id); b != nil {
+		t.Fatalf("兜底应只执行一次，实际又恢复了 %+v", b)
 	}
 }

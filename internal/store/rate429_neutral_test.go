@@ -60,12 +60,13 @@ func TestNeutralEventsAreStillRecorded(t *testing.T) {
 	st.RecordSourceEvent(id, "docker", true, 20, 404)
 	st.RecordSourceEvent(id, "docker", true, 20, 401)
 
-	okN, _, failN, _, err := st.SourceEvents(id, 10)
+	okN, neutralN, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatalf("读事件: %v", err)
 	}
-	if okN != 2 || failN != 0 {
-		t.Fatalf("中性事件应保留为 ok=2/fail=0，实际 ok=%d fail=%d", okN, failN)
+	// 三态口径：404/401 是中性，不是成功。
+	if okN != 0 || neutralN != 2 || failN != 0 {
+		t.Fatalf("中性事件应保留为 ok=0/neutral=2/fail=0，实际 %d/%d/%d", okN, neutralN, failN)
 	}
 
 	var n int

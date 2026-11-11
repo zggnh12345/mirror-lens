@@ -162,3 +162,47 @@ func TestTombstoneKeepsRev(t *testing.T) {
 		t.Fatalf("重启后 rev 应从墓碑续上，实际 %+v", rows)
 	}
 }
+
+// 旧版把 404 写成 ok=0 时，也不能进入失败连击。
+func TestLegacyFailFlagWithNeutralCode(t *testing.T) {
+	st := openTest(t)
+	id, err := st.AddSource(Source{BaseURL: "https://a.example", Name: "a", DockerCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatalf("加源: %v", err)
+	}
+	for _, code := range []int{401, 403, 404, 410} {
+		st.RecordSourceEvent(id, "docker", false, 5, code)
+	}
+	runs, err := st.SourceFailureRuns("docker", 64)
+	if err != nil {
+		t.Fatalf("查连击: %v", err)
+	}
+	if r := runs[id]; r.Fails != 0 {
+		t.Fatalf("ok=0 的中性状态码不该算失败，实际 %+v", r)
+	}
+	st.RecordSourceEvent(id, "docker", false, 5, 429)
+	if runs, _ = st.SourceFailureRuns("docker", 64); runs[id].Fails != 1 {
+		t.Fatalf("429 应算一次失败，实际 %+v", runs[id])
+	}
+}
+
+// 历史事件没有 neutral 列，三态统计要按状态码兼容。
+func TestSourceEventsLegacyCounts(t *testing.T) {
+	st := openTest(t)
+	id, err := st.AddSource(Source{BaseURL: "https://a.example", Name: "a", DockerCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatalf("加源: %v", err)
+	}
+	st.RecordSourceEvent(id, "docker", false, 5, 404)
+	st.RecordSourceEvent(id, "docker", false, 5, 401)
+	st.RecordSourceEvent(id, "docker", true, 5, 404)
+	st.RecordSourceEvent(id, "docker", true, 5, 200)
+	st.RecordSourceEvent(id, "docker", false, 5, 500)
+	okN, neutralN, failN, _, err := st.SourceEvents(id, 20)
+	if err != nil {
+		t.Fatalf("统计: %v", err)
+	}
+	if okN != 1 || neutralN != 3 || failN != 1 {
+		t.Fatalf("三态计数应为 1/3/1，实际 %d/%d/%d", okN, neutralN, failN)
+	}
+}
