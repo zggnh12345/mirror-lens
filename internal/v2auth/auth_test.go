@@ -145,6 +145,92 @@ func TestDoRejectsForeignRealm(t *testing.T) {
 	}
 }
 
+// token_method=POST 尚未实现：必须显式失败，且一个请求都不发。
+func TestTokenMethodPostRejected(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Www-Authenticate", `Bearer realm="`+srvURL(r)+`/token",service="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
+	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
+		Username: "u", Password: "p", TokenMethod: "POST", TokenAuth: "basic",
+	}}
+	_, err := a.Do(context.Background(), "quay.io", req, snap, "")
+	if !errors.Is(err, ErrTokenMethodUnsupported) {
+		t.Fatalf("POST 应显式拒绝，得到 %v", err)
+	}
+	// 首个 /v2/ 请求本身会发出，但 token 端点不能被访问。
+	if hits != 1 {
+		t.Fatalf("不应继续请求 token 端点，实际 %d 次", hits)
+	}
+}
+
+// token_auth=none 即使快照里残留用户名密码，也不能附带 Basic。
+func TestTokenAuthNoneSendsNoBasic(t *testing.T) {
+	var tokenAuth string
+	var seen bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenAuth, seen = r.Header.Get("Authorization"), true
+			w.Write([]byte(`{"token":"t"}`))
+			return
+		}
+		w.Header().Set("Www-Authenticate", `Bearer realm="`+srvURL(r)+`/token",service="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
+	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
+		Username: "u", Password: "p", TokenAuth: "none",
+	}}
+	resp, err := a.Do(context.Background(), "quay.io", req, snap, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !seen || tokenAuth != "" {
+		t.Fatalf("token_auth=none 不应带 Basic，实际 %q", tokenAuth)
+	}
+}
+
+// token_auth=basic 但快照没有凭据：显式报错，不去猜。
+func TestTokenAuthBasicRequiresCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Www-Authenticate", `Bearer realm="`+srvURL(r)+`/token",service="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
+	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{TokenAuth: "basic"}}
+	if _, err := a.Do(context.Background(), "quay.io", req, snap, ""); !errors.Is(err, ErrCredentialsMissing) {
+		t.Fatalf("缺凭据应报错，得到 %v", err)
+	}
+}
+
+func TestTokenAuthUnknownValue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Www-Authenticate", `Bearer realm="`+srvURL(r)+`/token",service="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
+	snap := CredentialSnapshot{Credentials: Credentials{Username: "u", TokenAuth: "digest"}}
+	if _, err := a.Do(context.Background(), "quay.io", req, snap, ""); !errors.Is(err, ErrTokenAuthUnsupported) {
+		t.Fatalf("未知认证方式应报错，得到 %v", err)
+	}
+}
+
 func TestDoTokenFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {

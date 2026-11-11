@@ -23,12 +23,27 @@ var (
 	ErrRealmDenied = errors.New("认证 Realm 不在该 Host 的白名单内")
 	// ErrNoRealm 表示 401 响应里没有可用的 Realm。
 	ErrNoRealm = errors.New("401 未提供可用的认证 Realm")
+	// ErrTokenMethodUnsupported 表示配置要求了尚未实现的 Token 获取方式。
+	// 必须显式失败，不能静默按 GET 处理。
+	ErrTokenMethodUnsupported = errors.New("Token 获取方式暂不支持")
+	// ErrTokenAuthUnsupported 表示 Token 端点的认证方式不在支持范围。
+	ErrTokenAuthUnsupported = errors.New("Token 认证方式暂不支持")
+	// ErrCredentialsMissing 表示 token_auth=basic 但快照里没有凭据。
+	ErrCredentialsMissing = errors.New("token_auth=basic 但快照没有凭据")
 )
 
-// Credentials 是某 Host 的一组凭据；零值表示匿名。
+// Credentials 是某 Host 的一组凭据与 Token 端点配置；零值表示匿名 + GET。
+//
+// TokenMethod 与 TokenAuth 是凭据模型的一部分，不能在实现层被忽略：
+//   - TokenMethod: ""/"GET" 支持；"POST" 暂不支持，显式报错。
+//   - TokenAuth:   "" 表示有凭据则 basic、无凭据则 none；
+//     "none" 永不附带 Basic（即使快照里残留用户名密码）；
+//     "basic" 必须带 Basic，缺凭据时报错。
 type Credentials struct {
-	Username string
-	Password string
+	Username    string
+	Password    string
+	TokenMethod string
+	TokenAuth   string
 }
 
 // Empty 报告是否没有凭据。
@@ -217,6 +232,30 @@ func (a *Authenticator) send(ctx context.Context, req *http.Request, token strin
 	return a.client.Do(r)
 }
 
+// tokenAuthMode 落实 token_method/token_auth 契约。
+func (c Credentials) tokenAuthMode() (bool, error) {
+	switch strings.ToUpper(strings.TrimSpace(c.TokenMethod)) {
+	case "", "GET":
+	case "POST":
+		return false, fmt.Errorf("%w: token_method=POST 尚未实现，不按 GET 降级", ErrTokenMethodUnsupported)
+	default:
+		return false, fmt.Errorf("%w: token_method=%q", ErrTokenMethodUnsupported, c.TokenMethod)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.TokenAuth)) {
+	case "":
+		return !c.Empty(), nil
+	case "none":
+		return false, nil
+	case "basic":
+		if c.Empty() {
+			return false, ErrCredentialsMissing
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("%w: token_auth=%q", ErrTokenAuthUnsupported, c.TokenAuth)
+	}
+}
+
 func (a *Authenticator) token(ctx context.Context, ch Challenge, creds Credentials) (string, error) {
 	ru, err := url.Parse(ch.Realm)
 	if err != nil {
@@ -236,7 +275,11 @@ func (a *Authenticator) token(ctx context.Context, ch Challenge, creds Credentia
 		return "", err
 	}
 	req.Header.Set("User-Agent", a.ua)
-	if !creds.Empty() {
+	useBasic, err := creds.tokenAuthMode()
+	if err != nil {
+		return "", err
+	}
+	if useBasic {
 		req.SetBasicAuth(creds.Username, creds.Password)
 	}
 	resp, err := a.client.Do(req)

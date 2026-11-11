@@ -15,7 +15,11 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
-const testManifest = `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:aaa"},"layers":[]}`
+const (
+	dockerManifest = `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:aaa"},"layers":[]}`
+	ociManifest    = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":"sha256:bbb"},"layers":[]}`
+	schema1Body    = `{"schemaVersion":1,"name":"library/alpine","tag":"latest","fsLayers":[]}`
+)
 
 func digestOf(s string) string {
 	sum := sha256.Sum256([]byte(s))
@@ -24,8 +28,9 @@ func digestOf(s string) string {
 
 // fakeHost 模拟一个「按路径格式区分行为」的镜像源。
 type fakeHost struct {
-	native    string // ok / 404 / unsupported / 500 / html
+	native    string // ok / oci / schema1 / plainjson / html / 404 / name_unknown / name_invalid / unsupported / 500
 	prefix    string
+	rootHTML  bool
 	declared  string // 覆盖 Docker-Content-Digest；空则用真实值
 	tokenHits int32
 	basicUser string
@@ -46,6 +51,11 @@ func (f *fakeHost) start(t *testing.T) *httptest.Server {
 			return
 		}
 		if r.URL.Path == "/v2/" {
+			if f.rootHTML {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte("<!doctype html><html>login</html>"))
+				return
+			}
 			w.Write([]byte(`{}`))
 			return
 		}
@@ -65,21 +75,31 @@ func (f *fakeHost) start(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		body := testManifestFor(mode)
 		switch mode {
-		case "ok":
+		case "ok", "oci":
 			if f.declared != "" {
 				w.Header().Set("Docker-Content-Digest", f.declared)
 			} else {
-				w.Header().Set("Docker-Content-Digest", digestOf(testManifest))
+				w.Header().Set("Docker-Content-Digest", digestOf(body))
 			}
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-			w.Write([]byte(testManifest))
+			w.Header().Set("Content-Type", contentTypeFor(mode))
+			w.Write([]byte(body))
+		case "schema1":
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v1+json")
+			w.Write([]byte(body))
+		case "plainjson":
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte(body))
 		case "html":
 			w.Header().Set("Content-Type", "text/html")
 			w.Write([]byte("<html>hi</html>"))
-		case "404":
+		case "name_invalid":
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"errors":[{"code":"NAME_INVALID","message":"invalid repository name"}]}`))
+		case "name_unknown":
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"errors":[{"code":"MANIFEST_UNKNOWN"}]}`))
+			w.Write([]byte(`{"errors":[{"code":"NAME_UNKNOWN"}]}`))
 		case "unsupported":
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte(`{"errors":[{"code":"UNSUPPORTED"}]}`))
@@ -87,10 +107,29 @@ func (f *fakeHost) start(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errors":[{"code":"MANIFEST_UNKNOWN"}]}`))
 		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func testManifestFor(mode string) string {
+	switch mode {
+	case "oci":
+		return ociManifest
+	case "schema1":
+		return schema1Body
+	default:
+		return dockerManifest
+	}
+}
+
+func contentTypeFor(mode string) string {
+	if mode == "oci" {
+		return "application/vnd.oci.image.manifest.v1+json"
+	}
+	return "application/vnd.docker.distribution.manifest.v2+json"
 }
 
 func runProbe(t *testing.T, f *fakeHost, expected string, creds v2auth.Credentials) RegistryHostOutcome {
@@ -108,67 +147,115 @@ func runProbe(t *testing.T, f *fakeHost, expected string, creds v2auth.Credentia
 
 func TestRegistryHostNativeOK(t *testing.T) {
 	f := &fakeHost{native: "ok", prefix: "404"}
-	out := runProbe(t, f, digestOf(testManifest), v2auth.Credentials{})
-	if out.Cap != capYes || out.Verdict != VerdictYes {
-		t.Fatalf("应判 cap=1，得到 cap=%d verdict=%q err=%q", out.Cap, out.Verdict, out.Native.Error)
+	out := runProbe(t, f, digestOf(dockerManifest), v2auth.Credentials{})
+	if out.Cap != capYes || out.Verdict != VerdictYes || out.Selected != modeNative {
+		t.Fatalf("应判 cap=1/native，得到 %+v", out)
 	}
-	if out.Native.Mode != modeNative || out.Native.DigestOK != 1 {
+	if out.Native.DigestOK != 1 || out.Native.MediaType != "application/vnd.docker.distribution.manifest.v2+json" {
 		t.Fatalf("native 结论不对: %+v", out.Native)
 	}
-	if out.Native.Digest != digestOf(testManifest) {
+	if out.Native.Digest != digestOf(dockerManifest) {
 		t.Fatalf("摘要应自己算: %s", out.Native.Digest)
 	}
 	if out.HostPrefix.Cap != capUnknown {
-		t.Fatalf("prefix 404 只能算未知，不能变成 0: %+v", out.HostPrefix)
+		t.Fatalf("prefix 404 只能算未知: %+v", out.HostPrefix)
 	}
 }
 
-// 响应头说的摘要与正文不符：必须自己算出来并判 2。
-func TestRegistryHostDeclaredDigestLies(t *testing.T) {
-	f := &fakeHost{native: "ok", prefix: "404", declared: "sha256:" + strings.Repeat("0", 64)}
+func TestRegistryHostOCIManifestAccepted(t *testing.T) {
+	f := &fakeHost{native: "oci", prefix: "404"}
+	out := runProbe(t, f, digestOf(ociManifest), v2auth.Credentials{})
+	if out.Cap != capYes {
+		t.Fatalf("OCI manifest 应判 1，得到 cap=%d err=%q", out.Cap, out.Native.Error)
+	}
+	if out.Native.MediaType != "application/vnd.oci.image.manifest.v1+json" {
+		t.Fatalf("媒体类型未记录: %q", out.Native.MediaType)
+	}
+}
+
+// 摘要对、类型不对：不算能力。
+func TestRegistryHostRejectsUnsupportedMediaType(t *testing.T) {
+	for _, mode := range []string{"schema1", "plainjson"} {
+		out := runProbe(t, &fakeHost{native: mode, prefix: "404"}, "", v2auth.Credentials{})
+		if out.Cap != capUnknown || out.Native.Cap != capUnknown {
+			t.Fatalf("%s 应判未知，得到 cap=%d native=%d", mode, out.Cap, out.Native.Cap)
+		}
+		if !strings.Contains(out.Native.Error, "媒体类型") {
+			t.Fatalf("%s 的错误未说明媒体类型: %q", mode, out.Native.Error)
+		}
+	}
+}
+
+// 两条路径都篡改，才是 2。
+func TestRegistryHostBothTampered(t *testing.T) {
+	f := &fakeHost{native: "ok", prefix: "ok", declared: "sha256:" + strings.Repeat("0", 64)}
 	out := runProbe(t, f, "", v2auth.Credentials{})
-	if out.Cap != capMismatch || !out.Native.Tampered {
-		t.Fatalf("头与正文不符应判 2，得到 cap=%d tampered=%v err=%q", out.Cap, out.Native.Tampered, out.Native.Error)
+	if out.Cap != capMismatch || !out.Native.Tampered || !out.HostPrefix.Tampered {
+		t.Fatalf("两条路径都篡改应判 2，得到 %+v", out)
 	}
 }
 
-// 内容与官方基准不同：判 2。
+// 一条不一致、另一条没验证完：不下结论，但保留证据。
+func TestRegistryHostTamperedWithUnknownOtherPath(t *testing.T) {
+	f := &fakeHost{native: "ok", prefix: "500", declared: "sha256:" + strings.Repeat("0", 64)}
+	out := runProbe(t, f, "", v2auth.Credentials{})
+	if out.Cap != capUnknown {
+		t.Fatalf("2 + 未知应判 -1，得到 cap=%d", out.Cap)
+	}
+	if len(out.Warnings) == 0 {
+		t.Fatal("不一致证据必须保留告警")
+	}
+}
+
+// 内容与官方基准不同：两条路径都比对，才判 2。
 func TestRegistryHostMismatchAgainstOfficial(t *testing.T) {
-	f := &fakeHost{native: "ok", prefix: "404"}
+	f := &fakeHost{native: "ok", prefix: "ok"}
 	out := runProbe(t, f, "sha256:"+strings.Repeat("1", 64), v2auth.Credentials{})
 	if out.Cap != capMismatch || out.Native.DigestOK != 0 {
 		t.Fatalf("与官方不一致应判 2，得到 cap=%d digest_ok=%d", out.Cap, out.Native.DigestOK)
 	}
 }
 
-// native 不支持、prefix 可用：cap=1，且记录命中 prefix。
+// 2 + 1：选中的路径通过完整校验，cap=1；但必须保留异常告警。
+func TestRegistryHostVerifiedWinsOverMismatch(t *testing.T) {
+	verdict, got, sel := aggregate(
+		PathOutcome{Cap: capMismatch},
+		PathOutcome{Cap: capYes},
+	)
+	if verdict != VerdictYes || got != capYes || sel != modeHostPrefix {
+		t.Fatalf("2+1 应选 host_prefix 并判 1，得到 %s/%d/%s", verdict, got, sel)
+	}
+	w := collectWarnings(PathOutcome{Cap: capMismatch}, PathOutcome{Cap: capYes}, modeHostPrefix, capYes)
+	if len(w) == 0 {
+		t.Fatal("未选中路径的不一致必须留下告警")
+	}
+}
+
+// native 不支持、prefix 可用。
 func TestRegistryHostPrefixOnly(t *testing.T) {
 	f := &fakeHost{native: "404", prefix: "ok"}
-	out := runProbe(t, f, digestOf(testManifest), v2auth.Credentials{})
-	if out.Cap != capYes || out.HostPrefix.Cap != capYes {
-		t.Fatalf("prefix 可用应判 1，得到 %+v", out)
+	out := runProbe(t, f, digestOf(dockerManifest), v2auth.Credentials{})
+	if out.Cap != capYes || out.Selected != modeHostPrefix {
+		t.Fatalf("prefix 可用应选 host_prefix，得到 %+v", out)
 	}
 	if out.HostPrefix.Path != "/v2/quay.io/library/alpine/manifests/latest" {
 		t.Fatalf("prefix 路径不对: %s", out.HostPrefix.Path)
 	}
 }
 
-// 双 404 只是「没这个仓库」，绝不能写 0，也不能写 1。
+// 双 404 只是「没这个仓库」，绝不能写 0。
 func TestRegistryHostDouble404IsUnknown(t *testing.T) {
 	f := &fakeHost{native: "404", prefix: "404"}
 	out := runProbe(t, f, "", v2auth.Credentials{})
 	if out.Cap != capUnknown {
 		t.Fatalf("双 404 应保持 -1，得到 cap=%d", out.Cap)
 	}
-	if out.Cap == capNo {
-		t.Fatal("双 404 不得写成 cap=0")
-	}
 	if len(out.Warnings) == 0 {
 		t.Fatal("应记录「双 404 只作负面证据」的告警")
 	}
 }
 
-// 只有明确的「不支持该路径格式」才写 0。
+// 两条路径都明确 UNSUPPORTED：0。
 func TestRegistryHostExplicitUnsupported(t *testing.T) {
 	f := &fakeHost{native: "unsupported", prefix: "unsupported"}
 	out := runProbe(t, f, "", v2auth.Credentials{})
@@ -186,6 +273,47 @@ func TestRegistryHostPartialEvidenceStaysUnknown(t *testing.T) {
 	}
 }
 
+// NAME_INVALID 有 native 对照（同仓库被正确识别）才升级为 0。
+func TestRegistryHostNameInvalidWithNativeControl(t *testing.T) {
+	f := &fakeHost{native: "ok", prefix: "name_invalid"}
+	out := runProbe(t, f, digestOf(dockerManifest), v2auth.Credentials{})
+	if out.HostPrefix.Cap != capNo || !strings.Contains(out.HostPrefix.Error, "路径格式被拒绝") {
+		t.Fatalf("有 native 对照时 prefix 应判 0: %+v", out.HostPrefix)
+	}
+	if out.Cap != capYes || out.Selected != modeNative {
+		t.Fatalf("聚合仍应是 native 可用: %+v", out)
+	}
+}
+
+// 没有对照证据时，NAME_INVALID 只是疑似，不能写 0。
+func TestRegistryHostNameInvalidWithoutControl(t *testing.T) {
+	f := &fakeHost{native: "500", prefix: "name_invalid"}
+	out := runProbe(t, f, "", v2auth.Credentials{})
+	if out.HostPrefix.Cap != capUnknown {
+		t.Fatalf("缺少对照时 prefix 应保持 -1，得到 %+v", out.HostPrefix)
+	}
+	if out.Cap != capUnknown {
+		t.Fatalf("整体应保持 -1，得到 cap=%d", out.Cap)
+	}
+}
+
+// native 给标准 NAME_UNKNOWN 也算「仓库名被正确识别」的对照。
+func TestRegistryHostNameUnknownActsAsControl(t *testing.T) {
+	f := &fakeHost{native: "name_unknown", prefix: "name_invalid"}
+	out := runProbe(t, f, "", v2auth.Credentials{})
+	if out.HostPrefix.Cap != capNo {
+		t.Fatalf("NAME_UNKNOWN 应作为对照，得到 %+v", out.HostPrefix)
+	}
+}
+
+// /v2/ 返回 HTML 不能证明「路径格式不支持」，只能算未知。
+func TestRegistryHostHTMLIsUnknown(t *testing.T) {
+	out := runProbe(t, &fakeHost{native: "ok", prefix: "ok", rootHTML: true}, "", v2auth.Credentials{})
+	if out.Cap != capUnknown {
+		t.Fatalf("HTML 应判 -1，得到 cap=%d", out.Cap)
+	}
+}
+
 func TestRegistryHostServerErrorIsUnknown(t *testing.T) {
 	f := &fakeHost{native: "500", prefix: "500"}
 	out := runProbe(t, f, "", v2auth.Credentials{})
@@ -197,7 +325,7 @@ func TestRegistryHostServerErrorIsUnknown(t *testing.T) {
 // 凭据只用于换 Token，且每条路径各自换一次。
 func TestRegistryHostUsesCredentialSnapshot(t *testing.T) {
 	f := &fakeHost{native: "ok", prefix: "ok", basicUser: "robot"}
-	out := runProbe(t, f, digestOf(testManifest), v2auth.Credentials{Username: "robot", Password: "pw"})
+	out := runProbe(t, f, digestOf(dockerManifest), v2auth.Credentials{Username: "robot", Password: "pw"})
 	if out.Cap != capYes {
 		t.Fatalf("带凭据应成功，得到 cap=%d err=%q", out.Cap, out.Native.Error)
 	}
@@ -225,6 +353,35 @@ func TestRegistryHostRejectsHubAndGhcr(t *testing.T) {
 		out := ProbeRegistryHost(context.Background(), RegistryHostProbe{Host: h})
 		if out.Cap != capUnknown || out.Native.Error == "" {
 			t.Fatalf("%q 不应进入 Host 探测: %+v", h, out)
+		}
+	}
+}
+
+// 冻结的聚合表；改动任何一行都会让 cap 与 path_mode 对不上。
+func TestAggregateMatrix(t *testing.T) {
+	cases := []struct {
+		native, prefix int
+		cap            int
+		selected       string
+	}{
+		{1, 0, 1, modeNative},
+		{0, 1, 1, modeHostPrefix},
+		{1, -1, 1, modeNative},
+		{-1, 1, 1, modeHostPrefix},
+		{1, 1, 1, modeNative},
+		{2, 1, 1, modeHostPrefix},
+		{1, 2, 1, modeNative},
+		{2, 2, 2, ""},
+		{0, 0, 0, ""},
+		{-1, -1, -1, ""},
+		{0, -1, -1, ""},
+		{2, -1, -1, ""},
+	}
+	for _, c := range cases {
+		_, got, sel := aggregate(PathOutcome{Cap: c.native}, PathOutcome{Cap: c.prefix})
+		if got != c.cap || sel != c.selected {
+			t.Fatalf("(%d,%d) 应为 cap=%d selected=%q，得到 cap=%d selected=%q",
+				c.native, c.prefix, c.cap, c.selected, got, sel)
 		}
 	}
 }
