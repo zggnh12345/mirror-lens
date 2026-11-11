@@ -96,6 +96,9 @@ type Candidate struct {
 	RangeAt  int64 `json:"range_at,omitempty"`
 	// SpeedKBps 是该源最近的速度估计（EWMA），用来估并行/单流哪条更快。
 	SpeedKBps int64 `json:"speed_kbps,omitempty"`
+	// RegistryPath 是该源对 Registry Host 已验证的路径模式（native | host_prefix）。
+	// 仅 registry:<host> 候选有值；一个候选只绑定一条路径，不保留路径回退。
+	RegistryPath string `json:"registry_path_mode,omitempty"`
 }
 
 type stickyPick struct {
@@ -278,7 +281,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	s.manualMode, s.manual = mo.Mode, mo.Orders
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps, RegistryPath: st.RegistryPath})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.orderN(kind, items, limit)
@@ -565,6 +568,30 @@ func (s *Scheduler) Rewrite(kind string, base *url.URL, c Candidate) (*url.URL, 
 	cb, err := url.Parse(strings.TrimRight(c.BaseURL, "/"))
 	if err != nil || cb.Host == "" {
 		return nil, false
+	}
+	// registry:<host> 的路径只由候选自己已验证的模式决定，不改道、不回退：
+	// native      → /v2/<name>/...
+	// host_prefix → /v2/<host>/<name>/... 是独立的一族，不在这里生成。
+	if kind == "registry" {
+		return nil, false
+	}
+	if host, ok := strings.CutPrefix(kind, "registry:"); ok {
+		if host == "" || !strings.EqualFold(host, base.Host) {
+			return nil, false
+		}
+		u := *base
+		u.Scheme, u.Host = cb.Scheme, cb.Host
+		switch c.RegistryPath {
+		case "native":
+			u.Path = base.Path
+		case "host_prefix":
+			u.Path = "/v2/" + host + strings.TrimPrefix(base.Path, "/v2")
+		default:
+			// 空值/未知模式一律拒绝，绝不猜一条路径出来。
+			return nil, false
+		}
+		u.RawQuery = base.RawQuery
+		return &u, true
 	}
 	if kind == "docker" || kind == "ghcr" {
 		u := *base

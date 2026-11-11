@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"math"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 )
 
 // minProxySpeedBytes 是单条真实吞吐样本的最小字节数。
@@ -21,6 +24,11 @@ const minProxySpeedBytes = 16 << 20
 // git 不映射：它有自己的 git_cap，且 github 探针测的是 4MB raw 抓取，
 // 与 git smart HTTP 的吞吐口径不同，借用会污染解释。
 func sampleKind(kind string) string {
+	// Registry 的每个 Host 是独立调度族，但探测样本按「registry」共用一个族：
+	// 样本只反映这台源到 Registry Host 的链路质量，分 host 反而让新 Host 没有先验。
+	if strings.HasPrefix(kind, "registry:") {
+		return "registry"
+	}
 	switch kind {
 	case "raw", "release":
 		return "github"
@@ -58,6 +66,9 @@ type SourceStat struct {
 	// RangeAt 是那次预检的时间戳，过期要重测。
 	RangeCap int   `json:"range_cap"`
 	RangeAt  int64 `json:"range_at"`
+	// RegistryPath 是该源对 RepoHost 已验证的路径模式（native | host_prefix）。
+	// 只有 registry:<host> 查询会填；调度时与 RegistryCap 一起作为不可拆分的选路依据。
+	RegistryPath string `json:"registry_path_mode,omitempty"`
 }
 
 const sourceSampleWindow = 10
@@ -69,7 +80,13 @@ const HealthFails = 3
 // Family 把请求类型归到协议族：docker / ghcr / github / git。
 // raw、release 是 GitHub 内容的另一种地址形态，健康度跟 github 一致。
 func Family(kind string) string {
+	// Registry 是独立协议族：既不能记进 docker，也不能落进 default 的 github。
+	if strings.HasPrefix(kind, "registry:") {
+		return "registry"
+	}
 	switch kind {
+	case "registry":
+		return "registry"
 	case "docker":
 		return "docker"
 	case "ghcr":
@@ -136,6 +153,15 @@ func (s *Store) LastProbeAt(id int64, family string) (int64, error) {
 // 能力按协议分开记：GitHub 前缀代理能代 raw/release，但多数做不了 git
 // smart HTTP，git 用单独的 git_cap。
 func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
+	// registry:<host> 是独立调度族：只认 registry_cap 与已验证的路径模式，
+	// 绝不借用 docker_cap/ghcr_cap 间接放行。
+	if raw, ok := strings.CutPrefix(kind, "registry:"); ok {
+		host, err := registryhost.Check(raw)
+		if err != nil {
+			return nil, nil
+		}
+		return s.registryCandidates(host)
+	}
 	col := ""
 	switch kind {
 	case "docker":
@@ -189,7 +215,55 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	return out, nil
 }
 
-// sourceSamples 取最近 N 条样本，返回中位延迟与中位速度。
+// registryCandidates 返回某个 Registry Host 下通过验证的源。
+//
+// 选路依据是不可拆分的一组条件：cap=1（已验证）+ 已知路径模式 + Host 精确匹配。
+// cap=2（内容不一致）、-1（未知）、0（不支持）都不能进候选；空路径也不进，
+// 否则调度会拿到一个不知道该怎么拼 URL 的候选。
+func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
+	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
+			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, s.registry_path_mode
+		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
+		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
+		  AND s.registry_cap = 1 AND s.repo_host = ?
+		  AND s.registry_path_mode IN ('native','host_prefix')
+		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = 'registry' AND fails >= ?)
+		ORDER BY s.id`, host, HealthFails)
+	if err != nil {
+		return nil, err
+	}
+	var out []SourceStat
+	for rows.Next() {
+		var st SourceStat
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred,
+			&st.GhcrPrefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	kind := "registry:" + host
+	tm, err := s.trustMap(kind, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		n, ok, lat, spd, last, err := s.sourceSamples(out[i].ID, kind)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = n, ok, lat, spd, last
+		out[i].Trust = tm[out[i].ID].Level
+	}
+	return out, nil
+}
+
+// sourceSamples 取最近 N 条样本。
 // 中位数比平均值稳：一次 25 秒超时不至于把整条源的分数拉到底。
 // 按 kind 隔离；本协议无样本时只退回无 kind 的老行，不退回别的协议，
 // 否则只有 docker 样本的源查 raw 排名时会被 docker 数据带偏。

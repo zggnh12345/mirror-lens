@@ -1,0 +1,172 @@
+package store
+
+import (
+	"fmt"
+	"sync/atomic"
+	"testing"
+)
+
+var regSeq atomic.Int64
+
+// addRegSource 建一台只服务某个 Registry Host 的源。
+// dockerCap 故意可调：用于证明 registry 候选不靠 docker_cap 间接放行。
+func addRegSource(t *testing.T, st *Store, host, path string, cap int, enabled bool, status string, dockerCap int) int64 {
+	t.Helper()
+	n := regSeq.Add(1)
+	id, err := st.AddSource(Source{
+		Name:      fmt.Sprintf("reg-%s-%d-%d", host, cap, n),
+		BaseURL:   fmt.Sprintf("https://reg-%d.example", n),
+		Status:    status,
+		Enabled:   enabled,
+		DockerCap: dockerCap,
+	})
+	if err != nil {
+		t.Fatalf("AddSource: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE sources SET repo_host=?, registry_cap=?, registry_path_mode=? WHERE id=?`,
+		host, cap, path, id); err != nil {
+		t.Fatalf("update registry cols: %v", err)
+	}
+	return id
+}
+
+func candidatesIDs(list []SourceStat) map[int64]string {
+	m := make(map[int64]string, len(list))
+	for _, s := range list {
+		m[s.ID] = s.RegistryPath
+	}
+	return m
+}
+
+func TestRegistryCandidatesOnlyVerifiedPaths(t *testing.T) {
+	st, _ := newTestStore(t)
+
+	okNative := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	okPrefix := addRegSource(t, st, "quay.io", "host_prefix", 1, true, "degraded", 0)
+	// 不靠 docker_cap 放行：这台 docker_cap=1，但 registry 条件同样成立，应入选。
+	okWithDocker := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 1)
+
+	badCap2 := addRegSource(t, st, "quay.io", "native", 2, true, "usable", 0)
+	badCap0 := addRegSource(t, st, "quay.io", "native", 0, true, "usable", 0)
+	badCapMinus1 := addRegSource(t, st, "quay.io", "native", -1, true, "usable", 0)
+	badEmptyPath := addRegSource(t, st, "quay.io", "", 1, true, "usable", 0)
+	badUnknownPath := addRegSource(t, st, "quay.io", "weird", 1, true, "usable", 0)
+	badOtherHost := addRegSource(t, st, "registry.k8s.io", "native", 1, true, "usable", 0)
+	badDisabled := addRegSource(t, st, "quay.io", "native", 1, false, "usable", 0)
+	badStatus := addRegSource(t, st, "quay.io", "native", 1, true, "blocked", 0)
+
+	list, err := st.SourceCandidates("registry:quay.io")
+	if err != nil {
+		t.Fatalf("SourceCandidates: %v", err)
+	}
+	got := candidatesIDs(list)
+
+	for _, id := range []int64{okNative, okPrefix, okWithDocker} {
+		if _, ok := got[id]; !ok {
+			t.Errorf("源 %d 应进入 quay.io 候选，实际没有", id)
+		}
+	}
+	if got[okNative] != "native" {
+		t.Errorf("native 源路径=%q，期望 native", got[okNative])
+	}
+	if got[okPrefix] != "host_prefix" {
+		t.Errorf("host_prefix 源路径=%q，期望 host_prefix", got[okPrefix])
+	}
+	for name, id := range map[string]int64{
+		"cap=2": badCap2, "cap=0": badCap0, "cap=-1": badCapMinus1,
+		"空路径": badEmptyPath, "未知路径": badUnknownPath,
+		"其他 Host": badOtherHost, "未启用": badDisabled, "状态不可用": badStatus,
+	} {
+		if _, ok := got[id]; ok {
+			t.Errorf("%s 的源 %d 不应进入候选", name, id)
+		}
+	}
+	if len(list) != 3 {
+		t.Errorf("候选数=%d，期望 3（%v）", len(list), got)
+	}
+}
+
+// 不同 Host 的候选池必须互不可见。
+func TestRegistryCandidatesHostIsolation(t *testing.T) {
+	st, _ := newTestStore(t)
+	a := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	b := addRegSource(t, st, "registry.k8s.io", "host_prefix", 1, true, "usable", 0)
+
+	qa, err := st.SourceCandidates("registry:quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := candidatesIDs(qa)[b]; ok {
+		t.Error("quay.io 候选里出现了 registry.k8s.io 的源")
+	}
+	qb, err := st.SourceCandidates("registry:registry.k8s.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := candidatesIDs(qb)
+	if len(m) != 1 {
+		t.Fatalf("registry.k8s.io 候选数=%d，期望 1", len(m))
+	}
+	if _, ok := m[a]; ok {
+		t.Error("registry.k8s.io 候选里出现了 quay.io 的源")
+	}
+	if m[b] != "host_prefix" {
+		t.Errorf("路径=%q，期望 host_prefix", m[b])
+	}
+}
+
+// 非白名单/空 Host 直接返回空，不报错也不放宽。
+func TestRegistryCandidatesUnknownHost(t *testing.T) {
+	st, _ := newTestStore(t)
+	for _, kind := range []string{"registry:", "registry:example.com", "registry:quay.io.evil"} {
+		list, err := st.SourceCandidates(kind)
+		if err != nil {
+			t.Errorf("%q 不应报错: %v", kind, err)
+		}
+		if len(list) != 0 {
+			t.Errorf("%q 应返回空，实际 %d 条", kind, len(list))
+		}
+	}
+}
+
+// docker 候选不能被 registry 源污染：registry_cap=1 但 docker_cap=0 的源不能进 docker 池。
+func TestRegistrySourceNotInDockerCandidates(t *testing.T) {
+	st, _ := newTestStore(t)
+	id := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	for _, c := range mustCandidates(t, st, "docker") {
+		if c.ID == id {
+			t.Error("registry-only 源出现在了 docker 候选里")
+		}
+	}
+}
+
+func mustCandidates(t *testing.T, st *Store, kind string) []SourceStat {
+	t.Helper()
+	list, err := st.SourceCandidates(kind)
+	if err != nil {
+		t.Fatalf("SourceCandidates(%q): %v", kind, err)
+	}
+	return list
+}
+
+func TestRegistryFamilyAndSampleKind(t *testing.T) {
+	for _, kind := range []string{"registry:quay.io", "registry:registry.k8s.io"} {
+		if got := Family(kind); got != "registry" {
+			t.Errorf("Family(%q)=%q，期望 registry", kind, got)
+		}
+		if got := sampleKind(kind); got != "registry" {
+			t.Errorf("sampleKind(%q)=%q，期望 registry", kind, got)
+		}
+	}
+	// 旧协议族不受影响。
+	for kind, want := range map[string]string{
+		"docker": "docker", "ghcr": "ghcr", "github": "github", "raw": "github", "git": "git",
+	} {
+		if got := Family(kind); got != want {
+			t.Errorf("Family(%q)=%q，期望 %q", kind, got, want)
+		}
+	}
+	if got := Family("registry"); got != "registry" {
+		t.Errorf("Family(registry)=%q，期望 registry（不得落进 github）", got)
+	}
+}
