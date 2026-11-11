@@ -164,6 +164,11 @@ type Scheduler struct {
 	persistFn func(store.OutcomeRecord) error
 	clearFn   func(int64) error
 
+	// wseq 让「检查积压 → 直接落库」与「入队」互斥：否则 DB 恢复后的
+	// 第一条结果可能越过仍然积压的旧事件直接插队，事件表顺序就不再是
+	// rev 顺序，按 id 重建连续失败的逻辑会算错。
+	wseq sync.Mutex
+
 	// 写库失败后的待重试队列：每个 (kind,id) 一条 FIFO，事件按产生顺序
 	// 补写（有上限），熔断状态靠 rev 守卫只前进不后退；跨代次的旧写入丢弃。
 	retryMu sync.Mutex
@@ -383,6 +388,11 @@ func (s *Scheduler) Revive(id int64) {
 	s.gone.Delete(id)
 	// 新生命周期必须有新代次：Forget 安排出去的延迟清库任务持的是旧代次，
 	// 不递增就会误删这个源刚写下的新状态。
+	//
+	// 整段持 pmu：在飞写入是「pmu 内查代次 + 写库」，不排同一把锁的话，
+	// 已经通过代次校验的旧写入会在 gen++ 之后落库，把新生命周期刚清掉的
+	// 熔断状态又写回来。id 被 rowid 复用时这是真实路径，不是理论问题。
+	s.pmu.Lock()
 	suffix := "|" + strconv.FormatInt(id, 10)
 	s.mu.Lock()
 	s.gen[id]++
@@ -403,6 +413,14 @@ func (s *Scheduler) Revive(id int64) {
 		}
 	}
 	s.retryMu.Unlock()
+	// 防御性清库：id 复用时旧生命周期的行必须消失，否则重启后又被加载。
+	// 清失败只记日志——下一次成功上报会用品墓碑行覆盖它。
+	if s.clearFn != nil {
+		if err := s.clearFn(id); err != nil {
+			log.Printf("调度：复活源 %d 时清理旧熔断状态失败: %v", id, err)
+		}
+	}
+	s.pmu.Unlock()
 }
 
 // isGone 报告该 id 是否已被删除，任何锁状态下都能问。
@@ -993,11 +1011,29 @@ func (s *Scheduler) persist(gen uint64, rec store.OutcomeRecord) {
 	if s.persistFn == nil {
 		return
 	}
+	s.wseq.Lock()
+	defer s.wseq.Unlock()
+	// 该 key 还有没补完的事件：一律排队，不能直写插到旧 rev 前面。
+	if s.hasBacklog(pkeyOf(rec)) {
+		s.enqueueLocked(gen, rec)
+		return
+	}
 	if s.write(rec, gen) {
 		s.dropState(rec)
 		return
 	}
-	s.enqueue(gen, rec)
+	s.enqueueLocked(gen, rec)
+}
+
+// hasBacklog 报告该 key 是否还有待补的事件或未落盘的熔断快照。
+func (s *Scheduler) hasBacklog(k string) bool {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if len(s.pending[k]) > 0 {
+		return true
+	}
+	_, ok := s.pstate[k]
+	return ok
 }
 
 func pkeyOf(rec store.OutcomeRecord) string { return pkey(rec.Kind, rec.SourceID) }
@@ -1037,6 +1073,13 @@ func (s *Scheduler) write(rec store.OutcomeRecord, gen uint64) bool {
 }
 
 func (s *Scheduler) enqueue(gen uint64, rec store.OutcomeRecord) {
+	s.wseq.Lock()
+	defer s.wseq.Unlock()
+	s.enqueueLocked(gen, rec)
+}
+
+// enqueueLocked 要求持 wseq。
+func (s *Scheduler) enqueueLocked(gen uint64, rec store.OutcomeRecord) {
 	k := pkeyOf(rec)
 	s.retryMu.Lock()
 	// 熔断快照独立保留：即使随后事件队列溢出丢掉这条事件，状态也不会丢。

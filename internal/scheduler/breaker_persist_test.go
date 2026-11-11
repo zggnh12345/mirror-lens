@@ -696,3 +696,92 @@ func TestConcurrentEnqueuePreservesAllEvents(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// 在飞写入不能穿过 Revive：Revive 返回后，旧生命周期的熔断行必须不在库里。
+func TestReviveWaitsForInflightWrite(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	real := s.persistFn
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	s.persistFn = func(r store.OutcomeRecord) error {
+		once.Do(func() {
+			entered <- struct{}{}
+			<-release
+		})
+		return real(r)
+	}
+	go s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	<-entered // 此时写入已过代次校验、持 pmu 停在 persistFn 里
+
+	revived := make(chan struct{})
+	go func() {
+		s.Revive(id)
+		close(revived)
+	}()
+	select {
+	case <-revived:
+		close(release)
+		t.Fatal("Revive 没等在飞写入结束就返回了")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-revived:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Revive 未返回")
+	}
+
+	rows, err := st.LoadBreakerStates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.SourceID == id {
+			t.Fatalf("旧生命周期的熔断行被写回: %+v", r)
+		}
+	}
+}
+
+// DB 恢复后的直写不能插到待重试的旧事件前面：事件表顺序必须是 rev 顺序。
+func TestDirectWriteDoesNotJumpQueue(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	real := s.persistFn
+	var n int32
+	var mu sync.Mutex
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			return errors.New("db down")
+		}
+		return real(r)
+	}
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 500})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		codes, err := st.SourceEventCodes(id, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(codes) == 2 {
+			// DESC：最新在前。rev 顺序正确时应为 [500, 429]。
+			if codes[0] != 500 || codes[1] != 429 {
+				t.Fatalf("事件顺序被直写打乱: %v", codes)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("事件未补齐: %v", codes)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
