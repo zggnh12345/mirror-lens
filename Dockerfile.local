@@ -1,8 +1,14 @@
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 lens
 COPY dist/mirror-lens /usr/local/bin/mirror-lens
-LABEL org.opencontainers.image.version="3.1.2"
-LABEL org.opencontainers.image.revision="local"
+# 版本与 revision 由构建参数传入，默认值保持中性，避免再写死一个会过期的号：
+#   docker build -f Dockerfile.local \
+#     --build-arg VERSION=$(grep -oP 'const Version = "\K[^"]+' internal/version/version.go) \
+#     --build-arg REVISION=$(git rev-parse --short HEAD) -t mirror-lens:local .
+ARG VERSION=dev
+ARG REVISION=local
+LABEL org.opencontainers.image.version="$VERSION"
+LABEL org.opencontainers.image.revision="$REVISION"
 ENV DATA_DIR=/data TZ=Asia/Shanghai
 RUN mkdir -p /data && chown lens:lens /data
 USER lens
