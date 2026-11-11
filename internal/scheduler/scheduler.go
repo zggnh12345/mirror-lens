@@ -136,6 +136,9 @@ type Scheduler struct {
 	lists  map[string]listEntry
 	sticky map[string]stickyPick
 	brk    map[string]*breaker // "kind|id"
+	// brev 是每个 (kind,id) 的单调版本号，落库时用于挡住晚到的旧写入。
+	// 在 s.mu 里分配，所以顺序就是内存状态的真实变更顺序，与墙上时钟无关。
+	brev map[string]int64
 	// 手动调度：manual 是每种协议的前 3 个源（有序），manualMode=manual 才生效。
 	// 与候选列表同生命周期刷新（30s），改设置时 API 会主动失效缓存。
 	manualMode string
@@ -165,6 +168,7 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		lists:  map[string]listEntry{},
 		sticky: map[string]stickyPick{},
 		brk:    map[string]*breaker{},
+		brev:   map[string]int64{},
 		gates:  map[int64]*gate{},
 		dyn:    map[int64]*dynState{},
 		leases: newLeaseManager(),
@@ -195,6 +199,11 @@ func (s *Scheduler) restoreBreakers() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, b := range rows {
+		k := pkey(b.Kind, b.SourceID)
+		// 墓碑也要续上版本号：否则重启后的第一次写入会被更早的高版本挡住。
+		if b.Rev > s.brev[k] {
+			s.brev[k] = b.Rev
+		}
 		if b.Fails <= 0 {
 			continue
 		}
@@ -202,7 +211,7 @@ func (s *Scheduler) restoreBreakers() {
 		if until.After(now.Add(s.cfg.MaxCooldown)) {
 			until = now.Add(s.cfg.MaxCooldown)
 		}
-		s.brk[pkey(b.Kind, b.SourceID)] = &breaker{fails: b.Fails, until: until}
+		s.brk[k] = &breaker{fails: b.Fails, until: until}
 	}
 }
 
@@ -233,6 +242,7 @@ func (s *Scheduler) Forget(id int64) {
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.brk, k)
+			delete(s.brev, k)
 		}
 	}
 	delete(s.dyn, id)
@@ -311,7 +321,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if err != nil {
 		return nil
 	}
-	cooling, cerr := s.st.SourceFailedRecently(kind, s.now().Add(-s.cfg.FailCooldown).Unix())
+	runs, cerr := s.st.SourceFailureRuns(kind, 64)
 	mo := s.st.GetSchedOrder()
 
 	s.mu.Lock()
@@ -320,15 +330,30 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
 		return s.orderN(kind, le.items, limit)
 	}
-	// 老库还没有 breaker_state（升级后的第一次启动）：从事件表兜底恢复。
-	// 截止时间按事件时间 + 基础冷却算，不按「现在 + 一个周期」重算，
-	// 否则剩余 10 秒的冷却会被拉长成 5 分钟。
+	// 老库还没有 breaker_state（升级后的第一次启动）：从事件表兜底。
+	//
+	// 旧版本没有持久化 fails/until，也没记当时的 Retry-After，所以这里只能
+	// 按事件顺序还原「连续失败次数」，再用基础退避公式推算截止时间；这是
+	// 近似恢复，不是精确恢复。截止时间仍以最后一条失败事件为基准，不按
+	// 「现在 + 一个周期」重算，否则剩余 10 秒的冷却会被拉长成 5 分钟。
 	if cerr == nil {
 		for _, st := range stats {
 			k := pkey(kind, st.ID)
-			if ts, bad := cooling[st.ID]; bad && s.brk[k] == nil {
-				s.brk[k] = &breaker{fails: 1, until: time.Unix(ts, 0).Add(s.cfg.FailCooldown)}
+			r, bad := runs[st.ID]
+			// brev!=0 说明这个键有过持久化状态（哪怕现在是一条 fails=0 的
+			// 墓碑）：以数据库为准，不能再用更老的事件把它翻出来。
+			if !bad || r.Fails == 0 || s.brk[k] != nil || s.brev[k] != 0 {
+				continue
 			}
+			shift := r.Fails - 1
+			if shift > maxBackoffShift {
+				shift = maxBackoffShift
+			}
+			cool := s.cfg.FailCooldown << shift
+			if cool > s.cfg.MaxCooldown {
+				cool = s.cfg.MaxCooldown
+			}
+			s.brk[k] = &breaker{fails: r.Fails, until: time.Unix(r.LastTS, 0).Add(cool)}
 		}
 	}
 	s.manualMode, s.manual = mo.Mode, mo.Orders
@@ -728,14 +753,12 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 		s.mu.Unlock()
 		return
 	}
-	// 在锁内取时间：并发上报时 updated_at 的先后必须和内存里状态变化的
-	// 先后一致，否则数据库的「后写覆盖」会把旧状态留下。
 	now = s.now()
 	switch o {
 	case OutcomeOK:
 		delete(s.brk, k)
 		s.sticky[kind] = stickyPick{cand: c, at: now}
-		// fails=0 的墓碑行：让并发里晚到的失败按 updated_at 比不过它。
+		// fails=0 的墓碑行：让并发里晚到的失败按 rev 比不过它。
 		brk = &store.BreakerState{SourceID: c.ID, Kind: kind, UpdatedAt: now.UnixNano()}
 	case OutcomeMiss, OutcomeAuth:
 		// 中性结果：不建粘性、不清熔断、不进冷却，也不写状态行。
@@ -764,6 +787,11 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 			SourceID: c.ID, Kind: kind, Fails: b.fails,
 			Until: b.until.Unix(), UpdatedAt: now.UnixNano(),
 		}
+	}
+	if brk != nil {
+		// 版本号在锁内递增：内存里谁后改，谁的号就大。
+		s.brev[k]++
+		brk.Rev = s.brev[k]
 	}
 	s.mu.Unlock()
 

@@ -177,6 +177,7 @@ func (s *Store) migrateAccel() error {
 			kind TEXT NOT NULL,
 			fails INTEGER NOT NULL DEFAULT 0,
 			until INTEGER NOT NULL DEFAULT 0,
+			rev INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(source_id, kind))`,
 		// 内容身份表：完整性状态按 blob 去重，不按 URL 重复。
@@ -226,6 +227,12 @@ func (s *Store) migrateAccel() error {
 	if err := s.ensureColumns("source_events", map[string]string{
 		"code":    "INTEGER NOT NULL DEFAULT 0",
 		"neutral": "INTEGER NOT NULL DEFAULT 0",
+	}); err != nil {
+		return err
+	}
+	// 本版内部开发库可能已经有 breaker_state（还没有 rev 列）。
+	if err := s.ensureColumns("breaker_state", map[string]string{
+		"rev": "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}

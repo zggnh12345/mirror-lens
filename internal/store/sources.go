@@ -461,32 +461,58 @@ func (s *Store) SetGitCap(id int64, on bool) error {
 	return err
 }
 
-// SourceFailedRecently 返回「最近一条有成败意义的事件是失败」的源，以及
-// 那条事件的时间（Unix 秒）。只用于没有 breaker_state 的老库兜底。
+// FailureRun 是旧库兜底用的「连续有效失败」信息。
+type FailureRun struct {
+	Fails  int
+	LastTS int64
+}
+
+// SourceFailureRuns 从事件表重建每个源最近一段连续有效失败。
 //
-// 中性事件不能把更早的失败盖掉：之前的实现取 MAX(id) 后判 ok，429 之后
-// 来一条 404 就会让重启后的调度器以为源已经恢复。这里先筛出「有意义」
-// 的事件再取最后一条。3.5.1 之前写的事件没有 neutral 列，按状态码判定：
-// 401/403/404/410 视为中性。
-func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]int64, error) {
+// 只用于没有 breaker_state 的旧库（升级后首次启动）。旧版本既不持久化
+// fails/until，也没记下当时生效的 Retry-After，所以这里只能做到「按事件
+// 顺序还原连续失败次数」，再按基础退避推算截止时间；Retry-After 造成的
+// 额外冷却无法恢复，调用方不能把结果说成精确恢复。
+//
+// 中性事件不算失败也不算成功：3.5.1 之后看 neutral 列，之前的事件按状态码
+// 判定（401/403/404/410 视为中性）。
+func (s *Store) SourceFailureRuns(kind string, perSource int) (map[int64]FailureRun, error) {
+	if perSource <= 0 {
+		perSource = 64
+	}
 	rows, err := s.db.Query(`
-		SELECT e.source_id, e.ts FROM source_events e
-		JOIN (SELECT source_id, MAX(id) AS mid FROM source_events
-		      WHERE kind=? AND neutral=0 AND (ok=0 OR code NOT IN (401,403,404,410))
-		      GROUP BY source_id) m
-		  ON m.mid = e.id
-		WHERE e.ok=0 AND e.ts>=?`, kind, since)
+		SELECT source_id, ts, ok FROM (
+			SELECT source_id, ts, ok,
+			       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY id DESC) AS rn
+			FROM source_events
+			WHERE kind=? AND neutral=0 AND (ok=0 OR code NOT IN (401,403,404,410))
+		) WHERE rn <= ?
+		ORDER BY source_id, rn`, kind, perSource)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]int64{}
+	out := map[int64]FailureRun{}
+	done := map[int64]bool{}
 	for rows.Next() {
 		var id, ts int64
-		if err := rows.Scan(&id, &ts); err != nil {
+		var ok int
+		if err := rows.Scan(&id, &ts, &ok); err != nil {
 			return nil, err
 		}
-		out[id] = ts
+		if ok == 1 {
+			done[id] = true
+			continue
+		}
+		if done[id] {
+			continue
+		}
+		r := out[id]
+		r.Fails++
+		if r.LastTS == 0 {
+			r.LastTS = ts
+		}
+		out[id] = r
 	}
 	return out, rows.Err()
 }
@@ -497,7 +523,8 @@ type BreakerState struct {
 	Kind      string
 	Fails     int
 	Until     int64 // Unix 秒，绝对截止时间
-	UpdatedAt int64 // Unix 纳秒，并发写入按它比新旧
+	Rev       int64 // 进程内单调版本号，由 Scheduler 在锁内分配
+	UpdatedAt int64 // Unix 纳秒，仅用于观测
 }
 
 // OutcomeRecord 是一次回源结果的持久化载荷。
@@ -516,9 +543,10 @@ type OutcomeRecord struct {
 
 // RecordOutcome 原子地记录一次回源结果，并按需更新熔断状态。
 //
-// 失败与恢复都走 upsert 且带 updated_at 守卫：同一源并发上报时，晚到的
-// 旧结果不会覆盖新状态。恢复写的是 fails=0 的墓碑行，不删行——删掉就
-// 没法再比新旧了。
+// 失败与恢复都走 upsert 且带 rev 守卫：同一源并发上报时，晚到的旧结果
+// 不会覆盖新状态。rev 由调用方在内存状态锁内分配，所以比较的是真实的
+// 状态变更顺序，不依赖墙上时钟（时钟回拨或同纳秒都不会误判）。恢复写的是
+// fails=0 的墓碑行，不删行——删掉就没法再比新旧了。
 func (s *Store) RecordOutcome(rec OutcomeRecord) error {
 	if rec.SourceID == 0 {
 		return nil
@@ -556,22 +584,22 @@ func (s *Store) RecordOutcome(rec OutcomeRecord) error {
 		if fails <= 0 {
 			fails, until = 0, 0
 		}
-		if _, err := tx.Exec(`INSERT INTO breaker_state(source_id, kind, fails, until, updated_at)
-			VALUES(?,?,?,?,?)
+		if _, err := tx.Exec(`INSERT INTO breaker_state(source_id, kind, fails, until, rev, updated_at)
+			VALUES(?,?,?,?,?,?)
 			ON CONFLICT(source_id, kind) DO UPDATE SET
-				fails=excluded.fails, until=excluded.until, updated_at=excluded.updated_at
-			WHERE excluded.updated_at > breaker_state.updated_at`,
-			rec.SourceID, rec.Kind, fails, until, bs.UpdatedAt); err != nil {
+				fails=excluded.fails, until=excluded.until, rev=excluded.rev, updated_at=excluded.updated_at
+			WHERE excluded.rev > breaker_state.rev`,
+			rec.SourceID, rec.Kind, fails, until, bs.Rev, bs.UpdatedAt); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-// LoadBreakerStates 读出仍然有效的熔断状态（fails=0 的墓碑不算）。
+// LoadBreakerStates 读出全部状态行，包括 fails=0 的墓碑：
+// 墓碑的 rev 也要用来续上版本号，否则重启后的第一次写入会被旧 rev 挡住。
 func (s *Store) LoadBreakerStates() ([]BreakerState, error) {
-	rows, err := s.db.Query(`SELECT source_id, kind, fails, until, updated_at
-		FROM breaker_state WHERE fails > 0`)
+	rows, err := s.db.Query(`SELECT source_id, kind, fails, until, rev, updated_at FROM breaker_state`)
 	if err != nil {
 		return nil, err
 	}
@@ -579,7 +607,7 @@ func (s *Store) LoadBreakerStates() ([]BreakerState, error) {
 	var out []BreakerState
 	for rows.Next() {
 		var b BreakerState
-		if err := rows.Scan(&b.SourceID, &b.Kind, &b.Fails, &b.Until, &b.UpdatedAt); err != nil {
+		if err := rows.Scan(&b.SourceID, &b.Kind, &b.Fails, &b.Until, &b.Rev, &b.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

@@ -62,11 +62,11 @@ func TestLegacyInsertWithoutNeutralColumn(t *testing.T) {
 	}
 
 	// 历史 404 不能恢复成失败。
-	got, err := st.SourceFailedRecently("docker", time.Now().Add(-time.Hour).Unix())
+	got, err := st.SourceFailureRuns("docker", 64)
 	if err != nil {
 		t.Fatalf("查失败事件: %v", err)
 	}
-	if _, bad := got[id]; bad {
+	if r, bad := got[id]; bad && r.Fails > 0 {
 		t.Fatalf("历史 404 不该被当成失败: %v", got)
 	}
 }
@@ -112,5 +112,53 @@ func TestOpenTwiceIsIdempotent(t *testing.T) {
 	defer st2.Close()
 	if _, err := st2.LoadBreakerStates(); err != nil {
 		t.Fatalf("读熔断状态: %v", err)
+	}
+}
+
+// rev 守卫：旧版本号不能覆盖新状态，即使墙上时钟更晚。
+func TestBreakerRevGuardRejectsStaleWrite(t *testing.T) {
+	st := openTest(t)
+	id, err := st.AddSource(Source{BaseURL: "https://a.example", Name: "a", DockerCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatalf("加源: %v", err)
+	}
+	now := time.Now()
+	write := func(fails int, rev, at int64) {
+		if err := st.RecordOutcome(OutcomeRecord{SourceID: id, Kind: "docker", OK: false, Code: 429,
+			Breaker: &BreakerState{SourceID: id, Kind: "docker", Fails: fails, Until: now.Add(time.Minute).Unix(), Rev: rev, UpdatedAt: at}}); err != nil {
+			t.Fatalf("写状态: %v", err)
+		}
+	}
+	write(2, 7, now.Add(-time.Hour).UnixNano()) // 新状态，但时钟被回拨
+	write(9, 3, now.UnixNano())                 // 旧状态，时钟却更晚
+	rows, err := st.LoadBreakerStates()
+	if err != nil {
+		t.Fatalf("读状态: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Fails != 2 || rows[0].Rev != 7 {
+		t.Fatalf("旧 revision 不应覆盖，实际 %+v", rows)
+	}
+}
+
+// 墓碑（fails=0）也要把 rev 保留下来，重启后的新写入才不会被挡住。
+func TestTombstoneKeepsRev(t *testing.T) {
+	st := openTest(t)
+	id, err := st.AddSource(Source{BaseURL: "https://a.example", Name: "a", DockerCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatalf("加源: %v", err)
+	}
+	now := time.Now()
+	for _, rw := range []struct {
+		fails int
+		rev   int64
+	}{{0, 4}, {1, 5}} {
+		if err := st.RecordOutcome(OutcomeRecord{SourceID: id, Kind: "docker", OK: rw.fails == 0, Code: 429,
+			Breaker: &BreakerState{SourceID: id, Kind: "docker", Fails: rw.fails, Rev: rw.rev, UpdatedAt: now.UnixNano()}}); err != nil {
+			t.Fatalf("写状态: %v", err)
+		}
+	}
+	rows, _ := st.LoadBreakerStates()
+	if len(rows) != 1 || rows[0].Fails != 1 || rows[0].Rev != 5 {
+		t.Fatalf("重启后 rev 应从墓碑续上，实际 %+v", rows)
 	}
 }

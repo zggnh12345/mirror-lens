@@ -249,7 +249,7 @@ func TestConcurrentReportsPersistConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读状态: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Fails != 20 {
+	if len(rows) != 1 || rows[0].Fails != 20 || rows[0].Rev != 20 {
 		t.Fatalf("落盘应为 20 次失败，实际 %+v", rows)
 	}
 }
@@ -281,13 +281,89 @@ func TestConcurrentOKAndFailConverge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读状态: %v", err)
 	}
+	var live []store.BreakerState
+	for _, r := range rows {
+		if r.Fails > 0 {
+			live = append(live, r)
+		}
+	}
 	if mem == nil {
-		if len(rows) != 0 {
-			t.Fatalf("内存已恢复但库里还有熔断：%+v", rows)
+		if len(live) != 0 {
+			t.Fatalf("内存已恢复但库里还有熔断：%+v", live)
 		}
 		return
 	}
-	if len(rows) != 1 || rows[0].Fails != mem.fails {
-		t.Fatalf("库状态与内存不一致：mem=%+v rows=%+v", mem, rows)
+	if len(live) != 1 || live[0].Fails != mem.fails {
+		t.Fatalf("库状态与内存不一致：mem=%+v rows=%+v", mem, live)
+	}
+}
+
+// 同一纳秒内的两次写入也必须按内存顺序落库。
+func TestFrozenClockKeepsWriteOrder(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	const kind = "docker"
+	cfg := Config{Enabled: true, FailCooldown: time.Minute}
+	s := New(st, cfg)
+	fixed := time.Now()
+	s.now = func() time.Time { return fixed }
+	c := candOf(id, "a")
+
+	s.ReportOutcome(kind, c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.ReportOutcome(kind, c, OutcomeOK, time.Millisecond, Hint{Code: 200})
+	// 同一时间戳下的失败不能被墓碑上的旧 rev 挡住。
+	s.ReportOutcome(kind, c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+
+	rows, err := st.LoadBreakerStates()
+	if err != nil {
+		t.Fatalf("读状态: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Fails != 1 || rows[0].Rev != 3 {
+		t.Fatalf("应落盘第 3 版失败，实际 %+v", rows)
+	}
+}
+
+// 旧库连续失败要按退避公式近似恢复，而不是只算一次 FailCooldown。
+func TestLegacyFailureRunRestoresBackoff(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	const kind = "docker"
+	for i := 0; i < 3; i++ {
+		st.RecordSourceEvent(id, kind, false, 10, 429)
+	}
+	cfg := Config{Enabled: true, FailCooldown: time.Minute, MaxCooldown: time.Hour}
+	s := New(st, cfg)
+	s.Candidates(kind)
+	b := brkOf(s, kind, id)
+	if b == nil || b.fails != 3 {
+		t.Fatalf("应恢复 3 次连续失败，实际 %+v", b)
+	}
+	// 3 次失败 → 4 倍基础冷却（1m << 2）。
+	left := time.Until(b.until)
+	if left < 2*time.Minute || left > 4*time.Minute {
+		t.Fatalf("近似冷却应约 4 分钟，实际 %v", left)
+	}
+}
+
+// 已恢复（墓碑）之后重启，旧事件不能把熔断翻出来。
+func TestTombstoneBlocksLegacyFallback(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	const kind = "docker"
+	cfg := Config{Enabled: true, FailCooldown: time.Minute}
+	s := New(st, cfg)
+	c := candOf(id, "a")
+	s.ReportOutcome(kind, c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.ReportOutcome(kind, c, OutcomeOK, time.Millisecond, Hint{Code: 200})
+
+	s2 := New(st, cfg)
+	s2.Candidates(kind)
+	if b := brkOf(s2, kind, id); b != nil {
+		t.Fatalf("墓碑存在时不该用旧事件恢复熔断，实际 %+v", b)
+	}
+	// 重启后的新失败仍要能写入（rev 从墓碑续上）。
+	s2.ReportOutcome(kind, c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	if b := brkOf(New(st, cfg), kind, id); b == nil || b.fails != 1 {
+		t.Fatalf("重启后新失败应写入，实际 %+v", b)
 	}
 }
