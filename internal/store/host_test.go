@@ -144,6 +144,33 @@ func TestBackfillRepoHost(t *testing.T) {
 	}
 }
 
+// 阶段 1 建的库没有 cred_digest 列，升级时必须补上且不丢原有 gen。
+func TestRegistryHostGenGetsDigestColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gen.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE registry_host_gen (
+		host TEXT PRIMARY KEY, gen INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO registry_host_gen(host,gen,updated_at) VALUES('quay.io',7,1)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st := openTestAt(t, path)
+	defer st.Close()
+	gen, digest, err := st.HostGenState("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen != 7 || digest != "" {
+		t.Fatalf("升级后应保留 gen=7、摘要为空，得到 gen=%d digest=%q", gen, digest)
+	}
+}
+
 func TestSetRepoHostClearsCaps(t *testing.T) {
 	st := openTestAt(t, filepath.Join(t.TempDir(), "rh.db"))
 	defer st.Close()
@@ -159,13 +186,13 @@ func TestSetRepoHostClearsCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen); err != nil || ok {
+	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || ok {
 		t.Fatalf("先要把源改成 lscr.io 才能写 lscr 能力: ok=%v err=%v", ok, err)
 	}
 	if err := st.SetRepoHost(id, "LSCR.IO."); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen); err != nil || !ok {
+	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || !ok {
 		t.Fatalf("写回失败: ok=%v err=%v", ok, err)
 	}
 	// 改归属必须清空旧结论。
@@ -214,18 +241,18 @@ func TestSetHostCapsGuards(t *testing.T) {
 	}
 
 	// 错误的 Host：用户中途改了归属，旧结果不能落库。
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 1, "", gen); err != nil || ok {
+	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 1, "", gen, ""); err != nil || ok {
 		t.Fatalf("Host 不匹配时应拒绝: ok=%v err=%v", ok, err)
 	}
 	// Hub / ghcr 不接受 Host Probe 结果。
-	if _, err := st.SetHostCaps(id, "", RegistryCapYes, PathNative, 1, "", gen); err == nil {
+	if _, err := st.SetHostCaps(id, "", RegistryCapYes, PathNative, 1, "", gen, ""); err == nil {
 		t.Fatal("Hub 应拒绝 SetHostCaps")
 	}
 	// 非法能力值。
-	if _, err := st.SetHostCaps(id, "quay.io", 3, PathNative, 1, "", gen); err == nil {
+	if _, err := st.SetHostCaps(id, "quay.io", 3, PathNative, 1, "", gen, ""); err == nil {
 		t.Fatal("cap=3 应报错")
 	}
-	if _, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, "weird", 1, "", gen); err == nil {
+	if _, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, "weird", 1, "", gen, ""); err == nil {
 		t.Fatal("非法路径模式应报错")
 	}
 
@@ -234,7 +261,7 @@ func TestSetHostCapsGuards(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		long += "错"
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapMismatch, PathHostPrefix, 42, long, gen); err != nil || !ok {
+	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapMismatch, PathHostPrefix, 42, long, gen, ""); err != nil || !ok {
 		t.Fatalf("写回失败: ok=%v err=%v", ok, err)
 	}
 	x := mustSource(t, st, id)
@@ -256,16 +283,16 @@ func TestSetHostCapsGuards(t *testing.T) {
 	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown || x.RegistryProbeError != "" {
 		t.Fatalf("Bump 后应清空能力: %+v", x)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen); err != nil || ok {
+	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen, ""); err != nil || ok {
 		t.Fatalf("旧代次结果不应写入: ok=%v err=%v", ok, err)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 51, "", gen2); err != nil || !ok {
+	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 51, "", gen2, ""); err != nil || !ok {
 		t.Fatalf("新代次结果应写入: ok=%v err=%v", ok, err)
 	}
 
 	// 归档后连正确的写入也要拒绝。
 	mustExec(t, st, `UPDATE sources SET status='archived' WHERE id=?`, id)
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 52, "", gen2); err != nil || ok {
+	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 52, "", gen2, ""); err != nil || ok {
 		t.Fatalf("归档源不应被写入: ok=%v err=%v", ok, err)
 	}
 }
@@ -288,7 +315,7 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(i), "", gen); err != nil || !ok {
+			if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(i), "", gen, ""); err != nil || !ok {
 				t.Errorf("并发写失败: ok=%v err=%v", ok, err)
 			}
 		}(i)
@@ -303,7 +330,7 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(100+i), "", gen)
+			ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(100+i), "", gen, "")
 			if err != nil {
 				t.Errorf("旧代次写入报错: %v", err)
 			}
@@ -316,7 +343,7 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown {
 		t.Fatalf("旧代次写入污染了结果: %+v", x)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 200, "", gen2); err != nil || !ok {
+	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 200, "", gen2, ""); err != nil || !ok {
 		t.Fatalf("新代次写入失败: ok=%v err=%v", ok, err)
 	}
 }
@@ -359,7 +386,7 @@ func TestListHostCapsScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(quay, "quay.io", RegistryCapYes, PathNative, 9, "", gen); err != nil || !ok {
+	if ok, err := st.SetHostCaps(quay, "quay.io", RegistryCapYes, PathNative, 9, "", gen, ""); err != nil || !ok {
 		t.Fatalf("写回失败: %v %v", ok, err)
 	}
 	pending, err = st.ListPendingHostCaps()

@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE TABLE IF NOT EXISTS registry_host_gen (
   host TEXT PRIMARY KEY,
   gen INTEGER NOT NULL DEFAULT 0,
+  cred_digest TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS checks (
@@ -371,6 +372,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	}
 	// 索引必须等补列之后再建：v1 库的 sources 没有 repo_host，
 	// 放进上面的建表脚本会让老库启动直接报 no such column。
+	if err := s.ensureColumns("registry_host_gen", map[string]string{
+		"cred_digest": "TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sources_repo_host ON sources(repo_host, status)`); err != nil {
 		return err
 	}
