@@ -542,6 +542,9 @@ type OutcomeRecord struct {
 	Breaker  *BreakerState
 	// Rev 仅用于日志/排障时对账，真正的版本号在 Breaker.Rev 里。
 	Rev int64
+	// BreakerOnly 表示只补写熔断状态、不再插事件。用于队列溢出丢掉事件后，
+	// 单独把尚未落盘的状态快照补上，避免重复事件。
+	BreakerOnly bool
 }
 
 // RecordOutcome 原子地记录一次回源结果，并按需更新熔断状态。
@@ -571,15 +574,26 @@ func (s *Store) RecordOutcome(rec OutcomeRecord) error {
 	// 事件表没有外键，源删掉后迟到的上报会把它重新插回来。
 	// 用 INSERT ... SELECT ... WHERE EXISTS 把「源还在」交给数据库判断，
 	// 堵住调用方检查到真正写入之间的空隙。
-	res, err := tx.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, neutral, ms, code)
-		SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
-		rec.SourceID, rec.Kind, time.Now().Unix(), b, n, rec.MS, rec.Code, rec.SourceID)
-	if err != nil {
-		return err
-	}
-	if aff, _ := res.RowsAffected(); aff == 0 {
-		// 源已经删了：状态也不写，别把刚清理的熔断复活。
-		return tx.Commit()
+	if rec.BreakerOnly {
+		// 只补状态：确认源还在，别给已删除的源留孤儿状态。
+		var one int
+		switch err := tx.QueryRow(`SELECT 1 FROM sources WHERE id=?`, rec.SourceID).Scan(&one); {
+		case err == sql.ErrNoRows:
+			return tx.Commit()
+		case err != nil:
+			return err
+		}
+	} else {
+		res, err := tx.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, neutral, ms, code)
+			SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
+			rec.SourceID, rec.Kind, time.Now().Unix(), b, n, rec.MS, rec.Code, rec.SourceID)
+		if err != nil {
+			return err
+		}
+		if aff, _ := res.RowsAffected(); aff == 0 {
+			// 源已经删了：状态也不写，别把刚清理的熔断复活。
+			return tx.Commit()
+		}
 	}
 	if rec.Breaker != nil {
 		bs := *rec.Breaker

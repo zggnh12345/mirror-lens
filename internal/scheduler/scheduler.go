@@ -160,13 +160,17 @@ type Scheduler struct {
 	// pmu 串行化所有持久化写入，并让 Forget 能等在飞写入结束再清库。
 	// 只在刷盘时持有，绝不与 s.mu 形成「先 mu 后 pmu」的持锁顺序。
 	pmu sync.Mutex
-	// persistFn 可注入，故障测试用来模拟写库失败。
+	// persistFn / clearFn 可注入，故障测试用来模拟写库、清库失败。
 	persistFn func(store.OutcomeRecord) error
+	clearFn   func(int64) error
 
 	// 写库失败后的待重试队列：每个 (kind,id) 一条 FIFO，事件按产生顺序
 	// 补写（有上限），熔断状态靠 rev 守卫只前进不后退；跨代次的旧写入丢弃。
-	retryMu   sync.Mutex
-	pending   map[string][]pendingWrite
+	retryMu sync.Mutex
+	pending map[string][]pendingWrite
+	// pstate 单独保存每个 (kind,id) 尚未确认落盘的最新熔断快照：事件队列
+	// 溢出时只丢旧事件，这份快照一定补写（BreakerOnly，不会重复事件）。
+	pstate    map[string]pendingWrite
 	retryBusy map[string]bool
 	retryWait map[string]time.Duration
 
@@ -209,12 +213,14 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		gen:    map[int64]uint64{},
 
 		pending:    map[string][]pendingWrite{},
+		pstate:     map[string]pendingWrite{},
 		retryBusy:  map[string]bool{},
 		retryWait:  map[string]time.Duration{},
 		legacyDone: map[string]bool{},
 	}
 	if st != nil {
 		s.persistFn = st.RecordOutcome
+		s.clearFn = st.ClearBreakerStates
 	}
 	s.restoreBreakers()
 	return s
@@ -320,6 +326,7 @@ func (s *Scheduler) Forget(id int64) {
 	for k := range s.pending {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.pending, k)
+			delete(s.pstate, k)
 			delete(s.retryWait, k)
 			delete(s.retryBusy, k)
 		}
@@ -350,7 +357,9 @@ func (s *Scheduler) clearBreakerState(id int64, gen uint64, attempt int) {
 	s.mu.Unlock()
 	var err error
 	if same {
-		err = s.st.ClearBreakerStates(id)
+		if s.clearFn != nil {
+			err = s.clearFn(id)
+		}
 	}
 	s.pmu.Unlock()
 	if err == nil || !same {
@@ -372,6 +381,28 @@ func (s *Scheduler) Revive(id int64) {
 		return
 	}
 	s.gone.Delete(id)
+	// 新生命周期必须有新代次：Forget 安排出去的延迟清库任务持的是旧代次，
+	// 不递增就会误删这个源刚写下的新状态。
+	suffix := "|" + strconv.FormatInt(id, 10)
+	s.mu.Lock()
+	s.gen[id]++
+	for k := range s.brk {
+		if strings.HasSuffix(k, suffix) {
+			delete(s.brk, k)
+			delete(s.brev, k)
+		}
+	}
+	s.mu.Unlock()
+	s.retryMu.Lock()
+	for k := range s.pending {
+		if strings.HasSuffix(k, suffix) {
+			delete(s.pending, k)
+			delete(s.pstate, k)
+			delete(s.retryWait, k)
+			delete(s.retryBusy, k)
+		}
+	}
+	s.retryMu.Unlock()
 }
 
 // isGone 报告该 id 是否已被删除，任何锁状态下都能问。
@@ -956,24 +987,39 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 }
 
 // persist 把结果写进库。写失败时不能回滚内存——可能已经有更高 rev 的
-// 后续结果——而是把这份结果追加到该 key 的待重试队列，按 FIFO 顺序退避
-// 重试。队列保留每一条事件（有上限），所以中性事件成功落库不会顺手把
-// 尚未写盘、且 rev 更小的失败状态淘汰掉。
+// 后续结果——而是把事件追加到该 key 的 FIFO 队列，同时把熔断快照单独
+// 记下来：事件队列有上限，快照没有，保证状态不会被事件洪峰挤掉。
 func (s *Scheduler) persist(gen uint64, rec store.OutcomeRecord) {
 	if s.persistFn == nil {
 		return
 	}
 	if s.write(rec, gen) {
+		s.dropState(rec)
 		return
 	}
-	s.enqueue(pkey(rec.Kind, rec.SourceID), gen, rec)
+	s.enqueue(gen, rec)
+}
+
+func pkeyOf(rec store.OutcomeRecord) string { return pkey(rec.Kind, rec.SourceID) }
+
+// dropState 在一条带熔断状态的记录确认落盘后，清掉它的待写快照。
+func (s *Scheduler) dropState(rec store.OutcomeRecord) {
+	if rec.Breaker == nil {
+		return
+	}
+	k := pkeyOf(rec)
+	s.retryMu.Lock()
+	if p, ok := s.pstate[k]; ok && p.rec.Rev <= rec.Rev {
+		delete(s.pstate, k)
+	}
+	s.retryMu.Unlock()
 }
 
 // write 落盘一条记录。返回 true 表示已处理（写入成功，或代次已过期而
 // 主动丢弃）；false 表示失败、需要重试。
 //
-// 持 pmu 再校验代次：Forget 是「gen++ → 放 mu → 拿 pmu → 删库」，所以
-// 这里若看到代次已变，说明清理已经发生，这份写入必须放弃。
+// 持 pmu 再校验代次：Forget/Revive 都是「gen++ → 放 mu → 拿 pmu → 改库」，
+// 所以这里若看到代次已变，说明身份已经换过，这份写入必须放弃。
 func (s *Scheduler) write(rec store.OutcomeRecord, gen uint64) bool {
 	s.pmu.Lock()
 	defer s.pmu.Unlock()
@@ -990,17 +1036,22 @@ func (s *Scheduler) write(rec store.OutcomeRecord, gen uint64) bool {
 	return true
 }
 
-func (s *Scheduler) enqueue(k string, gen uint64, rec store.OutcomeRecord) {
+func (s *Scheduler) enqueue(gen uint64, rec store.OutcomeRecord) {
+	k := pkeyOf(rec)
 	s.retryMu.Lock()
-	q := s.pending[k]
-	if n := len(q); n > 0 && q[n-1].rec.Rev >= rec.Rev {
-		s.retryMu.Unlock()
-		return
+	// 熔断快照独立保留：即使随后事件队列溢出丢掉这条事件，状态也不会丢。
+	if rec.Breaker != nil {
+		if p, ok := s.pstate[k]; !ok || p.rec.Rev < rec.Rev {
+			s.pstate[k] = pendingWrite{rec: rec, gen: gen}
+		}
 	}
-	q = append(q, pendingWrite{rec: rec, gen: gen})
+	// 不按到达顺序判断新旧：写失败与入队之间没有顺序保证，rev1 可能晚于
+	// rev2 到达。按 rev 插入，保证事件表里的顺序和状态变更顺序一致。
+	q := append(s.pending[k], pendingWrite{rec: rec, gen: gen})
+	sort.SliceStable(q, func(i, j int) bool { return q[i].rec.Rev < q[j].rec.Rev })
 	if len(q) > pendingCap {
 		drop := len(q) - pendingCap
-		log.Printf("调度：%s 待重试队列已满，丢弃 %d 条较旧结果", k, drop)
+		log.Printf("调度：%s 待重试事件队列已满，丢弃 %d 条较旧事件（熔断快照另存）", k, drop)
 		q = q[drop:]
 	}
 	s.pending[k] = q
@@ -1010,7 +1061,8 @@ func (s *Scheduler) enqueue(k string, gen uint64, rec store.OutcomeRecord) {
 
 func (s *Scheduler) schedulePending(k string, d time.Duration) {
 	s.retryMu.Lock()
-	if len(s.pending[k]) == 0 {
+	_, hasState := s.pstate[k]
+	if len(s.pending[k]) == 0 && !hasState {
 		s.retryBusy[k] = false
 		s.retryMu.Unlock()
 		return
@@ -1020,6 +1072,9 @@ func (s *Scheduler) schedulePending(k string, d time.Duration) {
 		return
 	}
 	s.retryBusy[k] = true
+	if d <= 0 {
+		d = time.Millisecond
+	}
 	s.retryWait[k] = d
 	s.retryMu.Unlock()
 	time.AfterFunc(d, func() { s.flushPending(k) })
@@ -1027,28 +1082,48 @@ func (s *Scheduler) schedulePending(k string, d time.Duration) {
 
 func (s *Scheduler) flushPending(k string) {
 	s.retryMu.Lock()
-	q := s.pending[k]
-	if len(q) == 0 {
+	var p pendingWrite
+	stateOnly := false
+	if q := s.pending[k]; len(q) > 0 {
+		p = q[0]
+	} else if v, ok := s.pstate[k]; ok {
+		// 事件都补完了，但这条状态还没确认落盘（可能事件已被溢出丢弃）：
+		// 只写状态，不重复插事件。
+		p, stateOnly = v, true
+	} else {
 		s.retryBusy[k] = false
 		delete(s.retryWait, k)
 		s.retryMu.Unlock()
 		return
 	}
-	p := q[0]
 	s.retryMu.Unlock()
 
-	ok := s.write(p.rec, p.gen)
+	rec := p.rec
+	if stateOnly {
+		rec.BreakerOnly = true
+	}
+	ok := s.write(rec, p.gen)
 
 	s.retryMu.Lock()
-	// 只有写成功才出队；失败时保留队首，退避后重写同一条。
 	if ok {
-		if n := len(s.pending[k]); n > 0 && s.pending[k][0].rec.Rev == p.rec.Rev && s.pending[k][0].gen == p.gen {
-			s.pending[k] = s.pending[k][1:]
+		if !stateOnly {
+			// 只有写成功才出队；失败时保留队首，退避后重写同一条。
+			if q := s.pending[k]; len(q) > 0 && q[0].rec.Rev == p.rec.Rev && q[0].gen == p.gen {
+				s.pending[k] = q[1:]
+			}
+		}
+		if p.rec.Breaker != nil {
+			if v, still := s.pstate[k]; still && v.rec.Rev <= p.rec.Rev {
+				delete(s.pstate, k)
+			}
 		}
 	}
-	empty := len(s.pending[k]) == 0
+	more := len(s.pending[k]) > 0
+	if _, still := s.pstate[k]; still {
+		more = true
+	}
 	d := s.retryWait[k]
-	if empty {
+	if !more {
 		delete(s.pending, k)
 		delete(s.retryWait, k)
 	}
@@ -1056,8 +1131,8 @@ func (s *Scheduler) flushPending(k string) {
 	s.retryMu.Unlock()
 
 	if ok {
-		// 队列里还有积压：立刻取下一条，不要等下一次上报来唤醒。
-		if !empty {
+		// 还有积压：立刻取下一条，不要等下一次上报来唤醒。
+		if more {
 			s.schedulePending(k, 5*time.Millisecond)
 		}
 		return

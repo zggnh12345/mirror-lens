@@ -566,6 +566,18 @@ func TestFlushKeepsOrderWhenBlocked(t *testing.T) {
 	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
 	<-entered
 	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 500})
+	// 等第二条真的改完内存状态（已经走到持久化阶段），再放行第一条；
+	// 只启动 goroutine 不等于时序已建立。
+	deadline2 := time.Now().Add(2 * time.Second)
+	for {
+		if b := brkOf(s, "docker", id); b != nil && b.fails == 2 {
+			break
+		}
+		if time.Now().After(deadline2) {
+			t.Fatal("第二条上报未进入预期阶段")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	close(release)
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -582,4 +594,95 @@ func TestFlushKeepsOrderWhenBlocked(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
+}
+
+// 事件队列溢出（>64 条）也不能丢掉唯一一份未落盘的熔断状态。
+func TestQueueOverflowPreservesPendingBreakerState(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	c := candOf(id, "a")
+	real := s.persistFn
+	var mu sync.Mutex
+	broken := true
+	s.persistFn = func(r store.OutcomeRecord) error {
+		mu.Lock()
+		fail := broken
+		mu.Unlock()
+		if fail {
+			return errors.New("db down")
+		}
+		return real(r)
+	}
+	s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	for i := 0; i < pendingCap+10; i++ {
+		s.ReportOutcome("docker", c, OutcomeMiss, time.Millisecond, Hint{Code: 404})
+	}
+	mu.Lock()
+	broken = false
+	mu.Unlock()
+
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		rows, _ := st.LoadBreakerStates()
+		if len(rows) == 1 && rows[0].Fails == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("溢出后熔断状态丢失，rows=%+v", rows)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Forget 的延迟清库任务不能删掉 Revive 之后新生命周期的状态。
+func TestForgetRetryDoesNotClearRevivedSource(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	realClear := s.clearFn
+	var mu sync.Mutex
+	failFirst := true
+	s.clearFn = func(sid int64) error {
+		mu.Lock()
+		f := failFirst
+		failFirst = false
+		mu.Unlock()
+		if f {
+			return errors.New("db busy")
+		}
+		return realClear(sid)
+	}
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.Forget(id)
+	s.Revive(id)
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+
+	time.Sleep(900 * time.Millisecond)
+	rows, _ := st.LoadBreakerStates()
+	if len(rows) != 1 || rows[0].Fails != 1 {
+		t.Fatalf("旧清理任务删掉了新状态，rows=%+v", rows)
+	}
+}
+
+// 失败写入与入队顺序反转时，两条事件都必须保留（按 rev 插入而非丢弃）。
+func TestConcurrentEnqueuePreservesAllEvents(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	// 模拟 rev=2 先入队、rev=1 后入队。
+	s.enqueue(0, store.OutcomeRecord{SourceID: id, Kind: "docker", OK: true, Code: 200, Rev: 2})
+	s.enqueue(0, store.OutcomeRecord{SourceID: id, Kind: "docker", OK: true, Code: 200, Rev: 1})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		codes, _ := st.SourceEventCodes(id, 10)
+		if len(codes) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("乱序入队丢了事件，codes=%v", codes)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
