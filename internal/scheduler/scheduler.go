@@ -89,6 +89,10 @@ type Candidate struct {
 	Preferred bool `json:"preferred"`
 	// GroupRank 是分组的优先级，越小越先试；未分组为 999。
 	GroupRank int `json:"group_rank"`
+	// Gen 是取这个候选时源所处生命周期的代次（存 gen+1，0 表示调用方没带）。
+	// 上报时必须带着它回来：源被删除又复用同一 id 时，旧请求不能把结果写进
+	// 新生命周期——只靠「墓碑已清 + 代次已加」是区分不出新旧请求的。
+	Gen uint64 `json:"gen,omitempty"`
 	// GhcrPrefix 代 ghcr 时用带 ghcr.io 前缀的路径（见 store.Source.GhcrPrefix）。
 	GhcrPrefix bool `json:"ghcr_prefix,omitempty"`
 	// RangeCap / RangeAt 是上次 Range 预检的结论与时间，用来跳过重复探测。
@@ -163,6 +167,16 @@ type Scheduler struct {
 	// persistFn / clearFn 可注入，故障测试用来模拟写库、清库失败。
 	persistFn func(store.OutcomeRecord) error
 	clearFn   func(int64) error
+
+	// persistBarrier 仅测试用：在 rev 已分配、尚未落库的位置插入同步点，
+	// 用来构造「先取 rev 的后落库」时序。生产路径恒为 nil。
+	persistBarrier func()
+
+	// kl 是每个 (kind,id) 的上报串行锁：rev 在锁内分配并且一直持有到落库
+	// 入队，保证事件表的 id 顺序与 rev 顺序一致。只锁同一 key，不跨源。
+	// 条目不在删除源时清理：删掉正在被持有的锁会让后来的上报拿到新锁，
+	// 串行就失效了。每个历史上报过的 (kind,id) 只占一个互斥锁指针。
+	kl sync.Map
 
 	// wseq 让「检查积压 → 直接落库」与「入队」互斥：否则 DB 恢复后的
 	// 第一条结果可能越过仍然积压的旧事件直接插队，事件表顺序就不再是
@@ -307,7 +321,8 @@ func (s *Scheduler) Forget(id int64) {
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.brk, k)
-			delete(s.brev, k)
+			// 不清 brev：id 可能被复用，新生命周期的 rev 必须继续高于库里
+			// 旧行，否则 rev 守卫会把新状态当成旧写入丢掉。
 		}
 	}
 	delete(s.dyn, id)
@@ -385,7 +400,6 @@ func (s *Scheduler) Revive(id int64) {
 	if s == nil || id == 0 {
 		return
 	}
-	s.gone.Delete(id)
 	// 新生命周期必须有新代次：Forget 安排出去的延迟清库任务持的是旧代次，
 	// 不递增就会误删这个源刚写下的新状态。
 	//
@@ -396,10 +410,13 @@ func (s *Scheduler) Revive(id int64) {
 	suffix := "|" + strconv.FormatInt(id, 10)
 	s.mu.Lock()
 	s.gen[id]++
+	// 墓碑和代次在同一段临界区里翻转：任何看到 gone=false 的上报，读到的
+	// 一定是新代次；旧候选带来的 Gen 会在上报入口被代次校验挡掉。
+	s.gone.Delete(id)
 	for k := range s.brk {
 		if strings.HasSuffix(k, suffix) {
 			delete(s.brk, k)
-			delete(s.brev, k)
+			// brev 同样保留，理由见 Forget。
 		}
 	}
 	s.mu.Unlock()
@@ -523,7 +540,7 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	s.manualMode, s.manual = mo.Mode, mo.Orders
 	items := make([]Candidate, 0, len(stats))
 	for _, st := range stats {
-		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps, RegistryPath: st.RegistryPath})
+		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, Gen: s.gen[st.ID] + 1, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps, RegistryPath: st.RegistryPath})
 	}
 	s.lists[kind] = listEntry{items: items, at: s.now()}
 	return s.orderN(kind, items, limit)
@@ -930,9 +947,20 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 	if mode == "" {
 		mode = "other"
 	}
+	// 同一 key 的上报串行：rev 分配与落库/入队必须在同一段临界区里完成，
+	// 否则两条并发上报可能「先拿大 rev 的先落库」，事件顺序与 rev 相反。
+	lk := s.keyLock(k)
+	lk.Lock()
+	defer lk.Unlock()
+
 	var now time.Time
 	var brk *store.BreakerState
 	s.mu.Lock()
+	if c.Gen != 0 && s.gen[c.ID]+1 != c.Gen {
+		// 候选来自旧生命周期（源被删除后 id 被复用）：结果不能写进新源。
+		s.mu.Unlock()
+		return
+	}
 	if s.isGone(c.ID) {
 		// 源已删除：写回去就是复活刚清理的熔断、粘性、事件和指标。
 		s.mu.Unlock()
@@ -996,6 +1024,9 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 	}
 	metrics.SourceResult(kind, res, code, mode, d)
 	// 事件与熔断状态一个事务落库：只写进一件，重启后就会按错误的那半恢复。
+	if s.persistBarrier != nil {
+		s.persistBarrier()
+	}
 	rec := store.OutcomeRecord{
 		SourceID: c.ID, Kind: kind, OK: o == OutcomeOK,
 		Neutral: o == OutcomeMiss || o == OutcomeAuth,
@@ -1037,6 +1068,15 @@ func (s *Scheduler) hasBacklog(k string) bool {
 }
 
 func pkeyOf(rec store.OutcomeRecord) string { return pkey(rec.Kind, rec.SourceID) }
+
+// keyLock 返回某个 (kind,id) 专用的互斥锁。
+func (s *Scheduler) keyLock(k string) *sync.Mutex {
+	if v, ok := s.kl.Load(k); ok {
+		return v.(*sync.Mutex)
+	}
+	v, _ := s.kl.LoadOrStore(k, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
 
 // dropState 在一条带熔断状态的记录确认落盘后，清掉它的待写快照。
 func (s *Scheduler) dropState(rec store.OutcomeRecord) {

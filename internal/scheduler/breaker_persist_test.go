@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -558,52 +559,38 @@ func TestFlushKeepsOrderWhenBlocked(t *testing.T) {
 	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
 	c := candOf(id, "a")
 	real := s.persistFn
-	var mu sync.Mutex
-	block := true
-	entered := make(chan struct{}, 1)
-	release := make(chan struct{})
+	var n int32
+	// 前两次落库都失败：两条事件按 rev 进队列，之后由 flush 统一补写。
 	s.persistFn = func(r store.OutcomeRecord) error {
-		mu.Lock()
-		b := block
-		block = false
-		mu.Unlock()
-		if b {
-			entered <- struct{}{}
-			<-release
+		if atomic.AddInt32(&n, 1) <= 2 {
+			return errors.New("db down")
 		}
 		return real(r)
 	}
-	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
-	<-entered
-	go s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 500})
-	// 等第二条真的改完内存状态（已经走到持久化阶段），再放行第一条；
-	// 只启动 goroutine 不等于时序已建立。
-	deadline2 := time.Now().Add(2 * time.Second)
-	for {
-		if brkFails(s, "docker", id) == 2 {
-			break
-		}
-		if time.Now().After(deadline2) {
-			t.Fatal("第二条上报未进入预期阶段")
-		}
-		time.Sleep(5 * time.Millisecond)
+	s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 429})
+	s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 500})
+	s.retryMu.Lock()
+	queued := len(s.pending[pkey("docker", id)])
+	s.retryMu.Unlock()
+	if queued != 2 {
+		t.Fatalf("两条事件没有都进队列: %d", queued)
 	}
-	close(release)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		rows, _ := st.LoadBreakerStates()
 		codes, _ := st.SourceEventCodes(id, 10)
 		if len(rows) == 1 && rows[0].Fails == 2 && len(codes) == 2 {
-			break
+			if codes[0] != 500 || codes[1] != 429 {
+				t.Fatalf("flush 顺序与 rev 相反: %v", codes)
+			}
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("并写入未收敛，rows=%+v codes=%v", rows, codes)
 		}
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
-	mu.Lock()
-	defer mu.Unlock()
 }
 
 // 事件队列溢出（>64 条）也不能丢掉唯一一份未落盘的熔断状态。
@@ -752,21 +739,24 @@ func TestDirectWriteDoesNotJumpQueue(t *testing.T) {
 	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
 	real := s.persistFn
 	var n int32
-	var mu sync.Mutex
 	s.persistFn = func(r store.OutcomeRecord) error {
-		mu.Lock()
-		n++
-		first := n == 1
-		mu.Unlock()
-		if first {
+		if atomic.AddInt32(&n, 1) == 1 {
 			return errors.New("db down")
 		}
 		return real(r)
 	}
+	// 第一条落库失败，事件进入待重试队列。
 	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	// 第二条不得直写越过它：必须同样入队。
 	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 500})
+	s.retryMu.Lock()
+	queued := len(s.pending[pkey("docker", id)])
+	s.retryMu.Unlock()
+	if queued != 2 {
+		t.Fatalf("直写越过了待重试队列: 队列长度=%d", queued)
+	}
 
-	deadline := time.Now().Add(3 * time.Second)
+	ddl := time.Now().Add(3 * time.Second)
 	for {
 		codes, err := st.SourceEventCodes(id, 10)
 		if err != nil {
@@ -779,9 +769,146 @@ func TestDirectWriteDoesNotJumpQueue(t *testing.T) {
 			}
 			return
 		}
+		if time.Now().After(ddl) {
+			t.Fatalf("事件未补齐: %v", codes)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// 候选带着旧生命周期的代次回来时，不能把结果写进复用同一 id 的新源。
+func TestReportRejectsStaleLifecycleCandidate(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	list := s.CandidatesN("docker", 10)
+	if len(list) == 0 {
+		t.Fatal("没有候选")
+	}
+	c := list[0]
+	if c.Gen == 0 {
+		t.Fatal("候选没有携带代次")
+	}
+	s.Revive(id) // 新生命周期：代次加一
+	s.ReportOutcome("docker", c, OutcomeFail, time.Millisecond, Hint{Code: 500})
+
+	codes, err := st.SourceEventCodes(id, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 0 {
+		t.Fatalf("旧候选的结果被写进新生命周期: %v", codes)
+	}
+	rows, _ := st.LoadBreakerStates()
+	for _, r := range rows {
+		if r.SourceID == id {
+			t.Fatalf("旧候选写入了熔断状态: %+v", r)
+		}
+	}
+	if got := brkFails(s, "docker", id); got != 0 {
+		t.Fatalf("内存里出现旧候选的失败计数: %d", got)
+	}
+}
+
+// rev 分配与落库串行：先拿到 rev 的上报必须先落库，事件表 id 顺序即 rev 顺序。
+func TestConcurrentReportsKeepRevOrder(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var first int32
+	// 用 CompareAndSwap 而不是 sync.Once：Once 会让并发的第二次调用一起
+	// 阻塞，等于自己把两个上报串起来了，测不出 key 锁的作用。
+	s.persistBarrier = func() {
+		if atomic.CompareAndSwapInt32(&first, 0, 1) {
+			entered <- struct{}{}
+			<-release
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	}()
+	<-entered // 第一条已取 rev 且卡在落库前
+	// 确定性断言：此刻 key 锁必须仍被持有，说明 rev 分配、状态更新和落库
+	// 在同一段临界区里，而不是只包住 persist()。
+	if lk := s.keyLock(pkey("docker", id)); lk.TryLock() {
+		lk.Unlock()
+		t.Fatal("rev 已分配但 key 锁没覆盖到落库前")
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 500})
+	}()
+	// 给第二条一个进入 ReportOutcome 的机会；它只能卡在 key 锁上。
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		codes, err := st.SourceEventCodes(id, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(codes) == 2 {
+			if codes[0] != 500 || codes[1] != 429 {
+				t.Fatalf("事件顺序与 rev 相反: %v", codes)
+			}
+			return
+		}
 		if time.Now().After(deadline) {
 			t.Fatalf("事件未补齐: %v", codes)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Revive 清库失败时，新生命周期的状态仍必须能覆盖旧行（rev 继续递增）。
+func TestReviveClearFailureStillAllowsNewState(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	for i := 0; i < 3; i++ {
+		s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 500})
+	}
+	waitRows := func(want int) store.BreakerState {
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			rows, err := st.LoadBreakerStates()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range rows {
+				if r.SourceID == id && r.Kind == "docker" {
+					if r.Fails == want {
+						return r
+					}
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("数据库里没有 fails=%d 的行: %+v", want, rows)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	old := waitRows(3)
+
+	s.clearFn = func(int64) error { return errors.New("db locked") }
+	s.Revive(id)
+	s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 429})
+	now := waitRows(1)
+	if now.Rev <= old.Rev {
+		t.Fatalf("新状态没有覆盖旧行: old rev=%d new rev=%d", old.Rev, now.Rev)
+	}
+
+	// 重启后按库恢复，仍是新生命周期的状态。
+	s2 := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	if got := brkFails(s2, "docker", id); got != 1 {
+		t.Fatalf("重启恢复了错误的失败计数: %d", got)
 	}
 }
