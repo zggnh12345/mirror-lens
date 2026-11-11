@@ -360,22 +360,42 @@ func UpstreamAccept(client string, foreign bool) string {
 	}
 	var keep []string
 	seen := map[string]bool{}
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			keep = append(keep, t)
+		}
+	}
 	for _, p := range strings.Split(client, ",") {
 		if i := strings.IndexByte(p, ';'); i >= 0 {
 			p = p[:i]
 		}
 		p = strings.ToLower(strings.TrimSpace(p))
-		if modern[p] && !seen[p] {
-			seen[p] = true
-			keep = append(keep, p)
+		if modern[p] {
+			add(p)
+		}
+	}
+	// 客户端没给可用类型（HEAD 探测、*/*、只有 schema1）时必须用完整兜底。
+	// 只补 OCI 两种会让存着 docker manifest list 的仓库回 400，
+	// docker 侧看到的是 502（registry 3.x 对「不支持 schema2 的客户端」直接拒绝）。
+	// 注意兜底只用现代类型：schema1 归一后必须消失（老站点发了就 404）。
+	if len(keep) == 0 {
+		if !foreign {
+			// Hub 原有行为：客户端什么都没要时，连 schema1 一起要，照顾老客户端。
+			return DefaultAccept
+		}
+		for _, t := range []string{
+			"application/vnd.oci.image.index.v1+json",
+			"application/vnd.docker.distribution.manifest.list.v2+json",
+			"application/vnd.oci.image.manifest.v1+json",
+			"application/vnd.docker.distribution.manifest.v2+json",
+		} {
+			add(t)
 		}
 	}
 	if foreign {
 		for _, t := range []string{"application/vnd.oci.image.index.v1+json", "application/vnd.oci.image.manifest.v1+json"} {
-			if !seen[t] {
-				seen[t] = true
-				keep = append(keep, t)
-			}
+			add(t)
 		}
 	}
 	if len(keep) == 0 {
