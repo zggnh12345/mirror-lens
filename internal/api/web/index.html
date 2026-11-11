@@ -362,6 +362,106 @@ function statusChip(x){
   return '<span class="st ' + s.c + '" title="' + esc(title) + '">' + s.t + '</span>';
 }
 
+/* --- Registry 诊断（数据来自 /api/sources 的 registry_* 字段） ---
+   只有 JSON 对象且 version 为 1/2 才结构化展示；未知版本、坏 JSON、纯文本
+   一律原文降级，绝不把未知版本按 v2 猜字段。 */
+var REG_CAP = {'1':['可用','c1'],'0':['不支持','c0'],'-1':['未知','cu'],'2':['内容不一致','c2']};
+var REG_REASON = {unsupported:'路径格式不支持',content_mismatch:'内容不一致',auth_error:'认证失败',transport_error:'传输失败',incomplete_evidence:'证据不足'};
+var REG_TRANSPORT = {dns:'DNS',connect:'连接',timeout:'超时',tls:'TLS',http_5xx:'HTTP 5xx'};
+
+function regCap(c){ return REG_CAP[String(c)] || ['未知状态','cu']; }
+function regReason(r){ return r ? (REG_REASON[r] || r) : ''; }
+function regTransport(t){ return t ? (REG_TRANSPORT[t] || t) : ''; }
+function regIsArray(v){ return Object.prototype.toString.call(v) === '[object Array]'; }
+
+function regParse(s){
+  var raw = String(s == null ? '' : s).trim();
+  if (!raw) return null;
+  var bad = {raw: raw, ok: false, version: null, why: '无法结构化解析'};
+  if (raw.charAt(0) !== '{') return bad;
+  var d;
+  try { d = JSON.parse(raw); } catch (e) { return bad; }
+  if (!d || typeof d !== 'object' || regIsArray(d)) return bad;
+  var v = d.version;
+  if (typeof v !== 'number' || !isFinite(v)) { bad.why = '诊断缺少版本号'; return bad; }
+  bad.version = v;
+  if (v !== 1 && v !== 2) { bad.why = '未知诊断版本 v' + v; return bad; }
+  return {raw: raw, ok: true, version: v, diag: d};
+}
+
+function regTime(ts){
+  var d = new Date(ts * 1000), p = function(n){ return n < 10 ? '0' + n : '' + n; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function regMedia(m){
+  if (!m) return '';
+  var s = String(m).toLowerCase();
+  if (s.indexOf('manifest.list') >= 0 || s.indexOf('image.index') >= 0) return 'index';
+  if (s.indexOf('manifest.v2') >= 0 || s.indexOf('image.manifest') >= 0) return 'v2';
+  if (s.indexOf('manifest.v1') >= 0) return 'v1';
+  return String(m);
+}
+
+/* 一条路径一行：结论徽标 + 名称 + HTTP/媒体类型/归因。字段缺失就不写，
+   不补默认值。 */
+function regPathRow(label, p, sel){
+  if (!p || typeof p !== 'object' || regIsArray(p)) return '';
+  var cap = (typeof p.cap === 'number') ? p.cap : -1;
+  var cls = cap === 1 ? 'ok' : (cap === 2 ? 'mis' : (cap === 0 ? 'no' : 'un'));
+  var mark = cap === 1 ? '✓' : (cap === 2 ? '!' : (cap === 0 ? '✗' : '—'));
+  var bits = [];
+  if (p.http_code) bits.push('HTTP ' + p.http_code);
+  if (p.code) bits.push(String(p.code));
+  var mt = regMedia(p.media_type); if (mt) bits.push(mt);
+  var rs = regReason(p.reason), tr = regTransport(p.transport);
+  if (rs) bits.push(tr ? rs + ' · ' + tr : rs);
+  if (!bits.length) bits.push(cap === 1 ? '通过' : '无结论');
+  return '<div class="rp' + (sel ? ' sel' : '') + '">'
+    + '<span class="rm ' + cls + '">' + mark + '</span>'
+    + '<b>' + esc(label) + '</b>'
+    + '<span class="rv">' + bits.map(function(b){ return '<span class="rb">' + esc(b) + '</span>'; }).join('') + '</span>'
+    + (p.path ? '<span class="rpath" title="' + esc(p.path) + '">' + esc(p.path) + '</span>' : '')
+    + '</div>';
+}
+
+/* Hub 源（repo_host 为空）不渲染本区域；没有诊断时只给一行「尚未探测」。 */
+function regDiagHtml(x){
+  if (!x || !x.repo_host) return '';
+  var cap = regCap(x.registry_cap);
+  var ts = x.registry_probe_at || 0;
+  var h = '<div class="rdiag"><div class="rdh"><b>镜像仓库探测</b>'
+    + '<span class="rcap ' + cap[1] + '">' + esc(cap[0]) + '</span>'
+    + '<span class="rwhen">' + (ts ? esc('历史探测 · ' + regTime(ts)) : '尚未探测') + '</span></div>';
+  var p = regParse(x.registry_probe_error);
+  if (!p) return h + '<div class="rempty">尚未探测</div></div>';
+  if (!p.ok) {
+    h += '<div class="rraw"><span class="rwhy">' + esc(p.why) + '</span><code>'
+      + esc(p.raw.length > 600 ? p.raw.slice(0, 600) + '…' : p.raw) + '</code></div></div>';
+    return h;
+  }
+  var d = p.diag, rows = [];
+  if (d.repo) rows.push('<div class="rrepo"><span class="rl">仓库</span><code>' + esc(d.repo)
+    + (d.tag ? '<i>:' + esc(d.tag) + '</i>' : '') + '</code></div>');
+  var sel = d.selected || '';
+  var n = regPathRow('原生', d.native, sel === 'native');
+  var hp = regPathRow('前缀', d.host_prefix, sel === 'host_prefix');
+  if (n || hp) rows.push('<div class="rpaths">' + n + hp + '</div>');
+  else rows.push('<div class="rempty">诊断无路径明细</div>');
+  if (sel) rows.push('<div class="rsel"><span class="rl">选中路径</span><b>'
+    + esc(sel === 'native' ? '原生' : (sel === 'host_prefix' ? '前缀' : sel)) + '</b></div>');
+  var rs = regReason(d.reason), tr = regTransport(d.transport);
+  if (rs) rows.push('<div class="rsel"><span class="rl">整体归因</span><b>' + esc(tr ? rs + ' · ' + tr : rs) + '</b></div>');
+  if (regIsArray(d.warnings) && d.warnings.length) {
+    var items = [];
+    for (var i = 0; i < d.warnings.length && i < 8; i++) {
+      items.push('<li>' + esc(typeof d.warnings[i] === 'string' ? d.warnings[i] : String(d.warnings[i])) + '</li>');
+    }
+    rows.push('<div class="rwarn"><span class="rl">警告 ' + d.warnings.length + '</span><ul>' + items.join('') + '</ul></div>');
+  }
+  return h + rows.join('') + '</div>';
+}
+
 /* 能力标签只出 HUB 与 RAW：没探过的类型不挂标签，
    否则一个泛称会让人以为两种代理都能用。 */
 function capTags(x){
@@ -508,6 +608,7 @@ function rowHtml(x){
           +   '<select class="gs" data-gs="' + x.id + '">' + groupOptions(x.group_id) + '</select>'
           + '</div>'
           + '<div class="detstats">' + detailStats(x) + '</div>'
+          + regDiagHtml(x)
           + (kindScoreHtml(x) ? '<div class="ksc">' + kindScoreHtml(x) + '</div>' : '')
           + '<svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
           + '<div class="life">'
