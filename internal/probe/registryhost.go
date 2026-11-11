@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -85,6 +86,14 @@ const (
 	capNo          = 0
 	capYes         = 1
 	capMismatch    = 2
+)
+
+// 导出的能力取值，供 Runner 与面板使用；与 store.RegistryCap* 同值。
+const (
+	CapUnknown  = capUnknown
+	CapNo       = capNo
+	CapYes      = capYes
+	CapMismatch = capMismatch
 )
 
 // Manifest 媒体类型白名单：摘要相同只证明字节一致，不证明拿到的是
@@ -319,6 +328,12 @@ func collectWarnings(native, prefix PathOutcome, selected string, cap int) []str
 	if selected == modeHostPrefix && native.Cap == capMismatch {
 		w = append(w, "native 内容不一致，未污染 host_prefix，但证据已保留")
 	}
+	if native.Cap == capMismatch && prefix.Cap == capNo {
+		w = append(w, "native 内容不一致，host_prefix 明确不支持：判未知，不写 0 也不写 2")
+	}
+	if native.Cap == capNo && prefix.Cap == capMismatch {
+		w = append(w, "host_prefix 内容不一致，native 明确不支持：判未知，不写 0 也不写 2")
+	}
 	if cap == capUnknown && (native.Cap == capMismatch || prefix.Cap == capMismatch) {
 		w = append(w, "存在内容不一致证据，但另一条路径未完成验证，不下结论")
 	}
@@ -382,4 +397,117 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// DiagnosticsVersion 是 registry_probe_error 里结构化诊断的格式版本。
+// 改字段语义必须升版本，读取方按 version 决定怎么解析。
+const DiagnosticsVersion = 1
+
+// Diagnostics 是写进 registry_probe_error 的完整快照：两条路径各自的
+// 结论都保留，即使数据库最终只存一组聚合值。
+type Diagnostics struct {
+	Version    int         `json:"version"`
+	Native     PathOutcome `json:"native"`
+	HostPrefix PathOutcome `json:"host_prefix"`
+	Selected   string      `json:"selected,omitempty"`
+	Warnings   []string    `json:"warnings,omitempty"`
+}
+
+const (
+	diagMaxBytes    = 4096
+	diagErrMaxRunes = 200
+)
+
+// Diagnostics 返回裁剪后的诊断快照。裁剪只动 error/detail/warnings 这些
+// 文本字段，序列化结果本身永远是完整 JSON。
+func (o RegistryHostOutcome) Diagnostics() Diagnostics {
+	d := Diagnostics{
+		Version:    DiagnosticsVersion,
+		Native:     trimOutcome(o.Native),
+		HostPrefix: trimOutcome(o.HostPrefix),
+		Selected:   o.Selected,
+	}
+	for _, w := range o.Warnings {
+		d.Warnings = append(d.Warnings, clip(w, diagErrMaxRunes))
+	}
+	return shrinkDiagnostics(d)
+}
+
+// DiagnosticJSON 是落库用的紧凑 JSON，保证不超过 4 KiB（UTF-8 字节）。
+func (o RegistryHostOutcome) DiagnosticJSON() string {
+	b, err := json.Marshal(o.Diagnostics())
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func trimOutcome(o PathOutcome) PathOutcome {
+	o.Error = clip(o.Error, diagErrMaxRunes)
+	o.Detail = clip(o.Detail, diagErrMaxRunes)
+	// 内部证据标记不进 JSON。
+	return o
+}
+
+// shrinkDiagnostics 按「先掉 detail，再掉 warnings，最后压 error」的顺序
+// 收缩，直到能完整放进 4 KiB。任何一步都不产生残缺 JSON。
+func shrinkDiagnostics(d Diagnostics) Diagnostics {
+	if diagBytes(d) <= diagMaxBytes {
+		return d
+	}
+	d.Native.Detail, d.HostPrefix.Detail = "", ""
+	if diagBytes(d) <= diagMaxBytes {
+		return d
+	}
+	d.Warnings = nil
+	if diagBytes(d) <= diagMaxBytes {
+		return d
+	}
+	d.Native.Error = clip(d.Native.Error, 80)
+	d.HostPrefix.Error = clip(d.HostPrefix.Error, 80)
+	if diagBytes(d) <= diagMaxBytes {
+		return d
+	}
+	// 最后手段：保留结论字段和路径，丢掉全部文本。
+	d.Native.Error, d.HostPrefix.Error = "", ""
+	d.Native.Detail, d.HostPrefix.Detail = "", ""
+	return d
+}
+
+func diagBytes(d Diagnostics) int {
+	b, err := json.Marshal(d)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// ErrOutcomeInconsistent 表示聚合结果自相矛盾，拒绝写库。
+var ErrOutcomeInconsistent = errors.New("probe outcome 与 selected 不一致")
+
+// StoreFields 把探测结论转成写库参数，并在这一层校验聚合语义：
+// cap=1 必须指向一条自身 cap=1 的路径，其余情况不得带路径。
+func (o RegistryHostOutcome) StoreFields() (cap int, pathMode string, note string, err error) {
+	note = o.DiagnosticJSON()
+	switch o.Cap {
+	case capYes:
+		if o.Selected != modeNative && o.Selected != modeHostPrefix {
+			return 0, "", note, ErrOutcomeInconsistent
+		}
+		sel := o.Native
+		if o.Selected == modeHostPrefix {
+			sel = o.HostPrefix
+		}
+		if sel.Cap != capYes {
+			return 0, "", note, ErrOutcomeInconsistent
+		}
+		return capYes, o.Selected, note, nil
+	case capNo, capMismatch, capUnknown:
+		if o.Selected != "" {
+			return 0, "", note, ErrOutcomeInconsistent
+		}
+		return o.Cap, "", note, nil
+	default:
+		return 0, "", note, fmt.Errorf("未知 registry_cap=%d", o.Cap)
+	}
 }

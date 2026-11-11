@@ -37,6 +37,45 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+// mustSecretKey 加载或创建数据目录里的密钥文件。Host 凭据与设置页 Token
+// 共用同一把密钥，AEAD 的 AAD 已经区分用途。
+func mustSecretKey(dir string) []byte {
+	key, err := secret.LoadOrCreateKey(filepath.Join(dir, "secret.key"))
+	if err != nil {
+		log.Printf("读取凭据密钥失败: %v", err)
+		return nil
+	}
+	return key
+}
+
+// hostProbeInterval 默认 6 小时；失败源靠 Runner 内部退避重试，不受这个
+// 周期约束。可用 ML_HOSTPROBE_INTERVAL 覆盖。
+func hostProbeInterval() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ML_HOSTPROBE_INTERVAL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		log.Printf("ML_HOSTPROBE_INTERVAL=%q 无效，用默认 6h", v)
+	}
+	return 6 * time.Hour
+}
+
+// parseHostProbeRepos 解析 ML_HOSTPROBE_REPOS="quay.io=org/repo,..."。
+func parseHostProbeRepos(v string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(v, ",") {
+		host, repo, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		host, repo = strings.TrimSpace(host), strings.TrimSpace(repo)
+		if host != "" && repo != "" {
+			out[host] = repo
+		}
+	}
+	return out
+}
+
 func main() {
 	// 只留四个开关，其余参数在配置文件里（见 config.example.yaml）
 	cfgPath := flag.String("config", "", "配置文件路径（默认找当前目录的 config.yaml）")
@@ -264,6 +303,29 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go eng.Loop(ctx)
+
+	// 仓库凭据与 Host 探测：对账成功才允许启动探测 Runner。
+	// 对账失败只关掉 Host 探测，不影响现有回源（阶段 4 仍不接业务路径）。
+	hostCreds, cerr := secret.NewCredStore(filepath.Join(cfg.Data, "registry_creds.enc"),
+		mustSecretKey(cfg.Data), st)
+	if cerr != nil {
+		log.Printf("仓库凭据存储初始化失败，Host 探测不启动: %v", cerr)
+		hostCreds = nil
+	} else if _, rerr := hostCreds.Reconcile(); rerr != nil {
+		log.Printf("仓库凭据对账失败，Host 探测不启动: %v", rerr)
+		hostCreds = nil
+	}
+	if hostCreds != nil {
+		go runner.NewHostProbeRunner(runner.HostProbeOptions{
+			Store:       st,
+			Creds:       hostCreds,
+			Repos:       parseHostProbeRepos(os.Getenv("ML_HOSTPROBE_REPOS")),
+			Interval:    hostProbeInterval(),
+			Timeout:     time.Duration(cfg.Probe.TimeoutSec) * time.Second,
+			Concurrency: cfg.Probe.Concurrency,
+			Backoff:     15 * time.Second,
+		}).Run(ctx)
+	}
 
 	// 数据库快照目录：留空跟 data 走，宿主上就是 <挂载目录>/backup。
 	backupDir := ""

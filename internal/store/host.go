@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,6 +30,38 @@ const (
 
 // ErrSourceNotFound 表示按 id 找不到源。
 var ErrSourceNotFound = errors.New("source not found")
+
+// HostCapsCommitResult 说明一次能力写回为什么没成功。
+//
+// 不能用 bool：写回失败可能是凭据版本变了，也可能是源被归档、被移走或
+// 被删了。前者要重排，后者重排只会变成死循环。
+type HostCapsCommitResult int
+
+const (
+	// HostCapsCommitted：已写入。
+	HostCapsCommitted HostCapsCommitResult = iota
+	// HostCapsStaleSnapshot：探测期间的 gen 或 cred_digest 已过期。
+	HostCapsStaleSnapshot
+	// HostCapsSourceChanged：repo_host 已经改成别的 Host。
+	HostCapsSourceChanged
+	// HostCapsSourceUnavailable：源不存在或已归档。
+	HostCapsSourceUnavailable
+)
+
+func (r HostCapsCommitResult) String() string {
+	switch r {
+	case HostCapsCommitted:
+		return "committed"
+	case HostCapsStaleSnapshot:
+		return "stale_snapshot"
+	case HostCapsSourceChanged:
+		return "source_changed"
+	case HostCapsSourceUnavailable:
+		return "source_unavailable"
+	default:
+		return "unknown"
+	}
+}
 
 // backfillRepoHost 把历史上只打了 ghcr_cap 的源标成 ghcr.io 归属。
 //
@@ -99,20 +133,27 @@ func (s *Store) withSourceLive(id int64, fn func(*sql.Tx) error) error {
 //   - registry_host_gen 必须仍是探测开始时的代次（凭据可能中途换过）；
 //   - status 不能是 archived（用户可能中途归档）。
 //
-// 返回 false 表示这次结果已过期，调用方应静默丢弃。
-func (s *Store) SetHostCaps(id int64, rawHost string, cap int, pathMode string, at int64, errText string, gen int64, credDigest string) (bool, error) {
+// 条件不满足时返回 HostCapsStaleSnapshot / HostCapsSourceChanged /
+// HostCapsSourceUnavailable，调用方据此决定重排还是收尾。
+func (s *Store) SetHostCaps(id int64, rawHost string, cap int, pathMode string, at int64, errText string, gen int64, credDigest string) (HostCapsCommitResult, error) {
 	host, err := registryhost.Check(rawHost)
 	if err != nil {
-		return false, err
+		return HostCapsCommitted, err
 	}
 	if host == "" || host == "ghcr.io" {
-		return false, errors.New("Hub/ghcr 的能力仍由 docker_cap/ghcr_cap 记录，不走 SetHostCaps")
+		return HostCapsCommitted, errors.New("Hub/ghcr 的能力仍由 docker_cap/ghcr_cap 记录，不走 SetHostCaps")
 	}
 	if !validRegistryCap(cap) {
-		return false, errors.New("registry_cap 只允许 -1/0/1/2")
+		return HostCapsCommitted, errors.New("registry_cap 只允许 -1/0/1/2")
 	}
-	if pathMode != "" && pathMode != PathNative && pathMode != PathHostPrefix {
-		return false, errors.New("registry_path_mode 只允许 native/host_prefix")
+	// 持久化形状：cap=1 必须带合法路径，其余必须不带。完整聚合语义由
+	// Probe 层保证，这里只拒绝非法组合，防止脏状态进库。
+	if cap == RegistryCapYes {
+		if pathMode != PathNative && pathMode != PathHostPrefix {
+			return HostCapsCommitted, errors.New("registry_cap=1 必须指定 native/host_prefix")
+		}
+	} else if pathMode != "" {
+		return HostCapsCommitted, errors.New("只有 registry_cap=1 可以带 registry_path_mode")
 	}
 	res, err := s.db.Exec(`UPDATE sources
 SET registry_cap=?, registry_path_mode=?, registry_probe_at=?, registry_probe_error=?
@@ -121,15 +162,53 @@ WHERE id=?
   AND status<>'archived'
   AND COALESCE((SELECT gen FROM registry_host_gen WHERE host=?),0)=?
   AND COALESCE((SELECT cred_digest FROM registry_host_gen WHERE host=?),'')=?`,
-		cap, pathMode, at, clipErr(errText), id, host, host, gen, host, credDigest)
+		cap, pathMode, at, clipProbeNote(errText), id, host, host, gen, host, credDigest)
 	if err != nil {
-		return false, err
+		return HostCapsCommitted, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return HostCapsCommitted, err
 	}
-	return n > 0, nil
+	if n > 0 {
+		return HostCapsCommitted, nil
+	}
+	return s.classifyHostCapsMiss(id, host, gen, credDigest)
+}
+
+// classifyHostCapsMiss 在 UPDATE 未命中后读一次现场，判断是版本过期还是
+// 源本身变了。这次读取只影响「接下来怎么调度」，不参与写回，所以和
+// UPDATE 之间的竞态最多导致一次多余重排，不会写错数据。
+func (s *Store) classifyHostCapsMiss(id int64, host string, gen int64, credDigest string) (HostCapsCommitResult, error) {
+	var repoHost, status string
+	err := s.db.QueryRow(`SELECT COALESCE(repo_host,''), status FROM sources WHERE id=?`, id).
+		Scan(&repoHost, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HostCapsSourceUnavailable, nil
+	}
+	if err != nil {
+		return HostCapsCommitted, err
+	}
+	if status == "archived" {
+		return HostCapsSourceUnavailable, nil
+	}
+	if repoHost != host {
+		return HostCapsSourceChanged, nil
+	}
+	var g int64
+	var d string
+	err = s.db.QueryRow(`SELECT gen, cred_digest FROM registry_host_gen WHERE host=?`, host).Scan(&g, &d)
+	if errors.Is(err, sql.ErrNoRows) {
+		g, d = 0, ""
+	} else if err != nil {
+		return HostCapsCommitted, err
+	}
+	if g != gen || d != credDigest {
+		return HostCapsStaleSnapshot, nil
+	}
+	// 条件都还成立却没更新到：期间被别的写入改回原值（例如归档后又恢复）。
+	// 当成过期处理，重探一次即可，不会无限循环——源不可用会走上面的分支。
+	return HostCapsStaleSnapshot, nil
 }
 
 func validRegistryCap(v int) bool {
@@ -314,14 +393,47 @@ ORDER BY s.repo_host, s.name`
 	return out, rows.Err()
 }
 
-// clipErr 限制错误文本长度并按 rune 截断：上游可以把整页 HTML 塞进
-// 错误信息，直接落库会让面板和备份一起膨胀。
-func clipErr(s string) string {
+// registry_probe_error 的长度上限。
+//
+// 普通错误文本按 200 rune 截断；结构化诊断（version>=1 的 JSON）按 UTF-8
+// 字节限制 4 KiB，且必须在序列化前裁字段——直接裁序列化结果会留下半个
+// JSON，面板永远解析不出来。
+const (
+	probeNoteMaxRunes = 200
+	probeNoteMaxBytes = 4096
+)
+
+func clipProbeNote(s string) string {
 	s = strings.TrimSpace(s)
-	const max = 200
+	if s == "" {
+		return ""
+	}
+	if isDiagnosticsJSON(s) {
+		if len(s) <= probeNoteMaxBytes {
+			return s
+		}
+		// Probe 层已按 4 KiB 裁剪；这里是兜底：宁可退化成一行文本，
+		// 也不把残缺 JSON 写进库。
+		return "诊断超限（" + strconv.Itoa(len(s)) + " 字节），已省略"
+	}
+	return clipRunes(s, probeNoteMaxRunes)
+}
+
+// isDiagnosticsJSON 先去掉首尾空白再解析，避免前缀/换行让判断失效。
+func isDiagnosticsJSON(s string) bool {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "{") {
+		return false
+	}
+	var v struct {
+		Version int `json:"version"`
+	}
+	return json.Unmarshal([]byte(s), &v) == nil && v.Version >= 1
+}
+
+func clipRunes(s string, max int) string {
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	r := []rune(s)
-	return string(r[:max])
+	return string([]rune(s)[:max])
 }

@@ -43,9 +43,17 @@ var (
 )
 
 // Credential 是解密后的凭据内容。
+//
+// TokenMethod / TokenAuth 与用户名密码一起封在同一个 AEAD 里，因此
+// 「凭据 + 认证方式」天然来自同一次一致性读取，不会出现拼装错版本。
+// 空值表示历史记录：TokenMethod 按 GET，TokenAuth 按「有凭据则 basic」。
 type Credential struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// TokenMethod: "" | "GET"（POST 暂不支持，由 v2auth 显式拒绝）。
+	TokenMethod string `json:"token_method,omitempty"`
+	// TokenAuth: ""（自动）| "none"（永不带 Basic）| "basic"（必须带 Basic）。
+	TokenAuth string `json:"token_auth,omitempty"`
 }
 
 type cipherRecord struct {
@@ -238,6 +246,57 @@ func (s *Store) Get(rawHost string) (Credential, bool, error) {
 		return Credential{}, false, err
 	}
 	return c, true, nil
+}
+
+// Snapshot 是一次探测使用的完整凭据版本。
+//
+// Host、Generation、Digest 与凭据内容必须来自同一次加锁读取；调用方不能
+// 分别读 gen、digest 和凭据再拼起来。digest 为 "" 表示数据库里还没有该
+// Host 的代次记录（与 SetHostCaps 的 COALESCE 语义一致）。
+type Snapshot struct {
+	Host          string
+	Generation    int64
+	Digest        string
+	Credential    Credential
+	HasCredential bool
+}
+
+// Snapshot 一次性取回某 Host 的凭据版本。
+func (s *Store) Snapshot(rawHost string) (Snapshot, error) {
+	host, err := credentialHost(rawHost)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.reconciled {
+		return Snapshot{}, ErrNotReconciled
+	}
+	doc, err := s.readValidated()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	gen, cur, err := s.db.HostGenState(host)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	rec, ok := doc.Hosts[host]
+	if !ok {
+		// 文件里没有：数据库必须也是「无凭据」，否则是删除只写了一半。
+		if cur != "" && cur != emptyDigest(host) {
+			return Snapshot{}, fmt.Errorf("%w: %s", ErrCredentialPending, host)
+		}
+		return Snapshot{Host: host, Generation: gen, Digest: cur}, nil
+	}
+	digest := recordDigest(host, rec)
+	if cur != digest {
+		return Snapshot{}, fmt.Errorf("%w: %s", ErrCredentialPending, host)
+	}
+	c, err := s.open(host, rec)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{Host: host, Generation: gen, Digest: digest, Credential: c, HasCredential: true}, nil
 }
 
 // Has 只报告是否配置了凭据，不返回密码。

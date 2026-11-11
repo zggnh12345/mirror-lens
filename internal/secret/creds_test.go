@@ -221,9 +221,9 @@ func TestCredsExplicitDelete(t *testing.T) {
 	f.mustPut(t, "quay.io", "u", "p")
 	gen, _ := f.genOf(t, "quay.io")
 	// 先放一个能力结论，删除后必须被清空。
-	if ok, err := f.db.SetHostCaps(f.source["quay.io"], "quay.io", store.RegistryCapYes,
-		store.PathNative, 100, "", gen, mustDigest(t, f, "quay.io")); err != nil || !ok {
-		t.Fatalf("预置能力失败: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(f.source["quay.io"], "quay.io", store.RegistryCapYes,
+		store.PathNative, 100, "", gen, mustDigest(t, f, "quay.io")); err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("预置能力失败: res=%v err=%v", res, err)
 	}
 	if f.capOf(t, "quay.io") != store.RegistryCapYes {
 		t.Fatal("预置能力没写进去")
@@ -410,22 +410,22 @@ func TestSetHostCapsNeedsCurrentDigest(t *testing.T) {
 	gen, _ := f.genOf(t, "quay.io")
 	id := f.source["quay.io"]
 
-	if ok, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen, "old-digest"); err != nil || ok {
-		t.Fatalf("旧摘要不应写入: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen, "old-digest"); err != nil || res != store.HostCapsStaleSnapshot {
+		t.Fatalf("旧摘要不应写入: res=%v err=%v", res, err)
 	}
-	if ok, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen+1, digest); err != nil || ok {
-		t.Fatalf("旧代次不应写入: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen+1, digest); err != nil || res != store.HostCapsStaleSnapshot {
+		t.Fatalf("旧代次不应写入: res=%v err=%v", res, err)
 	}
-	if ok, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen, digest); err != nil || !ok {
-		t.Fatalf("当前版本应写入: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 1, "", gen, digest); err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("当前版本应写入: res=%v err=%v", res, err)
 	}
 	// 换凭据后旧摘要立即失效。
 	newDigest := f.mustPut(t, "quay.io", "u", "p2")
-	if ok, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 2, "", gen+1, digest); err != nil || ok {
-		t.Fatalf("换凭据后旧摘要不应写入: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 2, "", gen+1, digest); err != nil || res != store.HostCapsStaleSnapshot {
+		t.Fatalf("换凭据后旧摘要不应写入: res=%v err=%v", res, err)
 	}
-	if ok, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 2, "", gen+1, newDigest); err != nil || !ok {
-		t.Fatalf("新摘要应写入: ok=%v err=%v", ok, err)
+	if res, err := f.db.SetHostCaps(id, "quay.io", store.RegistryCapYes, store.PathNative, 2, "", gen+1, newDigest); err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("新摘要应写入: res=%v err=%v", res, err)
 	}
 }
 
@@ -510,5 +510,81 @@ func tamper(t *testing.T, path string, fn func(map[string]any)) {
 	}
 	if err := os.WriteFile(path, out, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Snapshot 必须一次给出 gen/digest/凭据三件事，且与数据库当前版本一致。
+func TestSnapshotConsistent(t *testing.T) {
+	f := newCredFixture(t, "quay.io", "lscr.io")
+	if _, err := f.cs.Snapshot("quay.io"); !errors.Is(err, ErrNotReconciled) {
+		t.Fatalf("对账前应拒绝快照，得到 %v", err)
+	}
+	if _, err := f.cs.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	digest := f.mustPut(t, "quay.io", "robot", "p@ss")
+	gen, cur := f.genOf(t, "quay.io")
+
+	snap, err := f.cs.Snapshot("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Host != "quay.io" || snap.Generation != gen || snap.Digest != cur || snap.Digest != digest {
+		t.Fatalf("快照版本不一致: %+v gen=%d cur=%s", snap, gen, cur)
+	}
+	if !snap.HasCredential || snap.Credential.Username != "robot" || snap.Credential.Password != "p@ss" {
+		t.Fatalf("快照凭据不对: %+v", snap)
+	}
+
+	// 没配置凭据的 Host：快照仍然可用，Digest 必须与 SetHostCaps 的
+	// COALESCE 语义一致（无记录时为 ""）。
+	snap2, err := f.cs.Snapshot("lscr.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.HasCredential {
+		t.Fatalf("lscr.io 不应有凭据: %+v", snap2)
+	}
+	g2, d2 := f.genOf(t, "lscr.io")
+	if snap2.Generation != g2 || snap2.Digest != d2 {
+		t.Fatalf("无凭据快照与库不一致: %+v gen=%d digest=%q", snap2, g2, d2)
+	}
+}
+
+// 认证方式与凭据封在同一个 AEAD 里，读回时不能丢。
+func TestSnapshotCarriesTokenMode(t *testing.T) {
+	f := newCredFixture(t, "quay.io")
+	if _, err := f.cs.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	host := "quay.io"
+	f.cs.mu.Lock()
+	doc, err := f.cs.readValidated()
+	if err != nil {
+		f.cs.mu.Unlock()
+		t.Fatal(err)
+	}
+	rec, err := f.cs.seal(host, Credential{Username: "u", Password: "p", TokenMethod: "GET", TokenAuth: "basic"})
+	if err != nil {
+		f.cs.mu.Unlock()
+		t.Fatal(err)
+	}
+	doc.Hosts[host] = rec
+	if err := f.cs.writeAtomic(doc); err != nil {
+		f.cs.mu.Unlock()
+		t.Fatal(err)
+	}
+	dg := recordDigest(host, rec)
+	f.cs.mu.Unlock()
+	if err := f.db.ApplyCredChanges([]store.CredChange{{Host: host, Digest: &dg}}); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := f.cs.Snapshot(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Credential.TokenMethod != "GET" || snap.Credential.TokenAuth != "basic" {
+		t.Fatalf("认证方式丢失: %+v", snap.Credential)
 	}
 }

@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -186,14 +188,14 @@ func TestSetRepoHostClearsCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || ok {
-		t.Fatalf("先要把源改成 lscr.io 才能写 lscr 能力: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || res != HostCapsSourceChanged {
+		t.Fatalf("先要把源改成 lscr.io 才能写 lscr 能力: res=%v err=%v", res, err)
 	}
 	if err := st.SetRepoHost(id, "LSCR.IO."); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || !ok {
-		t.Fatalf("写回失败: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 123, "ok", gen, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("写回失败: res=%v err=%v", res, err)
 	}
 	// 改归属必须清空旧结论。
 	if err := st.SetRepoHost(id, "quay.io"); err != nil {
@@ -241,8 +243,8 @@ func TestSetHostCapsGuards(t *testing.T) {
 	}
 
 	// 错误的 Host：用户中途改了归属，旧结果不能落库。
-	if ok, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 1, "", gen, ""); err != nil || ok {
-		t.Fatalf("Host 不匹配时应拒绝: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "lscr.io", RegistryCapYes, PathNative, 1, "", gen, ""); err != nil || res != HostCapsSourceChanged {
+		t.Fatalf("Host 不匹配时应拒绝: res=%v err=%v", res, err)
 	}
 	// Hub / ghcr 不接受 Host Probe 结果。
 	if _, err := st.SetHostCaps(id, "", RegistryCapYes, PathNative, 1, "", gen, ""); err == nil {
@@ -261,11 +263,11 @@ func TestSetHostCapsGuards(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		long += "错"
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapMismatch, PathHostPrefix, 42, long, gen, ""); err != nil || !ok {
-		t.Fatalf("写回失败: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapMismatch, "", 42, long, gen, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("写回失败: res=%v err=%v", res, err)
 	}
 	x := mustSource(t, st, id)
-	if x.RegistryCap != RegistryCapMismatch || x.RegistryPath != PathHostPrefix || x.RegistryProbeAt != 42 {
+	if x.RegistryCap != RegistryCapMismatch || x.RegistryPath != "" || x.RegistryProbeAt != 42 {
 		t.Fatalf("写回结果不对: %+v", x)
 	}
 	if n := len([]rune(x.RegistryProbeError)); n != 200 {
@@ -283,17 +285,17 @@ func TestSetHostCapsGuards(t *testing.T) {
 	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown || x.RegistryProbeError != "" {
 		t.Fatalf("Bump 后应清空能力: %+v", x)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen, ""); err != nil || ok {
-		t.Fatalf("旧代次结果不应写入: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen, ""); err != nil || res != HostCapsStaleSnapshot {
+		t.Fatalf("旧代次结果不应写入: res=%v err=%v", res, err)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 51, "", gen2, ""); err != nil || !ok {
-		t.Fatalf("新代次结果应写入: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 51, "", gen2, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("新代次结果应写入: res=%v err=%v", res, err)
 	}
 
 	// 归档后连正确的写入也要拒绝。
 	mustExec(t, st, `UPDATE sources SET status='archived' WHERE id=?`, id)
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 52, "", gen2, ""); err != nil || ok {
-		t.Fatalf("归档源不应被写入: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 52, "", gen2, ""); err != nil || res != HostCapsSourceUnavailable {
+		t.Fatalf("归档源不应被写入: res=%v err=%v", res, err)
 	}
 }
 
@@ -315,8 +317,8 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(i), "", gen, ""); err != nil || !ok {
-				t.Errorf("并发写失败: ok=%v err=%v", ok, err)
+			if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(i), "", gen, ""); err != nil || res != HostCapsCommitted {
+				t.Errorf("并发写失败: res=%v err=%v", res, err)
 			}
 		}(i)
 	}
@@ -330,12 +332,12 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(100+i), "", gen, "")
+			res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, int64(100+i), "", gen, "")
 			if err != nil {
 				t.Errorf("旧代次写入报错: %v", err)
 			}
-			if ok {
-				t.Errorf("旧代次写入不应成功")
+			if res != HostCapsStaleSnapshot {
+				t.Errorf("旧代次应归类 stale_snapshot，得到 %v", res)
 			}
 		}(i)
 	}
@@ -343,8 +345,8 @@ func TestSetHostCapsConcurrentGenerations(t *testing.T) {
 	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown {
 		t.Fatalf("旧代次写入污染了结果: %+v", x)
 	}
-	if ok, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 200, "", gen2, ""); err != nil || !ok {
-		t.Fatalf("新代次写入失败: ok=%v err=%v", ok, err)
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 200, "", gen2, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("新代次写入失败: res=%v err=%v", res, err)
 	}
 }
 
@@ -386,8 +388,8 @@ func TestListHostCapsScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.SetHostCaps(quay, "quay.io", RegistryCapYes, PathNative, 9, "", gen, ""); err != nil || !ok {
-		t.Fatalf("写回失败: %v %v", ok, err)
+	if res, err := st.SetHostCaps(quay, "quay.io", RegistryCapYes, PathNative, 9, "", gen, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("写回失败: %v %v", res, err)
 	}
 	pending, err = st.ListPendingHostCaps()
 	if err != nil {
@@ -427,4 +429,78 @@ func mustSource(t *testing.T, st *Store, id int64) Source {
 		t.Fatal(err)
 	}
 	return *x
+}
+
+// 写库形状：cap=1 必须带合法路径，其余必须不带。这是 Probe 聚合之外的
+// 第二道闸，防止调用方传错组合把脏状态写进去。
+func TestSetHostCapsRejectsBadShape(t *testing.T) {
+	st := openTestAt(t, filepath.Join(t.TempDir(), "shape.db"))
+	defer st.Close()
+	id, err := st.AddSource(Source{Name: "s", BaseURL: "https://shape.example", Status: "usable", RepoHost: "quay.io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := st.HostGen("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := []struct {
+		cap  int
+		mode string
+	}{
+		{RegistryCapYes, ""},
+		{RegistryCapYes, "weird"},
+		{RegistryCapNo, PathNative},
+		{RegistryCapMismatch, PathHostPrefix},
+		{RegistryCapUnknown, PathNative},
+	}
+	for _, c := range bad {
+		if _, err := st.SetHostCaps(id, "quay.io", c.cap, c.mode, 1, "", gen, ""); err == nil {
+			t.Fatalf("cap=%d mode=%q 应被拒绝", c.cap, c.mode)
+		}
+	}
+	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown {
+		t.Fatalf("非法组合不应落库: %+v", x)
+	}
+}
+
+func TestSetHostCapsMissingSource(t *testing.T) {
+	st := openTestAt(t, filepath.Join(t.TempDir(), "miss.db"))
+	defer st.Close()
+	res, err := st.SetHostCaps(9999, "quay.io", RegistryCapYes, PathNative, 1, "", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != HostCapsSourceUnavailable {
+		t.Fatalf("已删除的源应归类 source_unavailable，得到 %v", res)
+	}
+}
+
+func TestClipProbeNote(t *testing.T) {
+	long := strings.Repeat("错", 500)
+	if got := clipProbeNote(" \n" + long + "\t"); len([]rune(got)) != probeNoteMaxRunes {
+		t.Fatalf("旧文本应截到 %d rune，得到 %d", probeNoteMaxRunes, len([]rune(got)))
+	}
+
+	diag := `{"version":1,"native":{"cap":1},"host_prefix":{"cap":0}}`
+	if got := clipProbeNote("  \n" + diag + "\n "); got != diag {
+		t.Fatalf("结构化诊断应原样保留: %q", got)
+	}
+
+	big := `{"version":1,"native":{"error":"` + strings.Repeat("x", probeNoteMaxBytes) + `"}}`
+	got := clipProbeNote(big)
+	if isDiagnosticsJSON(got) {
+		t.Fatal("超限诊断不能被截成残缺 JSON 落库")
+	}
+	if len(got) > probeNoteMaxBytes {
+		t.Fatalf("兜底文本也应短: %d", len(got))
+	}
+
+	var notDiag struct{ Version int }
+	if json.Unmarshal([]byte(`{"error":"boom"}`), &notDiag); notDiag.Version != 0 {
+		t.Fatal("测试前提错误")
+	}
+	if got := clipProbeNote(`{"error":"boom"}`); got != `{"error":"boom"}` {
+		t.Fatalf("无版本字段的普通文本按旧规则处理: %q", got)
+	}
 }

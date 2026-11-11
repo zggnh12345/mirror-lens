@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -443,5 +444,78 @@ func TestRegistryCapConstantsMatchStore(t *testing.T) {
 	}
 	if modeNative != store.PathNative || modeHostPrefix != store.PathHostPrefix {
 		t.Fatal("probe 与 store 的路径格式常量不一致")
+	}
+}
+
+// 聚合语义只能有一处真相：cap=1 必须指向一条自身 cap=1 的路径。
+func TestStoreFieldsInvariant(t *testing.T) {
+	ok := RegistryHostOutcome{
+		Cap: capYes, Selected: modeHostPrefix,
+		Native:     PathOutcome{Mode: modeNative, Cap: capMismatch},
+		HostPrefix: PathOutcome{Mode: modeHostPrefix, Cap: capYes},
+	}
+	capv, mode, note, err := ok.StoreFields()
+	if err != nil || capv != capYes || mode != modeHostPrefix || note == "" {
+		t.Fatalf("合法结果应通过: cap=%d mode=%q err=%v", capv, mode, err)
+	}
+
+	bad := []RegistryHostOutcome{
+		{Cap: capYes, Selected: modeNative, Native: PathOutcome{Cap: capUnknown}},
+		{Cap: capYes, Selected: ""},
+		{Cap: capYes, Selected: "weird", Native: PathOutcome{Cap: capYes}},
+		{Cap: capMismatch, Selected: modeNative, Native: PathOutcome{Cap: capYes}},
+		{Cap: capNo, Selected: modeHostPrefix},
+		{Cap: 7},
+	}
+	for _, b := range bad {
+		if _, _, _, err := b.StoreFields(); err == nil {
+			t.Fatalf("应拒绝不一致结果: %+v", b)
+		}
+	}
+}
+
+// 诊断 JSON 必须完整可解析，且不超过 4 KiB；裁剪只发生在文本字段上。
+func TestDiagnosticJSONFitsAndParses(t *testing.T) {
+	big := strings.Repeat("错", 6000)
+	out := RegistryHostOutcome{
+		Host:       "quay.io",
+		Cap:        capUnknown,
+		Native:     PathOutcome{Mode: modeNative, Cap: capUnknown, Error: big, Detail: big},
+		HostPrefix: PathOutcome{Mode: modeHostPrefix, Cap: capNo, Error: big, Detail: big},
+		Warnings:   []string{big, "native 内容不一致"},
+	}
+	raw := out.DiagnosticJSON()
+	if len(raw) > diagMaxBytes {
+		t.Fatalf("诊断超长: %d", len(raw))
+	}
+	var d Diagnostics
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatalf("诊断必须是完整 JSON: %v", err)
+	}
+	if d.Version != DiagnosticsVersion || d.Native.Mode != modeNative || d.HostPrefix.Mode != modeHostPrefix {
+		t.Fatalf("关键字段丢失: %+v", d)
+	}
+	if len([]rune(d.Native.Error)) > diagErrMaxRunes {
+		t.Fatalf("错误文本未裁剪: %d", len([]rune(d.Native.Error)))
+	}
+}
+
+// 2+0 / 0+2 各自留下明确告警，聚合仍是 -1。
+func TestAggregateMismatchVsUnsupported(t *testing.T) {
+	for _, tc := range []struct {
+		native, prefix int
+		want           string
+	}{
+		{capMismatch, capNo, "native 内容不一致"},
+		{capNo, capMismatch, "host_prefix 内容不一致"},
+	} {
+		_, capv, sel := aggregate(PathOutcome{Cap: tc.native}, PathOutcome{Cap: tc.prefix})
+		if capv != capUnknown || sel != "" {
+			t.Fatalf("(%d,%d) 应为 -1/空，得到 %d/%q", tc.native, tc.prefix, capv, sel)
+		}
+		w := strings.Join(collectWarnings(PathOutcome{Cap: tc.native}, PathOutcome{Cap: tc.prefix}, "", capv), "|")
+		if !strings.Contains(w, tc.want) {
+			t.Fatalf("缺少告警 %q: %q", tc.want, w)
+		}
 	}
 }
