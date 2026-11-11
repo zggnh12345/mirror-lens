@@ -18,10 +18,15 @@ import (
 
 // 多源 E2E 夹具：一个假官方（同时当 Hub 上游）+ 若干假镜像源。
 type moFixture struct {
-	gw    *Gateway
-	st    *store.Store
-	ad    *registryadapter.Adapter
-	token string
+	gw     *Gateway
+	st     *store.Store
+	ad     *registryadapter.Adapter
+	token  string
+	dbPath string
+	// officialStatus/officialHdr 让 HEAD 用例控制官方源的状态与挑战头；
+	// 默认 0 表示照旧返回 200 清单。
+	officialStatus int
+	officialHdr    http.Header
 	// native / hostPrefix 分别记录各自命中的路径；official 记录官方回源次数。
 	nativeHits   atomic.Int32
 	prefixHits   atomic.Int32
@@ -32,6 +37,7 @@ type moMirror struct {
 	path   string // 期望收到的路径（含 /v2/ 前缀）
 	status int
 	body   string
+	hdr    http.Header // 额外响应头（429 的 Retry-After、200 的 digest 等）
 	hits   *atomic.Int32
 	// abort 为 true 时先发一半 body 再断开，模拟已提交响应后上游失败。
 	abort bool
@@ -39,6 +45,11 @@ type moMirror struct {
 
 func (m *moMirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.hits.Add(1)
+	for k, vs := range m.hdr {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
 	if r.URL.Path != m.path {
 		http.NotFound(w, r)
 		return
@@ -72,7 +83,8 @@ func newMOFixture(t *testing.T) *moFixture {
 	t.Helper()
 	f := &moFixture{}
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "t.db"))
+	f.dbPath = filepath.Join(dir, "t.db")
+	st, err := store.Open(f.dbPath)
 	if err != nil {
 		t.Fatalf("打开库: %v", err)
 	}
@@ -84,6 +96,15 @@ func newMOFixture(t *testing.T) *moFixture {
 
 	official := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.officialHits.Add(1)
+		for k, vs := range f.officialHdr {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		if f.officialStatus != 0 {
+			w.WriteHeader(f.officialStatus)
+			return
+		}
 		w.Header().Set("Content-Type", manifestsAccept)
 		w.Write([]byte(officialManifest))
 	}))

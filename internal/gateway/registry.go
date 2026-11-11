@@ -1,15 +1,21 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
+	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -218,9 +224,11 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request) {
 		_ = g.st.CacheDelete(e.Key)
 	}
 
-	// HEAD 只问大小和 digest，不下整份
+	// HEAD 只问大小和 digest，不下整份。
+	// 但它必须和 GET 一样走多源：官方不可达而镜像可用时，
+	// 客户端拿 manifest 前的探测请求不能先失败。
 	if r.Method == http.MethodHead {
-		g.headUpstream(w, r, plan)
+		g.headBlob(w, r, plan)
 		return
 	}
 
@@ -269,12 +277,85 @@ func (g *Gateway) writeBlobFile(w http.ResponseWriter, r *http.Request, e *store
 	}
 }
 
-func (g *Gateway) headUpstream(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodHead, plan.Upstream.String(), nil)
-	if err != nil {
-		http.Error(w, "502 "+err.Error(), http.StatusBadGateway)
+// headBlob 处理未命中缓存的 blob HEAD。
+//
+// HEAD 与 GET 共用 targets() 和 Registry Rewrite：候选源在前、官方垫底，
+// 每个目标都过 checkTarget；成功/失败/429/503 都按 plan.Sched() 记进
+// registry 族，不会落到 docker 或 ghcr 的健康维度。
+// HEAD 没有 Body：任何分支都不写 Body，也不会在响应提交后换源。
+func (g *Gateway) headBlob(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
+	var (
+		lastCode int
+		lastHdr  http.Header
+		lastErr  error
+	)
+	for _, t := range g.targets(plan, nil) {
+		if err := g.checkTarget(t.u, r.Host); err != nil {
+			// 不安全的目标直接跳过：不发请求，也不产生健康样本。
+			log.Printf("HEAD 跳过目标 %s: %v", safeUpstream(t.u), logging.SafeErr(err))
+			continue
+		}
+		start := time.Now()
+		code, hdr, err := g.headOnce(r.Context(), plan, t.u)
+		if err != nil {
+			lastErr = err
+			g.reportSource(plan.Sched(), t, false, time.Since(start), scheduler.Hint{Mode: "head"})
+			continue
+		}
+		lastCode, lastHdr = code, hdr
+		switch {
+		case code == http.StatusOK:
+			g.reportSource(plan.Sched(), t, true, time.Since(start),
+				scheduler.Hint{Code: code, Mode: "head"})
+			// HEAD 没有 Body，真实的外源流量只有响应头。
+			g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), headerBytes(hdr))
+			g.writeHeadOK(w, plan, t, hdr)
+			return
+		case isAuthDenied(code):
+			// 与 GET 同口径：401/403 是「没资格问」，换源也拿不到，
+			// 直接把挑战头交给客户端去认证；不冷却（P2-2 待统一分类）。
+			g.reportSource(plan.Sched(), t, true, time.Since(start),
+				scheduler.Hint{Code: code, Mode: "head"})
+			g.writeHeadStatus(w, hdr, code)
+			return
+		case isMiss(code):
+			// 未命中不是源故障：只记事件，不冷却（与透传路径同口径）。
+			metrics.SourceMiss(plan.Kind, code)
+			g.reportSource(plan.Sched(), t, true, time.Since(start),
+				scheduler.Hint{Code: code, Mode: "head"})
+		default:
+			g.reportSource(plan.Sched(), t, false, time.Since(start),
+				scheduler.Hint{Code: code, Mode: "head", RetryAfter: retryAfterHeader(hdr)})
+		}
+	}
+
+	// 所有目标都失败：把最后一次真实的上游状态交给客户端。
+	if lastCode == 0 {
+		code := statusFor(lastErr)
+		log.Printf("HEAD 回源失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(lastErr))
+		g.writeHeadStatus(w, nil, code)
 		return
 	}
+	g.writeHeadStatus(w, lastHdr, lastCode)
+}
+
+// writeHeadStatus 交出一个非 200 的 HEAD 结果：只带认证/限流等必要头，
+// 不写 Body，也不把上游错误响应的 Content-Length 当成资源大小。
+func (g *Gateway) writeHeadStatus(w http.ResponseWriter, hdr http.Header, code int) {
+	noStore(w.Header())
+	copyHeadHeaders(w.Header(), hdr, "WWW-Authenticate", "Retry-After", "Docker-Distribution-Api-Version")
+	w.Header().Set("X-ML-Cache", "MISS")
+	w.WriteHeader(code)
+}
+
+// headOnce 发一次原生 HEAD：只到响应头，读完（最多 4K）并关闭 Body。
+func (g *Gateway) headOnce(ctx context.Context, plan *adapter.Plan, u *url.URL) (int, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("User-Agent", "mirror-lens/"+Version+" (+https://github.com/zggnh12345/mirror-lens)")
+	req.Header.Set("Accept-Encoding", "identity")
 	for k, vs := range plan.Header {
 		for _, v := range vs {
 			req.Header.Add(k, v)
@@ -282,25 +363,51 @@ func (g *Gateway) headUpstream(w http.ResponseWriter, r *http.Request, plan *ada
 	}
 	resp, err := g.cli.Do(req)
 	if err != nil {
-		code := statusFor(err)
-		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
-		return
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("%d 上游 %s", resp.StatusCode, resp.Status), resp.StatusCode)
+	return resp.StatusCode, resp.Header.Clone(), nil
+}
+
+// writeHeadOK 只提交状态和头，不写 Body。
+func (g *Gateway) writeHeadOK(w http.ResponseWriter, plan *adapter.Plan, t fetchTarget, hdr http.Header) {
+	h := w.Header()
+	copyHeadHeaders(h, hdr, "Content-Length", "Content-Type", "Docker-Content-Digest",
+		"Docker-Distribution-Api-Version", "ETag", "Last-Modified",
+		"Cache-Control", "Content-Disposition")
+	if h.Get("Accept-Ranges") == "" {
+		h.Set("Accept-Ranges", "bytes")
+	}
+	h.Set("X-ML-Cache", "MISS")
+	if t.c != nil {
+		plan.Source = t.c.Name
+		h.Set("X-ML-Source", t.c.Name)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func copyHeadHeaders(dst, src http.Header, keys ...string) {
+	if src == nil {
 		return
 	}
-	h := w.Header()
-	for _, k := range []string{"Content-Length", "Docker-Content-Digest", "Content-Type"} {
-		if v := resp.Header.Get(k); v != "" {
-			h.Set(k, v)
+	for _, k := range keys {
+		if v := src.Get(k); v != "" {
+			dst.Set(k, v)
 		}
 	}
-	h.Set("Accept-Ranges", "bytes")
-	h.Set("X-ML-Cache", "MISS")
-	w.WriteHeader(http.StatusOK)
+}
+
+// headerBytes 估算响应头字节数：HEAD 的唯一上游流量就是这些头。
+func headerBytes(h http.Header) int64 {
+	var n int64
+	for k, vs := range h {
+		n += int64(len(k) + 2) // ": "
+		for _, v := range vs {
+			n += int64(len(v) + 2) // "\r\n"
+		}
+	}
+	return n
 }
 
 // shortDigest 把 sha256:xxx 缩成面板一行放得下的形式。
