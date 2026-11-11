@@ -308,8 +308,10 @@ ON CONFLICT(host) DO UPDATE SET gen=gen+1, cred_digest=excluded.cred_digest, upd
 			host, *c.Digest, now); err != nil {
 			return err
 		}
+		// 只清结论，不抹诊断：诊断是上一次有效 Probe 留下的历史事实，
+		// 凭据变了只意味着它不能再当结论用，不意味着它没发生过。
 		if _, err := tx.Exec(`UPDATE sources
-SET registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
+SET registry_cap=?, registry_path_mode=''
 WHERE repo_host=? AND status<>'archived'`, RegistryCapUnknown, host); err != nil {
 			return err
 		}
@@ -357,6 +359,27 @@ type HostCap struct {
 // 出现两套可能矛盾的状态，所以一律排除。
 func (s *Store) ListHostCaps() ([]HostCap, error) {
 	return s.hostCaps("")
+}
+
+// ResetHostCaps 把一条源的能力结论清回「未知」，但保留最近一次诊断与
+// 探测时间：诊断确实来自那次有效 Probe，只是它对应的代表性仓库已经不
+// 是当前配置，不能再当结论用。
+//
+// 清理带条件：对账读到的是 (id, repo_host, cap)，写回时必须仍然一致，
+// 否则说明期间有人改过归属或能力，不能拿旧判断误伤新状态。
+//
+// 刻意不动 registry_host_gen：这是「探测输入变了」，不是凭据变更，也
+// 不应该让在途结果被误判成 stale_snapshot。
+func (s *Store) ResetHostCaps(id int64, host string, cap int) (bool, error) {
+	res, err := s.db.Exec(`UPDATE sources
+SET registry_cap=?, registry_path_mode=''
+WHERE id=? AND repo_host=? AND registry_cap=? AND status<>'archived'`,
+		RegistryCapUnknown, id, host, cap)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // ListPendingHostCaps 只返回尚未验证成功的源，供 Runner 入队。

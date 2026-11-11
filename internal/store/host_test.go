@@ -282,8 +282,10 @@ func TestSetHostCapsGuards(t *testing.T) {
 	if gen2 != gen+1 {
 		t.Fatalf("代次应 +1：%d -> %d", gen, gen2)
 	}
-	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown || x.RegistryProbeError != "" {
+	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown || x.RegistryPath != "" {
 		t.Fatalf("Bump 后应清空能力: %+v", x)
+	} else if x.RegistryProbeError != strings.Repeat("错", 200) {
+		t.Fatalf("Bump 不应抹掉诊断: %d rune", len([]rune(x.RegistryProbeError)))
 	}
 	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen, ""); err != nil || res != HostCapsStaleSnapshot {
 		t.Fatalf("旧代次结果不应写入: res=%v err=%v", res, err)
@@ -502,5 +504,38 @@ func TestClipProbeNote(t *testing.T) {
 	}
 	if got := clipProbeNote(`{"error":"boom"}`); got != `{"error":"boom"}` {
 		t.Fatalf("无版本字段的普通文本按旧规则处理: %q", got)
+	}
+}
+
+// 清能力必须带条件：对账读到的 (id, host, cap) 变了就不能写回。
+func TestResetHostCapsConditional(t *testing.T) {
+	st := openTestAt(t, filepath.Join(t.TempDir(), "r.db"))
+	defer st.Close()
+	id, err := st.AddSource(Source{Name: "s", BaseURL: "https://r.example", Status: "usable", RepoHost: "quay.io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, _, err := st.HostGenState("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 100, "diag", gen, ""); err != nil || res != HostCapsCommitted {
+		t.Fatalf("seed: %v %v", res, err)
+	}
+	if ok, err := st.ResetHostCaps(id, "quay.io", RegistryCapMismatch); err != nil || ok {
+		t.Fatalf("cap 不符不应写回: ok=%v err=%v", ok, err)
+	}
+	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapYes {
+		t.Fatalf("不应误清: %+v", x)
+	}
+	if ok, err := st.ResetHostCaps(id, "other.example", RegistryCapYes); err != nil || ok {
+		t.Fatalf("host 不符不应写回: ok=%v err=%v", ok, err)
+	}
+	if ok, err := st.ResetHostCaps(id, "quay.io", RegistryCapYes); err != nil || !ok {
+		t.Fatalf("条件一致应清能力: ok=%v err=%v", ok, err)
+	}
+	x := mustSource(t, st, id)
+	if x.RegistryCap != RegistryCapUnknown || x.RegistryPath != "" || x.RegistryProbeError != "diag" || x.RegistryProbeAt != 100 {
+		t.Fatalf("清理结果不对: %+v", x)
 	}
 }

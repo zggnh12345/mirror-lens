@@ -3,10 +3,13 @@ package probe
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -56,6 +59,11 @@ type PathOutcome struct {
 	LatencyMS int64  `json:"latency_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Detail    string `json:"detail,omitempty"`
+	// Reason 是这条路径失败的归因；cap=1 时为空。只解释「为什么没结论」，
+	// 不改变 cap 本身。
+	Reason string `json:"reason,omitempty"`
+	// Transport 是 transport_error 的细分：dns/connect/timeout/tls/http。
+	Transport string `json:"transport,omitempty"`
 
 	// weakEvidence：证据方向上像「路径格式不支持」，但 NAME_INVALID 也可能
 	// 只是命名空间/代理层的仓库名限制。只有另一条路径能证明仓库名被正确
@@ -69,10 +77,16 @@ type RegistryHostOutcome struct {
 	Native     PathOutcome `json:"native"`
 	HostPrefix PathOutcome `json:"host_prefix"`
 	// Selected 是支撑最终 cap=1 的那条路径；cap 不是 1 时为空。
-	Selected string   `json:"selected,omitempty"`
-	Verdict  string   `json:"verdict,omitempty"`
-	Cap      int      `json:"cap"`
-	Warnings []string `json:"warnings,omitempty"`
+	Selected string `json:"selected,omitempty"`
+	Verdict  string `json:"verdict,omitempty"`
+	Cap      int    `json:"cap"`
+	// Repo/Tag 记录这次结论是用哪个仓库测出来的：代表性仓库一变，
+	// 旧结论必须失效。
+	Repo      string   `json:"repo,omitempty"`
+	Tag       string   `json:"tag,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+	Transport string   `json:"transport,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 const defaultManifestCap = 8 << 20
@@ -86,6 +100,25 @@ const (
 	capNo          = 0
 	capYes         = 1
 	capMismatch    = 2
+)
+
+// 探测失败归因。它和 cap 是两个维度：cap 说「能不能用」，reason 说
+// 「为什么没结论」。stale_snapshot 属于提交阶段，不在这里。
+const (
+	ReasonUnsupported     = "unsupported"
+	ReasonContentMismatch = "content_mismatch"
+	ReasonAuthError       = "auth_error"
+	ReasonTransportError  = "transport_error"
+	ReasonIncomplete      = "incomplete_evidence"
+)
+
+// transport_error 的细分。
+const (
+	TransportDNS     = "dns"
+	TransportConnect = "connect"
+	TransportTimeout = "timeout"
+	TransportTLS     = "tls"
+	TransportHTTP5xx = "http_5xx"
 )
 
 // 导出的能力取值，供 Runner 与面板使用；与 store.RegistryCap* 同值。
@@ -119,24 +152,30 @@ func ProbeRegistryHost(ctx context.Context, p RegistryHostProbe) RegistryHostOut
 	host, err := registryhost.Check(p.Host)
 	if err != nil {
 		out.Native.Error, out.HostPrefix.Error = err.Error(), err.Error()
+		out.setReason(ReasonIncomplete)
 		return out
 	}
 	if host == "" || host == "ghcr.io" {
 		err := fmt.Errorf("%s 不进入 Host 探测（Hub/ghcr 有单独的探测与调度）", host)
 		out.Native.Error, out.HostPrefix.Error = err.Error(), err.Error()
+		out.setReason(ReasonIncomplete)
 		return out
 	}
 	if p.Snapshot.Host != "" && p.Snapshot.Host != host {
 		err := fmt.Errorf("凭据快照属于 %s，与本次探测的 %s 不一致", p.Snapshot.Host, host)
 		out.Native.Error, out.HostPrefix.Error = err.Error(), err.Error()
+		out.setReason(ReasonIncomplete)
 		return out
 	}
+	p.Repo = NormalizeRepo(p.Repo)
 	if p.Repo == "" {
 		p.Repo = "library/alpine"
 	}
+	p.Tag = strings.TrimSpace(p.Tag)
 	if p.Tag == "" {
 		p.Tag = "latest"
 	}
+	out.Repo, out.Tag = p.Repo, p.Tag
 	if p.Timeout <= 0 {
 		p.Timeout = 25 * time.Second
 	}
@@ -151,6 +190,7 @@ func ProbeRegistryHost(ctx context.Context, p RegistryHostProbe) RegistryHostOut
 	applyControlEvidence(&out.Native, &out.HostPrefix)
 	out.Verdict, out.Cap, out.Selected = aggregate(out.Native, out.HostPrefix)
 	out.Warnings = collectWarnings(out.Native, out.HostPrefix, out.Selected, out.Cap)
+	out.Reason, out.Transport = outcomeReason(out.Native, out.HostPrefix, out.Cap)
 	return out
 }
 
@@ -163,6 +203,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	base := trimBase(p.BaseURL)
 	if base == "" {
 		o.Error = "源地址为空"
+		o.Reason = ReasonIncomplete
 		return o
 	}
 	// 每条路径独立做一次 /v2/ 探测：它决定「这个地址是不是 registry」，
@@ -170,11 +211,13 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	root, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/", nil)
 	if err != nil {
 		o.Error = errStr(err)
+		o.Reason = ReasonIncomplete
 		return o
 	}
 	rr, err := auth.Do(ctx, p.Host, root, p.Snapshot, "")
 	if err != nil {
 		o.Error = errStr(err)
+		o.Reason, o.Transport = classifyErr(err)
 		return o
 	}
 	rootBody, _ := readCapped(rr.Body, 2048)
@@ -185,6 +228,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 		// 也不能证明路径格式不支持，只能算未知。
 		o.Error = "返回 HTML 页面，无法判定 registry 能力"
 		o.Detail = clip(string(rootBody), 80)
+		o.Reason = ReasonIncomplete
 		return o
 	}
 
@@ -196,6 +240,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+rel, nil)
 	if err != nil {
 		o.Error = errStr(err)
+		o.Reason = ReasonIncomplete
 		return o
 	}
 	req.Header.Set("Accept", manifestAccept)
@@ -204,6 +249,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	if err != nil {
 		o.Error = errStr(err)
 		o.LatencyMS = time.Since(t0).Milliseconds()
+		o.Reason, o.Transport = classifyErr(err)
 		return o
 	}
 	defer resp.Body.Close()
@@ -212,6 +258,10 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	o.HTTPCode = resp.StatusCode
 	if err != nil {
 		o.Error = "读取 manifest: " + errStr(err)
+		o.Reason, o.Transport = classifyErr(err)
+		if o.Reason == "" {
+			o.Reason = ReasonIncomplete
+		}
 		return o
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -220,16 +270,27 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 		switch {
 		case isHTML(resp.Header.Get("Content-Type"), raw):
 			o.Error = fmt.Sprintf("manifest 位置返回 HTML（%d），无法判定", resp.StatusCode)
+			o.Reason = ReasonIncomplete
 		case o.Code == "UNSUPPORTED":
 			o.Cap = capNo
 			o.Verdict = VerdictNo
 			o.Error = fmt.Sprintf("%d 明确表示不支持该路径格式", resp.StatusCode)
+			o.Reason = ReasonUnsupported
 		case o.Code == "NAME_INVALID" || hasInvalidNameText(raw):
 			// 可能是命名空间/代理层的名字限制，先记弱证据。
 			o.weakEvidence = true
 			o.Error = fmt.Sprintf("%d 疑似路径格式不被接受（%s）", resp.StatusCode, codeOr(o.Code))
+			o.Reason = ReasonIncomplete
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+			o.Error = fmt.Sprintf("认证失败（%d）", resp.StatusCode)
+			o.Reason = ReasonAuthError
+		case resp.StatusCode >= 500:
+			o.Error = fmt.Sprintf("上游暂时不可用（%d）", resp.StatusCode)
+			o.Reason = ReasonTransportError
+			o.Transport = TransportHTTP5xx
 		default:
 			o.Error = fmt.Sprintf("manifest 返回 %d", resp.StatusCode)
+			o.Reason = ReasonIncomplete
 		}
 		return o
 	}
@@ -238,6 +299,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	if !ok {
 		o.Error = "Manifest 媒体类型不在支持范围"
 		o.Detail = clip(resp.Header.Get("Content-Type")+" "+string(raw), 120)
+		o.Reason = ReasonIncomplete
 		return o
 	}
 	o.MediaType = mt
@@ -251,6 +313,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 		o.Cap = capMismatch
 		o.Verdict = VerdictNo
 		o.Error = "Docker-Content-Digest 与实际内容不符"
+		o.Reason = ReasonContentMismatch
 		return o
 	}
 	if p.ExpectedDigest != "" {
@@ -261,6 +324,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 			o.Cap = capMismatch
 			o.Verdict = VerdictNo
 			o.Error = "内容与官方基准不一致"
+			o.Reason = ReasonContentMismatch
 			return o
 		}
 	}
@@ -401,15 +465,21 @@ func clip(s string, n int) string {
 
 // DiagnosticsVersion 是 registry_probe_error 里结构化诊断的格式版本。
 // 改字段语义必须升版本，读取方按 version 决定怎么解析。
-const DiagnosticsVersion = 1
+const DiagnosticsVersion = 2
 
 // Diagnostics 是写进 registry_probe_error 的完整快照：两条路径各自的
 // 结论都保留，即使数据库最终只存一组聚合值。
 type Diagnostics struct {
-	Version    int         `json:"version"`
+	Version int `json:"version"`
+	// Repo/Tag 说明这份结论是用哪个仓库测出来的；代表性仓库变了，旧结论
+	// 就不能再用。
+	Repo       string      `json:"repo,omitempty"`
+	Tag        string      `json:"tag,omitempty"`
 	Native     PathOutcome `json:"native"`
 	HostPrefix PathOutcome `json:"host_prefix"`
 	Selected   string      `json:"selected,omitempty"`
+	Reason     string      `json:"reason,omitempty"`
+	Transport  string      `json:"transport,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 }
 
@@ -423,9 +493,13 @@ const (
 func (o RegistryHostOutcome) Diagnostics() Diagnostics {
 	d := Diagnostics{
 		Version:    DiagnosticsVersion,
+		Repo:       o.Repo,
+		Tag:        o.Tag,
 		Native:     trimOutcome(o.Native),
 		HostPrefix: trimOutcome(o.HostPrefix),
 		Selected:   o.Selected,
+		Reason:     o.Reason,
+		Transport:  o.Transport,
 	}
 	for _, w := range o.Warnings {
 		d.Warnings = append(d.Warnings, clip(w, diagErrMaxRunes))
@@ -510,4 +584,93 @@ func (o RegistryHostOutcome) StoreFields() (cap int, pathMode string, note strin
 	default:
 		return 0, "", note, fmt.Errorf("未知 registry_cap=%d", o.Cap)
 	}
+}
+
+// classifyErr 把网络/认证错误归到诊断类别。认证错误全部是可 errors.Is
+// 的哨兵值；TLS/DNS/超时靠类型判断，字符串匹配只是最后手段。
+func classifyErr(err error) (reason, transport string) {
+	if err == nil {
+		return "", ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ReasonTransportError, TransportTimeout
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return ReasonTransportError, TransportTimeout
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return ReasonTransportError, TransportDNS
+	}
+	if errors.Is(err, v2auth.ErrRealmDenied) || errors.Is(err, v2auth.ErrNoRealm) ||
+		errors.Is(err, v2auth.ErrTokenMethodUnsupported) || errors.Is(err, v2auth.ErrTokenAuthUnsupported) ||
+		errors.Is(err, v2auth.ErrCredentialsMissing) {
+		return ReasonAuthError, ""
+	}
+	var unk x509.UnknownAuthorityError
+	if errors.As(err, &unk) {
+		return ReasonTransportError, TransportTLS
+	}
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return ReasonTransportError, TransportTLS
+	}
+	var certErr x509.CertificateInvalidError
+	if errors.As(err, &certErr) {
+		return ReasonTransportError, TransportTLS
+	}
+	var recErr tls.RecordHeaderError
+	if errors.As(err, &recErr) {
+		return ReasonTransportError, TransportTLS
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return ReasonTransportError, TransportConnect
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "tls") {
+		return ReasonTransportError, TransportTLS
+	}
+	return ReasonIncomplete, ""
+}
+
+// outcomeReason 给出 Host 级归因。cap 已经是结论，reason 只解释 -1/0/2
+// 的原因；两条路径的细分冲突时宁可不细化。
+func outcomeReason(native, prefix PathOutcome, cap int) (string, string) {
+	switch cap {
+	case capYes:
+		return "", ""
+	case capMismatch:
+		return ReasonContentMismatch, ""
+	case capNo:
+		return ReasonUnsupported, ""
+	}
+	if native.Reason == ReasonContentMismatch || prefix.Reason == ReasonContentMismatch {
+		return ReasonContentMismatch, ""
+	}
+	if native.Reason == ReasonAuthError || prefix.Reason == ReasonAuthError {
+		return ReasonAuthError, ""
+	}
+	if native.Reason == ReasonTransportError || prefix.Reason == ReasonTransportError {
+		kind := ""
+		if native.Reason == ReasonTransportError && native.Transport == prefix.Transport {
+			kind = native.Transport
+		}
+		return ReasonTransportError, kind
+	}
+	return ReasonIncomplete, ""
+}
+
+// NormalizeRepo 把仓库名收敛成诊断里要保存的标准形式：去空白、去首尾
+// 斜杠。环境变量里的写法可能带这些噪音，落库的必须是实际使用的那一个。
+func NormalizeRepo(repo string) string {
+	repo = strings.TrimSpace(repo)
+	repo = strings.Trim(repo, "/")
+	return repo
+}
+
+// setReason 标记两条路径共同的归因（探测根本没发起时）。
+func (o *RegistryHostOutcome) setReason(r string) {
+	o.Native.Reason, o.HostPrefix.Reason = r, r
+	o.Reason = r
 }

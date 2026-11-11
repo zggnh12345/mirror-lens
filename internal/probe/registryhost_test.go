@@ -3,8 +3,12 @@ package probe
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -517,5 +521,62 @@ func TestAggregateMismatchVsUnsupported(t *testing.T) {
 		if !strings.Contains(w, tc.want) {
 			t.Fatalf("缺少告警 %q: %q", tc.want, w)
 		}
+	}
+}
+
+func TestClassifyErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		why  string
+		tr   string
+	}{
+		{"deadline", context.DeadlineExceeded, ReasonTransportError, TransportTimeout},
+		{"dns", &net.DNSError{Err: "no such host", Name: "quay.io", IsNotFound: true}, ReasonTransportError, TransportDNS},
+		{"connect", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, ReasonTransportError, TransportConnect},
+		{"auth", fmt.Errorf("token: %w", v2auth.ErrRealmDenied), ReasonAuthError, ""},
+		{"tls", x509.UnknownAuthorityError{}, ReasonTransportError, TransportTLS},
+		{"other", errors.New("boom"), ReasonIncomplete, ""},
+	}
+	for _, c := range cases {
+		why, tr := classifyErr(c.err)
+		if why != c.why || tr != c.tr {
+			t.Errorf("%s: 得到 (%s,%s)，期望 (%s,%s)", c.name, why, tr, c.why, c.tr)
+		}
+	}
+	if why, _ := classifyErr(nil); why != "" {
+		t.Errorf("nil 应为空归因")
+	}
+}
+
+func TestDiagnosticsCarriesRepoAndReason(t *testing.T) {
+	o := RegistryHostOutcome{
+		Host: "quay.io", Repo: "prometheus/node-exporter", Tag: "latest",
+		Cap: capUnknown, Reason: ReasonTransportError, Transport: TransportTimeout,
+		Native:     PathOutcome{Mode: modeNative, Cap: capUnknown, Reason: ReasonTransportError, Transport: TransportTimeout},
+		HostPrefix: PathOutcome{Mode: modeHostPrefix, Cap: capUnknown, Reason: ReasonTransportError, Transport: TransportTimeout},
+	}
+	raw := o.DiagnosticJSON()
+	var d Diagnostics
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Version != 2 || d.Repo != "prometheus/node-exporter" || d.Reason != ReasonTransportError || d.Transport != TransportTimeout {
+		t.Fatalf("诊断缺字段: %+v", d)
+	}
+	if d.Native.Transport != TransportTimeout {
+		t.Fatalf("路径级细分丢失: %+v", d.Native)
+	}
+}
+
+func TestOutcomeReasonPrefersHardEvidence(t *testing.T) {
+	// 一条路径内容不一致、另一条认证失败：安全结论优先。
+	n := PathOutcome{Mode: modeNative, Cap: capMismatch, Reason: ReasonContentMismatch}
+	p := PathOutcome{Mode: modeHostPrefix, Cap: capUnknown, Reason: ReasonAuthError}
+	if why, _ := outcomeReason(n, p, capUnknown); why != ReasonContentMismatch {
+		t.Fatalf("期望 content_mismatch，得到 %s", why)
+	}
+	if why, _ := outcomeReason(n, p, capMismatch); why != ReasonContentMismatch {
+		t.Fatalf("cap=2 应为 content_mismatch，得到 %s", why)
 	}
 }

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -60,6 +61,10 @@ type HostProbeRunner struct {
 type probeState struct {
 	next    time.Time
 	backoff time.Duration
+	// gen/digest 是上一次探测用的凭据版本：版本一变，旧版本的连续失败
+	// 就不该继续把退避往上抬。
+	gen    int64
+	digest string
 }
 
 const (
@@ -97,6 +102,7 @@ func (r *HostProbeRunner) Run(ctx context.Context) {
 		log.Printf("Host 探测未启用：缺少 Store 或凭据存储")
 		return
 	}
+	r.reconcileRepos()
 	r.Once(ctx)
 	t := time.NewTicker(r.o.Interval)
 	defer t.Stop()
@@ -133,6 +139,49 @@ func (r *HostProbeRunner) Once(ctx context.Context) {
 		}(j)
 	}
 	wg.Wait()
+}
+
+// reconcileRepos 在启动时对账「结论是用哪个代表性仓库测出来的」。
+// 仓库映射变了（含映射被删掉），旧结论立即失效：它可能只是另一个仓库
+// 的性质，继续拿它选路等于没验证。
+//
+// 只清 registry_cap/path_mode，保留诊断与时间；也不动凭据代次，避免把
+// 「探测输入变更」误报成「凭据变更」。
+func (r *HostProbeRunner) reconcileRepos() {
+	if r.o.Store == nil {
+		return
+	}
+	rows, err := r.o.Store.ListHostCaps()
+	if err != nil {
+		log.Printf("对账探测仓库失败: %v", err)
+		return
+	}
+	cleared := 0
+	for _, x := range rows {
+		if x.Cap == store.RegistryCapUnknown {
+			continue
+		}
+		want, ok := r.o.Repos[x.RepoHost]
+		var d probe.Diagnostics
+		// 只有明确的 v2 诊断才算「有 repo」；v1 没有这个字段，未知版本
+		// 更不能当成可信证据。
+		hasRepo := json.Unmarshal([]byte(x.ProbeError), &d) == nil &&
+			d.Version == probe.DiagnosticsVersion && d.Repo != ""
+		if ok && hasRepo && d.Repo == probe.NormalizeRepo(want) {
+			continue
+		}
+		done, err := r.o.Store.ResetHostCaps(x.SourceID, x.RepoHost, x.Cap)
+		if err != nil {
+			log.Printf("清除 %s（%s）旧结论失败: %v", x.Name, x.RepoHost, err)
+			continue
+		}
+		if done {
+			cleared++
+		}
+	}
+	if cleared > 0 {
+		log.Printf("代表性仓库已变更，清除 %d 条 Host 能力结论，等待重新探测", cleared)
+	}
 }
 
 func (r *HostProbeRunner) jobs(ctx context.Context) ([]HostProbeJob, error) {
@@ -202,6 +251,21 @@ func (r *HostProbeRunner) claim(key string) bool {
 	return true
 }
 
+// noteSnapshot 记住本次探测使用的凭据版本。版本变化时把退避重置，
+// 否则凭据早已稳定，仍会被旧版本的 10 分钟退避压着。
+func (r *HostProbeRunner) noteSnapshot(key string, gen int64, digest string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := r.state[key]
+	if st == nil {
+		return
+	}
+	if st.gen != gen || st.digest != digest {
+		st.backoff = 0
+		st.gen, st.digest = gen, digest
+	}
+}
+
 func (r *HostProbeRunner) finish(key string, retry bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -211,13 +275,18 @@ func (r *HostProbeRunner) finish(key string, retry bool) {
 		return
 	}
 	prev := r.o.Backoff
-	if st != nil && st.backoff > 0 {
-		prev = st.backoff * 2
+	var gen int64
+	var digest string
+	if st != nil {
+		gen, digest = st.gen, st.digest
+		if st.backoff > 0 {
+			prev = st.backoff * 2
+		}
 	}
 	if prev > maxHostProbeBackoff {
 		prev = maxHostProbeBackoff
 	}
-	r.state[key] = &probeState{next: r.o.Now().Add(prev), backoff: prev}
+	r.state[key] = &probeState{next: r.o.Now().Add(prev), backoff: prev, gen: gen, digest: digest}
 }
 
 func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
@@ -241,6 +310,8 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		}
 		return
 	}
+
+	r.noteSnapshot(key, snap.Generation, snap.Digest)
 
 	ctx, cancel := context.WithTimeout(parent, r.o.Timeout)
 	defer cancel()
