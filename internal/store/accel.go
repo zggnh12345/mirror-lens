@@ -169,6 +169,16 @@ func (s *Store) migrateAccel() error {
 			ms INTEGER NOT NULL DEFAULT 0,
 			code INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS idx_sev_src_ts ON source_events(source_id, ts DESC)`,
+		// 熔断状态是运行时状态，不靠事件表反推：指数退避的 fails 和绝对
+		// 截止时间都要活过进程重启。fails=0 是一行「已恢复」的墓碑，保留
+		// 它是为了和并发写入按 updated_at 比大小，不会被迟到的失败覆盖。
+		`CREATE TABLE IF NOT EXISTS breaker_state(
+			source_id INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			fails INTEGER NOT NULL DEFAULT 0,
+			until INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(source_id, kind))`,
 		// 内容身份表：完整性状态按 blob 去重，不按 URL 重复。
 		`CREATE TABLE IF NOT EXISTS blobs(
 			sha256 TEXT PRIMARY KEY,
@@ -211,8 +221,11 @@ func (s *Store) migrateAccel() error {
 		return err
 	}
 	// 老库补列：事件表原来只记成败，没有状态码，算不出限流比例。
+	// neutral 是 3.5.1 加的：Miss/Auth 既不是成功也不是源故障，用 ok=1 记
+	// 只是为了让老读端仍看到「源没坏」，真正的中性语义靠这一列表达。
 	if err := s.ensureColumns("source_events", map[string]string{
-		"code": "INTEGER NOT NULL DEFAULT 0",
+		"code":    "INTEGER NOT NULL DEFAULT 0",
+		"neutral": "INTEGER NOT NULL DEFAULT 0",
 	}); err != nil {
 		return err
 	}

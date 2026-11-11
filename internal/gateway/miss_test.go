@@ -67,13 +67,13 @@ func TestMirrorMissFailsOverWithoutCooling(t *testing.T) {
 		t.Fatalf("应由源站供货，实际 %q", got)
 	}
 
-	// 未命中按「答得正常，只是没有」记账：成功事件 + 状态码 404。
-	okN, failN, _, err := st.SourceEvents(id, 10)
+	// 未命中按「答得正常，只是没有」记中性事件：不是成功，也不是源故障。
+	okN, neutralN, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if okN != 1 || failN != 0 {
-		t.Fatalf("未命中不该记成故障，实际 ok=%d fail=%d", okN, failN)
+	if okN != 0 || neutralN != 1 || failN != 0 {
+		t.Fatalf("未命中应记中性，实际 ok=%d neutral=%d fail=%d", okN, neutralN, failN)
 	}
 	if codes, err := st.SourceEventCodes(id, 10); err != nil || len(codes) != 1 || codes[0] != 404 {
 		t.Fatalf("事件应记下 404，实际 %v %v", codes, err)
@@ -139,8 +139,8 @@ func TestAuthDeniedFailsOverWithoutCooling(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("镜像 403 后应换源成功，实际 %d", rec.Code)
 	}
-	if okN, failN, _, err := st.SourceEvents(id, 10); err != nil || okN != 1 || failN != 0 {
-		t.Fatalf("403 不该记成故障，实际 ok=%d fail=%d %v", okN, failN, err)
+	if okN, neutralN, failN, _, err := st.SourceEvents(id, 10); err != nil || okN != 0 || neutralN != 1 || failN != 0 {
+		t.Fatalf("403 应记中性，实际 ok=%d neutral=%d fail=%d %v", okN, neutralN, failN, err)
 	}
 	if !hasSource(sch.Candidates("raw"), id) {
 		t.Fatal("403 不该让源进冷却")

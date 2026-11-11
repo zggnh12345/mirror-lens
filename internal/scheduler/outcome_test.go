@@ -37,13 +37,13 @@ func TestMissIsNeutral(t *testing.T) {
 		t.Fatal("404 是缺文件，不该进冷却")
 	}
 
-	// 事件必须保留：一次 200 + 一次 404，都算「源没坏」。
-	okN, failN, _, err := st.SourceEvents(b, 10)
+	// 事件必须保留：一次 200（成功）+ 一次 404（中性），都不算源故障。
+	okN, neutralN, failN, _, err := st.SourceEvents(b, 10)
 	if err != nil {
 		t.Fatalf("读事件: %v", err)
 	}
-	if okN != 2 || failN != 0 {
-		t.Fatalf("事件应保留为 ok=2/fail=0，实际 ok=%d fail=%d", okN, failN)
+	if okN != 1 || neutralN != 1 || failN != 0 {
+		t.Fatalf("事件应为 ok=1/neutral=1/fail=0，实际 ok=%d neutral=%d fail=%d", okN, neutralN, failN)
 	}
 }
 
@@ -63,12 +63,12 @@ func TestAuthIsNeutral(t *testing.T) {
 	if _, cooled := s.brk[pkey(kind, a)]; cooled {
 		t.Fatal("401/403 不该冷却源")
 	}
-	okN, failN, _, err := st.SourceEvents(a, 10)
+	okN, neutralN, failN, _, err := st.SourceEvents(a, 10)
 	if err != nil {
 		t.Fatalf("读事件: %v", err)
 	}
-	if okN != 1 || failN != 0 {
-		t.Fatalf("认证失败事件应保留且不算故障，实际 ok=%d fail=%d", okN, failN)
+	if okN != 0 || neutralN != 1 || failN != 0 {
+		t.Fatalf("认证失败事件应保留为中性，实际 ok=%d neutral=%d fail=%d", okN, neutralN, failN)
 	}
 }
 

@@ -461,46 +461,144 @@ func (s *Store) SetGitCap(id int64, on bool) error {
 	return err
 }
 
-// SourceFailedRecently 返回「最近一次代理失败、且在 since 之后」的源。
-// 熔断状态落库而非只放内存：进程重启后不该再拿同一个坏源等超时。
-// 只看每个源的最近一条事件，成功即自动解除。
-func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]bool, error) {
+// SourceFailedRecently 返回「最近一条有成败意义的事件是失败」的源，以及
+// 那条事件的时间（Unix 秒）。只用于没有 breaker_state 的老库兜底。
+//
+// 中性事件不能把更早的失败盖掉：之前的实现取 MAX(id) 后判 ok，429 之后
+// 来一条 404 就会让重启后的调度器以为源已经恢复。这里先筛出「有意义」
+// 的事件再取最后一条。3.5.1 之前写的事件没有 neutral 列，按状态码判定：
+// 401/403/404/410 视为中性。
+func (s *Store) SourceFailedRecently(kind string, since int64) (map[int64]int64, error) {
 	rows, err := s.db.Query(`
-		SELECT e.source_id FROM source_events e
-		JOIN (SELECT source_id, MAX(id) AS mid FROM source_events WHERE kind=? GROUP BY source_id) m
+		SELECT e.source_id, e.ts FROM source_events e
+		JOIN (SELECT source_id, MAX(id) AS mid FROM source_events
+		      WHERE kind=? AND neutral=0 AND (ok=0 OR code NOT IN (401,403,404,410))
+		      GROUP BY source_id) m
 		  ON m.mid = e.id
 		WHERE e.ok=0 AND e.ts>=?`, kind, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]bool{}
+	out := map[int64]int64{}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var id, ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		out[id] = ts
 	}
 	return out, rows.Err()
 }
 
-// RecordSourceEvent 记录一次「代理请求打到某个源」的结果。
-// 只用于熔断与运维观察，不参与速度评分。
-func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64, code int) {
-	if sourceID == 0 {
-		return
+// BreakerState 是一个（源, 协议）的熔断运行时状态。
+type BreakerState struct {
+	SourceID  int64
+	Kind      string
+	Fails     int
+	Until     int64 // Unix 秒，绝对截止时间
+	UpdatedAt int64 // Unix 纳秒，并发写入按它比新旧
+}
+
+// OutcomeRecord 是一次回源结果的持久化载荷。
+//
+// Breaker 非 nil 时，事件和熔断状态必须在同一个事务里落库：只写进一件，
+// 就会留下「事件说 429、状态说没事」的分裂，重启后又回到错误的那一边。
+type OutcomeRecord struct {
+	SourceID int64
+	Kind     string
+	OK       bool
+	Neutral  bool
+	Code     int
+	MS       int64
+	Breaker  *BreakerState
+}
+
+// RecordOutcome 原子地记录一次回源结果，并按需更新熔断状态。
+//
+// 失败与恢复都走 upsert 且带 updated_at 守卫：同一源并发上报时，晚到的
+// 旧结果不会覆盖新状态。恢复写的是 fails=0 的墓碑行，不删行——删掉就
+// 没法再比新旧了。
+func (s *Store) RecordOutcome(rec OutcomeRecord) error {
+	if rec.SourceID == 0 {
+		return nil
 	}
-	b := 0
-	if ok {
+	b, n := 0, 0
+	// ok 列对中性事件也写 1：老版本读端只认这一列，写成 0 会把 404 当故障。
+	// 真正的三态语义靠 neutral 区分，新读端不能只看 ok。
+	if rec.OK || rec.Neutral {
 		b = 1
 	}
+	if rec.Neutral {
+		n = 1
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	// 事件表没有外键，源删掉后迟到的上报会把它重新插回来。
 	// 用 INSERT ... SELECT ... WHERE EXISTS 把「源还在」交给数据库判断，
 	// 堵住调用方检查到真正写入之间的空隙。
-	_, _ = s.db.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, ms, code)
-		SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
-		sourceID, kind, time.Now().Unix(), b, ms, code, sourceID)
+	res, err := tx.Exec(`INSERT INTO source_events(source_id, kind, ts, ok, neutral, ms, code)
+		SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sources WHERE id=?)`,
+		rec.SourceID, rec.Kind, time.Now().Unix(), b, n, rec.MS, rec.Code, rec.SourceID)
+	if err != nil {
+		return err
+	}
+	if aff, _ := res.RowsAffected(); aff == 0 {
+		// 源已经删了：状态也不写，别把刚清理的熔断复活。
+		return tx.Commit()
+	}
+	if rec.Breaker != nil {
+		bs := *rec.Breaker
+		fails, until := bs.Fails, bs.Until
+		if fails <= 0 {
+			fails, until = 0, 0
+		}
+		if _, err := tx.Exec(`INSERT INTO breaker_state(source_id, kind, fails, until, updated_at)
+			VALUES(?,?,?,?,?)
+			ON CONFLICT(source_id, kind) DO UPDATE SET
+				fails=excluded.fails, until=excluded.until, updated_at=excluded.updated_at
+			WHERE excluded.updated_at > breaker_state.updated_at`,
+			rec.SourceID, rec.Kind, fails, until, bs.UpdatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadBreakerStates 读出仍然有效的熔断状态（fails=0 的墓碑不算）。
+func (s *Store) LoadBreakerStates() ([]BreakerState, error) {
+	rows, err := s.db.Query(`SELECT source_id, kind, fails, until, updated_at
+		FROM breaker_state WHERE fails > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BreakerState
+	for rows.Next() {
+		var b BreakerState
+		if err := rows.Scan(&b.SourceID, &b.Kind, &b.Fails, &b.Until, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// ClearBreakerStates 在源被删除或改地址时清掉持久化状态：
+// 同一个 id 换了一台服务器，旧熔断不该继续生效。
+func (s *Store) ClearBreakerStates(sourceID int64) {
+	if sourceID == 0 {
+		return
+	}
+	_, _ = s.db.Exec(`DELETE FROM breaker_state WHERE source_id=?`, sourceID)
+}
+
+// RecordSourceEvent 兼容旧调用：只记事件，不动熔断状态。
+func (s *Store) RecordSourceEvent(sourceID int64, kind string, ok bool, ms int64, code int) {
+	_ = s.RecordOutcome(OutcomeRecord{SourceID: sourceID, Kind: kind, OK: ok, MS: ms, Code: code})
 }
 
 // SourceEventCodes 返回某源最近事件的状态码，新的在前。排障和测试用。
@@ -530,25 +628,31 @@ func (s *Store) PruneSourceEvents() {
 	_, _ = s.db.Exec(`DELETE FROM source_events WHERE ts < ?`, cut)
 }
 
-// SourceEvents 返回某个源最近的事件，供面板/排障使用。
-func (s *Store) SourceEvents(sourceID int64, limit int) (ok, fail int, lastErrAt int64, err error) {
+// SourceEvents 返回某个源最近事件的三态计数，供面板/排障使用。
+// 成功 = ok 且非中性；中性 = 404/401 这类「源没坏、只是没给内容」；
+// 失败 = ok=0。三者相加等于样本数，别把中性并进成功。
+func (s *Store) SourceEvents(sourceID int64, limit int) (ok, neutral, fail int, lastErrAt int64, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.Query(`SELECT ts, ok FROM source_events WHERE source_id = ? ORDER BY ts DESC LIMIT ?`, sourceID, limit)
+	rows, err := s.db.Query(`SELECT ts, ok, neutral FROM source_events
+		WHERE source_id = ? ORDER BY ts DESC LIMIT ?`, sourceID, limit)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var ts int64
-		var o int
-		if err = rows.Scan(&ts, &o); err != nil {
+		var o, n int
+		if err = rows.Scan(&ts, &o, &n); err != nil {
 			return
 		}
-		if o == 1 {
+		switch {
+		case n == 1:
+			neutral++
+		case o == 1:
 			ok++
-		} else {
+		default:
 			fail++
 			if lastErrAt == 0 {
 				lastErrAt = ts

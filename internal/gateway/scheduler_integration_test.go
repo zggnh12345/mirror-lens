@@ -86,7 +86,7 @@ func TestSchedulerFailover(t *testing.T) {
 	}
 
 	// 失败与成功都要落到 source_events，供面板和熔断使用
-	okN, failN, _, err := st.SourceEvents(badID, 10)
+	okN, _, failN, _, err := st.SourceEvents(badID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

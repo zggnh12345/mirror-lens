@@ -60,7 +60,7 @@ func TestNeutralEventsAreStillRecorded(t *testing.T) {
 	st.RecordSourceEvent(id, "docker", true, 20, 404)
 	st.RecordSourceEvent(id, "docker", true, 20, 401)
 
-	okN, failN, _, err := st.SourceEvents(id, 10)
+	okN, _, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatalf("读事件: %v", err)
 	}

@@ -158,7 +158,7 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		log.Printf("sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行")
 		cfg.Dynamic = false
 	}
-	return &Scheduler{
+	s := &Scheduler{
 		st:     st,
 		cfg:    cfg,
 		now:    time.Now,
@@ -168,6 +168,41 @@ func New(st *store.Store, cfg Config) *Scheduler {
 		gates:  map[int64]*gate{},
 		dyn:    map[int64]*dynState{},
 		leases: newLeaseManager(),
+	}
+	s.restoreBreakers()
+	return s
+}
+
+// restoreBreakers 把落盘的熔断状态装回内存。
+//
+// 恢复的是 fails 和绝对截止时间，不是「从现在起再冷却一个周期」：剩余
+// 10 秒的冷却重启后还是 10 秒。时钟大幅回拨（截止时间比 now+MaxCooldown
+// 还远）说明状态已经不可信，按最大冷却收敛，避免一个坏时间戳把源永久
+// 关在黑名单里。
+func (s *Scheduler) restoreBreakers() {
+	if s == nil || s.st == nil {
+		return
+	}
+	rows, err := s.st.LoadBreakerStates()
+	if err != nil {
+		log.Printf("调度：恢复熔断状态失败: %v", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, b := range rows {
+		if b.Fails <= 0 {
+			continue
+		}
+		until := time.Unix(b.Until, 0)
+		if until.After(now.Add(s.cfg.MaxCooldown)) {
+			until = now.Add(s.cfg.MaxCooldown)
+		}
+		s.brk[pkey(b.Kind, b.SourceID)] = &breaker{fails: b.Fails, until: until}
 	}
 }
 
@@ -210,6 +245,11 @@ func (s *Scheduler) Forget(id int64) {
 	s.loadMu.Unlock()
 	s.leases.forget(id)
 
+	// 持久化状态也要清：id 可能被新源复用，或者同一 id 换了地址，
+	// 旧熔断不该跟着到下一台服务器上。
+	if s.st != nil {
+		s.st.ClearBreakerStates(id)
+	}
 	metrics.ForgetSource(id)
 }
 
@@ -280,12 +320,14 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	if le, ok := s.lists[kind]; ok && s.now().Sub(le.at) < s.cfg.ListTTL {
 		return s.orderN(kind, le.items, limit)
 	}
-	// 重启后从事件表恢复最近失败的源，接着熔断而不是重新试错。
+	// 老库还没有 breaker_state（升级后的第一次启动）：从事件表兜底恢复。
+	// 截止时间按事件时间 + 基础冷却算，不按「现在 + 一个周期」重算，
+	// 否则剩余 10 秒的冷却会被拉长成 5 分钟。
 	if cerr == nil {
 		for _, st := range stats {
 			k := pkey(kind, st.ID)
-			if cooling[st.ID] && s.brk[k] == nil {
-				s.brk[k] = &breaker{fails: 1, until: s.now().Add(s.cfg.FailCooldown)}
+			if ts, bad := cooling[st.ID]; bad && s.brk[k] == nil {
+				s.brk[k] = &breaker{fails: 1, until: time.Unix(ts, 0).Add(s.cfg.FailCooldown)}
 			}
 		}
 	}
@@ -671,18 +713,32 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 		return
 	}
 	k := pkey(kind, c.ID)
+	code, mode := 0, ""
+	if len(hints) > 0 {
+		code, mode = hints[0].Code, hints[0].Mode
+	}
+	if mode == "" {
+		mode = "other"
+	}
+	var now time.Time
+	var brk *store.BreakerState
 	s.mu.Lock()
 	if s.isGone(c.ID) {
 		// 源已删除：写回去就是复活刚清理的熔断、粘性、事件和指标。
 		s.mu.Unlock()
 		return
 	}
+	// 在锁内取时间：并发上报时 updated_at 的先后必须和内存里状态变化的
+	// 先后一致，否则数据库的「后写覆盖」会把旧状态留下。
+	now = s.now()
 	switch o {
 	case OutcomeOK:
 		delete(s.brk, k)
-		s.sticky[kind] = stickyPick{cand: c, at: s.now()}
+		s.sticky[kind] = stickyPick{cand: c, at: now}
+		// fails=0 的墓碑行：让并发里晚到的失败按 updated_at 比不过它。
+		brk = &store.BreakerState{SourceID: c.ID, Kind: kind, UpdatedAt: now.UnixNano()}
 	case OutcomeMiss, OutcomeAuth:
-		// 中性结果：不建粘性、不清熔断、不进冷却。
+		// 中性结果：不建粘性、不清熔断、不进冷却，也不写状态行。
 		// 已有粘性也不动——它是这台源上一次「真拿到内容」的证明。
 	default:
 		b := s.brk[k]
@@ -702,21 +758,18 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 		if cool > s.cfg.MaxCooldown {
 			cool = s.cfg.MaxCooldown
 		}
-		b.until = s.now().Add(cool)
+		b.until = now.Add(cool)
 		s.brk[k] = b
+		brk = &store.BreakerState{
+			SourceID: c.ID, Kind: kind, Fails: b.fails,
+			Until: b.until.Unix(), UpdatedAt: now.UnixNano(),
+		}
 	}
 	s.mu.Unlock()
 
 	// git 能通说明实现了 smart HTTP，记下来下次不用再试错。
 	if o == OutcomeOK && kind == "git" {
 		_ = s.st.SetGitCap(c.ID, true)
-	}
-	code, mode := 0, ""
-	if len(hints) > 0 {
-		code, mode = hints[0].Code, hints[0].Mode
-	}
-	if mode == "" {
-		mode = "other"
 	}
 	res := metrics.SourceNeutral
 	switch o {
@@ -726,7 +779,15 @@ func (s *Scheduler) ReportOutcome(kind string, c Candidate, o Outcome, d time.Du
 		res = metrics.SourceFail
 	}
 	metrics.SourceResult(kind, res, code, mode, d)
-	s.st.RecordSourceEvent(c.ID, kind, o != OutcomeFail, d.Milliseconds(), code)
+	// 事件与熔断状态一个事务落库：只写进一件，重启后就会按错误的那半恢复。
+	rec := store.OutcomeRecord{
+		SourceID: c.ID, Kind: kind, OK: o == OutcomeOK,
+		Neutral: o == OutcomeMiss || o == OutcomeAuth,
+		Code:    code, MS: d.Milliseconds(), Breaker: brk,
+	}
+	if err := s.st.RecordOutcome(rec); err != nil {
+		log.Printf("调度：写回源结果失败（源 %d/%s）: %v", c.ID, kind, err)
+	}
 }
 
 // Snapshot 给面板看：每个协议当前的顺序与分数。

@@ -60,7 +60,7 @@ func TestTruncatedUpstreamCountedAsFailure(t *testing.T) {
 		t.Fatalf("应回落到官方源，实际 %q", got)
 	}
 
-	okN, failN, _, err := st.SourceEvents(id, 10)
+	okN, _, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestStreamBodyReportsFailureOnTruncation(t *testing.T) {
 	if rec.Body.Len() != 300<<10 {
 		t.Fatalf("已收的 300KB 应先发给客户端，实际 %d", rec.Body.Len())
 	}
-	okN, failN, _, err := st.SourceEvents(id, 10)
+	okN, _, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestCompletedUpstreamCountedAsSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "mirror-body" {
 		t.Fatalf("应 200 mirror-body，实际 %d %q", rec.Code, rec.Body.String())
 	}
-	if okN, failN, _, _ := st.SourceEvents(id, 10); okN != 1 || failN != 0 {
+	if okN, _, failN, _, _ := st.SourceEvents(id, 10); okN != 1 || failN != 0 {
 		t.Fatalf("完整传完应记 1 次成功，实际 ok=%d fail=%d", okN, failN)
 	}
 }
@@ -218,7 +218,7 @@ func TestClientGoneNotCounted(t *testing.T) {
 		t.Fatal("取消后处理函数没退出")
 	}
 
-	if okN, failN, _, _ := st.SourceEvents(id, 10); okN != 0 || failN != 0 {
+	if okN, _, failN, _, _ := st.SourceEvents(id, 10); okN != 0 || failN != 0 {
 		t.Fatalf("客户端断开不该记成败，实际 ok=%d fail=%d", okN, failN)
 	}
 }

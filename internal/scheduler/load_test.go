@@ -50,7 +50,7 @@ func TestAcquireCapsPerSource(t *testing.T) {
 	}
 
 	// 并发名额不碰健康：没有 source_events，候选照旧。
-	if _, failN, _, err := st.SourceEvents(id, 10); err != nil {
+	if _, _, failN, _, err := st.SourceEvents(id, 10); err != nil {
 		t.Fatal(err)
 	} else if failN != 0 {
 		t.Fatalf("排队/等待不该记失败，实际 %d 条", failN)

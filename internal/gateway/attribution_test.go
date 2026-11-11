@@ -78,7 +78,7 @@ func TestDiskFailureNotBlamedOnSource(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "mirror-body" {
 		t.Fatalf("应降级透传 200 mirror-body，实际 %d %q", rec.Code, rec.Body.String())
 	}
-	okN, failN, _, _ := st.SourceEvents(id, 10)
+	okN, _, failN, _, _ := st.SourceEvents(id, 10)
 	if failN != 0 {
 		t.Fatalf("本地磁盘故障不该记源站失败，实际 ok=%d fail=%d", okN, failN)
 	}
@@ -121,7 +121,7 @@ func TestUpstreamFailureStillBlamed(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "origin-body" {
 		t.Fatalf("应换到官方源 200 origin-body，实际 %d %q", rec.Code, rec.Body.String())
 	}
-	if _, failN, _, _ := st.SourceEvents(id, 10); failN == 0 {
+	if _, _, failN, _, _ := st.SourceEvents(id, 10); failN == 0 {
 		t.Fatal("真实上游故障必须记失败")
 	}
 }

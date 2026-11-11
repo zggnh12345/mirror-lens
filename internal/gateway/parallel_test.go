@@ -414,7 +414,7 @@ func TestParallelFallsBackWithoutRange(t *testing.T) {
 		t.Fatalf("应记一次退回，得到 %d", g.parFalls.Load())
 	}
 	// 不支持 Range 只是「不能分片」，源本身没坏：不能降权。
-	if okN, failN, _, _ := st.SourceEvents(id, 10); okN != 0 || failN != 0 {
+	if okN, _, failN, _, _ := st.SourceEvents(id, 10); okN != 0 || failN != 0 {
 		t.Fatalf("能力不匹配不该记源故障，实际 ok=%d fail=%d", okN, failN)
 	}
 }
@@ -452,7 +452,7 @@ func TestParallelRejectsWrongContent(t *testing.T) {
 	}
 	// 两台源拼出来的东西是错的，但分不清是谁撒谎：不能把两台都记失败，
 	// 否则正常源跟着被熔断。
-	if okN, failN, _, _ := st.SourceEvents(cand.ID, 10); okN != 0 || failN != 0 {
+	if okN, _, failN, _, _ := st.SourceEvents(cand.ID, 10); okN != 0 || failN != 0 {
 		t.Fatalf("无法归因时不该动源评分，实际 ok=%d fail=%d", okN, failN)
 	}
 }
@@ -483,7 +483,7 @@ func TestParallelRetriesOriginOnChunkError(t *testing.T) {
 	_ = origin
 	// 镜像供了第 0 段、后两段全 500 由官方源补上：它必须被记成失败，
 	// 不能因为「整份最终成功」就记成功——否则坏源永远熔不掉。
-	okN, failN, _, err := st.SourceEvents(cand.ID, 10)
+	okN, _, failN, _, err := st.SourceEvents(cand.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +673,7 @@ func TestParallelPreflightStatusClassification(t *testing.T) {
 			if rec := parRun(g, plan); rec.Code != -1 {
 				t.Fatalf("预检没通过时应退回单流，得到 %d", rec.Code)
 			}
-			okN, failN, _, err := st.SourceEvents(id, 10)
+			okN, _, failN, _, err := st.SourceEvents(id, 10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -715,7 +715,7 @@ func TestParallelPreflightContentRange(t *testing.T) {
 				return []fetchTarget{{u: mustURL(t, ms.URL), c: cand}, {u: plan.Upstream}}
 			}
 			parRun(g, plan)
-			okN, failN, _, err := st.SourceEvents(id, 10)
+			okN, _, failN, _, err := st.SourceEvents(id, 10)
 			if err != nil {
 				t.Fatal(err)
 			}

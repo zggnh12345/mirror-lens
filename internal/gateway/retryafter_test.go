@@ -80,7 +80,7 @@ func TestPreflight429RetryAfterReachesScheduler(t *testing.T) {
 		t.Fatalf("预检未通过时应退回单流，得到 %d", rec.Code)
 	}
 
-	_, failN, _, err := st.SourceEvents(id, 10)
+	_, _, failN, _, err := st.SourceEvents(id, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

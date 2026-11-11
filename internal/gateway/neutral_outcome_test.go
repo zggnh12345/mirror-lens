@@ -25,8 +25,8 @@ func TestHeadMissLeavesSourceUncooled(t *testing.T) {
 	}
 
 	ev := eventsOf(t, f.dbPath, regID)
-	if len(ev) != 1 || ev[0].Code != 404 || ev[0].OK != 1 || ev[0].Kind != "registry:quay.io" {
-		t.Fatalf("应留一条 code=404/ok=1/registry:quay.io 的事件，实际 %+v", ev)
+	if len(ev) != 1 || ev[0].Code != 404 || ev[0].OK != 1 || ev[0].Neutral != 1 || ev[0].Kind != "registry:quay.io" {
+		t.Fatalf("应留一条 code=404/ok=1/neutral=1/registry:quay.io 的事件，实际 %+v", ev)
 	}
 
 	if id := f.gw.sched.StickyFor("registry:quay.io"); id != 0 {
@@ -67,8 +67,8 @@ func TestHeadAuthLeavesSourceUncooled(t *testing.T) {
 	}
 
 	ev := eventsOf(t, f.dbPath, regID)
-	if len(ev) != 1 || ev[0].Code != 401 || ev[0].OK != 1 || ev[0].Kind != "registry:quay.io" {
-		t.Fatalf("应留一条 code=401/ok=1/registry:quay.io 的事件，实际 %+v", ev)
+	if len(ev) != 1 || ev[0].Code != 401 || ev[0].OK != 1 || ev[0].Neutral != 1 || ev[0].Kind != "registry:quay.io" {
+		t.Fatalf("应留一条 code=401/ok=1/neutral=1/registry:quay.io 的事件，实际 %+v", ev)
 	}
 
 	if id := f.gw.sched.StickyFor("registry:quay.io"); id != 0 {

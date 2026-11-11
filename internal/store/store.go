@@ -943,6 +943,7 @@ func (s *Store) DeleteSource(id int64) error {
 	// foreign_keys，也一并清掉，不留孤儿。
 	for _, q := range []string{
 		`DELETE FROM source_events WHERE source_id=?`,
+		`DELETE FROM breaker_state WHERE source_id=?`,
 		`DELETE FROM checks WHERE source_id=?`,
 		`DELETE FROM source_health WHERE source_id=?`,
 		`DELETE FROM sources WHERE id=?`,

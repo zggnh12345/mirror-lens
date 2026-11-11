@@ -26,9 +26,10 @@ func (f *moFixture) head(t *testing.T, path string) *httptest.ResponseRecorder {
 }
 
 type seRow struct {
-	Kind string
-	Code int
-	OK   int
+	Kind    string
+	Code    int
+	OK      int
+	Neutral int
 }
 
 // eventsOf 只读打开测试库，直接看 source_events 的 kind/code，避免用间接断言。
@@ -39,7 +40,7 @@ func eventsOf(t *testing.T, dbPath string, id int64) []seRow {
 		t.Fatalf("打开只读库: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT kind,code,ok FROM source_events WHERE source_id=? ORDER BY id`, id)
+	rows, err := db.Query(`SELECT kind,code,ok,neutral FROM source_events WHERE source_id=? ORDER BY id`, id)
 	if err != nil {
 		t.Fatalf("查事件: %v", err)
 	}
@@ -47,7 +48,7 @@ func eventsOf(t *testing.T, dbPath string, id int64) []seRow {
 	var out []seRow
 	for rows.Next() {
 		var r seRow
-		if err := rows.Scan(&r.Kind, &r.Code, &r.OK); err != nil {
+		if err := rows.Scan(&r.Kind, &r.Code, &r.OK, &r.Neutral); err != nil {
 			t.Fatalf("读事件: %v", err)
 		}
 		out = append(out, r)
