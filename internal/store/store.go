@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 )
 
 // 能力标记：-1 还没测过，0 不支持，1 支持
@@ -52,6 +54,19 @@ type Source struct {
 	// false = 裸格式 /v2/<repo>（ghcr.nju.edu.cn 等官方换域名站）。
 	// 探测时两种都试，据此写回；调度回源时按它拼路径。
 	GhcrPrefix bool `json:"ghcr_prefix"`
+
+	// RepoHost 是该源归属的 Registry Host（"" = Docker Hub）。
+	// 3.5.0 起只有一个值：一个源只服务一个 Registry，通用多仓代理留到后续版本。
+	RepoHost string `json:"repo_host"`
+	// RegistryCap 是该源对 RepoHost 的能力三态（0..2 见 store 常量），
+	// 与 docker_cap/ghcr_cap 并行存在：Hub 与 ghcr 仍以旧列权威，
+	// 新 Host 只认这两列。
+	RegistryCap  int    `json:"registry_cap"`
+	RegistryPath string `json:"registry_path_mode"` // native | host_prefix
+	// RegistryProbeAt/RegistryProbeError 只由独立 Host Probe 写入，
+	// 不得混进 probe_at（后者是旧协议族探测的字段）。
+	RegistryProbeAt    int64  `json:"registry_probe_at"`
+	RegistryProbeError string `json:"registry_probe_error"`
 	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
 	// 默认 0（不确定），实测通过后置 1。
 	GitCap int `json:"git_cap"`
@@ -205,6 +220,13 @@ CREATE TABLE IF NOT EXISTS sources (
   github_cap INTEGER NOT NULL DEFAULT -1,
   ghcr_cap INTEGER NOT NULL DEFAULT -1,
   git_cap INTEGER NOT NULL DEFAULT 0,
+  -- 3.5.0: 源归属的 Registry Host（'' = Docker Hub）与独立 Host Probe 的结果。
+  -- 与 docker_cap/ghcr_cap 并存：Hub/ghcr 仍以旧列为权威，新列只服务新 Host。
+  repo_host TEXT NOT NULL DEFAULT '',
+  registry_cap INTEGER NOT NULL DEFAULT -1,
+  registry_path_mode TEXT NOT NULL DEFAULT '',
+  registry_probe_at INTEGER NOT NULL DEFAULT 0,
+  registry_probe_error TEXT NOT NULL DEFAULT '',
   status_at INTEGER NOT NULL DEFAULT 0,
   status_reason TEXT NOT NULL DEFAULT '',
   probe_at INTEGER NOT NULL DEFAULT 0,
@@ -218,6 +240,13 @@ CREATE TABLE IF NOT EXISTS sources (
   pin_confirmed_at INTEGER NOT NULL DEFAULT 0,
   pin_grace_until INTEGER NOT NULL DEFAULT 0,
   UNIQUE(base_url)
+);
+-- 每个 Registry Host 一个凭据代次：凭据变更递增，Probe 结果按代次提交，
+-- 旧代次的结果在 SQL 层被拒，避免「旧凭据探出的能力覆盖新凭据」。
+CREATE TABLE IF NOT EXISTS registry_host_gen (
+  host TEXT PRIMARY KEY,
+  gen INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,31 +337,46 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		return err
 	}
 	if err := s.ensureColumns("sources", map[string]string{
-		"git_cap":          "INTEGER NOT NULL DEFAULT 0",
-		"ghcr_cap":         "INTEGER NOT NULL DEFAULT -1",
-		"ghcr_prefix":      "INTEGER NOT NULL DEFAULT 0",
-		"preferred":        "INTEGER NOT NULL DEFAULT 0",
-		"status_at":        "INTEGER NOT NULL DEFAULT 0",
-		"status_reason":    "TEXT NOT NULL DEFAULT ''",
-		"probe_at":         "INTEGER NOT NULL DEFAULT 0",
-		"site_name":        "TEXT NOT NULL DEFAULT ''",
-		"group_id":         "INTEGER NOT NULL DEFAULT 0",
-		"trusted":          "INTEGER NOT NULL DEFAULT 0",
-		"range_cap":        "INTEGER NOT NULL DEFAULT -1",
-		"range_at":         "INTEGER NOT NULL DEFAULT 0",
-		"pin_host":         "TEXT NOT NULL DEFAULT ''",
-		"pin_ipv4":         "TEXT NOT NULL DEFAULT ''",
-		"pin_ipv6":         "TEXT NOT NULL DEFAULT ''",
-		"pin_state":        "TEXT NOT NULL DEFAULT ''",
-		"pin_at":           "INTEGER NOT NULL DEFAULT 0",
-		"pin_confirmed_at": "INTEGER NOT NULL DEFAULT 0",
-		"pin_grace_until":  "INTEGER NOT NULL DEFAULT 0",
+		"git_cap":              "INTEGER NOT NULL DEFAULT 0",
+		"ghcr_cap":             "INTEGER NOT NULL DEFAULT -1",
+		"ghcr_prefix":          "INTEGER NOT NULL DEFAULT 0",
+		"preferred":            "INTEGER NOT NULL DEFAULT 0",
+		"status_at":            "INTEGER NOT NULL DEFAULT 0",
+		"status_reason":        "TEXT NOT NULL DEFAULT ''",
+		"probe_at":             "INTEGER NOT NULL DEFAULT 0",
+		"site_name":            "TEXT NOT NULL DEFAULT ''",
+		"group_id":             "INTEGER NOT NULL DEFAULT 0",
+		"trusted":              "INTEGER NOT NULL DEFAULT 0",
+		"range_cap":            "INTEGER NOT NULL DEFAULT -1",
+		"range_at":             "INTEGER NOT NULL DEFAULT 0",
+		"pin_host":             "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv4":             "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv6":             "TEXT NOT NULL DEFAULT ''",
+		"pin_state":            "TEXT NOT NULL DEFAULT ''",
+		"pin_at":               "INTEGER NOT NULL DEFAULT 0",
+		"pin_confirmed_at":     "INTEGER NOT NULL DEFAULT 0",
+		"pin_grace_until":      "INTEGER NOT NULL DEFAULT 0",
+		"repo_host":            "TEXT NOT NULL DEFAULT ''",
+		"registry_cap":         "INTEGER NOT NULL DEFAULT -1",
+		"registry_path_mode":   "TEXT NOT NULL DEFAULT ''",
+		"registry_probe_at":    "INTEGER NOT NULL DEFAULT 0",
+		"registry_probe_error": "TEXT NOT NULL DEFAULT ''",
 	}); err != nil {
 		return err
 	}
 	// 老库没有 status_at：从升级此刻起计时，不能拿 created_at 倒推，
 	// 否则历史死源会在首次巡检时被一起归档，升级即清空列表。
 	if _, err := s.db.Exec(`UPDATE sources SET status_at=? WHERE status_at=0`, time.Now().Unix()); err != nil {
+		return err
+	}
+	// 索引必须等补列之后再建：v1 库的 sources 没有 repo_host，
+	// 放进上面的建表脚本会让老库启动直接报 no such column。
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sources_repo_host ON sources(repo_host, status)`); err != nil {
+		return err
+	}
+	// 3.5.0 的历史回填必须排在 ensureColumns("sources") 之后：
+	// V1 升级会重建表，新表里没有 ghcr_cap/ghcr_prefix，提前读会 no such column。
+	if err := s.backfillRepoHost(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_groups(
@@ -455,14 +499,15 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error`
 
 const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted)
+		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted,
+		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError)
 	return x, err
 }
 
@@ -665,12 +710,22 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.GhcrCap == 0 {
 		x.GhcrCap = CapUnknown
 	}
+	// 3.5.0: 源归属的 Registry Host 必须规范化并命中白名单，
+	// 否则能写进去、3.5.1 却回源不了。默认 "" = Docker Hub。
+	host, err := registryhost.Check(x.RepoHost)
+	if err != nil {
+		return 0, err
+	}
+	x.RepoHost = host
+	if x.RegistryCap == 0 {
+		x.RegistryCap = CapUnknown
+	}
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath)
 	if err != nil {
 		return 0, err
 	}

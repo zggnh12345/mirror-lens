@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 )
 
 type Kind int
@@ -45,13 +46,9 @@ type Adapter struct {
 }
 
 // DefaultHosts 是允许按 /v2/<host>/... 前缀回源的仓库站。
-// dpanel / 1Panel 这类工具会把完整镜像地址塞进路径（ghcr.io/owner/repo），
-// 不设白名单就等于让 URL 决定回源地址——那是 SSRF。
-var DefaultHosts = []string{
-	"docker.io", "registry-1.docker.io", "ghcr.io", "quay.io",
-	"gcr.io", "registry.k8s.io", "mcr.microsoft.com", "lscr.io",
-	"registry.gitlab.com", "public.ecr.aws", "cgr.dev",
-}
+// 列表本体在 internal/registryhost，这里只是别名：3.5.x 起 store 的
+// repo_host 校验与路由必须用同一份清单，分叉会变成「能写进去但回源不了」。
+var DefaultHosts = registryhost.Hosts()
 
 func (a *Adapter) hostAllowed(h string) bool {
 	if a.Hosts != nil {
