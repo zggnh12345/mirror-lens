@@ -810,6 +810,41 @@ func TestReportRejectsStaleLifecycleCandidate(t *testing.T) {
 	}
 }
 
+// 复活后旧候选缓存必须作废：否则 ListTTL 内取到的候选带着旧代次，
+// 新生命周期的结果会被代次校验全部丢掉。
+func TestReviveDropsStaleCandidateCache(t *testing.T) {
+	st := newStore(t)
+	id := addSource(t, st, "https://a.example", true, 100, 1000)
+	s := New(st, Config{Enabled: true, FailCooldown: time.Minute, ListTTL: time.Hour})
+	old := s.CandidatesN("docker", 10)
+	if len(old) == 0 || old[0].Gen == 0 {
+		t.Fatal("候选没有代次")
+	}
+	s.Revive(id)
+	fresh := s.CandidatesN("docker", 10)
+	if len(fresh) == 0 {
+		t.Fatal("复活后没有候选")
+	}
+	if fresh[0].Gen == old[0].Gen {
+		t.Fatalf("复活后仍返回旧代次候选: %d", fresh[0].Gen)
+	}
+	s.ReportOutcome("docker", fresh[0], OutcomeFail, time.Millisecond, Hint{Code: 500})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		codes, err := st.SourceEventCodes(id, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(codes) == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("新生命周期的结果没有落库: %v", codes)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // rev 分配与落库串行：先拿到 rev 的上报必须先落库，事件表 id 顺序即 rev 顺序。
 func TestConcurrentReportsKeepRevOrder(t *testing.T) {
 	st := newStore(t)
@@ -835,7 +870,8 @@ func TestConcurrentReportsKeepRevOrder(t *testing.T) {
 	<-entered // 第一条已取 rev 且卡在落库前
 	// 确定性断言：此刻 key 锁必须仍被持有，说明 rev 分配、状态更新和落库
 	// 在同一段临界区里，而不是只包住 persist()。
-	if lk := s.keyLock(pkey("docker", id)); lk.TryLock() {
+	lk := s.keyLock(pkey("docker", id))
+	if lk.TryLock() {
 		lk.Unlock()
 		t.Fatal("rev 已分配但 key 锁没覆盖到落库前")
 	}
@@ -844,12 +880,18 @@ func TestConcurrentReportsKeepRevOrder(t *testing.T) {
 		defer wg.Done()
 		s.ReportOutcome("docker", candOf(id, "a"), OutcomeFail, time.Millisecond, Hint{Code: 500})
 	}()
-	// 给第二条一个进入 ReportOutcome 的机会；它只能卡在 key 锁上。
-	time.Sleep(100 * time.Millisecond)
+	// 等第二条真正卡在这把锁上再放行，不靠 sleep 猜调度。
+	deadline := time.Now().Add(2 * time.Second)
+	for lk.Waiters() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("第二条上报没有卡在 key 锁上")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	close(release)
 	wg.Wait()
 
-	deadline := time.Now().Add(3 * time.Second)
+	ddl := time.Now().Add(3 * time.Second)
 	for {
 		codes, err := st.SourceEventCodes(id, 10)
 		if err != nil {
@@ -861,7 +903,7 @@ func TestConcurrentReportsKeepRevOrder(t *testing.T) {
 			}
 			return
 		}
-		if time.Now().After(deadline) {
+		if time.Now().After(ddl) {
 			t.Fatalf("事件未补齐: %v", codes)
 		}
 		time.Sleep(20 * time.Millisecond)

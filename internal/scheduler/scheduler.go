@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
@@ -419,6 +420,10 @@ func (s *Scheduler) Revive(id int64) {
 			// brev 同样保留，理由见 Forget。
 		}
 	}
+	// 候选缓存和粘性里存的是旧代次的 Candidate：不清掉的话，复活后在
+	// ListTTL 内取到的候选会被代次校验全部丢弃，新源永远等不到第一条结果。
+	s.lists = map[string]listEntry{}
+	s.sticky = map[string]stickyPick{}
 	s.mu.Unlock()
 	s.retryMu.Lock()
 	for k := range s.pending {
@@ -1069,13 +1074,44 @@ func (s *Scheduler) hasBacklog(k string) bool {
 
 func pkeyOf(rec store.OutcomeRecord) string { return pkey(rec.Kind, rec.SourceID) }
 
-// keyLock 返回某个 (kind,id) 专用的互斥锁。
-func (s *Scheduler) keyLock(k string) *sync.Mutex {
-	if v, ok := s.kl.Load(k); ok {
-		return v.(*sync.Mutex)
+// keyLock 是某个 (kind,id) 专用的串行锁。
+//
+// 不用 sync.Mutex 是为了能观测等待者：测试需要确认「另一条上报已经卡在
+// 这把锁上」再放行前一条，而不是靠 sleep 猜它有没有被调度到。
+type keyLock struct {
+	sem     chan struct{}
+	waiting atomic.Int32
+}
+
+func newKeyLock() *keyLock { return &keyLock{sem: make(chan struct{}, 1)} }
+
+func (l *keyLock) Lock() {
+	l.waiting.Add(1)
+	l.sem <- struct{}{}
+	l.waiting.Add(-1)
+}
+
+func (l *keyLock) Unlock() { <-l.sem }
+
+func (l *keyLock) TryLock() bool {
+	select {
+	case l.sem <- struct{}{}:
+		return true
+	default:
+		return false
 	}
-	v, _ := s.kl.LoadOrStore(k, &sync.Mutex{})
-	return v.(*sync.Mutex)
+}
+
+// Waiters 返回正卡在 Lock() 里的数量。
+func (l *keyLock) Waiters() int32 { return l.waiting.Load() }
+
+// keyLock 返回某个 (kind,id) 专用的串行锁。
+func (s *Scheduler) keyLock(k string) *keyLock {
+	if v, ok := s.kl.Load(k); ok {
+		return v.(*keyLock)
+	}
+	v, _ := s.kl.LoadOrStore(k, newKeyLock())
+	return v.(*keyLock)
 }
 
 // dropState 在一条带熔断状态的记录确认落盘后，清掉它的待写快照。
