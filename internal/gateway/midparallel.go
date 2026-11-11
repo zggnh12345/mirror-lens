@@ -372,10 +372,10 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	for i := range srcs {
 		switch {
 		case atomic.LoadInt32(&stats[i].fail) > 0:
-			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start),
+			g.reportSource(plan.Sched(), srcs[i].t, false, time.Since(start),
 				scheduler.Hint{Code: int(atomic.LoadInt32(&stats[i].code)), Mode: "midparallel"})
 		case atomic.LoadInt32(&stats[i].ok) > 0:
-			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start),
+			g.reportSource(plan.Sched(), srcs[i].t, true, time.Since(start),
 				scheduler.Hint{Code: http.StatusPartialContent, Mode: "midparallel"})
 		}
 	}

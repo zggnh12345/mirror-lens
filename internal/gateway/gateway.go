@@ -516,12 +516,12 @@ func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTar
 	if prev != nil || plan.OfficialOnly || !g.sched.Enabled() {
 		return append(out, fbs...)
 	}
-	cands := g.sched.Candidates(plan.Kind)
+	cands := g.sched.Candidates(plan.Sched())
 	metrics.SourceCandidates(len(cands))
 	var head []fetchTarget
 	for _, c := range cands {
 		cc := c
-		u, ok := g.sched.Rewrite(plan.Kind, plan.Upstream, cc)
+		u, ok := g.sched.Rewrite(plan.Sched(), plan.Upstream, cc)
 		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
 			continue
 		}
@@ -556,11 +556,11 @@ func (g *Gateway) parallelTargetsN(plan *adapter.Plan, want int) []fetchTarget {
 		n = 24
 	}
 	var head []fetchTarget
-	cands := g.sched.CandidatesN(plan.Kind, n)
+	cands := g.sched.CandidatesN(plan.Sched(), n)
 	metrics.SourceCandidates(len(cands))
 	for _, c := range cands {
 		cc := c
-		u, ok := g.sched.Rewrite(plan.Kind, plan.Upstream, cc)
+		u, ok := g.sched.Rewrite(plan.Sched(), plan.Upstream, cc)
 		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
 			continue
 		}
@@ -703,7 +703,7 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 		if t.c != nil {
 			// 成功也要记状态码：429 率的分母要含真实响应，
 			// 不记 200 的话分母里只剩失败请求。
-			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
+			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: code, Mode: "single"})
 			if e != nil {
 				// 吞吐样本只喂给带宽控制器，不写库：一次回源一条记录就够了。
 				g.sched.Observe(t.c.ID, e.Size, time.Since(start), true, code)
@@ -724,7 +724,7 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 	if errors.As(err, &ue) && isMiss(ue.Code) {
 		if t.c != nil {
 			// 404/410 也进 429 率分母并按成功计：它答得很正常，只是没这个文件。
-			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
 		}
 		metrics.SourceMiss(plan.Kind, ue.Code)
 		name := t.u.Host
@@ -737,7 +737,7 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 	// 401/403 是「没资格问」：换源但不罚源，也不进 Miss 统计。
 	if errors.As(err, &ue) && isAuthDenied(ue.Code) {
 		if t.c != nil {
-			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
+			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: ue.Code, Mode: "single"})
 		}
 		name := t.u.Host
 		if t.c != nil {
@@ -760,7 +760,7 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 			hint.RetryAfter = ue.RetryAfter
 			hint.Code = ue.Code
 		}
-		g.sched.Report(plan.Kind, *t.c, false, time.Since(start), hint)
+		g.sched.Report(plan.Sched(), *t.c, false, time.Since(start), hint)
 		// 带宽控制也要知道它刚失败：429 时照原并发打只会拖长冷却。
 		g.sched.Observe(t.c.ID, 0, 0, false, hint.Code)
 	}
@@ -967,7 +967,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 				// 429/5xx 才是源站问题，记失败并带上 Retry-After。
 				ok := isMiss(code) || isAuthDenied(code)
 				if t := targets[r.idx]; t.c != nil {
-					g.sched.Report(plan.Kind, *t.c, ok, time.Since(r.start), hint)
+					g.sched.Report(plan.Sched(), *t.c, ok, time.Since(r.start), hint)
 					if !ok {
 						g.sched.Observe(t.c.ID, 0, 0, false, code)
 					}

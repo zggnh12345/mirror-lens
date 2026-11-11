@@ -3,6 +3,9 @@ package scheduler
 import (
 	"net/url"
 	"testing"
+	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
 func mustURL(t *testing.T, raw string) *url.URL {
@@ -119,4 +122,75 @@ func TestRewriteLegacyUnchanged(t *testing.T) {
 		// 现有实现：/v2 + TrimPrefix("/v2/<rest>","/v2") = /v2/ghcr.io + /v2/<rest>
 		t.Fatalf("ghcr 改写被改变: ok=%v path=%q", ok, got.Path)
 	}
+}
+
+// 熔断/粘性/候选缓存都以 kind 为键：registry 的 Host 之间、registry 与 docker 之间
+// 必须互不影响。
+func TestRegistryBreakerIsolation(t *testing.T) {
+	st := newStore(t)
+	qID := addRegSource(t, st, "quay.io", "native")
+	kID := addRegSource(t, st, "registry.k8s.io", "host_prefix")
+	dID, err := st.AddSource(store.Source{BaseURL: "https://hub.example", Name: "hub", DockerCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc := New(st, Config{Enabled: true, FailCooldown: time.Minute})
+	cur := time.Now()
+	sc.now = func() time.Time { return cur }
+
+	qs := sc.Candidates("registry:quay.io")
+	if len(qs) != 1 || qs[0].ID != qID || qs[0].RegistryPath != "native" {
+		t.Fatalf("quay 候选=%+v", qs)
+	}
+	if n := len(sc.Candidates("registry:registry.k8s.io")); n != 1 {
+		t.Fatalf("k8s 候选数=%d", n)
+	}
+	sc.Report("registry:quay.io", qs[0], false, 0)
+
+	if n := len(sc.Candidates("registry:quay.io")); n != 0 {
+		t.Errorf("quay 失败后应熔断，实际仍有 %d 个候选", n)
+	}
+	ks := sc.Candidates("registry:registry.k8s.io")
+	if len(ks) != 1 || ks[0].ID != kID {
+		t.Errorf("k8s 候选被 quay 的熔断牵连: %+v", ks)
+	}
+	ds := sc.Candidates("docker")
+	if len(ds) != 1 || ds[0].ID != dID {
+		t.Errorf("docker 候选被 registry 熔断牵连: %+v", ds)
+	}
+	if n := len(sc.Candidates("ghcr")); n != 0 {
+		t.Errorf("ghcr 池不应出现任何源，实际 %d", n)
+	}
+}
+
+// 面板/健康查询按 Host 取候选时，路径必须随候选一起返回。
+func TestCandidatesCarryRegistryPath(t *testing.T) {
+	st := newStore(t)
+	addRegSource(t, st, "quay.io", "host_prefix")
+	sc := New(st, Config{Enabled: true})
+	cs := sc.Candidates("registry:quay.io")
+	if len(cs) != 1 || cs[0].RegistryPath != "host_prefix" {
+		t.Fatalf("候选=%+v", cs)
+	}
+}
+
+func addRegSource(t *testing.T, st *store.Store, host, path string) int64 {
+	t.Helper()
+	id, err := st.AddSource(store.Source{BaseURL: "https://" + host + "-mirror.example", Name: host, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRepoHost(id, host); err != nil {
+		t.Fatal(err)
+	}
+	gen, dig, err := st.HostGenState(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := st.SetHostCaps(id, host, 1, path, time.Now().Unix(), "", gen, dig)
+	if err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("SetHostCaps: res=%v err=%v", res, err)
+	}
+	return id
 }

@@ -460,7 +460,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		// 拼错只证明「组合」错了：单源才归因记失败，
 		// 多源时不动评分，免得正常源被熔断。
 		if len(srcs) == 1 {
-			g.reportSource(plan.Kind, srcs[0].t, false, time.Since(start))
+			g.reportSource(plan.Sched(), srcs[0].t, false, time.Since(start))
 		}
 		log.Printf("并行填充：整份校验失败，不入缓存：期望 %s 实得 %s (%s)", plan.ExpectSHA, sha, parNames(srcs))
 		return true
@@ -514,12 +514,12 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for i := range srcs {
 		switch {
 		case atomic.LoadInt32(&stats[i].fail) > 0:
-			g.reportSource(plan.Kind, srcs[i].t, false, time.Since(start),
+			g.reportSource(plan.Sched(), srcs[i].t, false, time.Since(start),
 				scheduler.Hint{Code: int(atomic.LoadInt32(&stats[i].code)), Mode: "parallel"})
 		case atomic.LoadInt32(&stats[i].ok) > 0:
 			// 并行分片成功拿到的是 206，不是 200；不记的话这条成功事件
 			// 在 429 率的分母里就不存在了。
-			g.reportSource(plan.Kind, srcs[i].t, true, time.Since(start),
+			g.reportSource(plan.Sched(), srcs[i].t, true, time.Since(start),
 				scheduler.Hint{Code: http.StatusPartialContent, Mode: "parallel"})
 		}
 	}
@@ -672,7 +672,7 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 	if err != nil {
 		// 连不上、超时才算源故障；本次任务被取消则中性。
 		if ctx.Err() == nil {
-			g.reportSource(plan.Kind, t, false, time.Since(st))
+			g.reportSource(plan.Sched(), t, false, time.Since(st))
 		}
 		return parProbe{}
 	}
@@ -693,7 +693,7 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 					log.Printf("并行填充：%s 限流，Retry-After=%s", t.u.Host, ra)
 				}
 			}
-			g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode, Mode: "chunk"})
+			g.reportSource(plan.Sched(), t, false, time.Since(st), scheduler.Hint{RetryAfter: ra, Code: resp.StatusCode, Mode: "chunk"})
 		}
 		if resp.StatusCode == http.StatusOK && resp.Header.Get("Content-Range") == "" {
 			// 200 全量 = 明确不认 Range，记下来免得下次再白拉一遍。
@@ -707,7 +707,7 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 		// 回了 206 却给不出合法的 Content-Range：这不是「没有 Range 能力」，
 		// 是协议响应本身有问题，按源故障记。
 		if ctx.Err() == nil {
-			g.reportSource(plan.Kind, t, false, time.Since(st), scheduler.Hint{Code: resp.StatusCode, Mode: "chunk"})
+			g.reportSource(plan.Sched(), t, false, time.Since(st), scheduler.Hint{Code: resp.StatusCode, Mode: "chunk"})
 		}
 		log.Printf("并行填充：%s 返回异常 Range 响应（Content-Range=%q）",
 			t.u.Host, resp.Header.Get("Content-Range"))

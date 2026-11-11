@@ -28,7 +28,14 @@ const (
 
 // Plan 是一次代理请求的完整执行计划。
 type Plan struct {
-	Kind     string      // raw / release / http / git / docker
+	Kind string // raw / release / http / git / docker / registry
+
+	// SchedKey 是调度身份：Candidates / Rewrite / Report 的 kind 参数。
+	// 空表示等于 Kind。Registry 多源用它把每个 Host 拆成独立调度族
+	// （registry:<host>），Kind 仍保持单一 "registry" 供健康族与指标使用——
+	// 直接把 Host 写进 Kind 会让熔断、粘性、样本缓存各建一套，而健康族
+	// 又会因为未知 kind 落进 github 或按 Host 碎片化。
+	SchedKey string
 	Upstream *url.URL    // 真正要请求的上游
 	Method   string      // 一般 GET；git 的 POST 走透明转发
 	Header   http.Header // 追加到上游请求的头（认证、Accept 等）
@@ -93,6 +100,14 @@ type Plan struct {
 	// 适配器用它记住「这个 repo 其实在别处」，下次直接走对站点，
 	// 不用再白等一轮 Docker Hub 的 401。
 	OnFallback func(host string)
+}
+
+// Sched 返回调度身份，未显式设置时回落到 Kind。
+func (p *Plan) Sched() string {
+	if p.SchedKey != "" {
+		return p.SchedKey
+	}
+	return p.Kind
 }
 
 // Fallback 是一个备用上游站点。路径与主上游相同，只换 host。

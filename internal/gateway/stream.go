@@ -253,7 +253,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			}
 			// 客户端自己取消（关页面/断网）不是这台源的问题。
 			if ctx.Err() == nil {
-				g.sched.Report(plan.Kind, *t.c, false, time.Since(start))
+				g.sched.Report(plan.Sched(), *t.c, false, time.Since(start))
 			}
 			loggw(slog.LevelWarn, "源连不上，换下一个", ctx, plan, codeFor(err), err, "source", t.c.Name)
 			lastErr = err
@@ -265,7 +265,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
 			metrics.SourceMiss(plan.Kind, resp.StatusCode)
-			g.sched.Report(plan.Kind, *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
+			g.sched.Report(plan.Sched(), *t.c, true, time.Since(start), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 			loggw(slog.LevelInfo, "源未命中，换下一个", ctx, plan, "", nil, "source", t.c.Name, "status", resp.StatusCode)
 			lastErr = &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 			continue
@@ -275,7 +275,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			resp.Body.Close()
 			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
 			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它。
-			g.sched.Report(plan.Kind, *t.c, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
+			g.sched.Report(plan.Sched(), *t.c, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
 				loggw(slog.LevelInfo, "源限流，换下一个", ctx, plan, logging.UpstreamRateLimited, nil, "source", t.c.Name, "status", resp.StatusCode, "retry_after_s", int(ue.RetryAfter.Seconds()))
 			} else {
@@ -426,7 +426,7 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		// 只有整份传完才记成功，否则「握手快、传输慢」的源会一直粘着流量。
 		// 调度记整次耗时（非 TTFB），TTFB 另记 source_ttfb_seconds 供监控。
 		metrics.SourceTTFB(plan.Kind, "stream", ttfb)
-		g.reportSource(plan.Kind, *tgt, outcome == outcomeOK, ttfb+time.Since(t0), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
+		g.reportSource(plan.Sched(), *tgt, outcome == outcomeOK, ttfb+time.Since(t0), scheduler.Hint{Code: resp.StatusCode, Mode: "stream"})
 	}()
 
 	total := resp.ContentLength
@@ -1004,7 +1004,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 		}
 		resp, err = g.cli.Do(req)
 		if err != nil {
-			g.reportPass(plan.Kind, tt, start, 0, 0, false)
+			g.reportPass(plan.Sched(), tt, start, 0, 0, false)
 			continue
 		}
 		// 裸格式（Docker Hub 名）的 401/403 说明镜像不在 Hub 上：
@@ -1018,7 +1018,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 			if isMiss(code) {
 				metrics.SourceMiss(plan.Kind, code)
 			}
-			g.reportPass(plan.Kind, tt, start, code, ra, passOK(code))
+			g.reportPass(plan.Sched(), tt, start, code, ra, passOK(code))
 			continue
 		}
 		if t.c != nil {
@@ -1067,14 +1067,14 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	// 既不进熔断也不进 429 率。
 	if r.Method == http.MethodHead {
 		if chosen != nil {
-			g.reportPass(plan.Kind, *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), passOK(resp.StatusCode))
+			g.reportPass(plan.Sched(), *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), passOK(resp.StatusCode))
 		}
 		return
 	}
 	n, cerr := io.Copy(w, resp.Body)
 	g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), n)
 	if chosen != nil {
-		g.reportPass(plan.Kind, *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), cerr == nil && passOK(resp.StatusCode))
+		g.reportPass(plan.Sched(), *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), cerr == nil && passOK(resp.StatusCode))
 	}
 }
 

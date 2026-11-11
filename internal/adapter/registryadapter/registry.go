@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,11 @@ type Adapter struct {
 	MaxBytes int64           // 单个 blob 上限，超了只透传
 	TagTTL   time.Duration   // tag 的重新验证间隔；digest 永久
 	Hosts    map[string]bool // 允许 /v2/<host>/... 前缀的站；nil 用 DefaultHosts
+
+	// MultiOrigin 打开后，非 ghcr 的 foreign Host 走独立调度族 registry:<host>：
+	// 只有 registry_cap=1 且路径已验证的源会入选，没有候选时仍回官方。
+	// 关闭时行为与 3.4.6 逐字一致。
+	MultiOrigin bool
 
 	mu       sync.RWMutex
 	repoHost map[string]string // 裸格式镜像名 → 实测所在站点（Docker Hub 没有时自动找 ghcr）
@@ -86,10 +92,15 @@ func New(upstream string, maxBytes int64, tagTTL time.Duration) *Adapter {
 	if tagTTL < 0 {
 		tagTTL = 0
 	}
-	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL, repoHost: map[string]string{}}
+	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL, repoHost: map[string]string{}, MultiOrigin: multiOriginFromEnv()}
 }
 
 // rememberedHost 返回之前实测到的归属站点（裸格式镜像名）。
+// multiOriginFromEnv 只认精确的 "1"：未设置、空串、其他值一律保持旧行为。
+func multiOriginFromEnv() bool {
+	return strings.TrimSpace(os.Getenv("ML_REGISTRY_MULTI_ORIGIN")) == "1"
+}
+
 func (a *Adapter) rememberedHost(name string) string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -208,10 +219,12 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	case KindManifest:
 		accept := UpstreamAccept(r.Header.Get("Accept"), foreign)
 		up.Path = "/v2/" + name + "/manifests/" + ref
+		kindName, schedKey, official := a.sched(host, foreign)
 		p := &adapter.Plan{
-			Kind:         a.kindForHost(host, foreign),
+			Kind:         kindName,
+			SchedKey:     schedKey,
 			Upstream:     up,
-			OfficialOnly: a.officialOnly(host, foreign),
+			OfficialOnly: official,
 			Method:       http.MethodGet,
 			Header:       http.Header{"Accept": {accept}},
 			Label:        a.label(host, name, ref),
@@ -237,10 +250,12 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 		// 不给 blob 挂备用站点：镜像归属在拉 manifest 时已经记住
 		// （OnFallback 写 repoHost），blob 跟着 manifest 走同一个站点即可。
 		// 独立挂 fallback 会让每个 4xx 的层请求都多打一次真实外网。
+		kindName, schedKey, official := a.sched(host, foreign)
 		return &adapter.Plan{
-			Kind:         a.kindForHost(host, foreign),
+			Kind:         kindName,
+			SchedKey:     schedKey,
 			Upstream:     up,
-			OfficialOnly: a.officialOnly(host, foreign),
+			OfficialOnly: official,
 			Method:       http.MethodGet,
 			Label:        "layer " + shortDigest(ref),
 			CacheKey:     "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
@@ -259,6 +274,16 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 // isGhcrHost ghcr.io 有国内镜像源可加速；其余 foreign 站点（quay/gcr/...）
 // 没有镜像源，仍直连官方。
 func isGhcrHost(host string) bool { return strings.EqualFold(host, "ghcr.io") }
+
+// sched 决定一次回源的调度身份。
+// 多源开启且是真正的 foreign Host（非 ghcr）时，kind 固定为 registry，
+// SchedKey 带上 Host：调度按 Host 隔离，健康族仍是单一 registry。
+func (a *Adapter) sched(host string, foreign bool) (kind, schedKey string, officialOnly bool) {
+	if a.MultiOrigin && foreign && !isGhcrHost(host) {
+		return "registry", "registry:" + host, false
+	}
+	return a.kindForHost(host, foreign), "", a.officialOnly(host, foreign)
+}
 
 // kindForHost 决定回源类型：ghcr.io 走 ghcr 源池，docker hub 与其余 foreign
 // 站点走 docker（后者靠 OfficialOnly 直连）。
