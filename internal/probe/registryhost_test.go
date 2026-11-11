@@ -186,6 +186,55 @@ func TestRegistryHostRejectsUnsupportedMediaType(t *testing.T) {
 	}
 }
 
+// Content-Type 带参数时必须解析媒体类型，不能全等比较误判。
+func TestRegistryHostMediaTypeWithParameters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			w.Write([]byte(`{}`))
+			return
+		}
+		if r.URL.Path != "/v2/library/alpine/manifests/latest" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json; charset=utf-8")
+		w.Header().Set("Docker-Content-Digest", digestOf(ociManifest))
+		w.Write([]byte(ociManifest))
+	}))
+	defer srv.Close()
+
+	out := ProbeRegistryHost(context.Background(), RegistryHostProbe{
+		BaseURL:  srv.URL,
+		Host:     "quay.io",
+		Snapshot: v2auth.CredentialSnapshot{Host: "quay.io"},
+		Realms:   map[string][]string{"quay.io": {srv.URL}},
+		Timeout:  5 * time.Second,
+	})
+	if out.Native.Cap != capYes {
+		t.Fatalf("带参数的 Content-Type 应被接受: %+v", out.Native)
+	}
+	if out.Native.MediaType != "application/vnd.oci.image.manifest.v1+json" {
+		t.Fatalf("媒体类型应去掉参数: %q", out.Native.MediaType)
+	}
+}
+
+// cap=1 与 selected 必须成对出现：只写 cap 不写路径，等于把「哪条路径可信」
+// 交给下游猜。
+func TestAggregateInvariant(t *testing.T) {
+	caps := []int{capUnknown, capNo, capYes, capMismatch}
+	for _, a := range caps {
+		for _, b := range caps {
+			_, got, sel := aggregate(PathOutcome{Cap: a}, PathOutcome{Cap: b})
+			if got == capYes && sel == "" {
+				t.Fatalf("(%d,%d) 判了 cap=1 却没给 selected", a, b)
+			}
+			if got != capYes && sel != "" {
+				t.Fatalf("(%d,%d) 非 cap=1 却给了 selected=%q", a, b, sel)
+			}
+		}
+	}
+}
+
 // 两条路径都篡改，才是 2。
 func TestRegistryHostBothTampered(t *testing.T) {
 	f := &fakeHost{native: "ok", prefix: "ok", declared: "sha256:" + strings.Repeat("0", 64)}
