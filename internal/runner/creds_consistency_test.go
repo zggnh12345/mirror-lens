@@ -16,6 +16,11 @@ package runner
 // 凭据变更再放行，没有 sleep 猜测。身份记录取自 token 签发时的凭据标签，所以
 // 「同一个任务的请求混用 A/B」会直接暴露在日志里。
 //
+// 本文件禁止 t.Parallel()：newCredFixture 会改 probe.Configure 这个包级全局。
+// 所有闸门等待都经 awaitGate 限时，超时打印场景、闸门序号和当前请求日志，
+// 不能让整个包挂到 -timeout 才失败；arm 同时注册 Cleanup 兜底放行，
+// 测试中途 Fatal 也不会把 httptest 的 handler 永久留在 <-release 上。
+//
 // 默认用本地伪造的 OCI manifest；设置 ML_CREDTEST_UPSTREAM=http://native:5000
 // 后可把 manifest 请求代理到真实 registry:3（需在 ml-e2e 网络里运行测试二进制）。
 
@@ -75,6 +80,26 @@ type credRegistry struct {
 	fired      bool
 	armed      chan struct{}
 	release    chan struct{}
+	relOnce    sync.Once
+}
+
+// gateTimeout 是一次闸门等待的上限：超时说明装配和被测时序脱节
+// （例如探测顺序变了），必须马上失败并给出诊断，而不是挂到 -timeout。
+const gateTimeout = 10 * time.Second
+
+// awaitGate 限时等待闸门。snapshot 为 nil 时只报闸门名。
+func awaitGate(t *testing.T, scene, gate string, ch <-chan struct{}, snapshot func() string) {
+	t.Helper()
+	select {
+	case <-ch:
+		return
+	case <-time.After(gateTimeout):
+		state := ""
+		if snapshot != nil {
+			state = "；" + snapshot()
+		}
+		t.Fatalf("%s 等待 %s 超时（%s）%s", scene, gate, gateTimeout, state)
+	}
 }
 
 func newCredRegistry(t *testing.T) *credRegistry {
@@ -89,16 +114,43 @@ func newCredRegistry(t *testing.T) *credRegistry {
 	return c
 }
 
-// arm 让下一次 token 请求在签发后挂起；返回的 armed 通道在挂起时关闭。
-func (c *credRegistry) arm(at int) (armed, release chan struct{}) {
+// arm 让第 at 次 token 请求在签发后挂起；返回的 armed 通道在挂起时关闭。
+// 放行一律走 releaseGate：测试侧和 t.Cleanup 都调它，sync.Once 保证只关一次，
+// 中途 Fatal 也不会把 handler 永久留在 <-release 上。
+func (c *credRegistry) arm(t *testing.T, at int) (armed chan struct{}) {
+	t.Helper()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.holdAt = at
 	c.tokenCalls = 0
 	c.fired = false
 	c.armed = make(chan struct{})
 	c.release = make(chan struct{})
-	return c.armed, c.release
+	armed = c.armed
+	c.mu.Unlock()
+	t.Cleanup(c.releaseGate)
+	return armed
+}
+
+func (c *credRegistry) releaseGate() {
+	c.mu.Lock()
+	rel := c.release
+	c.mu.Unlock()
+	if rel == nil {
+		return
+	}
+	c.relOnce.Do(func() { close(rel) })
+}
+
+// state 供超时诊断：闸门到哪一步、最近三条上游请求。
+func (c *credRegistry) state() string {
+	c.mu.Lock()
+	fired, calls, hold := c.fired, c.tokenCalls, c.holdAt
+	c.mu.Unlock()
+	tail := c.since(0)
+	if len(tail) > 3 {
+		tail = tail[len(tail)-3:]
+	}
+	return fmt.Sprintf("闸门 fired=%v holdAt=%d tokenCalls=%d；最近请求=%v", fired, hold, calls, tail)
 }
 
 func (c *credRegistry) serve(w http.ResponseWriter, r *http.Request) {
@@ -334,12 +386,22 @@ func (f *credFixture) runner() *HostProbeRunner {
 
 // run 在后台跑一次真实 runOne（快照 → Probe → CAS 提交），返回完成通道。
 func (f *credFixture) run(r *HostProbeRunner) <-chan struct{} {
+	return f.runCtx(context.Background(), r)
+}
+
+func (f *credFixture) runCtx(ctx context.Context, r *HostProbeRunner) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		r.runOne(context.Background(), f.job)
+		r.runOne(ctx, f.job)
 	}()
 	return done
+}
+
+// wait 限时等任务退出：超时说明 runOne 不响应取消，或闸门没放行。
+func (f *credFixture) wait(t *testing.T, scene string, done <-chan struct{}) {
+	t.Helper()
+	awaitGate(t, scene, "任务退出(done)", done, f.reg.state)
 }
 
 type sourceRow struct {
@@ -401,7 +463,7 @@ func TestProbeCredentialScenario1Stable(t *testing.T) {
 	f.now = 1000
 	n := reg.mark()
 	reg.setJob("S1-A")
-	<-f.run(f.runner())
+	f.wait(t, "S1", f.run(f.runner()))
 
 	recs := reg.since(n)
 	mustOneIdentity(t, recs, "A")
@@ -425,7 +487,7 @@ func TestProbeCredentialScenario2NewSnapshot(t *testing.T) {
 	}
 	f.now = 1000
 	reg.setJob("S2-preA")
-	<-f.run(f.runner())
+	f.wait(t, "S2-preA", f.run(f.runner()))
 	if _, err := f.creds.Put(credTestHost, "userB", "passB"); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +495,7 @@ func TestProbeCredentialScenario2NewSnapshot(t *testing.T) {
 	f.now = 2000
 	n := reg.mark()
 	reg.setJob("S2-B")
-	<-f.run(f.runner())
+	f.wait(t, "S2-B", f.run(f.runner()))
 	recs := reg.since(n)
 	mustOneIdentity(t, recs, "B")
 	if row := f.source(); row.cap != store.RegistryCapYes || row.probeAt != 2000 {
@@ -454,20 +516,20 @@ func TestProbeCredentialScenario3UpdateMidFlight(t *testing.T) {
 	f.seedDiagnostics(t, 500, "上一次诊断")
 
 	// 第二个 token 请求 = native 路径的 manifest：此时已用 A 换到 token。
-	armed, release := reg.arm(2)
+	armed := reg.arm(t, 2)
 	n := reg.mark()
 	f.now = 3000
 	reg.setJob("S3-A")
 	done := f.run(f.runner())
-	<-armed
+	awaitGate(t, "S3", "闸门#2(armed)", armed, reg.state)
 
 	if _, err := f.creds.Put(credTestHost, "userB", "passB"); err != nil {
 		t.Fatal(err)
 	}
 	baseline := f.source()    // 凭据变更完成后的状态，才是 stale 的比对基准
 	afterUpdate := reg.mark() // 变更完成之后的请求必须仍然来自 A
-	close(release)
-	<-done
+	reg.releaseGate()
+	f.wait(t, "S3", done)
 
 	recs := reg.since(n)
 	mustOneIdentity(t, recs, "A") // 任务中途不得改读 B
@@ -503,20 +565,20 @@ func TestProbeCredentialScenario4DeleteMidFlight(t *testing.T) {
 	}
 	f.seedDiagnostics(t, 500, "上一次诊断")
 
-	armed, release := reg.arm(2)
+	armed := reg.arm(t, 2)
 	n := reg.mark()
 	f.now = 4000
 	reg.setJob("S4-A")
 	done := f.run(f.runner())
-	<-armed
+	awaitGate(t, "S4", "闸门#2(armed)", armed, reg.state)
 
 	if err := f.creds.Delete(credTestHost); err != nil {
 		t.Fatal(err)
 	}
 	baseline := f.source()
 	afterUpdate := reg.mark()
-	close(release)
-	<-done
+	reg.releaseGate()
+	f.wait(t, "S4", done)
 
 	recs := reg.since(n)
 	mustOneIdentity(t, recs, "A") // 手里已有 A 快照，允许走完，但不能改读别的代次
@@ -533,7 +595,7 @@ func TestProbeCredentialScenario4DeleteMidFlight(t *testing.T) {
 	n2 := reg.mark()
 	f.now = 5000
 	reg.setJob("S4-new")
-	<-f.run(f.runner())
+	f.wait(t, "S4-new", f.run(f.runner()))
 	recs2 := reg.since(n2)
 	if got := identities(recs2); len(got) != 0 {
 		t.Fatalf("删除后新任务不应再使用任何凭据，实际 %v", got)
@@ -548,6 +610,29 @@ func TestProbeCredentialScenario4DeleteMidFlight(t *testing.T) {
 	dumpLog(t, "S4-new", recs2)
 	dumpRow(t, "S4 baseline", baseline)
 	dumpRow(t, "S4 after", f.source())
+}
+
+// ---- 场景 5：任务执行中取消 Context ----
+
+// 闸门挂住时取消：探测请求被中止，runOne 必须在限时内退出。
+// 这条用例故意不放闸门就等 done，证明退出不依赖闸门释放。
+func TestProbeCredentialCancelStopsTask(t *testing.T) {
+	reg := newCredRegistry(t)
+	f := newCredFixture(t, reg)
+	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
+		t.Fatal(err)
+	}
+	f.now = 6000
+	armed := reg.arm(t, 2)
+	reg.setJob("S5-cancel")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := f.runCtx(ctx, f.runner())
+	awaitGate(t, "S5", "闸门#2(armed)", armed, reg.state)
+
+	cancel()
+	f.wait(t, "S5", done)
+	reg.releaseGate()
 }
 
 // dumpLog 把上游看到的请求逐条打印出来，作为验收证据（-test.v 可见）。
