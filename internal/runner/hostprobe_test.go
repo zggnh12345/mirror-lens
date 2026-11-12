@@ -369,7 +369,7 @@ func TestJobsComeFromDurableRecovery(t *testing.T) {
 	}
 
 	r := mk(2000)
-	jobs, err := r.jobs(context.Background())
+	jobs, err := r.jobs(context.Background(), r.o.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestJobsComeFromDurableRecovery(t *testing.T) {
 	}
 
 	due := mk(5000) // 4600 到期
-	jobs, err = due.jobs(context.Background())
+	jobs, err = due.jobs(context.Background(), due.o.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestJobsComeFromDurableRecovery(t *testing.T) {
 
 	// 重启：新实例没有任何内存状态，仍从 DB 捞到同一条。
 	restarted := mk(5000)
-	jobs, err = restarted.jobs(context.Background())
+	jobs, err = restarted.jobs(context.Background(), restarted.o.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

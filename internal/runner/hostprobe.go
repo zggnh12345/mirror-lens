@@ -52,6 +52,13 @@ type HostProbeOptions struct {
 	Probe func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome
 	// Jobs 可注入，测试用；默认从 Store.ListDueHostProbes 生成。
 	Jobs func(context.Context) ([]HostProbeJob, error)
+	// JobsAt 与 Jobs 同义，但能收到本轮统一的 now；用于验证物化与扫描
+	// 使用同一个时间点。优先级高于 Jobs。
+	JobsAt func(context.Context, time.Time) ([]HostProbeJob, error)
+
+	// Expirer 是 TTL 物化入口；默认用 Store。测试注入以验证失败路径。
+	Expirer RecoveryExpirer
+
 	// Guard 是路由层 fail-closed 屏蔽集；写库失败时屏蔽该 (源,Host)，
 	// 成功提交后按 token 解除。生产装配必须非 nil（main 校验）。
 	Guard *store.RecoveryGuard
@@ -60,6 +67,12 @@ type HostProbeOptions struct {
 	Invalidate func()
 
 	Now func() time.Time
+}
+
+// RecoveryExpirer 抽象 ok→expired 物化入口。生产实现是 *store.Store；
+// 独立出来只为在测试中注入失败，不改变调用语义。
+type RecoveryExpirer interface {
+	MaterializeExpired(now time.Time) (int, error)
 }
 
 // HostProbeRunner 只做一件事：把未验证的 Source×Host 探测一次并写回。
@@ -157,9 +170,27 @@ func (r *HostProbeRunner) Run(ctx context.Context) {
 	}
 }
 
-// Once 跑一轮：取任务、按并发执行、等同批结束。供测试与手动触发。
+// Once 跑一轮：物化过期结论、取任务、按并发执行、等同批结束。
+// 供测试与手动触发。
+//
+// 顺序固定：统一 now → MaterializeExpired(now) → ListDueHostProbes(now)。
+// 物化失败只记录并继续，不能让一轮探测因为状态维护失败而停摆。
 func (r *HostProbeRunner) Once(ctx context.Context) {
-	jobs, err := r.jobs(ctx)
+	now := r.o.Now()
+
+	exp := r.o.Expirer
+	if exp == nil {
+		exp = r.o.Store
+	}
+	if exp != nil {
+		if n, err := exp.MaterializeExpired(now); err != nil {
+			log.Printf("Host 恢复状态物化失败（继续本轮探测）: %v", err)
+		} else if n > 0 {
+			log.Printf("Host 恢复状态物化：%d 个源转为 expired", n)
+		}
+	}
+
+	jobs, err := r.jobs(ctx, now)
 	if err != nil {
 		log.Printf("Host 探测队列生成失败: %v", err)
 		return
@@ -225,11 +256,14 @@ func (r *HostProbeRunner) reconcileRepos() {
 	}
 }
 
-func (r *HostProbeRunner) jobs(ctx context.Context) ([]HostProbeJob, error) {
+func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJob, error) {
+	if r.o.JobsAt != nil {
+		return r.o.JobsAt(ctx, now)
+	}
 	if r.o.Jobs != nil {
 		return r.o.Jobs(ctx)
 	}
-	rows, err := r.o.Store.ListDueHostProbes(r.o.Now().Unix())
+	rows, err := r.o.Store.ListDueHostProbes(now.Unix())
 	if err != nil {
 		return nil, err
 	}
