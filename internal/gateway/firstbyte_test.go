@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -537,8 +538,8 @@ func TestLeaseReclaimCancelsCtxBlockingBody(t *testing.T) {
 	}
 	select {
 	case rerr := <-readErr:
-		if rerr == nil {
-			t.Fatal("Reclaim 后 Read 必须返回错误")
+		if !errors.Is(rerr, context.Canceled) {
+			t.Fatalf("Reclaim 后 Read 应因 Context 取消返回 context.Canceled，实际: %v", rerr)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Reclaim 没有取消请求 Context：BindCancel 未生效")
