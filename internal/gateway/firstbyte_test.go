@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
+	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
 // 首字节与超时同时就绪时必须唯一胜出，且优先采用已到达的数据。
@@ -291,4 +293,102 @@ func fbURL(t *testing.T, raw string) *url.URL {
 		t.Fatal(err)
 	}
 	return u
+}
+
+// 零长度 Read 不得消费待交付的错误。
+func TestPendingErrBodyZeroLengthRead(t *testing.T) {
+	b := &pendingErrBody{ReadCloser: io.NopCloser(strings.NewReader("rest")), err: io.ErrUnexpectedEOF}
+	if n, err := b.Read(nil); n != 0 || err != nil {
+		t.Fatalf("零长度读必须返回 (0,nil): %d %v", n, err)
+	}
+	if _, err := b.Read(make([]byte, 8)); err != io.ErrUnexpectedEOF {
+		t.Fatalf("错误被零长度读吞掉: %v", err)
+	}
+}
+
+// 换源成功持有 Lease 后，Lease 被 Reclaim 必须能取消阻塞中的 Read，
+// 并在 Body 关闭后真正释放名额。
+func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
+	const total = int64(1 << 20)
+	const sent = int64(256 << 10)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", sent, total-1, total))
+		w.WriteHeader(http.StatusPartialContent)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		w.Write([]byte("X"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id := addSchedSource(t, st, "blocked", srv.URL, 10, 9000)
+
+	g := &Gateway{
+		cli:          srv.Client(),
+		par:          ParOptions{SwitchMinMBps: 1},
+		switchBudget: time.Second,
+		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
+		parTargets: func(*adapter.Plan) []fetchTarget {
+			return []fetchTarget{{u: fbURL(t, srv.URL), c: &scheduler.Candidate{ID: id, Name: "blocked", Preferred: true}}}
+		},
+	}
+	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4}))
+	if held := g.sched.LeaseHeld(id); held != 0 {
+		t.Fatalf("起始不应持有名额: %d", held)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, _, first, _, err := g.trySwitch(ctx, &adapter.Plan{Kind: "docker"}, nil, hdr("ETag", `"v1"`), sent, total, map[int64]bool{})
+	if err != nil {
+		t.Fatalf("应成功接管: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("首字节不符: %v", first)
+	}
+	if held := g.sched.LeaseHeld(id); held != 1 {
+		t.Fatalf("成功接管后应持有 1 个名额: %d", held)
+	}
+
+	readErr := make(chan error, 1)
+	go func() {
+		_, rerr := resp.Body.Read(make([]byte, 4096))
+		readErr <- rerr
+	}()
+	time.Sleep(50 * time.Millisecond) // 让 Read 真正阻塞在上游
+	if n := g.sched.ReclaimSource(id, "stall"); n != 1 {
+		t.Fatalf("Reclaim 应命中 1 个 Lease: %d", n)
+	}
+	select {
+	case rerr := <-readErr:
+		if rerr == nil {
+			t.Fatal("Reclaim 后阻塞的 Read 必须返回错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Reclaim 未能中断阻塞的 Read：取消函数没有绑定到 Lease")
+	}
+	resp.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for g.sched.LeaseHeld(id) != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if held := g.sched.LeaseHeld(id); held != 0 {
+		t.Fatalf("Body 关闭后名额未释放: %d", held)
+	}
 }

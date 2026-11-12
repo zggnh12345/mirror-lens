@@ -369,26 +369,28 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			continue
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			// 先取消：Close 可能因为要读剩余数据而阻塞，届时 Reclaim 已
+			// 找不到取消函数，等于把名额锁死。
+			cancel()
 			unbind()
 			resp.Body.Close()
-			cancel()
 			releaseLease(l)
 			continue
 		}
 		verified, vok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
 		if !vok {
+			cancel()
 			unbind()
 			resp.Body.Close()
-			cancel()
 			releaseLease(l)
 			continue
 		}
 
 		remaining := budget - time.Since(start)
 		if remaining <= 0 {
+			cancel()
 			unbind()
 			resp.Body.Close()
-			cancel()
 			releaseLease(l)
 			continue
 		}
@@ -408,31 +410,32 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			cancel()
 		})
 		if !ok || rr.n <= 0 {
-			unbind()
 			cancel()
+			unbind()
 			resp.Body.Close()
 			releaseLease(l)
 			continue
 		}
 		wrapped, werr := wrapLease(resp, l)
 		if werr != nil {
+			cancel()
 			unbind()
 			resp.Body.Close()
-			cancel()
 			releaseLease(l)
 			continue
 		}
 		resp = wrapped
+		// 换源接管走的是读循环直用路径，不会经过 stream.go 里那次
+		// *leaseBody 断言；这里补上同一道空闲看门狗，避免调用方既不读
+		// 也不关时名额长期占用。必须在 pendingErrBody 包装之前做，
+		// 否则断言拿到的是 *pendingErrBody，看门狗不会启动。
+		if lb, ok := resp.Body.(*leaseBody); ok && l != nil {
+			go lb.watch(90 * time.Second)
+		}
 		if rr.err != nil {
 			// Read 允许同时返回 n>0 和非 nil error；字节已作为 first 交付，
 			// 错误必须留给下一次 Read，不能被吞掉当成正常 EOF。
 			resp.Body = &pendingErrBody{ReadCloser: resp.Body, err: rr.err}
-		}
-		// 换源接管走的是读循环直用路径，不会经过 stream.go 里那次
-		// *leaseBody 断言；这里补上同一道空闲看门狗，避免调用方既不读
-		// 也不关时名额长期占用。
-		if lb, ok := resp.Body.(*leaseBody); ok && l != nil {
-			go lb.watch(90 * time.Second)
 		}
 		// 成功接管的 body 关闭时才取消 rctx：既不泄漏 context，也保证
 		// 迟到的超时信号永远不能打断已经开始的读取。
@@ -526,6 +529,10 @@ type pendingErrBody struct {
 }
 
 func (b *pendingErrBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		// io.Reader 约定：零长度读不消费任何状态，也不能吞掉待交付的错误。
+		return 0, nil
+	}
 	if b.err != nil {
 		err := b.err
 		b.err = nil
