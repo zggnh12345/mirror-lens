@@ -213,6 +213,24 @@ func TestUnarchiveLegacyRegistryRoundTrip(t *testing.T) {
 	if n := countRows(t, st, `SELECT COUNT(*) FROM source_health_archive`); n != 1 {
 		t.Fatal("回滚不该删除归档行")
 	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`); n != 0 {
+		t.Fatalf("回滚后迁移标记应被撤销，实际 %d 条", n)
+	}
+
+	// 撤销标记后重跑迁移：数据应再次归档并清理，计数不能把归档表旧行算成新归档。
+	res, err := st.ArchiveLegacyRegistry(context.Background())
+	if err != nil {
+		t.Fatalf("重跑迁移: %v", err)
+	}
+	if res.Candidates != 1 || res.Archived != 0 || res.Removed != 1 || res.Left != 0 {
+		t.Fatalf("重跑计数 %+v", res)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM source_health WHERE family='registry'`); n != 0 {
+		t.Fatalf("重跑后仍有 %d 行", n)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`); n != 1 {
+		t.Fatalf("重跑后标记应恢复，实际 %d 条", n)
+	}
 }
 
 // 冲突：目标行已存在时跳过、不覆盖现行数据。

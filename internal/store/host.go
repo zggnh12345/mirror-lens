@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -71,8 +72,8 @@ func (r HostCapsCommitResult) String() string {
 //
 // 幂等：第二次执行时 repo_host 已经是 ghcr.io，不再命中。
 // 不触碰 docker_cap / ghcr_cap / ghcr_prefix。
-func (s *Store) backfillRepoHost() error {
-	_, err := s.db.Exec(`
+func (s *Store) backfillRepoHost(ctx context.Context, tx dbtx) error {
+	_, err := tx.ExecContext(ctx, `
 UPDATE sources
 SET repo_host='ghcr.io',
     registry_cap=1,

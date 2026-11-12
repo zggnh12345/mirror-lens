@@ -127,6 +127,18 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult,
 		return out, nil
 	}
 
+	// 先数「已在归档表中的同批行」：删除之后就查不到了。
+	// 这类行只在 unarchive 后重跑时出现，归档 0 行但删除 N 行是正常的。
+	var dup int64
+	if err := conn.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM source_health h
+WHERE h.family='registry' AND EXISTS (
+  SELECT 1 FROM source_health_archive a
+  WHERE a.source_id=h.source_id AND a.family=h.family AND a.batch=?)`,
+		legacyArchiveBatch).Scan(&dup); err != nil {
+		return out, err
+	}
+
 	res, err := conn.ExecContext(ctx, `
 INSERT INTO source_health_archive
   (source_id, family, fails, ok_at, last_at, archived_at, batch)
@@ -155,17 +167,7 @@ WHERE family='registry'
 		return out, err
 	}
 
-	// 事务内自校验：删除数 = 本次新归档数 + 已在归档表中的同批行数。
-	// 后者只会在 un-archive 之后重跑时出现，不能算作「字段错位」。
-	var dup int64
-	if err := conn.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM source_health h
-WHERE h.family='registry' AND EXISTS (
-  SELECT 1 FROM source_health_archive a
-  WHERE a.source_id=h.source_id AND a.family=h.family AND a.batch=?)`,
-		legacyArchiveBatch).Scan(&dup); err != nil {
-		return out, err
-	}
+	// 事务内自校验：删除数 = 本次新归档数 + 重跑前已在归档表中的行数。
 	if removed != archived+dup {
 		return out, fmt.Errorf("归档行数与删除行数不一致: archived=%d dup=%d removed=%d", archived, dup, removed)
 	}
@@ -226,6 +228,15 @@ WHERE a.batch=?
 	restored, err := res.RowsAffected()
 	if err != nil {
 		return out, err
+	}
+	// 回滚必须同时撤销迁移标记（方案 A）：数据回到 source_health 之后，
+	// 下次启动若仍认为「已迁移完成」，这批行就成了既没归档也没被清理的悬空数据。
+	// 撤销标记后重跑，归档表的同批次行靠 dup 校验兜住，不会重复计数。
+	if batch == legacyArchiveBatch {
+		if _, err := conn.ExecContext(ctx,
+			`DELETE FROM schema_migrations WHERE name=?`, legacyArchiveMarker); err != nil {
+			return out, err
+		}
 	}
 	if err := done(true); err != nil {
 		return out, err

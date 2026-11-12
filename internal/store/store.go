@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -212,6 +213,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
+	// 迁移日志表必须先于任何 step 存在；它同时是 Phase B 的完成标记表。
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(
+		name TEXT PRIMARY KEY,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -402,7 +410,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	}
 	// 3.5.0 的历史回填必须排在 ensureColumns("sources") 之后：
 	// V1 升级会重建表，新表里没有 ghcr_cap/ghcr_prefix，提前读会 no such column。
-	if err := s.backfillRepoHost(); err != nil {
+	// 不能登记为一次性 step：运行期新增的源也可能满足条件，每次启动都要收敛。
+	if err := s.backfillRepoHost(context.Background(), s.db); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_groups(
@@ -417,13 +426,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	}
 	// Phase B（3.5.3）：legacy registry 数据退出。表与标记先建好，迁移本身
 	// 在单事务内完成归档+清理+标记，失败整体回滚，下次启动重试。
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(
-		name TEXT PRIMARY KEY,
-		applied_at INTEGER NOT NULL
-	)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_health_archive(
+	if _, err := s.runStep(context.Background(), "3.5.3-phase-b-tables", func(ctx context.Context, tx dbtx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS source_health_archive(
 		source_id INTEGER NOT NULL,
 		family TEXT NOT NULL,
 		fails INTEGER NOT NULL,
@@ -433,15 +437,58 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		batch TEXT NOT NULL,
 		PRIMARY KEY (source_id, family, batch)
 	)`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_sha_batch ON source_health_archive(batch)`)
 		return err
-	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sha_batch ON source_health_archive(batch)`); err != nil {
+	}); err != nil {
 		return err
 	}
 	if err := s.migrateLegacyRegistry(); err != nil {
 		return err
 	}
 	return s.migrateAccel()
+}
+
+// runStep 执行一次性迁移步骤：业务写入与完成标记在同一个 IMMEDIATE 事务内
+// 提交，失败整体回滚；已登记则跳过。name 一旦发布就不能复用给不同内容，
+// 改动步骤内容必须换新名字（例如带版本号），否则会被旧标记跳过。
+//
+// 只用于内容已冻结的步骤。加列/建表探测（ensureColumns、IF NOT EXISTS）
+// 每次启动都必须执行，因为它们会随新版本扩展，不能登记后跳过。
+func (s *Store) runStep(ctx context.Context, name string, fn func(context.Context, dbtx) error) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name=?`, name).Scan(&n); err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	conn, done, err := s.beginImmediate(ctx)
+	if err != nil {
+		return false, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = done(false)
+		}
+	}()
+
+	start := time.Now()
+	if err := fn(ctx, conn); err != nil {
+		return false, fmt.Errorf("迁移步骤 %s: %w", name, err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)`, name, s.nowTime().Unix()); err != nil {
+		return false, fmt.Errorf("登记迁移步骤 %s: %w", name, err)
+	}
+	if err := done(true); err != nil {
+		return false, err
+	}
+	ok = true
+	log.Printf("迁移步骤 %s 完成: duration=%s", name, time.Since(start).Round(time.Millisecond))
+	return true, nil
 }
 
 // ensureColumns 给老库补上后来新增的列，避免 SELECT 报 no such column。
