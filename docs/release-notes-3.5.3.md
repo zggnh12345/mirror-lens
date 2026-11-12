@@ -8,7 +8,7 @@
 1. **首次启动会自动执行 Phase B**：把 `source_health` 中 `family='registry'` 的历史行
    归档到 `source_health_archive`，然后从运行表删除。这个过程在 `BEGIN IMMEDIATE`
    事务内完成，失败整体回滚，下次启动重试。
-2. **迁移失败会阻止启动**。两种失败会直接退出，不会带病运行：
+2. **迁移失败会阻止启动**。以下情况会直接退出，不会带病运行：
    - 事务内自校验不通过（归档数/删除数/剩余行不一致）；
    - 迁移标记已存在，但运行表里又出现了 registry 行 —— 说明有人把数据写回，
      需要人工判断，本版**拒绝再次删除**；
@@ -51,5 +51,5 @@ Registry 凭据。**不要把这套部署当作多租户隔离环境，给互不
 
 1. 停容器，`VACUUM INTO` 或文件级快照备份整库，并在副本上验证可打开、行数一致。
 2. 换镜像启动，确认日志出现 `迁移步骤 b1-archive-legacy-registry 完成` 且 `left=0`。
-3. `GET /readyz` 必须 200 且 `db.ok=true`、`cache.ok=true`；`/healthz` 只证明进程活着。
+3. `GET /readyz` 必须 200，`checks.db.ok=true`、`checks.cache.ok=true`；`/healthz` 只证明进程活着。
 4. 面板抽查源列表与探测状态；确认 `source_health` 无 registry 行、归档表行数符合预期。

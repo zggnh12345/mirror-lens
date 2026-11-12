@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,9 @@ func TestRunStepCommitFailureRollsBack(t *testing.T) {
 	}
 	if ran {
 		t.Fatal("失败的步骤不应返回 ran=true")
+	}
+	if strings.Contains(err.Error(), "事务已结束") {
+		t.Fatalf("COMMIT 错误被二次结束污染: %v", err)
 	}
 	if n := countRows(t, st, `SELECT COUNT(*) FROM cfc`); n != 0 {
 		t.Fatalf("半提交残留: %d", n)

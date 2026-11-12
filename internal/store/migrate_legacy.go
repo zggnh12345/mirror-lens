@@ -121,9 +121,9 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (out LegacyArchiveRes
 	if err != nil {
 		return out, err
 	}
-	committed := false
+	txClosed := false
 	defer func() {
-		if !committed {
+		if !txClosed {
 			// 回滚错误不能丢：它决定调用方能否认为数据状态未变。
 			if rbErr := done(false); rbErr != nil {
 				err = errors.Join(err, rbErr)
@@ -157,10 +157,10 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (out LegacyArchiveRes
 				return out, err
 			}
 		}
+		txClosed = true // done 已结束事务，失败时也由它负责回滚/丢弃
 		if err := done(true); err != nil {
 			return out, err
 		}
-		committed = true
 		return out, nil
 	}
 
@@ -241,10 +241,10 @@ WHERE family='registry'
 	if err := recordLegacyMarker(ctx, conn, now); err != nil {
 		return out, err
 	}
+	txClosed = true // done 已结束事务，失败时也由它负责回滚/丢弃
 	if err := done(true); err != nil {
 		return out, err
 	}
-	committed = true
 	out.Archived, out.Removed = archived, removed
 	return out, nil
 }
@@ -253,15 +253,14 @@ WHERE family='registry'
 //
 // 冲突策略：目标 (source_id, family) 已存在行时跳过、不覆盖，由调用方
 // 根据 Skipped 决定是否人工核对。归档行本身不删除，回滚动作可重复执行。
-func (s *Store) UnarchiveLegacyRegistry(ctx context.Context, batch string) (LegacyUnarchiveResult, error) {
-	var out LegacyUnarchiveResult
+func (s *Store) UnarchiveLegacyRegistry(ctx context.Context, batch string) (out LegacyUnarchiveResult, err error) {
 	conn, done, err := s.beginImmediate(ctx)
 	if err != nil {
 		return out, err
 	}
-	committed := false
+	txClosed := false
 	defer func() {
-		if !committed {
+		if !txClosed {
 			// 回滚错误不能丢：它决定调用方能否认为数据状态未变。
 			if rbErr := done(false); rbErr != nil {
 				err = errors.Join(err, rbErr)
@@ -298,10 +297,10 @@ WHERE a.batch=?
 			return out, err
 		}
 	}
+	txClosed = true // done 已结束事务，失败时也由它负责回滚/丢弃
 	if err := done(true); err != nil {
 		return out, err
 	}
-	committed = true
 	out.Restored = restored
 	out.Skipped = total - restored
 	return out, nil

@@ -486,10 +486,10 @@ func (s *Store) runStep(ctx context.Context, name string, fn func(context.Contex
 		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)`, name, s.nowTime().Unix()); err != nil {
 		return false, fmt.Errorf("登记迁移步骤 %s: %w", name, err)
 	}
+	ok = true // done 已结束事务，失败时也由它负责回滚/丢弃，defer 不再二次调用
 	if err := done(true); err != nil {
 		return false, err
 	}
-	ok = true
 	log.Printf("迁移步骤 %s 完成: duration=%s", name, time.Since(start).Round(time.Millisecond))
 	return true, nil
 }
