@@ -75,6 +75,7 @@ type Gateway struct {
 	relayLimit    int
 	semOnce       sync.Once
 	hedge         HedgeOptions
+	switchBudget  time.Duration                              // 测试注入用，0 时走 3s 默认
 	parTargets    func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
 	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
 	requireToken  bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）

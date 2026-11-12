@@ -304,12 +304,13 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			continue
 		}
 
-		// 3 秒只限制「等到首字节」：读到数据后不能取消 ctx，否则 body 立刻断。
+		// 首字节预算只约束「等到首字节」：读到数据后绝不能再取消 ctx，
+		// 否则 body 立刻断。超时信号只投递，由 waitWithin 唯一裁决胜负。
+		budget := g.switchTimeout()
+		start := time.Now()
 		rctx, cancel := context.WithCancel(ctx)
-		timer := time.AfterFunc(3*time.Second, cancel)
 		req, err := http.NewRequestWithContext(rctx, http.MethodGet, t.u.String(), nil)
 		if err != nil {
-			timer.Stop()
 			cancel()
 			releaseLease(l)
 			continue
@@ -323,48 +324,89 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(sent, 10)+"-")
 
-		resp, err := g.cli.Do(req)
+		type doResult struct {
+			resp *http.Response
+			err  error
+		}
+		done := make(chan doResult, 1)
+		go func() {
+			resp, err := g.cli.Do(req)
+			done <- doResult{resp, err}
+		}()
+		d, ok := waitWithin(done, budget, func() {
+			cancel()
+			// 超时后才返回的响应无人接收，必须关掉，避免泄漏连接。
+			go func() {
+				if late := <-done; late.resp != nil {
+					late.resp.Body.Close()
+				}
+			}()
+		})
+		if !ok {
+			releaseLease(l)
+			continue
+		}
+		resp, err := d.resp, d.err
 		if err != nil {
-			timer.Stop()
 			cancel()
 			releaseLease(l)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-			timer.Stop()
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
 			continue
 		}
-		verified, ok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
-		if !ok {
-			timer.Stop()
+		verified, vok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
+		if !vok {
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
 			continue
 		}
+
+		remaining := budget - time.Since(start)
+		if remaining <= 0 {
+			resp.Body.Close()
+			cancel()
+			releaseLease(l)
+			continue
+		}
+		type readResult struct {
+			n   int
+			err error
+		}
+		firstCh := make(chan readResult, 1)
 		buf := make([]byte, 64<<10)
-		n, rerr := resp.Body.Read(buf)
-		timer.Stop()
-		if n <= 0 {
+		go func() {
+			n, err := resp.Body.Read(buf)
+			firstCh <- readResult{n, err}
+		}()
+		rr, ok := waitWithin(firstCh, remaining, func() {
+			cancel()
+			resp.Body.Close()
+		})
+		if !ok || rr.n <= 0 {
 			cancel()
 			resp.Body.Close()
 			releaseLease(l)
-			_ = rerr // n<=0 时读错误已无意义，下面直接换源
 			continue
 		}
 		wrapped, werr := wrapLease(resp, l)
 		if werr != nil {
 			resp.Body.Close()
+			cancel()
 			releaseLease(l)
 			continue
 		}
 		resp = wrapped
+		// 成功接管的 body 关闭时才取消 rctx：既不泄漏 context，也保证
+		// 迟到的超时信号永远不能打断已经开始的读取。
+		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 		holderFrom(ctx).set(l)
 		log.Printf("单流换源：%s 已接手（已发 %d MB，验证器=%v）", t.c.Name, sent>>20, verified)
-		return resp, &t, buf[:n], verified, nil
+		return resp, &t, buf[:rr.n], verified, nil
 	}
 	return nil, nil, nil, false, fmt.Errorf("没有可换的星标源")
 }
@@ -375,5 +417,57 @@ func discardN(r io.Reader, n int64) error {
 		return nil
 	}
 	_, err := io.CopyN(io.Discard, r, n)
+	return err
+}
+
+// switchFirstByteBudget 是默认的首字节等待预算。
+const switchFirstByteBudget = 3 * time.Second
+
+func (g *Gateway) switchTimeout() time.Duration {
+	if g.switchBudget > 0 {
+		return g.switchBudget
+	}
+	return switchFirstByteBudget
+}
+
+var errFirstByteTimeout = errors.New("换源等待首字节超时")
+
+// waitWithin 等待 ch 里的结果或超时。超时回调只投递信号、不直接产生副作用，
+// 是否取消由调用方在 onTimeout 里决定，因此「数据先到」与「超时」只有一个胜者：
+// 两者同时就绪时优先采用已经到达的数据。成功路径不会触发 onTimeout。
+func waitWithin[T any](ch <-chan T, d time.Duration, onTimeout func()) (T, bool) {
+	expired := make(chan struct{}, 1)
+	t := time.AfterFunc(d, func() {
+		select {
+		case expired <- struct{}{}:
+		default:
+		}
+	})
+	defer t.Stop()
+	select {
+	case v := <-ch:
+		return v, true
+	case <-expired:
+		select {
+		case v := <-ch:
+			return v, true
+		default:
+			onTimeout()
+			var zero T
+			return zero, false
+		}
+	}
+}
+
+// cancelOnClose 在 body 关闭后取消请求 context，避免成功路径长期持有
+// 一个永不取消的 context。
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
 	return err
 }
