@@ -378,7 +378,6 @@ func (f *credFixture) runner() *HostProbeRunner {
 		Repos:       map[string]string{credTestHost: "prometheus/node-exporter"},
 		Concurrency: 1,
 		Timeout:     5 * time.Second,
-		Backoff:     time.Second,
 		Realms:      map[string][]string{credTestHost: {f.reg.srv.URL}},
 		Now:         func() time.Time { return time.Unix(f.now, 0) },
 	})

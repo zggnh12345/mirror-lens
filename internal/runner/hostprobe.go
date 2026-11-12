@@ -19,9 +19,12 @@ import (
 type HostProbeJob struct {
 	SourceID int64
 	Host     string
-	BaseURL  string
-	Repo     string
-	Tag      string
+	// Gen 是入队时 registry_host_gen 的代次。只在凭据读取失败、拿不到
+	// 快照时充当执行起点代次；正常路径用快照里的 Generation。
+	Gen     int64
+	BaseURL string
+	Repo    string
+	Tag     string
 }
 
 // HostProbeOptions 是 Host 探测 Runner 的装配参数。
@@ -36,8 +39,6 @@ type HostProbeOptions struct {
 	Interval    time.Duration
 	Timeout     time.Duration
 	Concurrency int
-	// Backoff 是 stale_snapshot / 认证暂不可用时的重排退避起点，按次数翻倍。
-	Backoff time.Duration
 
 	// RecoveryTTL 是 cap=1 成功结论的有效期；0 用 store.RecoveryDefaultTTL。
 	RecoveryTTL time.Duration
@@ -88,16 +89,13 @@ type HostProbeRunner struct {
 	guardTok map[store.GuardKey]store.GuardToken
 }
 
+// probeState 只是进程内的执行互斥标记。
+//
+// 调度时间与失败计数都在 registry_host_recovery 里（next_probe_at /
+// retry_failures）。这里保留时间或退避就会重启归零，形成第二套时间源。
 type probeState struct {
-	next time.Time
-	// running 覆盖「已 claim、未 finish」的整个探测生命周期。占位不能只
-	// 靠 next=now：并发调用 Once 时会把它当成过期状态直接抢走。
+	// running 覆盖「已 claim、未 release」的整个探测生命周期。
 	running bool
-	backoff time.Duration
-	// gen/digest 是上一次探测用的凭据版本：版本一变，旧版本的连续失败
-	// 就不该继续把退避往上抬。
-	gen    int64
-	digest string
 }
 
 const (
@@ -105,9 +103,7 @@ const (
 	defaultHostProbeInterval = 6 * time.Hour
 	// defaultHostProbeScan 是捞到期任务的节拍。恢复延迟上界由它决定，
 	// 与 6h 对账周期无关。
-	defaultHostProbeScan    = 30 * time.Second
-	defaultHostProbeBackoff = 15 * time.Second
-	maxHostProbeBackoff     = 10 * time.Minute
+	defaultHostProbeScan = 30 * time.Second
 )
 
 func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
@@ -119,9 +115,6 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 	}
 	if o.Concurrency <= 0 {
 		o.Concurrency = 2
-	}
-	if o.Backoff <= 0 {
-		o.Backoff = defaultHostProbeBackoff
 	}
 	if o.RecoveryTTL <= 0 {
 		o.RecoveryTTL = store.RecoveryDefaultTTL
@@ -282,6 +275,7 @@ func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJ
 		out = append(out, HostProbeJob{
 			SourceID: x.SourceID,
 			Host:     x.RepoHost,
+			Gen:      x.Gen,
 			BaseURL:  x.BaseURL,
 			Repo:     repo,
 		})
@@ -310,64 +304,54 @@ func itoa(v int64) string {
 	return string(b[i:])
 }
 
-// claim 返回 false 表示同一 (source, host) 正在跑或还在退避窗口内。
+// claim 只做进程内互斥：同一 (source, host) 已有执行在跑时返回 false。
+// 「该不该探」由 registry_host_recovery.next_probe_at 决定，这里不再看时间。
 func (r *HostProbeRunner) claim(key string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	st := r.state[key]
-	now := r.o.Now()
-	if st != nil {
-		if st.running || st.next.After(now) {
-			return false
-		}
-		delete(r.state, key)
+	if st := r.state[key]; st != nil && st.running {
+		return false
 	}
-	r.state[key] = &probeState{next: now, running: true}
+	r.state[key] = &probeState{running: true}
 	return true
 }
 
-// noteSnapshot 记住本次探测使用的凭据版本。版本变化时把退避重置，
-// 否则凭据早已稳定，仍会被旧版本的 10 分钟退避压着。
-func (r *HostProbeRunner) noteSnapshot(key string, gen int64, digest string) {
+// release 只清理执行状态。下一次到期时间已由数据库决定；这里绝不
+// 再算时间，否则重启前后会出现两套退避。
+func (r *HostProbeRunner) release(key string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	st := r.state[key]
-	if st == nil {
-		return
-	}
-	if st.gen != gen || st.digest != digest {
-		st.backoff = 0
-		st.gen, st.digest = gen, digest
-	}
+	delete(r.state, key)
+	r.mu.Unlock()
 }
 
-func (r *HostProbeRunner) finish(key string, retry bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	st := r.state[key]
-	if !retry {
-		delete(r.state, key)
-		return
+// retryReason 区分「为什么没提交成功」。它只决定调度、Guard 与指标，
+// 不参与六态派生。
+type retryReason int
+
+const (
+	retryNone retryReason = iota
+	retryCredentialPending
+	retryLocalExecution
+	retryCommitFailed
+	retryOutcomeInconsistent
+	retryStaleSnapshot
+	retryCanceled
+)
+
+// schedules 表示该原因是否需要持久化下一次到期时间。
+// stale 靠代次稳定后自然重探，cancel 是 Runner 关闭，两者都不写调度：
+// 旧代次的结果不能参与新代次的调度。
+func (x retryReason) schedules() bool {
+	switch x {
+	case retryCredentialPending, retryLocalExecution, retryCommitFailed, retryOutcomeInconsistent:
+		return true
 	}
-	prev := r.o.Backoff
-	var gen int64
-	var digest string
-	if st != nil {
-		gen, digest = st.gen, st.digest
-		if st.backoff > 0 {
-			prev = st.backoff * 2
-		}
-	}
-	if prev > maxHostProbeBackoff {
-		prev = maxHostProbeBackoff
-	}
-	r.state[key] = &probeState{next: r.o.Now().Add(prev), backoff: prev, gen: gen, digest: digest}
+	return false
 }
 
 func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 	key := jobKey(j)
-	retry := false
-	defer func() { r.finish(key, retry) }()
+	defer r.release(key)
 
 	snap, err := r.o.Creds.Snapshot(j.Host)
 	if err != nil {
@@ -378,15 +362,13 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 			log.Printf("Host 探测中止：凭据未对账（%v）", err)
 		case errors.Is(err, secret.ErrCredentialPending):
 			log.Printf("Host %s 凭据正在变更，稍后重试: %v", j.Host, err)
-			retry = true
+			r.scheduleRetry(j, j.Gen, retryCredentialPending)
 		default:
 			log.Printf("读取 %s 凭据失败: %v", j.Host, err)
-			retry = true
+			r.scheduleRetry(j, j.Gen, retryLocalExecution)
 		}
 		return
 	}
-
-	r.noteSnapshot(key, snap.Generation, snap.Digest)
 
 	ctx, cancel := context.WithTimeout(parent, r.o.Timeout)
 	defer cancel()
@@ -412,9 +394,21 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 
 	capv, mode, note, err := out.StoreFields()
 	if err != nil {
+		// 本地聚合结果违反了数据不变量：既不提交也不计数，
+		// 但必须屏蔽并退避 —— Block 不阻止 Runner 再来一次。
 		log.Printf("Host %s 探测结果自相矛盾，拒绝写库: %v", j.Host, err)
+		r.blockRoute(j, snap.Generation)
+		r.invalidateRoutes()
+		r.scheduleRetry(j, snap.Generation, retryOutcomeInconsistent)
 		return
 	}
+
+	// 提交边界：只判断 Runner/上层生命周期是否已取消。Probe 子 Context
+	// 超时属于真实探测失败，parent 仍然有效，必须照常提交。
+	if parent.Err() != nil {
+		return
+	}
+
 	// 一次事务写回 cap / scoped 健康 / recovery。gen 与 digest 都来自
 	// 探测起点的快照，事务内只做相等校验，不重新读取当前代次。
 	res, err := r.o.Store.CommitHostProbe(store.HostProbeCommit{
@@ -432,12 +426,12 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		TTL:           r.o.RecoveryTTL,
 	})
 	if err != nil {
-		// 写库失败 = 本次结果无法确认：屏蔽该源直到下一次成功提交。
-		// failClosed 只补充这一种保守隔离，不参与六态派生。
+		// 写库失败 = 本次结果无法确认：屏蔽该源直到下一次独立探测成功提交。
+		// 数据库重试成功也不解除屏蔽。
 		log.Printf("写回 %s 能力失败: %v", j.Host, err)
 		r.blockRoute(j, snap.Generation)
 		r.invalidateRoutes()
-		retry = true
+		r.scheduleRetry(j, snap.Generation, retryCommitFailed)
 		return
 	}
 	switch res {
@@ -450,12 +444,34 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 			log.Printf("Host %s 验证通过（%s）", j.Host, out.Selected)
 		}
 	case store.HostCapsStaleSnapshot:
-		// 整笔拒绝：cap、scoped、recovery 都没有写入。退避后重新取快照。
-		retry = true
+		// 整笔拒绝：cap、scoped、recovery 都没有写入。不写调度，
+		// 下一轮扫描重新取快照即可。
+		r.scheduleRetry(j, snap.Generation, retryStaleSnapshot)
 	case store.HostCapsSourceChanged:
 		// 源已换 Host：下一轮按新归属重新入队。
 	case store.HostCapsSourceUnavailable:
 		// 归档或删除：不再重排。
+	}
+}
+
+// scheduleRetry 把可重试的执行失败写进数据库。写失败或被 CAS 拒绝时
+// 什么也不做：该行保持到期，下一轮 30s 扫描会重新尝试，上界是扫描节拍。
+func (r *HostProbeRunner) scheduleRetry(j HostProbeJob, gen int64, why retryReason) {
+	if !why.schedules() {
+		return
+	}
+	ok, err := r.o.Store.ScheduleHostProbeRetry(store.HostProbeRetry{
+		SourceID: j.SourceID,
+		Host:     j.Host,
+		Gen:      gen,
+		At:       r.o.Now().Unix(),
+	})
+	if err != nil {
+		log.Printf("安排 %s 重试失败（下一轮扫描重试）: %v", j.Host, err)
+		return
+	}
+	if !ok {
+		log.Printf("安排 %s 重试被拒绝：代次/归属/到期条件已变", j.Host)
 	}
 }
 

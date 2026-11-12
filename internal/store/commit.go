@@ -293,12 +293,12 @@ func (s *Store) commitHostProbeTx(ctx context.Context, conn *sql.Conn, host stri
 	if _, err := conn.ExecContext(ctx,
 		`INSERT INTO registry_host_recovery
 		 (source_id, family, scope, state, gen, last_probe_at, last_success_at,
-		  next_probe_at, rec_failures, last_error, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		  next_probe_at, rec_failures, retry_failures, last_error, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,0,?,?)
 		 ON CONFLICT(source_id, family, scope) DO UPDATE SET
 		   state=excluded.state, gen=excluded.gen, last_probe_at=excluded.last_probe_at,
 		   last_success_at=excluded.last_success_at, next_probe_at=excluded.next_probe_at,
-		   rec_failures=excluded.rec_failures, last_error=excluded.last_error,
+		   rec_failures=excluded.rec_failures, retry_failures=0, last_error=excluded.last_error,
 		   updated_at=excluded.updated_at`,
 		p.SourceID, "registry", host, state, p.Gen, p.At, lastSuccess,
 		next, failures, lastError, p.At); err != nil {

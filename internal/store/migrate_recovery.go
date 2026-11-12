@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS registry_host_recovery (
   last_success_at INTEGER NOT NULL DEFAULT 0,
   next_probe_at INTEGER NOT NULL DEFAULT 0,
   rec_failures INTEGER NOT NULL DEFAULT 0,
+  retry_failures INTEGER NOT NULL DEFAULT 0,
   last_error TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(source_id, family, scope)
@@ -45,6 +46,13 @@ CREATE TABLE source_health_scope_new (
 func (s *Store) migrateRecoverySchema() error {
 	if _, err := s.db.Exec(recoveryDDL); err != nil {
 		return fmt.Errorf("建 registry_host_recovery: %w", err)
+	}
+	// CREATE TABLE IF NOT EXISTS 不会给既有表补列，老库必须显式 ALTER。
+	// retry_failures 的默认值 0 等价于「没有未完成的退避」，升级时不需要回填。
+	if err := s.ensureColumns("registry_host_recovery", map[string]string{
+		"retry_failures": "INTEGER NOT NULL DEFAULT 0",
+	}); err != nil {
+		return err
 	}
 	if err := s.migrateScopedGen(); err != nil {
 		return err

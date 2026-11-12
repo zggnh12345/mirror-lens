@@ -57,7 +57,6 @@ func (f *hostProbeFixture) runner(t *testing.T, jobs []HostProbeJob, fn func(con
 		Creds:       f.creds,
 		Repos:       map[string]string{"quay.io": "prometheus/node-exporter"},
 		Concurrency: 2,
-		Backoff:     15 * time.Second,
 		Now:         func() time.Time { return f.now },
 		Jobs: func(context.Context) ([]HostProbeJob, error) {
 			return jobs, nil
@@ -110,8 +109,14 @@ func TestHostProbeRunnerCommitsDiagnostics(t *testing.T) {
 	}
 }
 
-func TestHostProbeRunnerStaleSnapshotBacksOff(t *testing.T) {
+// stale 快照不写调度：旧代次的结果不能参与新代次的排期。
+// 该行由 ApplyCredChanges 置为到期，下一轮扫描自然会重探。
+func TestHostProbeRunnerStaleSnapshotDoesNotSchedule(t *testing.T) {
 	f := newHostProbeFixture(t, "quay.io")
+	f.now = time.Now()
+	if _, err := f.st.BumpHostGen("quay.io"); err != nil {
+		t.Fatalf("初始化代次: %v", err)
+	}
 	jobs := []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", BaseURL: "https://mirror.example", Repo: "r"}}
 	var mu sync.Mutex
 	r, calls := f.runner(t, jobs, func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome {
@@ -128,18 +133,23 @@ func TestHostProbeRunnerStaleSnapshotBacksOff(t *testing.T) {
 	if x.RegistryCap != store.RegistryCapUnknown || x.RegistryProbeError != "" {
 		t.Fatalf("stale 结果不应落库: %+v", x)
 	}
+	failures, next, ok, err := f.st.HostProbeRetryState(f.srcID, "quay.io")
+	if err != nil || !ok {
+		t.Fatalf("读退避状态: ok=%v err=%v", ok, err)
+	}
+	if failures != 0 {
+		t.Fatalf("stale 不得累计退避次数，得到 %d", failures)
+	}
+	if next > time.Now().Unix()+2 {
+		t.Fatalf("stale 不得把 next_probe_at 推到未来: next=%d", next)
+	}
 	if *calls != 1 {
 		t.Fatalf("应当只调用一次，实际 %d", *calls)
 	}
-	// 同一个时钟点再跑一轮：退避窗口内不得重排。
-	r.Once(context.Background())
-	if *calls != 1 {
-		t.Fatalf("退避期内不应重试，实际 %d 次", *calls)
-	}
-	f.now = f.now.Add(16 * time.Second)
+	// 不写退避的结果就是下一轮照常重探（O2 接受的 30s 节奏）。
 	r.Once(context.Background())
 	if *calls != 2 {
-		t.Fatalf("退避结束后应重排，实际 %d 次", *calls)
+		t.Fatalf("stale 后下一轮应重探，实际 %d 次", *calls)
 	}
 }
 
@@ -255,34 +265,44 @@ func TestReconcileReposClearsChangedRepo(t *testing.T) {
 	})
 }
 
-// 凭据版本变化后，退避必须回到起点，不能被旧版本的连续失败继续抬高。
-func TestBackoffResetsOnNewSnapshot(t *testing.T) {
+// 退避计数的清零只发生在「当前代次成功提交」与「代次/归属/启用状态重定义」。
+// stale 与取消都不清零；这条测试锁住前者。
+func TestRetryFailuresSurviveStaleButResetOnNewGeneration(t *testing.T) {
 	f := newHostProbeFixture(t, "quay.io")
+	f.now = time.Now()
+	if _, err := f.st.BumpHostGen("quay.io"); err != nil {
+		t.Fatalf("初始化代次: %v", err)
+	}
 	jobs := []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", BaseURL: "https://mirror.example", Repo: "r"}}
-	r, _ := f.runner(t, jobs, func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome {
-		if _, err := f.st.BumpHostGen("quay.io"); err != nil {
-			t.Errorf("bump: %v", err)
-		}
-		return yesOutcome()
+	r, _ := f.runner(t, jobs, func(ctx context.Context, p probe.RegistryHostProbe) probe.RegistryHostOutcome {
+		// 第一次：本地结果矛盾 -> Block + 退避，不提交。
+		return probe.RegistryHostOutcome{Host: "quay.io", Cap: probe.CapYes, Selected: "native"}
 	})
-	key := jobKey(jobs[0])
-	backoff := func() time.Duration {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if st := r.state[key]; st != nil {
-			return st.backoff
-		}
-		return 0
-	}
 
+	// 先用一次矛盾结果把退避次数推起来。
 	r.Once(context.Background())
-	if got := backoff(); got != 15*time.Second {
-		t.Fatalf("首次 stale 退避应为 15s，得到 %v", got)
+	failures, _, ok, err := f.st.HostProbeRetryState(f.srcID, "quay.io")
+	if err != nil || !ok || failures != 1 {
+		t.Fatalf("矛盾结果应安排 1 次退避: failures=%d ok=%v err=%v", failures, ok, err)
 	}
+	// 推进 16s，第二次仍是矛盾结果：阶梯继续叠加，不重置。
 	f.now = f.now.Add(16 * time.Second)
 	r.Once(context.Background())
-	if got := backoff(); got != 15*time.Second {
-		t.Fatalf("快照版本已变，退避应重置为 15s，得到 %v", got)
+	failures, _, _, err = f.st.HostProbeRetryState(f.srcID, "quay.io")
+	if err != nil || failures != 2 {
+		t.Fatalf("连续失败应叠加到 2: failures=%d err=%v", failures, err)
+	}
+
+	// 代次变化（ApplyCredChanges）清零。
+	if _, err := f.st.BumpHostGen("quay.io"); err != nil {
+		t.Fatalf("bump: %v", err)
+	}
+	failures, next, _, err := f.st.HostProbeRetryState(f.srcID, "quay.io")
+	if err != nil || failures != 0 {
+		t.Fatalf("代次变化应清零退避计数: failures=%d err=%v", failures, err)
+	}
+	if next > time.Now().Unix()+2 {
+		t.Fatalf("代次变化应把 next_probe_at 置回当下，得到 %d", next)
 	}
 }
 
@@ -432,9 +452,9 @@ func TestHostProbeScanDoesNotDuplicateInflight(t *testing.T) {
 	r := NewHostProbeRunner(HostProbeOptions{
 		Store: f.st, Creds: f.creds,
 		Repos:       map[string]string{"quay.io": "prometheus/node-exporter"},
-		Concurrency: 2, Backoff: 15 * time.Second,
-		Now:  func() time.Time { return f.now },
-		Jobs: func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
+		Concurrency: 2,
+		Now:         func() time.Time { return f.now },
+		Jobs:        func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
 		Probe: func(ctx context.Context, p probe.RegistryHostProbe) probe.RegistryHostOutcome {
 			atomic.AddInt64(&calls, 1)
 			started <- struct{}{}

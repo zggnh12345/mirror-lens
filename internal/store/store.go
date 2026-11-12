@@ -783,11 +783,11 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.RepoHost != "" && x.RepoHost != "ghcr.io" {
 		now := time.Now().Unix()
 		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
-(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
-VALUES(?, 'registry', ?, 'initial', COALESCE((SELECT gen FROM registry_host_gen WHERE host=?), 0), 0, 0, ?, 0, '', ?)
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
+VALUES(?, 'registry', ?, 'initial', COALESCE((SELECT gen FROM registry_host_gen WHERE host=?), 0), 0, 0, ?, 0, 0, '', ?)
 ON CONFLICT(source_id, family, scope) DO UPDATE SET
   state='initial', gen=excluded.gen, last_probe_at=0,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0, last_error='',
   updated_at=excluded.updated_at`,
 			id, x.RepoHost, x.RepoHost, now, now); err != nil {
 			return 0, err
@@ -824,7 +824,7 @@ func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, prefer
 			// 重新启用就该马上重验：禁用期间 next_probe_at 可能停在很久
 			// 以后（失败退避），不能让用户等完退避期才看到结论。
 			now := time.Now().Unix()
-			if _, err := s.db.Exec(`UPDATE registry_host_recovery SET next_probe_at=?
+			if _, err := s.db.Exec(`UPDATE registry_host_recovery SET next_probe_at=?, retry_failures=0
 WHERE source_id=? AND family='registry' AND next_probe_at>?`, now, id, now); err != nil {
 				return err
 			}

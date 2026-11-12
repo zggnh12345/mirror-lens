@@ -127,11 +127,11 @@ WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
 		}
 		now := time.Now().Unix()
 		_, err = tx.Exec(`INSERT INTO registry_host_recovery
-(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
-VALUES(?, 'registry', ?, 'initial', ?, 0, 0, ?, 0, '', ?)
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
+VALUES(?, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?)
 ON CONFLICT(source_id, family, scope) DO UPDATE SET
   state='initial', gen=excluded.gen, last_probe_at=0,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0, last_error='',
   updated_at=excluded.updated_at`,
 			id, host, gen, now, now)
 		return err
@@ -363,12 +363,12 @@ WHERE repo_host=? AND status<>'archived'`, RegistryCapUnknown, host); err != nil
 		// 代次绑定：recovery 行在同一事务内切到新 gen 并重置为待重验。
 		// last_success_at 保留为历史事实，但 gen 不匹配使它不再参与 ok 判定。
 		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
-(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
-SELECT id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, '', ?
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
+SELECT id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?
 FROM sources WHERE repo_host=? AND status<>'archived'
 ON CONFLICT(source_id, family, scope) DO UPDATE SET
   state='initial', gen=excluded.gen, last_probe_at=0,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0, last_error='',
   updated_at=excluded.updated_at`,
 			host, newGen, now, now, host); err != nil {
 			return err

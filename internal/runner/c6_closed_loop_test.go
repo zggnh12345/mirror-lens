@@ -76,7 +76,6 @@ func (h *c6Harness) runner(exp RecoveryExpirer, repos map[string]string, now fun
 		Creds:       h.f.creds,
 		Repos:       repos,
 		Concurrency: 1,
-		Backoff:     15 * time.Second,
 		Guard:       h.guard,
 		Invalidate:  func() { h.invalidations++ },
 		Expirer:     exp,

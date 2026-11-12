@@ -349,7 +349,6 @@ func main() {
 			ScanInterval: hostProbeScanInterval(),
 			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,
 			Concurrency:  cfg.Probe.Concurrency,
-			Backoff:      15 * time.Second,
 			RecoveryTTL:  st.RecoveryTTL(),
 			Guard:        guard,
 			// 事务提交不会刷新调度器内存缓存，失败与成功都必须显式失效。

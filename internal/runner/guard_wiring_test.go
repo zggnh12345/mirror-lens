@@ -24,9 +24,9 @@ func TestRunnerInvalidatesCacheOnCommitSuccess(t *testing.T) {
 	invalidations := 0
 	r := NewHostProbeRunner(HostProbeOptions{
 		Store: f.st, Creds: f.creds, Repos: map[string]string{"quay.io": "r"},
-		Concurrency: 1, Backoff: 15 * time.Second,
-		Now:  func() time.Time { return f.now },
-		Jobs: func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
+		Concurrency: 1,
+		Now:         func() time.Time { return f.now },
+		Jobs:        func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
 		Probe: func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome {
 			return yesOutcome()
 		},
@@ -64,9 +64,9 @@ func TestRunnerBlocksOnCommitFailure(t *testing.T) {
 	invalidations := 0
 	r := NewHostProbeRunner(HostProbeOptions{
 		Store: f.st, Creds: f.creds, Repos: map[string]string{"quay.io": "r"},
-		Concurrency: 1, Backoff: 15 * time.Second,
-		Now:  func() time.Time { return f.now },
-		Jobs: func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
+		Concurrency: 1,
+		Now:         func() time.Time { return f.now },
+		Jobs:        func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
 		Probe: func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome {
 			return yesOutcome()
 		},
@@ -82,8 +82,8 @@ func TestRunnerBlocksOnCommitFailure(t *testing.T) {
 	if invalidations != 1 {
 		t.Fatalf("失败后应失效缓存一次，实际 %d", invalidations)
 	}
-	if len(r.state) == 0 {
-		t.Fatal("失败后应保留重试状态")
+	if len(r.state) != 0 {
+		t.Fatalf("失败后必须释放执行锁，退避由数据库负责: %v", r.state)
 	}
 }
 
