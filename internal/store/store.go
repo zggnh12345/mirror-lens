@@ -806,28 +806,44 @@ var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复�
 
 func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool, groupID *int64) error {
 	if enabled != nil {
-		if *enabled {
-			// 归档是已经做过的判断，不能被「启用」开关顺手撤销；
-			// 恢复必须走显式流程（status=pending → 重新探测验证）。
-			var status string
-			if err := s.db.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
-				return err
-			}
-			if status == "archived" {
-				return ErrArchived
-			}
-		}
-		if _, err := s.db.Exec(`UPDATE sources SET enabled=? WHERE id=?`, *enabled, id); err != nil {
+		// 启用状态与 recovery 的重置必须同生共死：只改一半会留下
+		// 「已启用但仍背着旧退避」的状态。
+		tx, err := s.db.Begin()
+		if err != nil {
 			return err
 		}
-		if *enabled {
-			// 重新启用就该马上重验：禁用期间 next_probe_at 可能停在很久
-			// 以后（失败退避），不能让用户等完退避期才看到结论。
+		defer tx.Rollback()
+
+		var wasEnabled int
+		var status string
+		if err := tx.QueryRow(`SELECT enabled, status FROM sources WHERE id=?`, id).Scan(&wasEnabled, &status); err != nil {
+			return err
+		}
+		if *enabled && status == "archived" {
+			// 归档是已经做过的判断，不能被「启用」开关顺手撤销；
+			// 恢复必须走显式流程（status=pending → 重新探测验证）。
+			return ErrArchived
+		}
+		if _, err := tx.Exec(`UPDATE sources SET enabled=? WHERE id=?`, *enabled, id); err != nil {
+			return err
+		}
+		if *enabled && wasEnabled == 0 {
+			// 真实的 0→1 转换：退避次数无条件清零，与调度时间无关。
+			// 重复执行 enabled=1 不触发，避免用户点两下就把阶梯重置。
+			if _, err := tx.Exec(`UPDATE registry_host_recovery SET retry_failures=0
+WHERE source_id=? AND family='registry'`, id); err != nil {
+				return err
+			}
+			// 原拉近逻辑保持不变：只把停在未来的排期拉回现在；
+			// 已到期的行保持原值，不清零也不推后。
 			now := time.Now().Unix()
-			if _, err := s.db.Exec(`UPDATE registry_host_recovery SET next_probe_at=?, retry_failures=0
+			if _, err := tx.Exec(`UPDATE registry_host_recovery SET next_probe_at=?
 WHERE source_id=? AND family='registry' AND next_probe_at>?`, now, id, now); err != nil {
 				return err
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
 		}
 	}
 	if name != nil && *name != "" {

@@ -211,23 +211,137 @@ func TestRetryFailuresClearedOnlyByFreshDefinition(t *testing.T) {
 			t.Fatalf("换 Host 后新行必须从 0 起算，得到 %d", failures)
 		}
 	})
+}
 
-	t.Run("重新启用", func(t *testing.T) {
-		st, id, gen := retryTestStore(t)
+// 重新启用是「Generation/启用状态重置」的一部分：真实的 0→1 转换
+// 无条件清零退避次数；重复启用不算转换。
+func TestReenableClearsRetryFailures(t *testing.T) {
+	schedule := func(t *testing.T, st *Store, id, gen int64) int64 {
+		t.Helper()
 		at := time.Now().Unix()
-		if ok, _ := st.ScheduleHostProbeRetry(HostProbeRetry{SourceID: id, Host: "quay.io", Gen: gen, At: at}); !ok {
-			t.Fatal("预置失败")
+		if ok, err := st.ScheduleHostProbeRetry(HostProbeRetry{SourceID: id, Host: "quay.io", Gen: gen, At: at}); err != nil || !ok {
+			t.Fatalf("预置退避: ok=%v err=%v", ok, err)
 		}
-		off := false
-		if err := st.UpdateSource(id, &off, nil, nil, nil, nil); err != nil {
+		_, next, found, err := st.HostProbeRetryState(id, "quay.io")
+		if err != nil || !found {
+			t.Fatalf("读状态: found=%v err=%v", found, err)
+		}
+		return next
+	}
+	toggle := func(t *testing.T, st *Store, id int64, on bool) error {
+		t.Helper()
+		return st.UpdateSource(id, &on, nil, nil, nil, nil)
+	}
+	retry := func(t *testing.T, st *Store, id int64) (int, int64) {
+		t.Helper()
+		f, n, found, err := st.HostProbeRetryState(id, "quay.io")
+		if err != nil || !found {
+			t.Fatalf("读状态: found=%v err=%v", found, err)
+		}
+		return f, n
+	}
+
+	t.Run("next 在未来则清零并拉近", func(t *testing.T) {
+		st, id, gen := retryTestStore(t)
+		schedule(t, st, id, gen)
+		if err := toggle(t, st, id, false); err != nil {
 			t.Fatal(err)
 		}
-		on := true
-		if err := st.UpdateSource(id, &on, nil, nil, nil, nil); err != nil {
+		if err := toggle(t, st, id, true); err != nil {
 			t.Fatal(err)
 		}
-		if failures, _, _, _ := st.HostProbeRetryState(id, "quay.io"); failures != 0 {
-			t.Fatalf("重新启用必须清零，得到 %d", failures)
+		f, next := retry(t, st, id)
+		if f != 0 {
+			t.Fatalf("必须清零，得到 %d", f)
+		}
+		if next > time.Now().Unix() {
+			t.Fatalf("原排期在未来时必须拉近，得到 %d", next)
+		}
+	})
+
+	t.Run("next 已到期则清零且保持原值", func(t *testing.T) {
+		st, id, gen := retryTestStore(t)
+		schedule(t, st, id, gen)
+		past := time.Now().Unix() - 60
+		if _, err := st.db.Exec(`UPDATE registry_host_recovery SET next_probe_at=? WHERE source_id=? AND family='registry'`, past, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := toggle(t, st, id, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := toggle(t, st, id, true); err != nil {
+			t.Fatal(err)
+		}
+		f, next := retry(t, st, id)
+		if f != 0 {
+			t.Fatalf("到期状态也必须清零，得到 %d", f)
+		}
+		if next != past {
+			t.Fatalf("已到期不得改写 next: got=%d want=%d", next, past)
+		}
+	})
+
+	t.Run("已启用重复启用不重置", func(t *testing.T) {
+		st, id, gen := retryTestStore(t)
+		schedule(t, st, id, gen)
+		if err := toggle(t, st, id, true); err != nil {
+			t.Fatal(err)
+		}
+		if f, _ := retry(t, st, id); f != 1 {
+			t.Fatalf("没有 0→1 转换就不该重置，得到 %d", f)
+		}
+	})
+
+	t.Run("第二步失败则整笔回滚", func(t *testing.T) {
+		st, id, gen := retryTestStore(t)
+		next := schedule(t, st, id, gen)
+		if err := toggle(t, st, id, false); err != nil {
+			t.Fatal(err)
+		}
+		// 只让「拉近 next_probe_at」这一步失败，验证清零被一起回滚。
+		if _, err := st.db.Exec(`CREATE TRIGGER fail_pull BEFORE UPDATE OF next_probe_at
+ON registry_host_recovery BEGIN SELECT RAISE(ABORT, 'boom'); END;`); err != nil {
+			t.Fatal(err)
+		}
+		if err := toggle(t, st, id, true); err == nil {
+			t.Fatal("预期第二步失败")
+		}
+		if f, n := retry(t, st, id); f != 1 || n != next {
+			t.Fatalf("必须整笔回滚: failures=%d next=%d want 1/%d", f, n, next)
+		}
+		x, err := st.GetSource(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if x.Enabled {
+			t.Fatal("sources.enabled 也必须回滚")
+		}
+	})
+
+	t.Run("多 Source 只重置发生转换的", func(t *testing.T) {
+		st, id1, _ := retryTestStore(t)
+		id2, err := st.AddSource(Source{Name: "second", BaseURL: "https://two.example", Status: "usable", Enabled: true, RepoHost: "quay.io"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		gen, err := st.BumpHostGen("quay.io")
+		if err != nil {
+			t.Fatal(err)
+		}
+		schedule(t, st, id1, gen)
+		schedule(t, st, id2, gen)
+
+		if err := toggle(t, st, id1, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := toggle(t, st, id1, true); err != nil {
+			t.Fatal(err)
+		}
+		if f, _ := retry(t, st, id1); f != 0 {
+			t.Fatalf("转换的 Source 必须清零，得到 %d", f)
+		}
+		if f, _ := retry(t, st, id2); f != 1 {
+			t.Fatalf("未转换的 Source 不得重置，得到 %d", f)
 		}
 	})
 }
