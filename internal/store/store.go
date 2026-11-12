@@ -415,6 +415,32 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	if err := s.migrateRecoverySchema(); err != nil {
 		return err
 	}
+	// Phase B（3.5.3）：legacy registry 数据退出。表与标记先建好，迁移本身
+	// 在单事务内完成归档+清理+标记，失败整体回滚，下次启动重试。
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(
+		name TEXT PRIMARY KEY,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_health_archive(
+		source_id INTEGER NOT NULL,
+		family TEXT NOT NULL,
+		fails INTEGER NOT NULL,
+		ok_at INTEGER NOT NULL,
+		last_at INTEGER NOT NULL,
+		archived_at INTEGER NOT NULL,
+		batch TEXT NOT NULL,
+		PRIMARY KEY (source_id, family, batch)
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sha_batch ON source_health_archive(batch)`); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyRegistry(); err != nil {
+		return err
+	}
 	return s.migrateAccel()
 }
 
