@@ -309,8 +309,22 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		budget := g.switchTimeout()
 		start := time.Now()
 		rctx, cancel := context.WithCancel(ctx)
+		unbind := func() {}
+		if l != nil {
+			// Reclaim("stall") 只能取消登记过的函数；不绑定的话看门狗会在
+			// 底层 Body.Close 上等一个永远不返回的 Read。
+			unbind = l.BindCancel(cancel)
+			if rctx.Err() != nil {
+				// 名额在绑定前已失效，登记即取消：不允许继续拨号。
+				unbind()
+				cancel()
+				releaseLease(l)
+				continue
+			}
+		}
 		req, err := http.NewRequestWithContext(rctx, http.MethodGet, t.u.String(), nil)
 		if err != nil {
+			unbind()
 			cancel()
 			releaseLease(l)
 			continue
@@ -343,16 +357,19 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			}()
 		})
 		if !ok {
+			unbind()
 			releaseLease(l)
 			continue
 		}
 		resp, err := d.resp, d.err
 		if err != nil {
+			unbind()
 			cancel()
 			releaseLease(l)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			unbind()
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
@@ -360,6 +377,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		verified, vok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
 		if !vok {
+			unbind()
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
@@ -368,6 +386,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 
 		remaining := budget - time.Since(start)
 		if remaining <= 0 {
+			unbind()
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
@@ -389,6 +408,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			cancel()
 		})
 		if !ok || rr.n <= 0 {
+			unbind()
 			cancel()
 			resp.Body.Close()
 			releaseLease(l)
@@ -396,12 +416,18 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		wrapped, werr := wrapLease(resp, l)
 		if werr != nil {
+			unbind()
 			resp.Body.Close()
 			cancel()
 			releaseLease(l)
 			continue
 		}
 		resp = wrapped
+		if rr.err != nil {
+			// Read 允许同时返回 n>0 和非 nil error；字节已作为 first 交付，
+			// 错误必须留给下一次 Read，不能被吞掉当成正常 EOF。
+			resp.Body = &pendingErrBody{ReadCloser: resp.Body, err: rr.err}
+		}
 		// 换源接管走的是读循环直用路径，不会经过 stream.go 里那次
 		// *leaseBody 断言；这里补上同一道空闲看门狗，避免调用方既不读
 		// 也不关时名额长期占用。
@@ -410,7 +436,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		// 成功接管的 body 关闭时才取消 rctx：既不泄漏 context，也保证
 		// 迟到的超时信号永远不能打断已经开始的读取。
-		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel, unbind: unbind}
 		holderFrom(ctx).set(l)
 		log.Printf("单流换源：%s 已接手（已发 %d MB，验证器=%v）", t.c.Name, sent>>20, verified)
 		return resp, &t, buf[:rr.n], verified, nil
@@ -453,14 +479,24 @@ func waitWithin[T any](ch <-chan T, d time.Duration, onTimeout func()) (T, bool)
 	case v := <-ch:
 		return v, true
 	case <-expired:
-		select {
-		case v := <-ch:
+		if v, ok := afterTimeout(ch); ok {
 			return v, true
-		default:
-			onTimeout()
-			var zero T
-			return zero, false
 		}
+		onTimeout()
+		var zero T
+		return zero, false
+	}
+}
+
+// afterTimeout 是超时胜出前的最后一次裁决：此刻 channel 有值则数据胜出。
+// 独立成函数，才能脱离 select 的随机性做确定性测试。
+func afterTimeout[T any](ch <-chan T) (T, bool) {
+	select {
+	case v := <-ch:
+		return v, true
+	default:
+		var zero T
+		return zero, false
 	}
 }
 
@@ -469,10 +505,31 @@ func waitWithin[T any](ch <-chan T, d time.Duration, onTimeout func()) (T, bool)
 type cancelOnClose struct {
 	io.ReadCloser
 	cancel context.CancelFunc
+	unbind func()
 }
 
 func (c *cancelOnClose) Close() error {
+	// 正常完成：先关 Body 让底层连接尽量复用，再解绑并取消 Context。
 	err := c.ReadCloser.Close()
+	if c.unbind != nil {
+		c.unbind()
+	}
 	c.cancel()
 	return err
+}
+
+// pendingErrBody 把「一批字节 + 同一次 Read 返回的错误」拆成两次返回：
+// 字节已经由 trySwitch 作为 first 交付，错误在下一次 Read 交给流处理。
+type pendingErrBody struct {
+	io.ReadCloser
+	err error
+}
+
+func (b *pendingErrBody) Read(p []byte) (int, error) {
+	if b.err != nil {
+		err := b.err
+		b.err = nil
+		return 0, err
+	}
+	return b.ReadCloser.Read(p)
 }

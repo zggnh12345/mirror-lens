@@ -144,3 +144,151 @@ func TestTrySwitchTimeoutBeforeFirstByte(t *testing.T) {
 		t.Fatalf("首字节超时应放弃换源: resp=%v err=%v", resp, err)
 	}
 }
+
+// afterTimeout 是超时分支的最终裁决原语：此时数据已就绪就必须胜出。
+// 它不经过 select 的双就绪随机路径，因此可以确定性断言。
+func TestAfterTimeoutReadyDataWins(t *testing.T) {
+	ch := make(chan int, 1)
+	ch <- 42
+	if v, ok := afterTimeout(ch); !ok || v != 42 {
+		t.Fatalf("数据已就绪却判超时: ok=%v v=%d", ok, v)
+	}
+}
+
+func TestAfterTimeoutEmptyMeansTimeout(t *testing.T) {
+	ch := make(chan int, 1)
+	if _, ok := afterTimeout(ch); ok {
+		t.Fatal("空通道不得判数据胜出")
+	}
+}
+
+// 自定义 RoundTripper：无视 ctx，延迟返回一个可计数的 Body。
+type lateRT struct {
+	closed *atomic.Int32
+	delay  time.Duration
+	body   []byte
+}
+
+func (r lateRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	time.Sleep(r.delay)
+	return &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		Header:        http.Header{"Etag": {`"v1"`}, "Content-Range": {"bytes 262144-1048575/1048576"}},
+		Body:          &countCloser{closed: r.closed, data: r.body},
+		ContentLength: int64(len(r.body)),
+		Request:       req,
+	}, nil
+}
+
+type countCloser struct {
+	closed *atomic.Int32
+	data   []byte
+}
+
+func (c *countCloser) Read(p []byte) (int, error) {
+	if len(c.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, c.data)
+	c.data = c.data[n:]
+	return n, nil
+}
+
+func (c *countCloser) Close() error {
+	c.closed.Add(1)
+	return nil
+}
+
+// Do 超时先胜出，迟到响应由清理协程关闭，且只关一次。
+func TestTrySwitchLateResponseClosedOnce(t *testing.T) {
+	var closed atomic.Int32
+	g := &Gateway{
+		cli:          &http.Client{Transport: lateRT{closed: &closed, delay: 80 * time.Millisecond, body: []byte("late")}},
+		par:          ParOptions{SwitchMinMBps: 1},
+		switchBudget: 20 * time.Millisecond,
+		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
+		parTargets: func(*adapter.Plan) []fetchTarget {
+			u, _ := url.Parse("http://127.0.0.1:1/never")
+			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+		},
+	}
+	plan := &adapter.Plan{Kind: "docker", Upstream: fbURL(t, "http://127.0.0.1:1/never")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, _, _, _, err := g.trySwitch(ctx, plan, nil, hdr("ETag", `"v1"`), 256<<10, 1<<20, map[int64]bool{}); err == nil {
+		t.Fatal("Do 超时应放弃换源")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for closed.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := closed.Load(); n != 1 {
+		t.Fatalf("迟到响应 Body 必须恰好关闭一次: %d", n)
+	}
+}
+
+// 首个 Read 同时返回 n>0 和错误时，错误必须留给下一次 Read。
+type errFirstBody struct{ step int }
+
+func (b *errFirstBody) Read(p []byte) (int, error) {
+	b.step++
+	if b.step == 1 {
+		p[0] = 'X'
+		return 1, io.ErrUnexpectedEOF
+	}
+	return 0, io.EOF
+}
+
+func (b *errFirstBody) Close() error { return nil }
+
+type staticRT struct{ resp *http.Response }
+
+func (r staticRT) RoundTrip(*http.Request) (*http.Response, error) { return r.resp, nil }
+
+func TestTrySwitchPropagatesFirstReadError(t *testing.T) {
+	const total = int64(1 << 20)
+	const sent = int64(256 << 10)
+	resp := &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		Header:        http.Header{"Etag": {`"v1"`}, "Content-Range": {"bytes 262144-1048575/1048576"}},
+		Body:          &errFirstBody{},
+		ContentLength: total - sent,
+	}
+	g := &Gateway{
+		cli:          &http.Client{Transport: staticRT{resp: resp}},
+		par:          ParOptions{SwitchMinMBps: 1},
+		switchBudget: time.Second,
+		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
+		parTargets: func(*adapter.Plan) []fetchTarget {
+			return []fetchTarget{{u: fbURL(t, "http://127.0.0.1:1/x"), c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+		},
+	}
+	plan := &adapter.Plan{Kind: "docker"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, _, first, _, err := g.trySwitch(ctx, plan, nil, hdr("ETag", `"v1"`), sent, total, map[int64]bool{})
+	if err != nil {
+		t.Fatalf("首字节已有数据，应成功接管: %v", err)
+	}
+	defer got.Body.Close()
+	if len(first) != 1 || first[0] != 'X' {
+		t.Fatalf("首字节不符: %v", first)
+	}
+	if _, rerr := got.Body.Read(make([]byte, 8)); rerr != io.ErrUnexpectedEOF {
+		t.Fatalf("首个 Read 的错误被吞掉: %v", rerr)
+	}
+	if _, rerr := got.Body.Read(make([]byte, 8)); rerr != io.EOF {
+		t.Fatalf("错误只应交付一次: %v", rerr)
+	}
+}
+
+func fbURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
