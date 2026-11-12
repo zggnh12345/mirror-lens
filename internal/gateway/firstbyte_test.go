@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -306,6 +307,37 @@ func TestPendingErrBodyZeroLengthRead(t *testing.T) {
 	}
 }
 
+// enterRT / enterBody 给测试一个显式屏障：第二次及以后的 Read 会先关闭
+// entered，再委托给真实 http body 阻塞等待。这样不必用 sleep 猜“是否已阻塞”。
+type enterRT struct {
+	base    http.RoundTripper
+	entered chan struct{}
+	once    *sync.Once
+}
+
+func (r enterRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.base.RoundTrip(req)
+	if resp != nil && resp.Body != nil {
+		resp.Body = &enterBody{ReadCloser: resp.Body, entered: r.entered, once: r.once}
+	}
+	return resp, err
+}
+
+type enterBody struct {
+	io.ReadCloser
+	entered chan struct{}
+	once    *sync.Once
+	reads   int
+}
+
+func (b *enterBody) Read(p []byte) (int, error) {
+	b.reads++
+	if b.reads > 1 {
+		b.once.Do(func() { close(b.entered) })
+	}
+	return b.ReadCloser.Read(p)
+}
+
 // 换源成功持有 Lease 后，Lease 被 Reclaim 必须能取消阻塞中的 Read，
 // 并在 Body 关闭后真正释放名额。
 func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
@@ -339,8 +371,12 @@ func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
 	defer st.Close()
 	id := addSchedSource(t, st, "blocked", srv.URL, 10, 9000)
 
+	entered := make(chan struct{})
+	var once sync.Once
+	cli := srv.Client()
+	cli.Transport = enterRT{base: cli.Transport, entered: entered, once: &once}
 	g := &Gateway{
-		cli:          srv.Client(),
+		cli:          cli,
 		par:          ParOptions{SwitchMinMBps: 1},
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
@@ -371,7 +407,16 @@ func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
 		_, rerr := resp.Body.Read(make([]byte, 4096))
 		readErr <- rerr
 	}()
-	time.Sleep(50 * time.Millisecond) // 让 Read 真正阻塞在上游
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("调用方的 Read 未进入底层")
+	}
+	select {
+	case rerr := <-readErr:
+		t.Fatalf("上游仍在挂起，Read 不应提前返回: %v", rerr)
+	default:
+	}
 	if n := g.sched.ReclaimSource(id, "stall"); n != 1 {
 		t.Fatalf("Reclaim 应命中 1 个 Lease: %d", n)
 	}
