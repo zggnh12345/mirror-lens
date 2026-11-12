@@ -456,7 +456,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 //
 // 只用于内容已冻结的步骤。加列/建表探测（ensureColumns、IF NOT EXISTS）
 // 每次启动都必须执行，因为它们会随新版本扩展，不能登记后跳过。
-func (s *Store) runStep(ctx context.Context, name string, fn func(context.Context, dbtx) error) (bool, error) {
+func (s *Store) runStep(ctx context.Context, name string, fn func(context.Context, dbtx) error) (ran bool, err error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name=?`, name).Scan(&n); err != nil {
 		return false, err
@@ -471,7 +471,10 @@ func (s *Store) runStep(ctx context.Context, name string, fn func(context.Contex
 	ok := false
 	defer func() {
 		if !ok {
-			_ = done(false)
+			// 回滚错误不能丢：调用方据此判断是否可能留下半提交。
+			if rbErr := done(false); rbErr != nil {
+				err = errors.Join(err, rbErr)
+			}
 		}
 	}()
 

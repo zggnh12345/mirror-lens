@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"log"
@@ -90,6 +91,7 @@ func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error
 				// 提交失败：先在原连接上回滚，把写锁放掉。
 				_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
 				if rbErr != nil && !isNoActiveTx(rbErr) {
+					discardConn(conn)
 					return fmt.Errorf("提交失败: %w（回滚也失败: %v）", err, rbErr)
 				}
 				return fmt.Errorf("提交失败: %w", err)
@@ -99,6 +101,7 @@ func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error
 		// Background：即使 ctx 已取消也要把写锁放掉。
 		_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
 		if rbErr != nil && !isNoActiveTx(rbErr) {
+			discardConn(conn)
 			return fmt.Errorf("回滚失败: %w", rbErr)
 		}
 		return nil
@@ -111,8 +114,7 @@ func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error
 // 前置：schema_migrations 与 source_health_archive 已由 migrate() 建好。
 // 幂等：同一 batch 重跑时 0 写 0 删；若标记存在但仍有 legacy 行，返回错误
 // 而不是静默跳过，避免「标记成功、数据没清」的假完成。
-func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult, error) {
-	var out LegacyArchiveResult
+func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (out LegacyArchiveResult, err error) {
 	now := s.nowTime().Unix()
 
 	conn, done, err := s.beginImmediate(ctx)
@@ -122,7 +124,10 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult,
 	committed := false
 	defer func() {
 		if !committed {
-			_ = done(false)
+			// 回滚错误不能丢：它决定调用方能否认为数据状态未变。
+			if rbErr := done(false); rbErr != nil {
+				err = errors.Join(err, rbErr)
+			}
 		}
 	}()
 
@@ -157,6 +162,26 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult,
 		}
 		committed = true
 		return out, nil
+	}
+
+	// 同一主键但内容与归档不一致：说明归档后运行行被改动过（或 Unarchive 当时
+	// 跳过冲突保留了现行值）。此时再有 dup 语义去重就会把现行数据删掉，
+	// 所以必须在写入/删除前直接报冲突，交给运维决定保留哪一份。
+	var conflicts int64
+	var firstConflict int64 = -1
+	if err := conn.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(MIN(h.source_id), -1) FROM source_health h
+JOIN source_health_archive a
+  ON a.source_id=h.source_id AND a.family=h.family AND a.batch=?
+WHERE h.family='registry'
+  AND NOT (a.fails IS h.fails AND a.ok_at IS h.ok_at AND a.last_at IS h.last_at)`,
+		legacyArchiveBatch).Scan(&conflicts, &firstConflict); err != nil {
+		return out, err
+	}
+	if conflicts > 0 {
+		return out, fmt.Errorf("有 %d 行 legacy registry 数据与归档内容不一致（首个 source_id=%d）: "+
+			"拒绝归档删除；请先核对 source_health 与 source_health_archive 保留哪一份",
+			conflicts, firstConflict)
 	}
 
 	// 先数「已在归档表中的同批行」：删除之后就查不到了。
@@ -237,7 +262,10 @@ func (s *Store) UnarchiveLegacyRegistry(ctx context.Context, batch string) (Lega
 	committed := false
 	defer func() {
 		if !committed {
-			_ = done(false)
+			// 回滚错误不能丢：它决定调用方能否认为数据状态未变。
+			if rbErr := done(false); rbErr != nil {
+				err = errors.Join(err, rbErr)
+			}
 		}
 	}()
 
@@ -287,6 +315,12 @@ func recordLegacyMarker(ctx context.Context, tx dbtx, now int64) error {
 		 ON CONFLICT(name) DO NOTHING`,
 		legacyArchiveMarker, now)
 	return err
+}
+
+// discardConn 丢弃底层连接：回滚是否成功已无法确认时，不能把可能还在事务里的
+// 连接还给池子（sql.Conn.Close 只是归还，不会重置连接级状态）。
+func discardConn(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 }
 
 // errTxFinished 表示事务已经提交或回滚过，防止外层清理二次操作。

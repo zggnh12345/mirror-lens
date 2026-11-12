@@ -354,6 +354,13 @@ func TestArchiveLegacyRegistryRefusesWhenMarkedAndRowsRemain(t *testing.T) {
 	}
 
 	// 走 Unarchive 撤销标记后应能重新归档，证明报错不是死路。
+	// 第一步是冲突跳过（现行行内容不同），清掉现行行后再恢复，才是可归档状态。
+	if _, err := st.UnarchiveLegacyRegistry(context.Background(), legacyArchiveBatch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM source_health WHERE family='registry'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.UnarchiveLegacyRegistry(context.Background(), legacyArchiveBatch); err != nil {
 		t.Fatal(err)
 	}
@@ -388,5 +395,56 @@ func TestArchiveLegacyRegistryKeepsMarkerTimestamp(t *testing.T) {
 	}
 	if got := countRows(t, st, `SELECT applied_at FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`); got != first-1000 {
 		t.Fatalf("already_done 刷新了标记时间: %d -> %d", first-1000, got)
+	}
+}
+
+// Unarchive 因冲突跳过时撤销了标记，下一次启动不能把「当时被保护下来的现行行」删掉。
+// 归档内容与现行内容不一致时必须报冲突，三处数据原样保留。
+func TestUnarchiveConflictSurvivesNextStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	st := openTestAtNoMarker(t, path)
+	defer st.Close()
+	ctx := context.Background()
+
+	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
+	seedLegacyRow(t, st, id, 3, 100, 200)
+	if _, err := st.ArchiveLegacyRegistry(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// 归档之后运行表出现同主键、不同内容的现行行。
+	if _, err := st.db.Exec(`INSERT INTO source_health(source_id,family,fails,ok_at,last_at)
+		VALUES(?,?,?,?,?)`, id, "registry", 9, 300, 400); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := st.UnarchiveLegacyRegistry(ctx, legacyArchiveBatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Restored != 0 || out.Skipped != 1 {
+		t.Fatalf("应跳过冲突: %+v", out)
+	}
+
+	// 模拟重启：标记已被撤销，启动迁移必须报冲突而不是删掉现行行。
+	second, err := Open(path)
+	if err == nil {
+		second.Close()
+		t.Fatal("冲突数据存在时必须拒绝启动")
+	}
+
+	if got := countRows(t, st, `SELECT fails FROM source_health WHERE source_id=? AND family='registry'`, id); got != 9 {
+		t.Fatalf("现行行被改写或删除: fails=%d", got)
+	}
+	if got := countRows(t, st, `SELECT fails FROM source_health_archive WHERE source_id=? AND family='registry' AND batch=?`, id, legacyArchiveBatch); got != 3 {
+		t.Fatalf("归档行被改写: fails=%d", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE name=?`, legacyArchiveMarker); got != 0 {
+		t.Fatalf("失败路径不应写标记: %d", got)
+	}
+
+	// 同一判定在显式重跑时也要成立（不是只在启动路径上）。
+	if _, err := st.ArchiveLegacyRegistry(ctx); err == nil {
+		t.Fatal("显式重跑也必须报冲突")
 	}
 }
