@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -67,6 +68,12 @@ func TestArchiveLegacyRegistryCoversAllSources(t *testing.T) {
 	}
 	if out.Archived != 4 || out.Removed != 4 {
 		t.Fatalf("归档计数 = %d/%d, want 4/4", out.Archived, out.Removed)
+	}
+	if out.Candidates != 4 || out.Left != 0 {
+		t.Fatalf("候选/剩余计数 = %d/%d, want 4/0", out.Candidates, out.Left)
+	}
+	if out.AlreadyDone {
+		t.Fatal("首次迁移不应标记 already_done")
 	}
 	if n := countRows(t, st, `SELECT COUNT(*) FROM source_health WHERE family='registry'`); n != 0 {
 		t.Fatalf("legacy 残留 %d 行", n)
@@ -237,4 +244,45 @@ func TestUnarchiveLegacyRegistrySkipsConflict(t *testing.T) {
 	if fails != 0 || okAt != 99 {
 		t.Fatalf("现行数据被覆盖: %d/%d", fails, okAt)
 	}
+}
+
+// 事务必须以 BEGIN IMMEDIATE 开始：持锁期间另一个连接拿不到写锁，
+// 释放后立刻可以拿到。DEFERRED 在首次写之前不会持有 RESERVED 锁，
+// 这个用例会直接失败。
+func TestBeginImmediateTakesWriteLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lock.db")
+	st := openTestAt(t, path)
+	defer st.Close()
+
+	_, done, err := st.beginImmediate(context.Background())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = done(false)
+		}
+	}()
+
+	ext, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ext.Close()
+
+	if _, err := ext.Exec("BEGIN IMMEDIATE"); err == nil {
+		_, _ = ext.Exec("ROLLBACK")
+		t.Fatal("写事务持锁期间，第二个连接不应拿到写锁")
+	}
+
+	if err := done(false); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	released = true
+
+	if _, err := ext.Exec("BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("释放后仍拿不到写锁: %v", err)
+	}
+	_, _ = ext.Exec("ROLLBACK")
 }

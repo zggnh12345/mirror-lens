@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"time"
 )
 
 // Legacy Registry 数据退出（Phase B）。
@@ -21,10 +23,19 @@ const (
 	legacyArchiveMarker = "b1-archive-legacy-registry"
 )
 
+// dbtx 是 *sql.Conn 与 *sql.Tx 的公共子集。
+// BEGIN IMMEDIATE 只能通过专用 *sql.Conn 发起，事务内所有语句必须走同一连接。
+type dbtx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // LegacyArchiveResult 是一次归档迁移的结果。
 type LegacyArchiveResult struct {
+	Candidates  int64 // 迁移前 source_health 中 family='registry' 的行数
 	Archived    int64 // 本次新写入归档表的行数
 	Removed     int64 // 本次从 source_health 删除的行数
+	Left        int64 // 提交前剩余行数（必须为 0）
 	AlreadyDone bool  // 迁移标记已存在且无残留
 }
 
@@ -35,8 +46,41 @@ type LegacyUnarchiveResult struct {
 }
 
 func (s *Store) migrateLegacyRegistry() error {
-	_, err := s.ArchiveLegacyRegistry(context.Background())
-	return err
+	start := time.Now()
+	res, err := s.ArchiveLegacyRegistry(context.Background())
+	if err != nil {
+		log.Printf("迁移步骤 %s 失败: %v", legacyArchiveMarker, err)
+		return err
+	}
+	log.Printf("迁移步骤 %s 完成: batch=%s candidates=%d archived=%d removed=%d left=%d already_done=%t duration=%s",
+		legacyArchiveMarker, legacyArchiveBatch, res.Candidates, res.Archived,
+		res.Removed, res.Left, res.AlreadyDone, time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// beginImmediate 在专用连接上开写事务。database/sql 的 BeginTx 只能发出
+// 默认的 BEGIN（DEFERRED），先读后写时会直接 SQLITE_BUSY；这里显式 IMMEDIATE，
+// 由 busy_timeout(5000) 排队。提交/回滚与连接释放由 done 负责。
+func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error, error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	done := func(commit bool) error {
+		defer conn.Close()
+		if commit {
+			_, err := conn.ExecContext(ctx, "COMMIT")
+			return err
+		}
+		// Background：即使 ctx 已取消也要把写锁放掉。
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		return nil
+	}
+	return conn, done, nil
 }
 
 // ArchiveLegacyRegistry 归档并清理 source_health 中的 legacy registry 行。
@@ -48,36 +92,42 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult,
 	var out LegacyArchiveResult
 	now := s.nowTime().Unix()
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	conn, done, err := s.beginImmediate(ctx)
 	if err != nil {
 		return out, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = done(false)
+		}
+	}()
 
 	var marked int
-	if err := tx.QueryRowContext(ctx,
+	if err := conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM schema_migrations WHERE name=?`, legacyArchiveMarker).Scan(&marked); err != nil {
 		return out, err
 	}
 
 	var remaining int64
-	if err := tx.QueryRowContext(ctx,
+	if err := conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_health WHERE family='registry'`).Scan(&remaining); err != nil {
 		return out, err
 	}
+	out.Candidates = remaining
 	if remaining == 0 {
 		out.AlreadyDone = marked > 0
-		if err := recordLegacyMarker(ctx, tx, now); err != nil {
+		if err := recordLegacyMarker(ctx, conn, now); err != nil {
 			return out, err
 		}
-		if err := tx.Commit(); err != nil {
+		if err := done(true); err != nil {
 			return out, err
 		}
-		out.AlreadyDone = true
+		committed = true
 		return out, nil
 	}
 
-	res, err := tx.ExecContext(ctx, `
+	res, err := conn.ExecContext(ctx, `
 INSERT INTO source_health_archive
   (source_id, family, fails, ok_at, last_at, archived_at, batch)
 SELECT source_id, family, fails, ok_at, last_at, ?, ?
@@ -96,7 +146,7 @@ WHERE family='registry'
 		return out, err
 	}
 
-	del, err := tx.ExecContext(ctx, `DELETE FROM source_health WHERE family='registry'`)
+	del, err := conn.ExecContext(ctx, `DELETE FROM source_health WHERE family='registry'`)
 	if err != nil {
 		return out, err
 	}
@@ -108,7 +158,7 @@ WHERE family='registry'
 	// 事务内自校验：删除数 = 本次新归档数 + 已在归档表中的同批行数。
 	// 后者只会在 un-archive 之后重跑时出现，不能算作「字段错位」。
 	var dup int64
-	if err := tx.QueryRowContext(ctx, `
+	if err := conn.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM source_health h
 WHERE h.family='registry' AND EXISTS (
   SELECT 1 FROM source_health_archive a
@@ -120,20 +170,22 @@ WHERE h.family='registry' AND EXISTS (
 		return out, fmt.Errorf("归档行数与删除行数不一致: archived=%d dup=%d removed=%d", archived, dup, removed)
 	}
 	var left int64
-	if err := tx.QueryRowContext(ctx,
+	if err := conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_health WHERE family='registry'`).Scan(&left); err != nil {
 		return out, err
 	}
 	if left != 0 {
 		return out, fmt.Errorf("清理后仍有 %d 行 legacy registry 数据", left)
 	}
+	out.Left = left
 
-	if err := recordLegacyMarker(ctx, tx, now); err != nil {
+	if err := recordLegacyMarker(ctx, conn, now); err != nil {
 		return out, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := done(true); err != nil {
 		return out, err
 	}
+	committed = true
 	out.Archived, out.Removed = archived, removed
 	return out, nil
 }
@@ -144,18 +196,23 @@ WHERE h.family='registry' AND EXISTS (
 // 根据 Skipped 决定是否人工核对。归档行本身不删除，回滚动作可重复执行。
 func (s *Store) UnarchiveLegacyRegistry(ctx context.Context, batch string) (LegacyUnarchiveResult, error) {
 	var out LegacyUnarchiveResult
-	tx, err := s.db.BeginTx(ctx, nil)
+	conn, done, err := s.beginImmediate(ctx)
 	if err != nil {
 		return out, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = done(false)
+		}
+	}()
 
 	var total int64
-	if err := tx.QueryRowContext(ctx,
+	if err := conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM source_health_archive WHERE batch=?`, batch).Scan(&total); err != nil {
 		return out, err
 	}
-	res, err := tx.ExecContext(ctx, `
+	res, err := conn.ExecContext(ctx, `
 INSERT INTO source_health(source_id, family, fails, ok_at, last_at)
 SELECT source_id, family, fails, ok_at, last_at
 FROM source_health_archive a
@@ -170,15 +227,16 @@ WHERE a.batch=?
 	if err != nil {
 		return out, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := done(true); err != nil {
 		return out, err
 	}
+	committed = true
 	out.Restored = restored
 	out.Skipped = total - restored
 	return out, nil
 }
 
-func recordLegacyMarker(ctx context.Context, tx *sql.Tx, now int64) error {
+func recordLegacyMarker(ctx context.Context, tx dbtx, now int64) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)
 		 ON CONFLICT(name) DO UPDATE SET applied_at=excluded.applied_at`,
