@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -204,6 +205,16 @@ func (r *HostProbeRunner) Once(ctx context.Context) {
 		}(j)
 	}
 	wg.Wait()
+
+	// Gauge 用 SQL 统计，不用内存推算：到期行不计，退避中的行才计。
+	if r.o.Store == nil {
+		return
+	}
+	if n, err := r.o.Store.CountRetryPending(now.Unix()); err == nil {
+		metrics.SetHostProbeRetryPending(uint64(n))
+	} else {
+		log.Printf("统计重试中 Host 数失败: %v", err)
+	}
 }
 
 // reconcileRepos 在启动时对账「结论是用哪个代表性仓库测出来的」。
@@ -349,6 +360,21 @@ func (x retryReason) schedules() bool {
 	return false
 }
 
+// metric 返回封闭标签值，供 A2-2 指标使用。
+func (x retryReason) metric() string {
+	switch x {
+	case retryCredentialPending:
+		return "credential_pending"
+	case retryLocalExecution:
+		return "local_execution"
+	case retryCommitFailed:
+		return "commit_failed"
+	case retryOutcomeInconsistent:
+		return "outcome_inconsistent"
+	}
+	return "other"
+}
+
 func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 	key := jobKey(j)
 	defer r.release(key)
@@ -467,19 +493,24 @@ func (r *HostProbeRunner) scheduleRetry(j HostProbeJob, gen int64, why retryReas
 	if !why.schedules() {
 		return
 	}
-	ok, err := r.o.Store.ScheduleHostProbeRetry(store.HostProbeRetry{
+	rej, delay, err := r.o.Store.ScheduleHostProbeRetryClassified(store.HostProbeRetry{
 		SourceID: j.SourceID,
 		Host:     j.Host,
 		Gen:      gen,
 		At:       r.o.Now().Unix(),
 	})
 	if err != nil {
+		metrics.HostProbeRetryRejected(string(store.RetryRejectDBError))
 		log.Printf("安排 %s 重试失败（下一轮扫描重试）: %v", j.Host, err)
 		return
 	}
-	if !ok {
-		log.Printf("安排 %s 重试被拒绝：代次/归属/到期条件已变", j.Host)
+	if rej != store.RetryWritten {
+		metrics.HostProbeRetryRejected(string(rej))
+		log.Printf("安排 %s 重试被拒绝（%s）：代次/归属/到期条件已变", j.Host, rej)
+		return
 	}
+	metrics.HostProbeRetryScheduled(why.metric())
+	metrics.HostProbeRetryDelay(delay)
 }
 
 // routeKey 是 Host 探测在 Guard 里的键：同一 Host 的不同源互不影响。

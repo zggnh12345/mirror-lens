@@ -51,6 +51,18 @@ func HostProbeRetryDelay(n int) time.Duration {
 	return d
 }
 
+// RetryReject 是持久化调度的拒绝原因（A2-2 观测用，封闭集合）。
+// 空值表示写入成功；分类只用于指标，不参与 CAS 判定。
+type RetryReject string
+
+const (
+	RetryWritten                 RetryReject = ""
+	RetryRejectGenMismatch       RetryReject = "gen_mismatch"
+	RetryRejectCASLost           RetryReject = "cas_lost"
+	RetryRejectSourceUnavailable RetryReject = "source_unavailable"
+	RetryRejectDBError           RetryReject = "db_error"
+)
+
 // ScheduleHostProbeRetry 把一个未提交成功的执行失败持久化为下一次到期时间。
 //
 // 返回 false 表示被拒绝：代次不符、行已不在到期状态、源被禁用/归档/换 Host、
@@ -60,19 +72,27 @@ func HostProbeRetryDelay(n int) time.Duration {
 // last_probe_at、last_success_at、last_error 全部不动 —— 这是「本地执行失败」
 // 与「探测结果失败」的边界。
 func (s *Store) ScheduleHostProbeRetry(r HostProbeRetry) (bool, error) {
+	rej, _, err := s.ScheduleHostProbeRetryClassified(r)
+	return rej == RetryWritten, err
+}
+
+// ScheduleHostProbeRetryClassified 与 ScheduleHostProbeRetry 行为完全一致，
+// 额外返回拒绝原因与实际写入的退避间隔（A2-2 指标用）。分类 SELECT 与
+// UPDATE 在同一 BEGIN IMMEDIATE 事务内，只读不改。
+func (s *Store) ScheduleHostProbeRetryClassified(r HostProbeRetry) (RetryReject, time.Duration, error) {
 	if r.SourceID == 0 || r.Host == "" || r.At <= 0 {
-		return false, fmt.Errorf("ScheduleHostProbeRetry: 参数不完整 source=%d host=%q at=%d", r.SourceID, r.Host, r.At)
+		return RetryRejectDBError, 0, fmt.Errorf("ScheduleHostProbeRetry: 参数不完整 source=%d host=%q at=%d", r.SourceID, r.Host, r.At)
 	}
 
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	committed := false
 	defer func() {
@@ -89,13 +109,13 @@ func (s *Store) ScheduleHostProbeRetry(r HostProbeRetry) (bool, error) {
 		 WHERE source_id=? AND family='registry' AND scope=?`,
 		r.SourceID, r.Host).Scan(&failures, &next)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return RetryRejectSourceUnavailable, 0, nil
 	}
 	if err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	if next > r.At {
-		return false, nil
+		return RetryRejectCASLost, 0, nil
 	}
 
 	// 读、算、写用同一个 n：UPDATE 写回的就是它，old=7 时仍是 7。
@@ -103,7 +123,8 @@ func (s *Store) ScheduleHostProbeRetry(r HostProbeRetry) (bool, error) {
 	if n > hostProbeRetryMaxFailures {
 		n = hostProbeRetryMaxFailures
 	}
-	nextAt := r.At + int64(HostProbeRetryDelay(n)/time.Second)
+	delay := HostProbeRetryDelay(n)
+	nextAt := r.At + int64(delay/time.Second)
 
 	res, err := conn.ExecContext(ctx,
 		`UPDATE registry_host_recovery
@@ -124,20 +145,61 @@ func (s *Store) ScheduleHostProbeRetry(r HostProbeRetry) (bool, error) {
 		r.Host, r.Gen,
 		r.SourceID, r.Host)
 	if err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	if rows == 0 {
-		return false, nil
+		return classifyRetryReject(ctx, conn, r), 0, nil
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return false, err
+		return RetryRejectDBError, 0, err
 	}
 	committed = true
-	return true, nil
+	return RetryWritten, delay, nil
+}
+
+// classifyRetryReject 只在 RowsAffected==0 时执行一次只读分类。
+// 判定顺序与 CAS 条件一一对应，保证指标原因与真实拒绝原因一致。
+func classifyRetryReject(ctx context.Context, conn *sql.Conn, r HostProbeRetry) RetryReject {
+	var rowGen, hostGen int64
+	var enabled int
+	var status, repoHost, state string
+	err := conn.QueryRowContext(ctx,
+		`SELECT rec.gen,
+		        COALESCE((SELECT gen FROM registry_host_gen WHERE host=?), -1),
+		        src.enabled, src.status, src.repo_host, rec.state
+		   FROM registry_host_recovery rec
+		   JOIN sources src ON src.id=rec.source_id
+		  WHERE rec.source_id=? AND rec.family='registry' AND rec.scope=?`,
+		r.Host, r.SourceID, r.Host).Scan(&rowGen, &hostGen, &enabled, &status, &repoHost, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RetryRejectSourceUnavailable
+	}
+	if err != nil {
+		return RetryRejectDBError
+	}
+	if rowGen != r.Gen || hostGen != r.Gen {
+		return RetryRejectGenMismatch
+	}
+	if enabled != 1 || status == "archived" || repoHost != r.Host || state == "hard-excluded" {
+		return RetryRejectSourceUnavailable
+	}
+	return RetryRejectCASLost
+}
+
+// CountRetryPending 统计处于退避中（未到期）的 Host 数，供 Gauge 使用。
+func (s *Store) CountRetryPending(now int64) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("CountRetryPending: store 未初始化")
+	}
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM registry_host_recovery
+		 WHERE family='registry' AND retry_failures>0 AND next_probe_at>?`, now).Scan(&n)
+	return n, err
 }
 
 // HostProbeRetryState 读取一行的退避状态，供诊断与测试使用。

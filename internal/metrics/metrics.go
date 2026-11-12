@@ -152,12 +152,36 @@ type Registry struct {
 	lastHits  map[string]uint64
 	lastTotal map[string]uint64
 
+	// 3.5.2 A2-2：Host 探测持久化调度的最小观测。
+	// 标签是封闭集合，未知值折叠成 other（防御，不新开维度）。
+	hprSched     map[string]uint64
+	hprReject    map[string]uint64
+	hprDelay     *hist
+	hprPending   uint64
+	haveHPending bool
+
 	// 热度：累计请求数，janitor 取差值得到本轮请求量。
 	sceneTotal map[string]*atomic.Uint64
 	haveHot    bool
 	sceneDelta map[string]uint64
 	lastScene  map[string]uint64
 }
+
+// Host 探测重试延迟的固定桶（秒）。D1 裁定：不用默认桶，也不加抖动。
+var hostProbeRetryBuckets = []float64{15, 30, 60, 120, 240, 480, 600}
+
+// 两个标签集合都是封闭的；未知值落 other，避免标签维度被外部输入撑开。
+var (
+	hprSchedReasons = map[string]bool{
+		"credential_pending": true, "local_execution": true,
+		"commit_failed": true, "outcome_inconsistent": true,
+	}
+	hprRejectReasons = map[string]bool{
+		"gen_mismatch": true, "cas_lost": true,
+		"source_unavailable": true, "db_error": true,
+	}
+	hostProbeRetryReasonFallback = "other"
+)
 
 // New 返回空注册表。
 func New() *Registry {
@@ -194,6 +218,9 @@ func New() *Registry {
 		leaseWait:          map[int64]*hist{},
 		srcBytes:           map[srcBytesKey]uint64{},
 		cand:               newHist(candBuckets),
+		hprSched:           map[string]uint64{},
+		hprReject:          map[string]uint64{},
+		hprDelay:           newHist(hostProbeRetryBuckets),
 		forgotten:          map[int64]bool{},
 		limited:            map[string]uint64{},
 		relayFallback:      map[string]uint64{},
@@ -558,6 +585,61 @@ func RelayFallback(state string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.relayFallback[state]++
+}
+
+// HostProbeRetryScheduled 记一次成功写入的持久化退避。
+// reason 是封闭集合：credential_pending / local_execution / commit_failed /
+// outcome_inconsistent；未知值折叠为 other。
+func HostProbeRetryScheduled(reason string) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	if !hprSchedReasons[reason] {
+		reason = hostProbeRetryReasonFallback
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hprSched[reason]++
+}
+
+// HostProbeRetryRejected 记一次被 CAS 拒绝的调度写入。
+// reason 是封闭集合：gen_mismatch / cas_lost / source_unavailable / db_error。
+func HostProbeRetryRejected(reason string) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	if !hprRejectReasons[reason] {
+		reason = hostProbeRetryReasonFallback
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hprReject[reason]++
+}
+
+// HostProbeRetryDelay 记录一次实际写入的退避间隔。
+func HostProbeRetryDelay(d time.Duration) {
+	r := current.Load()
+	if r == nil || d <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hprDelay.observe(d.Seconds(), hostProbeRetryBuckets)
+}
+
+// SetHostProbeRetryPending 刷新「退避中」的 Host 数。
+// 必须由 SQL 统计（retry_failures>0 AND next_probe_at>now），不得用内存推算。
+func SetHostProbeRetryPending(n uint64) {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hprPending = n
+	r.haveHPending = true
 }
 
 // SourceStat 是源站数标签。status 为封闭集合
@@ -1019,6 +1101,38 @@ func (r *Registry) render() []byte {
 		for _, s := range sortedKeys(r.limited) {
 			fmt.Fprintf(&b, "%sratelimit_rejected_total{layer=%q} %d\n", prefix, s, r.limited[s])
 		}
+	}
+	if len(r.hprSched) > 0 {
+		b.WriteString("# HELP " + prefix + "hostprobe_retry_scheduled_total Host 探测失败后成功写入持久化退避的次数（按原因）\n")
+		b.WriteString("# TYPE " + prefix + "hostprobe_retry_scheduled_total counter\n")
+		for _, k := range sortedKeys(r.hprSched) {
+			fmt.Fprintf(&b, "%shostprobe_retry_scheduled_total{reason=%q} %d\n", prefix, k, r.hprSched[k])
+		}
+	}
+	if len(r.hprReject) > 0 {
+		b.WriteString("# HELP " + prefix + "hostprobe_retry_rejected_total 持久化退避写入被拒的次数（按原因）\n")
+		b.WriteString("# TYPE " + prefix + "hostprobe_retry_rejected_total counter\n")
+		for _, k := range sortedKeys(r.hprReject) {
+			fmt.Fprintf(&b, "%shostprobe_retry_rejected_total{reason=%q} %d\n", prefix, k, r.hprReject[k])
+		}
+	}
+	if r.haveHPending {
+		b.WriteString("# HELP " + prefix + "hostprobe_retry_pending 处于退避中的 Host 数（SQL 统计，retry_failures>0 且 next_probe_at>now）\n")
+		b.WriteString("# TYPE " + prefix + "hostprobe_retry_pending gauge\n")
+		fmt.Fprintf(&b, "%shostprobe_retry_pending %d\n", prefix, r.hprPending)
+	}
+	if r.hprDelay != nil && r.hprDelay.n > 0 {
+		b.WriteString("# HELP " + prefix + "hostprobe_retry_delay_seconds 实际写入的退避间隔（秒，固定桶）\n")
+		b.WriteString("# TYPE " + prefix + "hostprobe_retry_delay_seconds histogram\n")
+		var cum uint64
+		for i, le := range hostProbeRetryBuckets {
+			cum += r.hprDelay.counts[i]
+			fmt.Fprintf(&b, "%shostprobe_retry_delay_seconds_bucket{le=\"%s\"} %d\n", prefix, trimFloat(le), cum)
+		}
+		cum += r.hprDelay.counts[len(hostProbeRetryBuckets)]
+		fmt.Fprintf(&b, "%shostprobe_retry_delay_seconds_bucket{le=\"+Inf\"} %d\n", prefix, cum)
+		fmt.Fprintf(&b, "%shostprobe_retry_delay_seconds_sum %s\n", prefix, trimFloat(r.hprDelay.sum))
+		fmt.Fprintf(&b, "%shostprobe_retry_delay_seconds_count %d\n", prefix, r.hprDelay.n)
 	}
 	return []byte(b.String())
 }
