@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,6 +80,26 @@ func TestStaleOwnerReleaseAfterTransfer(t *testing.T) {
 	if got := leaseReleasedTotal(t, 7); got != 1 {
 		t.Fatalf("名额只能归还一次：lease_released_total=%d，期望 1", got)
 	}
+}
+
+// metricValue 从 Prometheus 文本里取指定指标、指定源的数值。
+func metricValue(t *testing.T, name string, id int64) int64 {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	metrics.Get().Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	want := fmt.Sprintf("%s{source_id=%q}", name, strconv.FormatInt(id, 10))
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.Contains(line, want) {
+			continue
+		}
+		f := strings.Fields(line)
+		v, err := strconv.ParseInt(f[len(f)-1], 10, 64)
+		if err != nil {
+			t.Fatalf("解析指标失败 %q: %v", line, err)
+		}
+		return v
+	}
+	return 0
 }
 
 // leaseReleasedTotal 从 Prometheus 文本里取指定源的归还次数。
@@ -208,6 +229,109 @@ func TestReclaimHoldsUntilBodyExit(t *testing.T) {
 	if held, _, _, _, bodies := set.snapshot(); held != 0 || bodies != 0 {
 		t.Fatalf("Body 退出后应归零：%d/%d", held, bodies)
 	}
+}
+
+// P2-3：重复 Reclaim 不得重复取消、重复计指标。
+func TestReclaimIsIdempotent(t *testing.T) {
+	metrics.Enable()
+	t.Cleanup(metrics.Disable)
+
+	set := newLeaseSet(11, 2, 2)
+	l, err := set.acquire(context.Background(), KindNormal, "blocking", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cancels atomic.Int32
+	l.BindCancel(func() { cancels.Add(1) })
+
+	if !l.Reclaim("stall") {
+		t.Fatal("首次 reclaim 应生效")
+	}
+	if l.Reclaim("stall") {
+		t.Fatal("重复 reclaim 应返回 false")
+	}
+	if got := cancels.Load(); got != 1 {
+		t.Fatalf("取消函数执行 %d 次，期望 1", got)
+	}
+	if got := metricValue(t, "lease_reclaim_stuck", 11); got != 1 {
+		t.Fatalf("lease_reclaim_stuck=%d，期望 1（重复 reclaim 不得累加）", got)
+	}
+	retire()
+	if held, _, _, _, _ := set.snapshot(); held != 0 {
+		t.Fatalf("Body 退出后名额未归还: %d", held)
+	}
+}
+
+// Release 在 Body 未退出时也会把状态置为 Reclaiming；
+// 这时的首个 Reclaim 仍必须执行取消流程。
+func TestReclaimAfterReleaseReclaiming(t *testing.T) {
+	set := newLeaseSet(12, 2, 2)
+	l, err := set.acquire(context.Background(), KindNormal, "blocking", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cancels atomic.Int32
+	l.BindCancel(func() { cancels.Add(1) })
+
+	l.Release(l.Token())
+	if st := l.State(); st != StateReclaiming {
+		t.Fatalf("Body 未退出时 Release 应呈现 reclaiming，得到 %s", st)
+	}
+	if !l.Reclaim("cancel") {
+		t.Fatal("Release 设置的 reclaiming 不应阻止首个 reclaim")
+	}
+	if got := cancels.Load(); got != 1 {
+		t.Fatalf("取消函数执行 %d 次，期望 1", got)
+	}
+	retire()
+}
+
+// 并发 Reclaim 只能有一个赢家。
+func TestReclaimConcurrentSingleWinner(t *testing.T) {
+	set := newLeaseSet(13, 2, 2)
+	l, err := set.acquire(context.Background(), KindNormal, "blocking", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire, err := l.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cancels atomic.Int32
+	l.BindCancel(func() { cancels.Add(1) })
+
+	const n = 8
+	var wg sync.WaitGroup
+	var wins atomic.Int32
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if l.Reclaim("cancel") {
+				wins.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := wins.Load(); got != 1 {
+		t.Fatalf("并发 reclaim 赢家 %d 个，期望 1", got)
+	}
+	if got := cancels.Load(); got != 1 {
+		t.Fatalf("取消函数执行 %d 次，期望 1", got)
+	}
+	retire()
 }
 
 // I5：Transfer 后旧 token 释放必须失效。

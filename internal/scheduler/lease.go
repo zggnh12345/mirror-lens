@@ -92,6 +92,9 @@ type Lease struct {
 	bodies int
 	cancel map[int]context.CancelFunc
 	nx     int
+	// reclaimStarted 表示已有 Reclaim 接管了取消流程。
+	// Release 也会把状态置为 Reclaiming，因此不能只看状态判断「已取消」。
+	reclaimStarted bool
 }
 
 // Token 返回当前所有权凭证。
@@ -229,12 +232,17 @@ func (l *Lease) Release(tok Token) {
 }
 
 // Reclaim 取消该 Lease 关联的全部 attempt，并保持名额直到 Body 退出（I4）。
+//
+// 重复或并发的 Reclaim 只有第一个真正执行取消并计入指标；后续调用返回 false。
+// 这里不能只看 StateReclaiming：Release 在 Body 未退出时也会把状态置为
+// Reclaiming，那时取消函数尚未被调用，首个 Reclaim 仍必须执行。
 func (l *Lease) Reclaim(reason string) bool {
 	l.mu.Lock()
-	if l.state == StateReleased {
+	if l.state == StateReleased || l.reclaimStarted {
 		l.mu.Unlock()
 		return false
 	}
+	l.reclaimStarted = true
 	l.setState(StateReclaiming)
 	fns := make([]context.CancelFunc, 0, len(l.cancel))
 	for _, fn := range l.cancel {
