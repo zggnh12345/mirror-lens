@@ -392,6 +392,12 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		Timeout: r.o.Timeout,
 	})
 
+	// O1 优先于 O4：取消后的结果不参与任何分类，连「矛盾结果」的屏蔽
+	// 与退避都不做 —— 那是给真实结果准备的副作用。
+	if parent.Err() != nil {
+		return
+	}
+
 	capv, mode, note, err := out.StoreFields()
 	if err != nil {
 		// 本地聚合结果违反了数据不变量：既不提交也不计数，
@@ -403,8 +409,9 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		return
 	}
 
-	// 提交边界：只判断 Runner/上层生命周期是否已取消。Probe 子 Context
-	// 超时属于真实探测失败，parent 仍然有效，必须照常提交。
+	// 提交边界（第二次检查）：覆盖 StoreFields 执行期间发生的取消。
+	// 只判断 Runner/上层生命周期；Probe 子 Context 超时属于真实探测失败，
+	// parent 仍然有效，必须照常提交。这不是原子的取消保证。
 	if parent.Err() != nil {
 		return
 	}

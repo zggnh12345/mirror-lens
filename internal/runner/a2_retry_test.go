@@ -116,6 +116,46 @@ func TestParentCancelSkipsCommitAndSchedule(t *testing.T) {
 	}
 }
 
+// O1 优先于 O4：父已取消时，即使聚合结果自相矛盾，也不得 Block/Invalidate/退避。
+// 否则取消会被当成「真实结果矛盾」，污染 Guard 与调度。
+func TestCancelBeatsOutcomeInconsistent(t *testing.T) {
+	f := newHostProbeFixture(t, "quay.io")
+	f.now = time.Now()
+	gen, err := f.st.BumpHostGen("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, beforeNext, _, _ := f.st.HostProbeRetryState(f.srcID, "quay.io")
+	g := store.NewRecoveryGuard()
+	invalidations := 0
+	jobs := []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", Gen: gen, BaseURL: "https://mirror.example", Repo: "r"}}
+	r := NewHostProbeRunner(HostProbeOptions{
+		Store: f.st, Creds: f.creds, Repos: map[string]string{"quay.io": "r"},
+		Concurrency: 1,
+		Now:         func() time.Time { return f.now },
+		Jobs:        func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
+		Probe: func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome {
+			return probe.RegistryHostOutcome{Host: "quay.io", Cap: probe.CapYes, Selected: "native"}
+		},
+		Guard:      g,
+		Invalidate: func() { invalidations++ },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.Once(ctx)
+
+	if g.Blocked(store.GuardKey{SourceID: f.srcID, Family: "registry", Scope: "quay.io"}) {
+		t.Fatal("取消不得屏蔽该源")
+	}
+	if invalidations != 0 {
+		t.Fatalf("取消不得失效路由缓存，实际 %d", invalidations)
+	}
+	failures, next, _, _ := f.st.HostProbeRetryState(f.srcID, "quay.io")
+	if failures != 0 || next != beforeNext {
+		t.Fatalf("取消不得写调度: failures=%d next=%d before=%d", failures, next, beforeNext)
+	}
+}
+
 // 子 Context 超时是真实探测失败：parent 有效，必须照常提交，
 // 由状态机（rec_failures）而不是 retry 阶梯承担退避。
 func TestProbeTimeoutStillCommits(t *testing.T) {
