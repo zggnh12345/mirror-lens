@@ -450,6 +450,9 @@ type ctxBlockingBody struct {
 }
 
 func (b *ctxBlockingBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if len(b.first) > 0 {
 		n := copy(p, b.first)
 		b.first = b.first[n:]
@@ -481,6 +484,25 @@ func (r ctxBlockingRT) RoundTrip(req *http.Request) (*http.Response, error) {
 		Body:          &ctxBlockingBody{ctx: req.Context(), entered: r.entered, first: append([]byte(nil), r.first...)},
 		Request:       req,
 	}, nil
+}
+
+// 测试替身自身也要遵守 io.Reader：零长度读不得进入阻塞分支。
+func TestCtxBlockingBodyZeroLengthRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{})
+	b := &ctxBlockingBody{ctx: ctx, entered: entered}
+	if n, err := b.Read(nil); n != 0 || err != nil {
+		t.Fatalf("零长度读应返回 (0,nil): %d %v", n, err)
+	}
+	select {
+	case <-entered:
+		t.Fatal("零长度读不应关闭 entered / 进入阻塞")
+	default:
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
 
 // 确定性版本：阻塞点由测试 Body 显式控制，entered 关闭后 Read 只可能因
