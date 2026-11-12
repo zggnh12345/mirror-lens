@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
 // expireCand 是物化候选行在事务内的快照。
@@ -44,7 +46,17 @@ func updateExpiredCAS(ctx context.Context, conn *sql.Conn, c expireCand, now tim
 //
 // now 由调用方提供，与同一轮 ListDueHostProbes 使用同一个时间点；
 // Store 内部不再取当前时间。返回实际成功物化的行数。
-func (s *Store) MaterializeExpired(now time.Time) (int, error) {
+func (s *Store) MaterializeExpired(now time.Time) (n int, err error) {
+	start := time.Now()
+	defer func() {
+		// 事务失败会整体回滚：未提交的行不能算作物化成功。
+		rows := n
+		if err != nil {
+			rows = 0
+		}
+		metrics.RecoveryMaterialize(rows, time.Since(start), err)
+	}()
+
 	ttl := s.RecoveryTTL()
 	if ttl < time.Second {
 		// cutoff 是秒级：小于 1s 的 TTL 会被截断成 0，语义上等于「全部失效」。
@@ -97,7 +109,6 @@ func (s *Store) MaterializeExpired(now time.Time) (int, error) {
 	}
 	rows.Close()
 
-	n := 0
 	for _, c := range cands {
 		var curGen int64
 		err := conn.QueryRowContext(ctx,

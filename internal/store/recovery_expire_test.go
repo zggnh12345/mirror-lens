@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/metrics"
 )
 
 func seedExpireExec(t *testing.T, st *Store, q string, args ...any) {
@@ -272,5 +274,48 @@ func TestMaterializeExpiredSkipsNonCandidates(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("cap!=1 或 archived 的源不应物化，推进了 %d 行", n)
+	}
+}
+
+// 指标：物化行数只统计 CAS 提交成功；零行与执行失败在 runs/failures 上可区分。
+func TestMaterializeExpiredMetrics(t *testing.T) {
+	st, _ := newTestStore(t)
+	base := time.Unix(1_700_000_000, 0)
+	st.SetClock(func() time.Time { return base })
+	st.SetRecoveryTTL(24 * time.Hour)
+
+	before := metrics.RecoveryCountersSnapshot()
+	// 零行：没有过期记录，runs+1、rows 不动、failures 不动。
+	if n, err := st.MaterializeExpired(base); err != nil || n != 0 {
+		t.Fatalf("空跑应 0 行，n=%d err=%v", n, err)
+	}
+	mid := metrics.RecoveryCountersSnapshot()
+	if mid.Runs != before.Runs+1 || mid.MaterializedRows != before.MaterializedRows || mid.Failures != before.Failures {
+		t.Fatalf("零行语义错误: before=%+v mid=%+v", before, mid)
+	}
+
+	seedExpiredOK(t, st, "quay.io", base.Unix()-int64(24*time.Hour/time.Second)-1, 0)
+	if n, err := st.MaterializeExpired(base); err != nil || n != 1 {
+		t.Fatalf("应物化 1 行，n=%d err=%v", n, err)
+	}
+	after := metrics.RecoveryCountersSnapshot()
+	if after.MaterializedRows != before.MaterializedRows+1 {
+		t.Fatalf("物化行数增量错误: %+v", after)
+	}
+	if after.Runs != before.Runs+2 || after.Failures != before.Failures {
+		t.Fatalf("runs/failures 增量错误: %+v", after)
+	}
+
+	// 执行失败：failures+1，rows 不动。
+	st.Close()
+	if _, err := st.MaterializeExpired(base); err == nil {
+		t.Fatal("关闭后应返回错误")
+	}
+	failed := metrics.RecoveryCountersSnapshot()
+	if failed.Failures != after.Failures+1 || failed.MaterializedRows != after.MaterializedRows {
+		t.Fatalf("失败计数错误: %+v", failed)
+	}
+	if failed.Runs != after.Runs+1 {
+		t.Fatalf("失败也应计入 runs: %+v", failed)
 	}
 }

@@ -12,6 +12,15 @@ type MetricsView struct {
 	Heat        map[string]uint64 `json:"heat"`
 	Concurrency ConcurrencyView   `json:"concurrency"`
 	Guard       GuardView         `json:"guard"`
+	Recovery    RecoveryView      `json:"recovery"`
+}
+
+// RecoveryView 是 TTL 物化的累计观测：rows 为实际 CAS 提交行数。
+type RecoveryView struct {
+	MaterializedRowsTotal uint64  `json:"materialized_rows_total"`
+	RunsTotal             uint64  `json:"runs_total"`
+	FailuresTotal         uint64  `json:"failures_total"`
+	AvgDurationMS         float64 `json:"avg_duration_ms"`
 }
 
 // GuardView 候选屏蔽的保守降级计数。
@@ -67,12 +76,14 @@ func SnapshotView() MetricsView {
 			Enabled:  false,
 			Heat:     map[string]uint64{},
 			Ratio:    RatioView{Scenes: map[string]float64{}},
-			Guard: GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
+			Guard:    GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
+			Recovery: RecoveryViewSnapshot(),
 		}
 	}
 	out := MetricsView{
 		Enabled: true, Heat: map[string]uint64{}, Ratio: RatioView{Scenes: map[string]float64{}},
-		Guard: GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
+		Guard:    GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
+		Recovery: RecoveryViewSnapshot(),
 	}
 
 	r.mu.Lock()
