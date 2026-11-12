@@ -437,3 +437,114 @@ func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
 		t.Fatalf("Body 关闭后名额未释放: %d", held)
 	}
 }
+
+// ctxBlockingBody 的第一段数据交付后，Read 会停在 ctx.Done 上；它只跟随
+// 请求 Context，不依赖任何超时或调度时序。Reclaim 若没有经 BindCancel
+// 取消这个 Context，Read 就永远不会返回。
+type ctxBlockingBody struct {
+	ctx     context.Context
+	entered chan struct{}
+	once    sync.Once
+	first   []byte
+}
+
+func (b *ctxBlockingBody) Read(p []byte) (int, error) {
+	if len(b.first) > 0 {
+		n := copy(p, b.first)
+		b.first = b.first[n:]
+		return n, nil
+	}
+	b.once.Do(func() { close(b.entered) })
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (b *ctxBlockingBody) Close() error { return nil }
+
+type ctxBlockingRT struct {
+	entered chan struct{}
+	first   []byte
+	sent    int64
+	total   int64
+}
+
+func (r ctxBlockingRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusPartialContent,
+		Header: http.Header{
+			"Etag":           {`"v1"`},
+			"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", r.sent, r.total-1, r.total)},
+			"Content-Length": {strconv.FormatInt(r.total-r.sent, 10)},
+		},
+		ContentLength: r.total - r.sent,
+		Body:          &ctxBlockingBody{ctx: req.Context(), entered: r.entered, first: append([]byte(nil), r.first...)},
+		Request:       req,
+	}, nil
+}
+
+// 确定性版本：阻塞点由测试 Body 显式控制，entered 关闭后 Read 只可能因
+// Context 取消返回，因此 Reclaim 与阻塞状态的先后不依赖 sleep。
+func TestLeaseReclaimCancelsCtxBlockingBody(t *testing.T) {
+	const total = int64(1 << 20)
+	const sent = int64(256 << 10)
+
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id := addSchedSource(t, st, "ctxblocked", "http://ctxblocked.invalid/x", 10, 9000)
+
+	entered := make(chan struct{})
+	g := &Gateway{
+		cli:          &http.Client{Transport: ctxBlockingRT{entered: entered, first: []byte("X"), sent: sent, total: total}},
+		par:          ParOptions{SwitchMinMBps: 1},
+		switchBudget: time.Second,
+		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
+		parTargets: func(*adapter.Plan) []fetchTarget {
+			return []fetchTarget{{u: &url.URL{Scheme: "http", Host: "ctxblocked.invalid", Path: "/x"}, c: &scheduler.Candidate{ID: id, Name: "ctxblocked", Preferred: true}}}
+		},
+	}
+	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, _, first, _, err := g.trySwitch(ctx, &adapter.Plan{Kind: "docker"}, nil, hdr("ETag", `"v1"`), sent, total, map[int64]bool{})
+	if err != nil {
+		t.Fatalf("应成功接管: %v", err)
+	}
+	if len(first) != 1 || g.sched.LeaseHeld(id) != 1 {
+		t.Fatalf("首字节或名额不符: %v held=%d", first, g.sched.LeaseHeld(id))
+	}
+
+	readErr := make(chan error, 1)
+	go func() {
+		_, rerr := resp.Body.Read(make([]byte, 64))
+		readErr <- rerr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Read 未走到阻塞点")
+	}
+	select {
+	case rerr := <-readErr:
+		t.Fatalf("Context 未取消，Read 不应返回: %v", rerr)
+	default:
+	}
+	if n := g.sched.ReclaimSource(id, "stall"); n != 1 {
+		t.Fatalf("Reclaim 应命中 1 个 Lease: %d", n)
+	}
+	select {
+	case rerr := <-readErr:
+		if rerr == nil {
+			t.Fatal("Reclaim 后 Read 必须返回错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Reclaim 没有取消请求 Context：BindCancel 未生效")
+	}
+	resp.Body.Close()
+	if held := g.sched.LeaseHeld(id); held != 0 {
+		t.Fatalf("关闭后名额未释放: %d", held)
+	}
+}
