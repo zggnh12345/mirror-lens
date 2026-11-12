@@ -46,7 +46,10 @@ func (s *Store) migrateRecoverySchema() error {
 	if _, err := s.db.Exec(recoveryDDL); err != nil {
 		return fmt.Errorf("建 registry_host_recovery: %w", err)
 	}
-	return s.migrateScopedGen()
+	if err := s.migrateScopedGen(); err != nil {
+		return err
+	}
+	return s.seedRecoveryFromScope()
 }
 
 // migrateScopedGen 把 3.5.1 的 source_health_scope(source_id,family,scope)

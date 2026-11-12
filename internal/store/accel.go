@@ -153,9 +153,6 @@ func (s *Store) migrateAccel() error {
 			n INTEGER NOT NULL DEFAULT 0,
 			bytes INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(day, traffic, kind))`,
-		`CREATE TABLE IF NOT EXISTS meta(
-			k TEXT PRIMARY KEY,
-			v TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS pending_blobs(
 			sha TEXT PRIMARY KEY,
 			queued_at INTEGER NOT NULL)`,
