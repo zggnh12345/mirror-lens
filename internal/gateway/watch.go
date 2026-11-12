@@ -402,6 +402,12 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			continue
 		}
 		resp = wrapped
+		// 换源接管走的是读循环直用路径，不会经过 stream.go 里那次
+		// *leaseBody 断言；这里补上同一道空闲看门狗，避免调用方既不读
+		// 也不关时名额长期占用。
+		if lb, ok := resp.Body.(*leaseBody); ok && l != nil {
+			go lb.watch(90 * time.Second)
+		}
 		// 成功接管的 body 关闭时才取消 rctx：既不泄漏 context，也保证
 		// 迟到的超时信号永远不能打断已经开始的读取。
 		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
