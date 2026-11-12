@@ -384,8 +384,9 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			firstCh <- readResult{n, err}
 		}()
 		rr, ok := waitWithin(firstCh, remaining, func() {
+			// 只取消，不在这里关闭 body：Close 由下面唯一的失败分支执行，
+			// 保证任何路径上 body 只被关闭一次。cancel 会先让阻塞的 Read 返回。
 			cancel()
-			resp.Body.Close()
 		})
 		if !ok || rr.n <= 0 {
 			cancel()
@@ -429,8 +430,6 @@ func (g *Gateway) switchTimeout() time.Duration {
 	}
 	return switchFirstByteBudget
 }
-
-var errFirstByteTimeout = errors.New("换源等待首字节超时")
 
 // waitWithin 等待 ch 里的结果或超时。超时回调只投递信号、不直接产生副作用，
 // 是否取消由调用方在 onTimeout 里决定，因此「数据先到」与「超时」只有一个胜者：
