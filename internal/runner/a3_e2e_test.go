@@ -318,7 +318,7 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv, _, _ := bearerRegistry(t, false)
+		srv, tokenHits, _ := bearerRegistry(t, false)
 		if _, err := rawExec(t, f, `UPDATE sources SET base_url=? WHERE id=?`, srv.URL, f.srcID); err != nil {
 			t.Fatal(err)
 		}
@@ -336,6 +336,9 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		})
 		r.Once(context.Background())
 
+		if got := atomic.LoadInt32(tokenHits); got < 1 {
+			t.Fatalf("未打到 token endpoint，用例没有覆盖目标路径: %d", got)
+		}
 		src, _ := f.st.GetSource(f.srcID)
 		if src.RegistryCap == store.RegistryCapYes {
 			t.Fatal("Token 获取失败不得写 cap=1")
