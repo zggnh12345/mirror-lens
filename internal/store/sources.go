@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"math"
 	"sort"
 	"strings"
@@ -104,33 +105,18 @@ func (s *Store) NoteProbe(id int64, family string, ok bool) error {
 	return s.NoteProbeScoped(id, family, "", ok)
 }
 
-// NoteProbeScoped 记录一次探测结果。scope 为空时沿用按协议族的旧表；
-// registry 用规范化 Host 作为 scope，写独立维度表——一个 Host 的连续失败
-// 不能摘掉同一来源在其他 Host 的候选资格。
+// NoteProbeScoped 记录一次探测结果。
+//
+// Registry 探测结果必须走 CommitHostProbe：它需要探测起点的代次/摘要做
+// 事务内校验，并同时维护 recovery。这里直接拒绝，避免出现只写 scoped、
+// 不校验代次、不更新 recovery 的第二条写路径。
+// 其他 family 的历史语义不变：按 (source_id, family) 聚合，scope 不参与。
 func (s *Store) NoteProbeScoped(id int64, family, scope string, ok bool) error {
-	now := time.Now().Unix()
-	// scope 为空时保持旧语义（按 family 聚合），留给尚未接入 Host 维度的调用方。
-	if family == "registry" && scope != "" {
-		h, err := registryhost.Check(scope)
-		if err != nil {
-			return err
-		}
-		scope = h
-		if scope != "" {
-			if ok {
-				_, err := s.db.Exec(`INSERT INTO source_health_scope(source_id, family, scope, fails, ok_at, last_at)
-					VALUES(?,?,?,0,?,?)
-					ON CONFLICT(source_id, family, scope) DO UPDATE SET fails=0, ok_at=excluded.ok_at, last_at=excluded.last_at`,
-					id, family, scope, now, now)
-				return err
-			}
-			_, err := s.db.Exec(`INSERT INTO source_health_scope(source_id, family, scope, fails, last_at)
-				VALUES(?,?,?,1,?)
-				ON CONFLICT(source_id, family, scope) DO UPDATE SET fails=fails+1, last_at=excluded.last_at`,
-				id, family, scope, now)
-			return err
-		}
+	if family == "registry" {
+		return errors.New("registry 探测结果必须经 CommitHostProbe 写入")
 	}
+	_ = scope
+	now := time.Now().Unix()
 	if ok {
 		_, err := s.db.Exec(`INSERT INTO source_health(source_id, family, fails, ok_at, last_at)
 			VALUES(?,?,0,?,?)
@@ -145,10 +131,20 @@ func (s *Store) NoteProbeScoped(id int64, family, scope string, ok bool) error {
 	return err
 }
 
-// ScopedHealthOf 返回某个源按 (family,scope) 的连续失败次数，目前只有
-// registry 的 Host 维度会产生记录。key 形如 "registry@ghcr.example"。
+// ScopedHealthOf 返回某个源按 (family,scope) 的连续失败次数，key 形如
+// "registry@ghcr.example"。
+//
+// Registry 只认当前凭据代次的证据：z.gen 必须等于该源 Host 的 currentGen。
+// 旧代次行（包括 3.5.1 迁移来的 gen=0 行）在 currentGen>0 时不出现在结果里，
+// 调用方据此按「无证据」处理。非 Registry family 没有代次概念，保持旧语义。
 func (s *Store) ScopedHealthOf(id int64) (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT family, scope, fails FROM source_health_scope WHERE source_id=?`, id)
+	rows, err := s.db.Query(`
+		SELECT z.family, z.scope, z.fails, z.gen,
+		       COALESCE((SELECT g.gen FROM registry_host_gen g
+		                 JOIN sources src ON src.repo_host = g.host
+		                 WHERE src.id = z.source_id), 0)
+		FROM source_health_scope z
+		WHERE z.source_id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +153,20 @@ func (s *Store) ScopedHealthOf(id int64) (map[string]int, error) {
 	for rows.Next() {
 		var f, sc string
 		var n int
-		if err := rows.Scan(&f, &sc, &n); err != nil {
+		var gen, currentGen int64
+		if err := rows.Scan(&f, &sc, &n, &gen, &currentGen); err != nil {
 			return nil, err
+		}
+		if f == "registry" {
+			// scope 统一规范化，避免历史上的大小写/尾点变体被当成另一个 Host。
+			h, err := registryhost.Check(sc)
+			if err != nil {
+				continue
+			}
+			sc = h
+			if gen != currentGen {
+				continue
+			}
 		}
 		out[f+"@"+sc] = n
 	}

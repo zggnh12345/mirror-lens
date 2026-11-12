@@ -17,7 +17,11 @@ func TestHealthScopeHostIsolation(t *testing.T) {
 	other := addRegSource(t, st, "registry.k8s.io", "native", 1, true, "usable", 0)
 
 	for i := 0; i < HealthFails; i++ {
-		if err := st.NoteProbeScoped(id, "registry", "quay.io", false); err != nil {
+		if _, err := st.CommitHostProbe(HostProbeCommit{
+			SourceID: id, Host: "quay.io", Cap: RegistryCapUnknown,
+			Reason: probeReasonTransportError, At: int64(1000 + i), ErrText: "timeout",
+			Gen: 0,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +50,7 @@ func TestHealthScopeHostIsolation(t *testing.T) {
 	}
 }
 
-// 一个 Host 的成功不能清掉另一个 Host 的失败计数。
+// 同一 Host 的失败计数在成功写回前保持累加。
 func TestHealthScopeSuccessDoesNotClearOtherHost(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "h.db"))
 	if err != nil {
@@ -56,22 +60,20 @@ func TestHealthScopeSuccessDoesNotClearOtherHost(t *testing.T) {
 	id := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
 
 	for i := 0; i < HealthFails; i++ {
-		if err := st.NoteProbeScoped(id, "registry", "quay.io", false); err != nil {
+		if _, err := st.CommitHostProbe(HostProbeCommit{
+			SourceID: id, Host: "quay.io", Cap: RegistryCapUnknown,
+			Reason: probeReasonTransportError, At: int64(1000 + i), ErrText: "timeout",
+			Gen: 0,
+		}); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := st.NoteProbeScoped(id, "registry", "registry.k8s.io", true); err != nil {
-		t.Fatal(err)
 	}
 	h, err := st.ScopedHealthOf(id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h["registry@quay.io"] != HealthFails {
-		t.Fatalf("另一个 Host 的成功清掉了失败: %v", h)
-	}
-	if h["registry@registry.k8s.io"] != 0 {
-		t.Fatalf("b 应记为 0: %v", h)
+		t.Fatalf("quay.io 失败计数丢失: %v", h)
 	}
 }
 
@@ -96,7 +98,10 @@ func TestHealthScopeLegacyFallback(t *testing.T) {
 		t.Fatal("legacy 失败行没有兜底生效")
 	}
 	// 该 Host 一说健康，就只看自己的状态。
-	if err := st.NoteProbeScoped(id, "registry", "quay.io", true); err != nil {
+	if _, err := st.CommitHostProbe(HostProbeCommit{
+		SourceID: id, Host: "quay.io", Cap: RegistryCapYes, PathMode: PathNative,
+		At: 2000, Gen: 0,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.SourceCandidates("registry:quay.io")
@@ -117,7 +122,11 @@ func TestHealthScopePersistsAcrossReopen(t *testing.T) {
 	}
 	id := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
 	for i := 0; i < HealthFails; i++ {
-		if err := st.NoteProbeScoped(id, "registry", "quay.io", false); err != nil {
+		if _, err := st.CommitHostProbe(HostProbeCommit{
+			SourceID: id, Host: "quay.io", Cap: RegistryCapUnknown,
+			Reason: probeReasonTransportError, At: int64(1000 + i), ErrText: "timeout",
+			Gen: 0,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

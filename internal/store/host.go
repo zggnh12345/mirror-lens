@@ -85,17 +85,55 @@ WHERE repo_host=''
 }
 
 // SetRepoHost 修改源归属的 Registry Host。
-// 归属变了，旧 Host 的探测结论对新 Host 没有意义，必须一起清空，
-// 否则新 Host 会顶着旧能力被调度。
+// 归属变了，旧 Host 的探测结论、健康证据和恢复状态对新 Host 都没有意义，
+// 必须在同一事务里一起清掉，否则新 Host 会顶着旧归属的数据被调度。
 func (s *Store) SetRepoHost(id int64, rawHost string) error {
 	host, err := registryhost.Check(rawHost)
 	if err != nil {
 		return err
 	}
 	return s.withSourceLive(id, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE sources
+		var oldHost string
+		if err := tx.QueryRow(`SELECT COALESCE(repo_host,'') FROM sources WHERE id=?`, id).
+			Scan(&oldHost); err != nil {
+			return err
+		}
+
+		// 旧 scope 的行按 (source_id, 'registry', oldHost) 精确删除，不按
+		// host 全局删——同 Host 上的其他源不受影响。
+		if _, err := tx.Exec(`DELETE FROM source_health_scope
+WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM registry_host_recovery
+WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(`UPDATE sources
 SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
-WHERE id=?`, host, RegistryCapUnknown, id)
+WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
+			return err
+		}
+
+		// 新 Host 的恢复行：state=initial、gen 取新 Host 的当前代次、
+		// next_probe_at=now，等待新的有效探测证据；没有代次行时按 0 处理。
+		var gen int64
+		err := tx.QueryRow(`SELECT gen FROM registry_host_gen WHERE host=?`, host).Scan(&gen)
+		if errors.Is(err, sql.ErrNoRows) {
+			gen = 0
+		} else if err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		_, err = tx.Exec(`INSERT INTO registry_host_recovery
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
+VALUES(?, 'registry', ?, 'initial', ?, 0, 0, ?, 0, '', ?)
+ON CONFLICT(source_id, family, scope) DO UPDATE SET
+  state='initial', gen=excluded.gen, last_probe_at=0,
+  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  updated_at=excluded.updated_at`,
+			id, host, gen, now, now)
 		return err
 	})
 }
@@ -127,6 +165,10 @@ func (s *Store) withSourceLive(id int64, fn func(*sql.Tx) error) error {
 }
 
 // SetHostCaps 写回一次 Host Probe 的结果。
+//
+// Deprecated: 生产路径已统一到 CommitHostProbe（cap + scoped + recovery 同一
+// 事务）。此函数只保留给历史测试造数据，不得新增调用方；
+// TestRegistryProbeWritePathsConverged 会拦住生产代码里的调用。
 //
 // 三个条件都放在 SQL 里，不靠 Go 侧提前检查：
 //   - repo_host 必须仍是探测时的 Host（用户可能中途改了归属）；
@@ -298,14 +340,17 @@ func (s *Store) ApplyCredChanges(changes []CredChange) error {
 		if host == "" || host == "ghcr.io" {
 			return errors.New("Hub/ghcr 不使用 Host 代次")
 		}
+		var newGen int64
 		if c.Digest == nil {
-			if _, err := tx.Exec(`INSERT INTO registry_host_gen(host,gen,updated_at) VALUES(?,1,?)
-ON CONFLICT(host) DO UPDATE SET gen=gen+1, updated_at=excluded.updated_at`, host, now); err != nil {
+			if err := tx.QueryRow(`INSERT INTO registry_host_gen(host,gen,updated_at) VALUES(?,1,?)
+ON CONFLICT(host) DO UPDATE SET gen=gen+1, updated_at=excluded.updated_at
+RETURNING gen`, host, now).Scan(&newGen); err != nil {
 				return err
 			}
-		} else if _, err := tx.Exec(`INSERT INTO registry_host_gen(host,gen,cred_digest,updated_at) VALUES(?,1,?,?)
-ON CONFLICT(host) DO UPDATE SET gen=gen+1, cred_digest=excluded.cred_digest, updated_at=excluded.updated_at`,
-			host, *c.Digest, now); err != nil {
+		} else if err := tx.QueryRow(`INSERT INTO registry_host_gen(host,gen,cred_digest,updated_at) VALUES(?,1,?,?)
+ON CONFLICT(host) DO UPDATE SET gen=gen+1, cred_digest=excluded.cred_digest, updated_at=excluded.updated_at
+RETURNING gen`,
+			host, *c.Digest, now).Scan(&newGen); err != nil {
 			return err
 		}
 		// 只清结论，不抹诊断：诊断是上一次有效 Probe 留下的历史事实，
@@ -313,6 +358,19 @@ ON CONFLICT(host) DO UPDATE SET gen=gen+1, cred_digest=excluded.cred_digest, upd
 		if _, err := tx.Exec(`UPDATE sources
 SET registry_cap=?, registry_path_mode=''
 WHERE repo_host=? AND status<>'archived'`, RegistryCapUnknown, host); err != nil {
+			return err
+		}
+		// 代次绑定：recovery 行在同一事务内切到新 gen 并重置为待重验。
+		// last_success_at 保留为历史事实，但 gen 不匹配使它不再参与 ok 判定。
+		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
+SELECT id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, '', ?
+FROM sources WHERE repo_host=? AND status<>'archived'
+ON CONFLICT(source_id, family, scope) DO UPDATE SET
+  state='initial', gen=excluded.gen, last_probe_at=0,
+  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  updated_at=excluded.updated_at`,
+			host, newGen, now, now, host); err != nil {
 			return err
 		}
 	}
@@ -382,8 +440,64 @@ WHERE id=? AND repo_host=? AND registry_cap=? AND status<>'archived'`,
 	return n > 0, err
 }
 
-// ListPendingHostCaps 只返回尚未验证成功的源，供 Runner 入队。
-// 已确认不支持（0）的也在其中：上游策略会变，仍需按周期重探。
+// DueHostProbe 是一条到期待探测的源×Host。
+type DueHostProbe struct {
+	SourceID int64
+	Name     string
+	BaseURL  string
+	RepoHost string
+	Gen      int64
+}
+
+// ListDueHostProbes 返回 §6 定义的待探测集合：recovery 行不存在（还没人
+// 探测过）或 next_probe_at 已到期。持久化状态是唯一权威，Runner 重启后
+// 直接从这里捞回任务。
+//
+// 边界与 §6.1 一致：
+//   - archived / 空 Host / ghcr.io 不参与；
+//   - disabled 源保留 recovery 行但不进周期探测；
+//   - cap=2 与 state='hard-excluded' 双重排除（cap 未写回时靠 state，
+//     state 未更新时靠 cap）；
+//   - cap=1 但 recovery 行缺失仍会返回——缺行不等于健康，必须重探。
+func (s *Store) ListDueHostProbes(now int64) ([]DueHostProbe, error) {
+	rows, err := s.db.Query(`
+SELECT s.id, s.name, s.base_url, s.repo_host, COALESCE(g.gen,0)
+FROM sources s
+LEFT JOIN registry_host_gen g ON g.host = s.repo_host
+WHERE s.status<>'archived'
+  AND s.repo_host<>''
+  AND s.repo_host<>'ghcr.io'
+  AND s.enabled = 1
+  AND s.registry_cap <> ?
+  AND NOT EXISTS (SELECT 1 FROM registry_host_recovery r
+                  WHERE r.source_id=s.id AND r.family='registry'
+                    AND r.scope=s.repo_host AND r.state='hard-excluded')
+  AND ( NOT EXISTS (SELECT 1 FROM registry_host_recovery r
+                    WHERE r.source_id=s.id AND r.family='registry' AND r.scope=s.repo_host)
+     OR EXISTS (SELECT 1 FROM registry_host_recovery r
+                WHERE r.source_id=s.id AND r.family='registry'
+                  AND r.scope=s.repo_host AND r.next_probe_at <= ?) )
+ORDER BY s.repo_host, s.name`, RegistryCapMismatch, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DueHostProbe
+	for rows.Next() {
+		var x DueHostProbe
+		if err := rows.Scan(&x.SourceID, &x.Name, &x.BaseURL, &x.RepoHost, &x.Gen); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// ListPendingHostCaps 只返回尚未验证成功的源。
+//
+// Deprecated: Runner 已改用 ListDueHostProbes（recovery 驱动的到期查询）。
+// 保留此方法仅供历史测试与只读诊断，不得作为调度依据。
 func (s *Store) ListPendingHostCaps() ([]HostCap, error) {
 	return s.hostCaps("AND s.registry_cap<>1")
 }

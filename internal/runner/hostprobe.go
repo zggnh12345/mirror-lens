@@ -39,11 +39,18 @@ type HostProbeOptions struct {
 	// Backoff 是 stale_snapshot / 认证暂不可用时的重排退避起点，按次数翻倍。
 	Backoff time.Duration
 
+	// RecoveryTTL 是 cap=1 成功结论的有效期；0 用 store.RecoveryDefaultTTL。
+	RecoveryTTL time.Duration
+
+	// ScanInterval 是「捞到期任务」的主节拍。它是恢复延迟的上界：
+	// 事务写入的 next_probe_at 最迟这么久被 Runner 看见。默认 30s。
+	ScanInterval time.Duration
+
 	Realms map[string][]string
 
 	// Probe 可注入，测试用；默认 probe.ProbeRegistryHost。
 	Probe func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome
-	// Jobs 可注入，测试用；默认从 Store.ListPendingHostCaps 生成。
+	// Jobs 可注入，测试用；默认从 Store.ListDueHostProbes 生成。
 	Jobs func(context.Context) ([]HostProbeJob, error)
 
 	Now func() time.Time
@@ -59,7 +66,10 @@ type HostProbeRunner struct {
 }
 
 type probeState struct {
-	next    time.Time
+	next time.Time
+	// running 覆盖「已 claim、未 finish」的整个探测生命周期。占位不能只
+	// 靠 next=now：并发调用 Once 时会把它当成过期状态直接抢走。
+	running bool
 	backoff time.Duration
 	// gen/digest 是上一次探测用的凭据版本：版本一变，旧版本的连续失败
 	// 就不该继续把退避往上抬。
@@ -68,9 +78,13 @@ type probeState struct {
 }
 
 const (
+	// defaultHostProbeInterval 是「全量对账」周期（reconcileRepos）。
 	defaultHostProbeInterval = 6 * time.Hour
-	defaultHostProbeBackoff  = 15 * time.Second
-	maxHostProbeBackoff      = 10 * time.Minute
+	// defaultHostProbeScan 是捞到期任务的节拍。恢复延迟上界由它决定，
+	// 与 6h 对账周期无关。
+	defaultHostProbeScan    = 30 * time.Second
+	defaultHostProbeBackoff = 15 * time.Second
+	maxHostProbeBackoff     = 10 * time.Minute
 )
 
 func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
@@ -85,6 +99,12 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 	}
 	if o.Backoff <= 0 {
 		o.Backoff = defaultHostProbeBackoff
+	}
+	if o.RecoveryTTL <= 0 {
+		o.RecoveryTTL = store.RecoveryDefaultTTL
+	}
+	if o.ScanInterval <= 0 {
+		o.ScanInterval = defaultHostProbeScan
 	}
 	if o.Probe == nil {
 		o.Probe = probe.ProbeRegistryHost
@@ -104,13 +124,19 @@ func (r *HostProbeRunner) Run(ctx context.Context) {
 	}
 	r.reconcileRepos()
 	r.Once(ctx)
-	t := time.NewTicker(r.o.Interval)
-	defer t.Stop()
+	scan := time.NewTicker(r.o.ScanInterval)
+	defer scan.Stop()
+	recon := time.NewTicker(r.o.Interval)
+	defer recon.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-scan.C:
+			r.Once(ctx)
+		case <-recon.C:
+			// 仓库映射变化会让旧结论失效；这与到期扫描是两件事。
+			r.reconcileRepos()
 			r.Once(ctx)
 		}
 	}
@@ -188,7 +214,7 @@ func (r *HostProbeRunner) jobs(ctx context.Context) ([]HostProbeJob, error) {
 	if r.o.Jobs != nil {
 		return r.o.Jobs(ctx)
 	}
-	rows, err := r.o.Store.ListPendingHostCaps()
+	rows, err := r.o.Store.ListDueHostProbes(r.o.Now().Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -242,12 +268,12 @@ func (r *HostProbeRunner) claim(key string) bool {
 	st := r.state[key]
 	now := r.o.Now()
 	if st != nil {
-		if st.next.After(now) {
+		if st.running || st.next.After(now) {
 			return false
 		}
 		delete(r.state, key)
 	}
-	r.state[key] = &probeState{next: now} // 占位，跑完由 finish 改成 true/false
+	r.state[key] = &probeState{next: now, running: true}
 	return true
 }
 
@@ -340,7 +366,22 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		log.Printf("Host %s 探测结果自相矛盾，拒绝写库: %v", j.Host, err)
 		return
 	}
-	res, err := r.o.Store.SetHostCaps(j.SourceID, j.Host, capv, mode, r.o.Now().Unix(), note, snap.Generation, snap.Digest)
+	// 一次事务写回 cap / scoped 健康 / recovery。gen 与 digest 都来自
+	// 探测起点的快照，事务内只做相等校验，不重新读取当前代次。
+	res, err := r.o.Store.CommitHostProbe(store.HostProbeCommit{
+		SourceID:      j.SourceID,
+		Host:          j.Host,
+		Cap:           capv,
+		PathMode:      mode,
+		Reason:        out.Reason,
+		Transport:     out.Transport,
+		At:            r.o.Now().Unix(),
+		ErrText:       note,
+		Gen:           snap.Generation,
+		CredDigest:    snap.Digest,
+		HasCredential: snap.HasCredential,
+		TTL:           r.o.RecoveryTTL,
+	})
 	if err != nil {
 		log.Printf("写回 %s 能力失败: %v", j.Host, err)
 		retry = true
@@ -351,16 +392,8 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		if out.Cap == probe.CapYes {
 			log.Printf("Host %s 验证通过（%s）", j.Host, out.Selected)
 		}
-		// 健康度按 Host 记：这一条只影响 (源, registry, 本 Host) 的候选资格，
-		// 不牵连同一来源在其他 Registry 的调度。明确「不支持」是能力问题，
-		// 已经写进 registry_cap，不再记成健康失败。
-		if out.Cap == probe.CapYes || out.Cap == probe.CapUnknown {
-			if err := r.o.Store.NoteProbeScoped(j.SourceID, "registry", j.Host, out.Cap == probe.CapYes); err != nil {
-				log.Printf("记 %s 的 Host 健康失败: %v", j.Host, err)
-			}
-		}
 	case store.HostCapsStaleSnapshot:
-		// 不写错误、不计失败，退避后重新取快照。
+		// 整笔拒绝：cap、scoped、recovery 都没有写入。退避后重新取快照。
 		retry = true
 	case store.HostCapsSourceChanged:
 		// 源已换 Host：下一轮按新归属重新入队。

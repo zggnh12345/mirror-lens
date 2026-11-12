@@ -48,6 +48,18 @@ func mustSecretKey(dir string) []byte {
 	return key
 }
 
+// hostProbeScanInterval 是捞到期恢复任务的节拍，同时是恢复延迟上界。
+// 可用 ML_HOSTPROBE_SCAN 覆盖。
+func hostProbeScanInterval() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ML_HOSTPROBE_SCAN")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		log.Printf("ML_HOSTPROBE_SCAN=%q 无效，用默认 30s", v)
+	}
+	return 30 * time.Second
+}
+
 // hostProbeInterval 默认 6 小时；失败源靠 Runner 内部退避重试，不受这个
 // 周期约束。可用 ML_HOSTPROBE_INTERVAL 覆盖。
 func hostProbeInterval() time.Duration {
@@ -317,13 +329,14 @@ func main() {
 	}
 	if hostCreds != nil {
 		go runner.NewHostProbeRunner(runner.HostProbeOptions{
-			Store:       st,
-			Creds:       hostCreds,
-			Repos:       parseHostProbeRepos(os.Getenv("ML_HOSTPROBE_REPOS")),
-			Interval:    hostProbeInterval(),
-			Timeout:     time.Duration(cfg.Probe.TimeoutSec) * time.Second,
-			Concurrency: cfg.Probe.Concurrency,
-			Backoff:     15 * time.Second,
+			Store:        st,
+			Creds:        hostCreds,
+			Repos:        parseHostProbeRepos(os.Getenv("ML_HOSTPROBE_REPOS")),
+			Interval:     hostProbeInterval(),
+			ScanInterval: hostProbeScanInterval(),
+			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,
+			Concurrency:  cfg.Probe.Concurrency,
+			Backoff:      15 * time.Second,
 		}).Run(ctx)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ type hostProbeFixture struct {
 	st    *store.Store
 	creds *secret.Store
 	srcID int64
+	dir   string
+	key   []byte
 	now   time.Time
 }
 
@@ -28,7 +31,7 @@ func newHostProbeFixture(t *testing.T, host string) *hostProbeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, err := st.AddSource(store.Source{Name: "mirror", BaseURL: "https://mirror.example", Status: "usable", RepoHost: host})
+	id, err := st.AddSource(store.Source{Name: "mirror", BaseURL: "https://mirror.example", Status: "usable", Enabled: true, RepoHost: host})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +46,7 @@ func newHostProbeFixture(t *testing.T, host string) *hostProbeFixture {
 	if _, err := cs.Reconcile(); err != nil {
 		t.Fatal(err)
 	}
-	return &hostProbeFixture{st: st, creds: cs, srcID: id, now: time.Unix(1000, 0)}
+	return &hostProbeFixture{st: st, creds: cs, srcID: id, dir: dir, key: key, now: time.Unix(1000, 0)}
 }
 
 func (f *hostProbeFixture) runner(t *testing.T, jobs []HostProbeJob, fn func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome) (*HostProbeRunner, *int) {
@@ -340,5 +343,151 @@ func TestReconcileReposClearsUnverifiableDiagnostics(t *testing.T) {
 				t.Fatalf("诊断应保留")
 			}
 		})
+	}
+}
+
+// TestJobsComeFromDurableRecovery 验证待探测集合来自 recovery 表的
+// next_probe_at，而不是进程内状态：同一 DB 上新建 Runner（模拟重启）
+// 仍能捞回到期任务。
+func TestJobsComeFromDurableRecovery(t *testing.T) {
+	f := newHostProbeFixture(t, "quay.io")
+	repos := map[string]string{"quay.io": "prometheus/node-exporter"}
+
+	// 把 next_probe_at 固定到 at+TTL，绕开 AddSource 写入的真实时间。
+	if res, err := f.st.CommitHostProbe(store.HostProbeCommit{
+		SourceID: f.srcID, Host: "quay.io", Cap: store.RegistryCapYes,
+		PathMode: store.PathNative, At: 1000, TTL: time.Hour,
+	}); err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("seed commit: %v %v", res, err)
+	}
+
+	mk := func(now int64) *HostProbeRunner {
+		return NewHostProbeRunner(HostProbeOptions{
+			Store: f.st, Creds: f.creds, Repos: repos,
+			Now: func() time.Time { return time.Unix(now, 0) },
+		})
+	}
+
+	r := mk(2000)
+	jobs, err := r.jobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("未到期不应入队: %+v", jobs)
+	}
+
+	due := mk(5000) // 4600 到期
+	jobs, err = due.jobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].SourceID != f.srcID || jobs[0].Host != "quay.io" {
+		t.Fatalf("到期任务缺失: %+v", jobs)
+	}
+
+	// 重启：新实例没有任何内存状态，仍从 DB 捞到同一条。
+	restarted := mk(5000)
+	jobs, err = restarted.jobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].SourceID != f.srcID {
+		t.Fatalf("重启后丢失待重验任务: %+v", jobs)
+	}
+}
+
+// TestProbeStaleAfterCredChangeIsRejected：探测进行中凭据变化，旧探测
+// 携带的 gen 已过期，整笔写回被拒——cap、scoped、recovery 都不动。
+func TestProbeStaleAfterCredChangeIsRejected(t *testing.T) {
+	f := newHostProbeFixture(t, "quay.io")
+	jobs := []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", BaseURL: "https://mirror.example", Repo: "prometheus/node-exporter"}}
+	r, _ := f.runner(t, jobs, func(ctx context.Context, p probe.RegistryHostProbe) probe.RegistryHostOutcome {
+		d := "rotated"
+		if err := f.st.ApplyCredChanges([]store.CredChange{{Host: "quay.io", Digest: &d}}); err != nil {
+			t.Errorf("apply creds: %v", err)
+		}
+		return yesOutcome()
+	})
+	r.Once(context.Background())
+
+	v, err := f.st.RecoveryState(f.srcID, "registry", "quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Gen != 1 || v.State != store.RecoveryInitial || v.LastProbeAt != 0 {
+		t.Fatalf("旧探测不应写入 recovery: %+v", v)
+	}
+}
+
+// TestHostProbeScanDoesNotDuplicateInflight：同一 (source,host) 在探测
+// 未完成时不能被下一轮扫描重复启动；finish 后 claim 必须释放。
+func TestHostProbeScanDoesNotDuplicateInflight(t *testing.T) {
+	f := newHostProbeFixture(t, "quay.io")
+	jobs := []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", BaseURL: "https://mirror.example", Repo: "prometheus/node-exporter"}}
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var calls int64
+
+	r := NewHostProbeRunner(HostProbeOptions{
+		Store: f.st, Creds: f.creds,
+		Repos:       map[string]string{"quay.io": "prometheus/node-exporter"},
+		Concurrency: 2, Backoff: 15 * time.Second,
+		Now:  func() time.Time { return f.now },
+		Jobs: func(context.Context) ([]HostProbeJob, error) { return jobs, nil },
+		Probe: func(ctx context.Context, p probe.RegistryHostProbe) probe.RegistryHostOutcome {
+			atomic.AddInt64(&calls, 1)
+			started <- struct{}{}
+			<-release
+			return yesOutcome()
+		},
+	})
+
+	done := make(chan struct{})
+	go func() { r.Once(context.Background()); close(done) }()
+	<-started
+
+	// 探测还在飞：第二轮扫描必须跳过。
+	r.Once(context.Background())
+	if n := atomic.LoadInt64(&calls); n != 1 {
+		t.Fatalf("探测未完成时被重复启动: calls=%d", n)
+	}
+
+	close(release)
+	<-done
+
+	// 第一轮已 finish，claim 必须释放；再扫一轮应能重新启动。
+	r.Once(context.Background())
+	if n := atomic.LoadInt64(&calls); n != 2 {
+		t.Fatalf("finish 后 claim 未释放: calls=%d", n)
+	}
+}
+
+// TestCredSnapshotGenerationMatchesDBAfterRestart：代次权威在
+// registry_host_gen；CredStore 不缓存 gen，重启后新建实例读到的
+// Generation 必须与数据库一致，不能出现内存 5 / 数据库 6。
+func TestCredSnapshotGenerationMatchesDBAfterRestart(t *testing.T) {
+	f := newHostProbeFixture(t, "quay.io")
+	if _, err := f.creds.Put("quay.io", "u", "p"); err != nil {
+		t.Fatal(err)
+	}
+
+	cs2, err := secret.NewCredStore(filepath.Join(f.dir, "registry_creds.enc"), f.key, f.st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs2.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := cs2.Snapshot("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, _, err := f.st.HostGenState("quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gen != 1 || snap.Generation != gen {
+		t.Fatalf("快照代次与数据库不一致: snap=%d db=%d", snap.Generation, gen)
 	}
 }

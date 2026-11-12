@@ -303,10 +303,11 @@ CREATE TABLE IF NOT EXISTS source_health_scope (
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   family TEXT NOT NULL,
   scope TEXT NOT NULL DEFAULT '',
+  gen INTEGER NOT NULL DEFAULT 0,
   fails INTEGER NOT NULL DEFAULT 0,
   ok_at INTEGER NOT NULL DEFAULT 0,
   last_at INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY(source_id, family, scope)
+  PRIMARY KEY(source_id, family, scope, gen)
 );
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -399,6 +400,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		name TEXT NOT NULL DEFAULT '',
 		rank INTEGER NOT NULL DEFAULT 0
 	)`); err != nil {
+		return err
+	}
+	if err := s.migrateRecoverySchema(); err != nil {
 		return err
 	}
 	return s.migrateAccel()
@@ -740,7 +744,14 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
+	// 源与 recovery 行必须同一事务落库：只建源不建 recovery，会让新源在
+	// 「cap 未知但 recovery 缺失」状态下被 §6 的到期查询反复漏掉。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath)
 	if err != nil {
@@ -756,6 +767,25 @@ func (s *Store) AddSource(x Source) (int64, error) {
 		return 0, ErrExists
 	}
 	id, _ := res.LastInsertId()
+	// 归属 Host 的源立即进入待探测集合：gen 取该 Host 当前代次，
+	// 没有代次行时按 0（与 CommitHostProbe 的缺行规则一致）。
+	// 空 Host（Docker Hub）与 ghcr.io 不参与 Host 探测，不建行。
+	if x.RepoHost != "" && x.RepoHost != "ghcr.io" {
+		now := time.Now().Unix()
+		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
+(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, last_error, updated_at)
+VALUES(?, 'registry', ?, 'initial', COALESCE((SELECT gen FROM registry_host_gen WHERE host=?), 0), 0, 0, ?, 0, '', ?)
+ON CONFLICT(source_id, family, scope) DO UPDATE SET
+  state='initial', gen=excluded.gen, last_probe_at=0,
+  next_probe_at=excluded.next_probe_at, rec_failures=0, last_error='',
+  updated_at=excluded.updated_at`,
+			id, x.RepoHost, x.RepoHost, now, now); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -779,6 +809,15 @@ func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, prefer
 		}
 		if _, err := s.db.Exec(`UPDATE sources SET enabled=? WHERE id=?`, *enabled, id); err != nil {
 			return err
+		}
+		if *enabled {
+			// 重新启用就该马上重验：禁用期间 next_probe_at 可能停在很久
+			// 以后（失败退避），不能让用户等完退避期才看到结论。
+			now := time.Now().Unix()
+			if _, err := s.db.Exec(`UPDATE registry_host_recovery SET next_probe_at=?
+WHERE source_id=? AND family='registry' AND next_probe_at>?`, now, id, now); err != nil {
+				return err
+			}
 		}
 	}
 	if name != nil && *name != "" {
