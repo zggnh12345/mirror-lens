@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -60,7 +62,13 @@ func (s *Store) migrateLegacyRegistry() error {
 
 // beginImmediate 在专用连接上开写事务。database/sql 的 BeginTx 只能发出
 // 默认的 BEGIN（DEFERRED），先读后写时会直接 SQLITE_BUSY；这里显式 IMMEDIATE，
-// 由 busy_timeout(5000) 排队。提交/回滚与连接释放由 done 负责。
+// 由 busy_timeout(5000) 排队。
+//
+// done 只能真正结束事务一次：
+//   - 提交成功 → 关闭连接；
+//   - 提交失败 → 事务通常仍活着，必须在同一连接上 ROLLBACK 再关闭，
+//     提交错误与回滚错误都要带回，不能静默吞掉；
+//   - 之后外层 defer 再调用是空操作，不会去操作已经关闭的连接。
 func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error, error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -70,14 +78,29 @@ func (s *Store) beginImmediate(ctx context.Context) (*sql.Conn, func(bool) error
 		_ = conn.Close()
 		return nil, nil, err
 	}
+	finished := false
 	done := func(commit bool) error {
+		if finished {
+			return errTxFinished
+		}
+		finished = true
 		defer conn.Close()
 		if commit {
-			_, err := conn.ExecContext(ctx, "COMMIT")
-			return err
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				// 提交失败：先在原连接上回滚，把写锁放掉。
+				_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
+				if rbErr != nil && !isNoActiveTx(rbErr) {
+					return fmt.Errorf("提交失败: %w（回滚也失败: %v）", err, rbErr)
+				}
+				return fmt.Errorf("提交失败: %w", err)
+			}
+			return nil
 		}
 		// Background：即使 ctx 已取消也要把写锁放掉。
-		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
+		if rbErr != nil && !isNoActiveTx(rbErr) {
+			return fmt.Errorf("回滚失败: %w", rbErr)
+		}
 		return nil
 	}
 	return conn, done, nil
@@ -115,10 +138,19 @@ func (s *Store) ArchiveLegacyRegistry(ctx context.Context) (LegacyArchiveResult,
 		return out, err
 	}
 	out.Candidates = remaining
+	// 标记存在但又有 legacy 行：这是「迁移完成后数据被重新写回」的信号，
+	// 不能再次静默归档删除，否则等于每次启动都无条件清掉人工恢复的数据。
+	// 停机交给运维判断；要重跑迁移必须先 Unarchive 撤销标记。
+	if marked > 0 && remaining > 0 {
+		return out, fmt.Errorf("迁移标记 %s 已存在，但 source_health 仍有 %d 行 legacy registry 数据: "+
+			"拒绝再次归档；如需重跑，先调用 UnarchiveLegacyRegistry 撤销标记", legacyArchiveMarker, remaining)
+	}
 	if remaining == 0 {
 		out.AlreadyDone = marked > 0
-		if err := recordLegacyMarker(ctx, conn, now); err != nil {
-			return out, err
+		if marked == 0 {
+			if err := recordLegacyMarker(ctx, conn, now); err != nil {
+				return out, err
+			}
 		}
 		if err := done(true); err != nil {
 			return out, err
@@ -247,10 +279,25 @@ WHERE a.batch=?
 	return out, nil
 }
 
+// recordLegacyMarker 只写一次：标记存在时不动 applied_at，
+// 否则每次启动都会刷新，迁移记录就不再是「首次完成时间」。
 func recordLegacyMarker(ctx context.Context, tx dbtx, now int64) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)
-		 ON CONFLICT(name) DO UPDATE SET applied_at=excluded.applied_at`,
+		 ON CONFLICT(name) DO NOTHING`,
 		legacyArchiveMarker, now)
 	return err
+}
+
+// errTxFinished 表示事务已经提交或回滚过，防止外层清理二次操作。
+var errTxFinished = errors.New("事务已结束")
+
+// isNoActiveTx 判断是否「已经不在事务里」——COMMIT 报错但实际已提交时，
+// 随后的 ROLLBACK 会返回这个错误，不算回滚失败。
+func isNoActiveTx(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no transaction is active") || errors.Is(err, sql.ErrTxDone)
 }

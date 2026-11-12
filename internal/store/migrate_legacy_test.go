@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+// openTestAtNoMarker 打开测试库后清掉启动迁移写入的空批次标记，
+// 用来构造「3.5.3 之前」的库：有 legacy 数据、没有迁移标记。
+func openTestAtNoMarker(t *testing.T, path string) *Store {
+	t.Helper()
+	st := openTestAt(t, path)
+	clearLegacyMarker(t, st)
+	return st
+}
+
+func clearLegacyMarker(t *testing.T, st *Store) {
+	t.Helper()
+	if _, err := st.db.Exec(`DELETE FROM schema_migrations WHERE name=?`, legacyArchiveMarker); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedLegacyRow(t *testing.T, s *Store, id int64, fails, okAt, lastAt int64) {
 	t.Helper()
 	if _, err := s.db.Exec(`INSERT INTO source_health(source_id,family,fails,ok_at,last_at)
@@ -41,7 +57,7 @@ func countRows(t *testing.T, s *Store, q string, args ...any) int64 {
 // 覆盖口径：usable / archived / 空 repo_host / ghcr.io 四种源的 legacy 行都要归档，
 // 且不按 registry_cap 过滤；其他 family 的行必须原地保留。
 func TestArchiveLegacyRegistryCoversAllSources(t *testing.T) {
-	st := openTestAt(t, filepath.Join(t.TempDir(), "a.db"))
+	st := openTestAtNoMarker(t, filepath.Join(t.TempDir(), "a.db"))
 	defer st.Close()
 
 	usable := addLegacySource(t, st, "usable", "ghcr.example", "usable")
@@ -105,6 +121,7 @@ func TestArchiveLegacyRegistryCoversAllSources(t *testing.T) {
 func TestArchiveLegacyRegistryIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "b.db")
 	st := openTestAt(t, path)
+	clearLegacyMarker(t, st)
 	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
 	seedLegacyRow(t, st, id, 3, 1, 2)
 
@@ -135,6 +152,7 @@ func TestArchiveLegacyRegistryIdempotent(t *testing.T) {
 func TestOpenArchivesLegacyRegistry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.db")
 	st := openTestAt(t, path)
+	clearLegacyMarker(t, st)
 	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
 	seedLegacyRow(t, st, id, 1, 10, 20)
 	st.Close()
@@ -180,7 +198,7 @@ func TestArchiveLegacyRegistryRollsBack(t *testing.T) {
 
 // 回滚：归档行补回运行表，字段逐项相等；再次回滚全部按冲突跳过。
 func TestUnarchiveLegacyRegistryRoundTrip(t *testing.T) {
-	st := openTestAt(t, filepath.Join(t.TempDir(), "e.db"))
+	st := openTestAtNoMarker(t, filepath.Join(t.TempDir(), "e.db"))
 	defer st.Close()
 	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
 	seedLegacyRow(t, st, id, 4, 11, 22)
@@ -235,7 +253,7 @@ func TestUnarchiveLegacyRegistryRoundTrip(t *testing.T) {
 
 // 冲突：目标行已存在时跳过、不覆盖现行数据。
 func TestUnarchiveLegacyRegistrySkipsConflict(t *testing.T) {
-	st := openTestAt(t, filepath.Join(t.TempDir(), "f.db"))
+	st := openTestAtNoMarker(t, filepath.Join(t.TempDir(), "f.db"))
 	defer st.Close()
 	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
 	seedLegacyRow(t, st, id, 8, 1, 2)
@@ -303,4 +321,72 @@ func TestBeginImmediateTakesWriteLock(t *testing.T) {
 		t.Fatalf("释放后仍拿不到写锁: %v", err)
 	}
 	_, _ = ext.Exec("ROLLBACK")
+}
+
+// 标记已存在但运行表又出现 legacy 行：必须拒绝归档并停机，
+// 不能把人工恢复的数据再次删掉。运行表、归档表、标记都要保持原样。
+func TestArchiveLegacyRegistryRefusesWhenMarkedAndRowsRemain(t *testing.T) {
+	st := openTestAtNoMarker(t, filepath.Join(t.TempDir(), "e.db"))
+	defer st.Close()
+	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
+	seedLegacyRow(t, st, id, 3, 1, 2)
+	if _, err := st.ArchiveLegacyRegistry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	markedAt := countRows(t, st, `SELECT applied_at FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`)
+	archivedBefore := countRows(t, st, `SELECT COUNT(*) FROM source_health_archive`)
+
+	// 模拟迁移后被人工写回一行。
+	seedLegacyRow(t, st, id, 9, 5, 6)
+
+	_, err := st.ArchiveLegacyRegistry(context.Background())
+	if err == nil {
+		t.Fatal("标记存在且有残留行时必须报错")
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM source_health WHERE family='registry'`); n != 1 {
+		t.Fatalf("残留行被删除或改写: %d", n)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM source_health_archive`); n != archivedBefore {
+		t.Fatalf("归档表被改写: %d -> %d", archivedBefore, n)
+	}
+	if got := countRows(t, st, `SELECT applied_at FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`); got != markedAt {
+		t.Fatalf("标记时间被改写: %d -> %d", markedAt, got)
+	}
+
+	// 走 Unarchive 撤销标记后应能重新归档，证明报错不是死路。
+	if _, err := st.UnarchiveLegacyRegistry(context.Background(), legacyArchiveBatch); err != nil {
+		t.Fatal(err)
+	}
+	out, err := st.ArchiveLegacyRegistry(context.Background())
+	if err != nil {
+		t.Fatalf("撤销标记后重跑失败: %v", err)
+	}
+	if out.Removed != 1 {
+		t.Fatalf("重跑未清理: %+v", out)
+	}
+}
+
+// 完成标记只写一次：already_done 的启动不得刷新 applied_at。
+func TestArchiveLegacyRegistryKeepsMarkerTimestamp(t *testing.T) {
+	st := openTestAtNoMarker(t, filepath.Join(t.TempDir(), "f.db"))
+	defer st.Close()
+	id := addLegacySource(t, st, "s", "ghcr.example", "usable")
+	seedLegacyRow(t, st, id, 1, 1, 2)
+	if _, err := st.ArchiveLegacyRegistry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first := countRows(t, st, `SELECT applied_at FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`)
+	if _, err := st.db.Exec(`UPDATE schema_migrations SET applied_at=? WHERE name=?`, first-1000, legacyArchiveMarker); err != nil {
+		t.Fatal(err)
+	}
+	out, err := st.ArchiveLegacyRegistry(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.AlreadyDone {
+		t.Fatalf("应为 already_done: %+v", out)
+	}
+	if got := countRows(t, st, `SELECT applied_at FROM schema_migrations WHERE name='`+legacyArchiveMarker+`'`); got != first-1000 {
+		t.Fatalf("already_done 刷新了标记时间: %d -> %d", first-1000, got)
+	}
 }
