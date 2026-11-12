@@ -11,6 +11,12 @@ type MetricsView struct {
 	Ratio       RatioView         `json:"ratio"`
 	Heat        map[string]uint64 `json:"heat"`
 	Concurrency ConcurrencyView   `json:"concurrency"`
+	Guard       GuardView         `json:"guard"`
+}
+
+// GuardView 候选屏蔽的保守降级计数。
+type GuardView struct {
+	FilterRetryExhaustedTotal uint64 `json:"filter_retry_exhausted_total"`
 }
 
 // CacheView 缓存盘快照（gauge，janitor 刷新）。
@@ -58,12 +64,16 @@ func SnapshotView() MetricsView {
 	r := Get()
 	if r == nil {
 		return MetricsView{
-			Enabled: false,
-			Heat:    map[string]uint64{},
-			Ratio:   RatioView{Scenes: map[string]float64{}},
+			Enabled:  false,
+			Heat:     map[string]uint64{},
+			Ratio:    RatioView{Scenes: map[string]float64{}},
+			Guard: GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
 		}
 	}
-	out := MetricsView{Enabled: true, Heat: map[string]uint64{}, Ratio: RatioView{Scenes: map[string]float64{}}}
+	out := MetricsView{
+		Enabled: true, Heat: map[string]uint64{}, Ratio: RatioView{Scenes: map[string]float64{}},
+		Guard: GuardView{FilterRetryExhaustedTotal: GuardFilterExhaustedTotal()},
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

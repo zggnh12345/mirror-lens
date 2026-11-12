@@ -27,6 +27,19 @@ func addRegSource(t *testing.T, st *Store, host, path string, cap int, enabled b
 		host, cap, path, id); err != nil {
 		t.Fatalf("update registry cols: %v", err)
 	}
+	// cap=1 且路径合法的源代表「已经探测通过」：候选准入还要求 recovery
+	// 行是 ok 且成功结论未过期（C5 五重约束），所以这里补一条。
+	if cap == 1 && (path == "native" || path == "host_prefix") {
+		now := st.nowTime().Unix()
+		if _, err := st.db.Exec(`INSERT INTO registry_host_recovery
+			(source_id, family, scope, state, gen, last_success_at, next_probe_at, updated_at)
+			VALUES(?, 'registry', ?, 'ok', 0, ?, 0, ?)
+			ON CONFLICT(source_id, family, scope) DO UPDATE SET
+			state='ok', gen=0, last_success_at=excluded.last_success_at`,
+			id, host, now, now); err != nil {
+			t.Fatalf("seed recovery: %v", err)
+		}
+	}
 	return id
 }
 

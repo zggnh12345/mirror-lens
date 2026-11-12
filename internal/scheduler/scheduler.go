@@ -129,7 +129,10 @@ const (
 
 type listEntry struct {
 	items []Candidate
-	at    time.Time
+	// okAt 记录构建该列表时每个源的 recovery.last_success_at。缓存命中
+	// 必须用它按「当前 now」重算 TTL，而不是沿用 SQL 执行时刻的结论。
+	okAt map[int64]int64
+	at   time.Time
 }
 
 type Scheduler struct {
@@ -491,7 +494,18 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 	// 查库不能在 s.mu 里：这里两条 SQL，慢查询的时候 Observe/Acquire
 	// 全被堵住，表现是「所有源一起变慢」，还会被 AIMD 记到源头上。
 	q0 := time.Now()
-	stats, err := s.st.SourceCandidates(kind)
+	// Registry 缓存必须存「原始候选」：Store 的公开查询已经过滤过 Guard，
+	// 直接缓存会让被屏蔽的源永久消失，解除屏蔽后也回不来。
+	var (
+		stats []store.SourceStat
+		err   error
+	)
+	regHost, isRegistry := strings.CutPrefix(kind, "registry:")
+	if isRegistry {
+		stats, err = s.st.RegistryCandidatesRaw(regHost)
+	} else {
+		stats, err = s.st.SourceCandidates(kind)
+	}
 	if d := time.Since(q0); d > 200*time.Millisecond {
 		log.Printf("调度：SourceCandidates(%s) 耗时 %v（锁外）", kind, d)
 	}
@@ -543,12 +557,29 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 		}
 	}
 	s.manualMode, s.manual = mo.Mode, mo.Orders
+	cutoff := s.now().Unix() - int64(s.st.RecoveryTTL()/time.Second)
 	items := make([]Candidate, 0, len(stats))
+	var okAt map[int64]int64
+	if isRegistry {
+		okAt = make(map[int64]int64, len(stats))
+		for _, st := range stats {
+			// 查询到构建之间可能已跨过 TTL 边界；同一 cutoff 再挡一次。
+			if st.LastSuccess < cutoff {
+				continue
+			}
+			okAt[st.ID] = st.LastSuccess
+		}
+	}
 	for _, st := range stats {
+		if isRegistry {
+			if _, fresh := okAt[st.ID]; !fresh {
+				continue
+			}
+		}
 		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, Gen: s.gen[st.ID] + 1, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps, RegistryPath: st.RegistryPath})
 	}
-	s.lists[kind] = listEntry{items: items, at: s.now()}
-	return s.orderN(kind, items, limit)
+	s.lists[kind] = listEntry{items: items, okAt: okAt, at: s.now()}
+	return s.guardFilter(kind, s.orderN(kind, items, limit))
 }
 
 // cached 返回仍在 TTL 内的候选列表。
@@ -559,7 +590,40 @@ func (s *Scheduler) cached(kind string, limit int) ([]Candidate, bool) {
 	if !ok || s.now().Sub(le.at) >= s.cfg.ListTTL {
 		return nil, false
 	}
-	return s.orderN(kind, le.items, limit), true
+	items := le.items
+	if _, isRegistry := strings.CutPrefix(kind, "registry:"); isRegistry {
+		// 缓存里的列表可能是 TTL 到期前构建的：SQL 的 TTL 条件只在查询时
+		// 生效，命中缓存必须用当前时间重算，否则过期结论能一直复用。
+		cutoff := s.now().Unix() - int64(s.st.RecoveryTTL()/time.Second)
+		items = freshByLastSuccess(items, le.okAt, cutoff)
+	}
+	return s.guardFilter(kind, s.orderN(kind, items, limit)), true
+}
+
+// freshByLastSuccess 返回独立切片，不修改输入（缓存保留的原始列表）。
+func freshByLastSuccess(items []Candidate, okAt map[int64]int64, cutoff int64) []Candidate {
+	out := make([]Candidate, 0, len(items))
+	for _, c := range items {
+		if ts, ok := okAt[c.ID]; ok && ts >= cutoff {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// guardFilter 用一次 Guard 原子快照过滤当前协议族；非 registry 类目原样返回。
+func (s *Scheduler) guardFilter(kind string, in []Candidate) []Candidate {
+	host, ok := strings.CutPrefix(kind, "registry:")
+	if !ok || s.st == nil {
+		return in
+	}
+	g := s.st.RecoveryGuard()
+	if g == nil {
+		return in
+	}
+	return store.FilterByGuard(g, in, func(c Candidate) store.GuardKey {
+		return store.GuardKey{SourceID: c.ID, Family: "registry", Scope: host}
+	})
 }
 
 // refreshLock 返回协议级的重建锁。

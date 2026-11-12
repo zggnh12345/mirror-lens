@@ -52,6 +52,12 @@ type HostProbeOptions struct {
 	Probe func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome
 	// Jobs 可注入，测试用；默认从 Store.ListDueHostProbes 生成。
 	Jobs func(context.Context) ([]HostProbeJob, error)
+	// Guard 是路由层 fail-closed 屏蔽集；写库失败时屏蔽该 (源,Host)，
+	// 成功提交后按 token 解除。生产装配必须非 nil（main 校验）。
+	Guard *store.RecoveryGuard
+	// Invalidate 使调度器的原始候选缓存失效。DB 事务提交不会自动刷新
+	// 内存缓存，失败与成功两条路径都必须显式调用。
+	Invalidate func()
 
 	Now func() time.Time
 }
@@ -63,6 +69,10 @@ type HostProbeRunner struct {
 
 	mu    sync.Mutex
 	state map[string]*probeState // key = sourceID|host
+
+	// guardTok 保存每个 (源,Host) 最近一次 Block 产生的 token。解除时
+	// 必须用它精确匹配，旧探测不得清掉后来更新的屏蔽。
+	guardTok map[store.GuardKey]store.GuardToken
 }
 
 type probeState struct {
@@ -118,6 +128,11 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 // Run 启动周期扫描。第一条探测在启动后立即执行：未验证的源不该等到
 // 下一个周期才拿到结论。
 func (r *HostProbeRunner) Run(ctx context.Context) {
+	// 生产装配必须注入与 Store 共享的 Guard：漏注入会让写库失败的源继续
+	// 参与候选，等于关掉 fail-closed。这里 fail-fast，不静默降级。
+	if r.o.Guard == nil {
+		panic("HostProbeRunner: 未注入 RecoveryGuard，拒绝启动")
+	}
 	if r.o.Store == nil || r.o.Creds == nil {
 		log.Printf("Host 探测未启用：缺少 Store 或凭据存储")
 		return
@@ -383,12 +398,20 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		TTL:           r.o.RecoveryTTL,
 	})
 	if err != nil {
+		// 写库失败 = 本次结果无法确认：屏蔽该源直到下一次成功提交。
+		// failClosed 只补充这一种保守隔离，不参与六态派生。
 		log.Printf("写回 %s 能力失败: %v", j.Host, err)
+		r.blockRoute(j, snap.Generation)
+		r.invalidateRoutes()
 		retry = true
 		return
 	}
 	switch res {
 	case store.HostCapsCommitted:
+		// 成功提交也可能改变资格（ok→unsupported、路径模式变化等），
+		// 先失效原始候选缓存，再解除本次对应的屏蔽。
+		r.invalidateRoutes()
+		r.unblockRoute(j)
 		if out.Cap == probe.CapYes {
 			log.Printf("Host %s 验证通过（%s）", j.Host, out.Selected)
 		}
@@ -399,5 +422,53 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		// 源已换 Host：下一轮按新归属重新入队。
 	case store.HostCapsSourceUnavailable:
 		// 归档或删除：不再重排。
+	}
+}
+
+// routeKey 是 Host 探测在 Guard 里的键：同一 Host 的不同源互不影响。
+func routeKey(j HostProbeJob) store.GuardKey {
+	return store.GuardKey{SourceID: j.SourceID, Family: "registry", Scope: j.Host}
+}
+
+func (r *HostProbeRunner) blockRoute(j HostProbeJob, gen int64) {
+	if r.o.Guard == nil {
+		return
+	}
+	key := routeKey(j)
+	tok := r.o.Guard.Block(key, gen)
+	r.mu.Lock()
+	if r.guardTok == nil {
+		r.guardTok = make(map[store.GuardKey]store.GuardToken)
+	}
+	r.guardTok[key] = tok
+	r.mu.Unlock()
+}
+
+// unblockRoute 只在当前 Guard 条目仍是我们记录的 token 时解除。
+// 旧代次/旧序号的 token 不得清除后来更新的屏蔽。
+func (r *HostProbeRunner) unblockRoute(j HostProbeJob) {
+	if r.o.Guard == nil {
+		return
+	}
+	key := routeKey(j)
+	r.mu.Lock()
+	tok, ok := r.guardTok[key]
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	if !r.o.Guard.UnblockIfMatch(key, tok) {
+		return
+	}
+	r.mu.Lock()
+	if cur, still := r.guardTok[key]; still && cur == tok {
+		delete(r.guardTok, key)
+	}
+	r.mu.Unlock()
+}
+
+func (r *HostProbeRunner) invalidateRoutes() {
+	if r.o.Invalidate != nil {
+		r.o.Invalidate()
 	}
 }

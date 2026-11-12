@@ -70,6 +70,9 @@ type SourceStat struct {
 	// RegistryPath 是该源对 RepoHost 已验证的路径模式（native | host_prefix）。
 	// 只有 registry:<host> 查询会填；调度时与 RegistryCap 一起作为不可拆分的选路依据。
 	RegistryPath string `json:"registry_path_mode,omitempty"`
+	// LastSuccess 是 recovery 行记录的成功结论时间（Unix 秒）。只给调度
+	// 缓存的 TTL 实时检查用，不对外暴露。
+	LastSuccess int64 `json:"-"`
 }
 
 const sourceSampleWindow = 10
@@ -272,27 +275,40 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	return out, nil
 }
 
-// registryCandidates 返回某个 Registry Host 下通过验证的源。
+// registryCandidatesRaw 返回某个 Registry Host 下满足全部资格条件的源，
+// 不经过进程内 Guard 过滤。
 //
-// 选路依据是不可拆分的一组条件：cap=1（已验证）+ 已知路径模式 + Host 精确匹配。
-// cap=2（内容不一致）、-1（未知）、0（不支持）都不能进候选；空路径也不进，
-// 否则调度会拿到一个不知道该怎么拼 URL 的候选。
-func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
+// 资格是五条不可拆分的约束（设计 §5）：
+//  1. registry_cap=1 且路径模式已知（cap 为 2/-1/0 都不能进候选）；
+//  2. 当前凭据代次下没有连续失败（fails<>0，与 ok 的定义逐字一致）；
+//  3. recovery 行存在且 state='ok'；
+//  4. recovery.gen 等于当前代次（旧凭据下的成功结论不得复用）；
+//  5. 成功结论未过期（last_success_at >= now - TTL，边界取等号）。
+//
+// 第 5 条是实时闸门：state 是 DB 投影，不会随时间自己变；Runner 没跑时
+// 也必须由查询挡住过期结论。
+func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
+	cutoff := s.nowTime().Unix() - int64(s.RecoveryTTL()/time.Second)
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
-			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, s.registry_path_mode
-		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
+		s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, s.registry_path_mode,
+		r.last_success_at
+		FROM sources s
+		LEFT JOIN source_groups g ON g.id = s.group_id
+		JOIN registry_host_recovery r
+		  ON r.source_id = s.id AND r.family = 'registry' AND r.scope = ?
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
 		  AND s.registry_cap = 1 AND s.repo_host = ?
 		  AND s.registry_path_mode IN ('native','host_prefix')
-		  AND NOT (
-		    EXISTS (SELECT 1 FROM source_health_scope z
-		            WHERE z.source_id = s.id AND z.family = 'registry' AND z.scope = ? AND z.fails >= ?)
-		    OR (NOT EXISTS (SELECT 1 FROM source_health_scope z2
-		                    WHERE z2.source_id = s.id AND z2.family = 'registry' AND z2.scope = ?)
-		        AND EXISTS (SELECT 1 FROM source_health h
-		                    WHERE h.source_id = s.id AND h.family = 'registry' AND h.fails >= ?))
-		  )
-		ORDER BY s.id`, host, host, HealthFails, host, HealthFails)
+		  AND r.state = 'ok'
+		  AND r.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = s.repo_host), 0)
+		  AND r.last_success_at > 0
+		  AND r.last_success_at >= ?
+		  AND NOT EXISTS (
+		    SELECT 1 FROM source_health_scope z
+		    WHERE z.source_id = s.id AND z.family = 'registry' AND z.scope = ?
+		      AND z.fails <> 0
+		      AND z.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = s.repo_host), 0))
+		ORDER BY s.id`, host, host, cutoff, host)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +316,8 @@ func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
 	for rows.Next() {
 		var st SourceStat
 		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred,
-			&st.GhcrPrefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath); err != nil {
+			&st.GhcrPrefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath,
+			&st.LastSuccess); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -312,7 +329,7 @@ func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
 	}
 
 	kind := "registry:" + host
-	tm, err := s.trustMap(kind, time.Now())
+	tm, err := s.trustMap(kind, s.nowTime())
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +342,24 @@ func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
 		out[i].Trust = tm[out[i].ID].Level
 	}
 	return out, nil
+}
+
+// RegistryCandidatesRaw 供调度缓存层使用：返回未经过 Guard 过滤的原始
+// 候选。缓存必须保存这份列表，每次命中再按当前时间与 Guard 过滤。
+func (s *Store) RegistryCandidatesRaw(host string) ([]SourceStat, error) {
+	return s.registryCandidatesRaw(host)
+}
+
+// registryCandidates 是 API 直调入口：raw + Guard 原子快照过滤。
+// 调度器缓存必须用 registryCandidatesRaw，存原始列表后自行过滤。
+func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
+	out, err := s.registryCandidatesRaw(host)
+	if err != nil {
+		return nil, err
+	}
+	return FilterByGuard(s.guard, out, func(st SourceStat) GuardKey {
+		return GuardKey{SourceID: st.ID, Family: "registry", Scope: host}
+	}), nil
 }
 
 // sourceSamples 取最近 N 条样本。

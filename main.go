@@ -272,6 +272,19 @@ func main() {
 	} else {
 		log.Printf("代理路径匿名放行（auth.require_token=false），面板仍需登录")
 	}
+	// 路由层 fail-closed 屏蔽集：进程内只创建一次，Store / Scheduler /
+	// Runner 共享同一指针。Store 未注入 Guard 时 API 直调路径会静默放行，
+	// 所以装配失败必须直接终止启动。
+	guard := store.NewRecoveryGuard()
+	if gerr := st.SetRecoveryGuard(guard); gerr != nil {
+		log.Fatalf("Recovery Guard 装配失败: %v", gerr)
+	}
+	if st.RecoveryGuard() != guard {
+		log.Fatalf("Recovery Guard 未共享同一实例")
+	}
+	st.SetRecoveryTTL(recoveryTTL())
+	log.Printf("成功结论有效期 %v（ML_RECOVERY_TTL）", st.RecoveryTTL())
+
 	// 多源调度：只有回源才选源，缓存命中不受影响。
 	var sched *scheduler.Scheduler
 	if cfg.Sources.Enabled {
@@ -337,6 +350,14 @@ func main() {
 			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,
 			Concurrency:  cfg.Probe.Concurrency,
 			Backoff:      15 * time.Second,
+			RecoveryTTL:  st.RecoveryTTL(),
+			Guard:        guard,
+			// 事务提交不会刷新调度器内存缓存，失败与成功都必须显式失效。
+			Invalidate: func() {
+				if sched != nil {
+					sched.Invalidate()
+				}
+			},
 		}).Run(ctx)
 	}
 
@@ -475,4 +496,21 @@ func applyOverrides(cfg *config.Config, set func(string) bool, getenv func(strin
 	if set("no-seed") {
 		cfg.NoSeed = noSeed
 	}
+}
+
+// recoveryTTL 是成功结论的有效期。候选准入、调度缓存与 Runner 写入共用
+// 同一个值，避免「查询按 24h 判、Runner 按 6h 写」的口径分裂。
+func recoveryTTL() time.Duration {
+	v := strings.TrimSpace(os.Getenv("ML_RECOVERY_TTL"))
+	if v == "" {
+		return store.RecoveryDefaultTTL
+	}
+	d, err := time.ParseDuration(v)
+	// cutoff 是秒级（now - TTL 向下取整），小于 1s 的正数会被截断成 0，
+	// 语义上等于「全部失效」，因此直接拒绝并回落默认值。
+	if err != nil || d < time.Second {
+		log.Printf("ML_RECOVERY_TTL=%q 无效（最小 1s），用默认 %v", v, store.RecoveryDefaultTTL)
+		return store.RecoveryDefaultTTL
+	}
+	return d
 }

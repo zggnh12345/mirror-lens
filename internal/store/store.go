@@ -146,6 +146,12 @@ type Check struct {
 type Store struct {
 	db *sql.DB
 
+	// guard 是路由层的 fail-closed 屏蔽集（见 guard.go）。只在进程装配点
+	// 注入一次；生产路径为 nil 必须在启动时失败，不能静默不过滤。
+	guard       *RecoveryGuard
+	recoveryTTL time.Duration
+	clock       func() time.Time
+
 	// 审计走单条后台通道：登录爆破时每个失败都同步写库会把写锁打满，
 	// 所以宁可丢几条事件，也不让审计拖慢认证。
 	//
@@ -184,7 +190,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // modernc/sqlite: 单写者最稳
-	s := &Store{db: db}
+	s := &Store{db: db, recoveryTTL: RecoveryDefaultTTL, clock: time.Now}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
@@ -1220,3 +1226,47 @@ func (s *Store) PruneSessions() {
 }
 
 func (s *Store) String() string { return fmt.Sprintf("store(%p)", s.db) }
+
+// SetRecoveryGuard 注入路由层屏蔽集。nil 视为装配错误：生产路径不允许
+// 「没有 Guard 就静默放行」。
+func (s *Store) SetRecoveryGuard(g *RecoveryGuard) error {
+	if g == nil {
+		return errors.New("store: recovery guard 不能为 nil")
+	}
+	s.guard = g
+	return nil
+}
+
+// RecoveryGuard 返回当前注入的屏蔽集（未注入时为 nil，仅测试可达）。
+func (s *Store) RecoveryGuard() *RecoveryGuard { return s.guard }
+
+// SetRecoveryTTL 设置成功结论的有效期；<=0 回到默认 24h。
+func (s *Store) SetRecoveryTTL(d time.Duration) {
+	if d <= 0 {
+		d = RecoveryDefaultTTL
+	}
+	s.recoveryTTL = d
+}
+
+// RecoveryTTL 是候选准入与缓存实时检查共用的有效期。
+func (s *Store) RecoveryTTL() time.Duration {
+	if s.recoveryTTL <= 0 {
+		return RecoveryDefaultTTL
+	}
+	return s.recoveryTTL
+}
+
+// SetClock 仅供测试注入时间源；生产使用 time.Now。
+func (s *Store) SetClock(f func() time.Time) {
+	if f == nil {
+		f = time.Now
+	}
+	s.clock = f
+}
+
+func (s *Store) nowTime() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
+}

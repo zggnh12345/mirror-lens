@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // 同一来源在某个 Host 上连续失败，只摘掉这个 Host 的候选资格。
@@ -77,17 +78,22 @@ func TestHealthScopeSuccessDoesNotClearOtherHost(t *testing.T) {
 	}
 }
 
-// 旧库只有 family 级 registry 行：没有 scoped 行时作兜底；出现 scoped
-// 行后立即失效，不会被旧聚合值长期压着。
-func TestHealthScopeLegacyFallback(t *testing.T) {
+// 旧库只有 family 级 registry 行时不再兜底：候选准入要求 recovery 行
+// 为 ok，没有这条证据就不放行（fail-closed）。legacy 的 fails=0 也不能
+// 替代「本代次探测成功」。
+func TestRegistryCandidateRequiresRecoveryEvidence(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "h.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
 	id := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
-	if _, err := st.db.Exec(`INSERT INTO source_health(source_id, family, fails, last_at) VALUES(?, 'registry', ?, 1)`,
-		id, HealthFails); err != nil {
+	if _, err := st.db.Exec(`INSERT INTO source_health(source_id, family, fails, last_at) VALUES(?, 'registry', 0, 1)`,
+		id); err != nil {
+		t.Fatal(err)
+	}
+	// 删掉 seed 的 ok 行：只剩 sources.registry_cap=1 和 legacy family 行。
+	if _, err := st.db.Exec(`DELETE FROM registry_host_recovery WHERE source_id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.SourceCandidates("registry:quay.io")
@@ -95,12 +101,12 @@ func TestHealthScopeLegacyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := candidatesIDs(got)[id]; ok {
-		t.Fatal("legacy 失败行没有兜底生效")
+		t.Fatal("没有 recovery 证据时 legacy 行不应放行")
 	}
-	// 该 Host 一说健康，就只看自己的状态。
+	// 探测成功写回 recovery=ok 后才进入候选。
 	if _, err := st.CommitHostProbe(HostProbeCommit{
 		SourceID: id, Host: "quay.io", Cap: RegistryCapYes, PathMode: PathNative,
-		At: 2000, Gen: 0,
+		At: time.Now().Unix(), Gen: 0,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +115,7 @@ func TestHealthScopeLegacyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := candidatesIDs(got)[id]; !ok {
-		t.Fatal("scoped 行出现后 legacy 仍生效")
+		t.Fatal("recovery=ok 后仍不在候选")
 	}
 }
 

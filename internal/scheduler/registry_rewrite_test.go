@@ -188,9 +188,12 @@ func addRegSource(t *testing.T, st *store.Store, host, path string) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := st.SetHostCaps(id, host, 1, path, time.Now().Unix(), "", gen, dig)
+	res, err := st.CommitHostProbe(store.HostProbeCommit{
+		SourceID: id, Host: host, Cap: store.RegistryCapYes, PathMode: path,
+		At: time.Now().Unix(), Gen: gen, CredDigest: dig, HasCredential: dig != "",
+	})
 	if err != nil || res != store.HostCapsCommitted {
-		t.Fatalf("SetHostCaps: res=%v err=%v", res, err)
+		t.Fatalf("CommitHostProbe: res=%v err=%v", res, err)
 	}
 	return id
 }

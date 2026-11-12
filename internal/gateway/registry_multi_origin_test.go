@@ -159,8 +159,13 @@ func (f *moFixture) addRegistrySource(t *testing.T, srv *httptest.Server, mode s
 	if err != nil {
 		t.Fatalf("gen: %v", err)
 	}
-	if res, err := f.st.SetHostCaps(id, "quay.io", 1, mode, time.Now().Unix(), "", gen, dig); err != nil || res != store.HostCapsCommitted {
-		t.Fatalf("SetHostCaps: %v %v", res, err)
+	// C5 起候选准入要求 recovery 证据：走真实提交路径同时写 cap、path
+	// 与 recovery=ok，而不是只改 sources 的展示列。
+	if res, err := f.st.CommitHostProbe(store.HostProbeCommit{
+		SourceID: id, Host: "quay.io", Cap: store.RegistryCapYes, PathMode: mode,
+		At: time.Now().Unix(), Gen: gen, CredDigest: dig, HasCredential: dig != "",
+	}); err != nil || res != store.HostCapsCommitted {
+		t.Fatalf("CommitHostProbe: %v %v", res, err)
 	}
 	return id
 }
