@@ -368,8 +368,8 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		if err := raw.QueryRow(`SELECT state, last_probe_at, last_error FROM registry_host_recovery WHERE source_id=? AND family='registry'`, f.srcID).Scan(&state, &probeAt, &lastErr); err != nil {
 			t.Fatal(err)
 		}
-		if state == "ok" || state == "initial" {
-			t.Fatalf("认证失败必须落失败状态: %q", state)
+		if state != "failed" {
+			t.Fatalf("认证失败必须派生 failed: %q", state)
 		}
 		if probeAt != f.now.Unix() {
 			t.Fatalf("本次探测没有落库: last_probe_at=%d want=%d", probeAt, f.now.Unix())
