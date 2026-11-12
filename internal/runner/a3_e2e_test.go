@@ -322,6 +322,23 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		if _, err := rawExec(t, f, `UPDATE sources SET base_url=? WHERE id=?`, srv.URL, f.srcID); err != nil {
 			t.Fatal(err)
 		}
+		raw, err := sql.Open("sqlite", filepath.Join(f.dir, "hp.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer raw.Close()
+		// 先证明库里没有旧的成功数据，排除假阳性。
+		var preOK int
+		if err := raw.QueryRow(`SELECT COUNT(*) FROM registry_host_recovery WHERE source_id=? AND family='registry' AND state='ok'`, f.srcID).Scan(&preOK); err != nil {
+			t.Fatal(err)
+		}
+		pre, err := f.st.GetSource(f.srcID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preOK != 0 || pre.RegistryCap == store.RegistryCapYes {
+			t.Fatalf("前置数据不干净: ok_rows=%d cap=%d", preOK, pre.RegistryCap)
+		}
 		guard := store.NewRecoveryGuard()
 		key := store.GuardKey{SourceID: f.srcID, Family: "registry", Scope: "quay.io"}
 		guard.Block(key, gen)
@@ -346,17 +363,19 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		if !guard.Blocked(key) {
 			t.Fatal("Token 获取失败不得解除 Guard")
 		}
-		var state string
-		raw, err := sql.Open("sqlite", filepath.Join(f.dir, "hp.db"))
-		if err != nil {
+		var state, lastErr string
+		var probeAt int64
+		if err := raw.QueryRow(`SELECT state, last_probe_at, last_error FROM registry_host_recovery WHERE source_id=? AND family='registry'`, f.srcID).Scan(&state, &probeAt, &lastErr); err != nil {
 			t.Fatal(err)
 		}
-		defer raw.Close()
-		if err := raw.QueryRow(`SELECT state FROM registry_host_recovery WHERE source_id=? AND family='registry'`, f.srcID).Scan(&state); err != nil {
-			t.Fatal(err)
+		if state == "ok" || state == "initial" {
+			t.Fatalf("认证失败必须落失败状态: %q", state)
 		}
-		if state == "ok" {
-			t.Fatal("认证失败不得写恢复成功状态")
+		if probeAt != f.now.Unix() {
+			t.Fatalf("本次探测没有落库: last_probe_at=%d want=%d", probeAt, f.now.Unix())
+		}
+		if lastErr == "" {
+			t.Fatal("认证失败必须记录错误原因")
 		}
 	})
 
