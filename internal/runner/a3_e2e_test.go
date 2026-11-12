@@ -2,12 +2,16 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -250,6 +254,109 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("Bearer challenge 全链路", func(t *testing.T) {
+		f := newHostProbeFixture(t, "quay.io")
+		f.now = time.Now()
+		gen, err := f.st.BumpHostGen("quay.io")
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv, tokenHits, authHits := bearerRegistry(t, true)
+		if _, err := rawExec(t, f, `UPDATE sources SET base_url=? WHERE id=?`, srv.URL, f.srcID); err != nil {
+			t.Fatal(err)
+		}
+		r := NewHostProbeRunner(HostProbeOptions{
+			Store: f.st, Creds: f.creds, Concurrency: 1,
+			Now:    func() time.Time { return f.now },
+			Guard:  store.NewRecoveryGuard(),
+			Realms: map[string][]string{"quay.io": {srv.URL}},
+			Jobs: func(context.Context) ([]HostProbeJob, error) {
+				return []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", Gen: gen, BaseURL: srv.URL, Repo: "library/alpine"}}, nil
+			},
+		})
+		r.Once(context.Background())
+
+		if got := atomic.LoadInt32(tokenHits); got < 1 {
+			t.Fatalf("未请求 token endpoint: %d", got)
+		}
+		if got := atomic.LoadInt32(authHits); got < 1 {
+			t.Fatalf("未带 Bearer 重试 manifest: %d", got)
+		}
+		src, err := f.st.GetSource(f.srcID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.RegistryCap != store.RegistryCapYes {
+			t.Fatalf("Bearer 认证通过后应写 cap=1: %d (%s)", src.RegistryCap, src.RegistryProbeError)
+		}
+		var state string
+		var okAt int64
+		raw, err := sql.Open("sqlite", filepath.Join(f.dir, "hp.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer raw.Close()
+		if err := raw.QueryRow(`SELECT state, last_success_at FROM registry_host_recovery WHERE source_id=? AND family='registry'`, f.srcID).Scan(&state, &okAt); err != nil {
+			t.Fatal(err)
+		}
+		if state != "ok" || okAt != f.now.Unix() {
+			t.Fatalf("CommitHostProbe 应提交 ok/成功时间: state=%s ok_at=%d", state, okAt)
+		}
+		cands, err := f.st.RegistryCandidatesRaw("quay.io")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasSource(cands, f.srcID) {
+			t.Fatalf("认证通过后应进入候选: %+v", cands)
+		}
+	})
+
+	t.Run("Token 获取失败不写 cap=1 且不解 Guard", func(t *testing.T) {
+		f := newHostProbeFixture(t, "quay.io")
+		f.now = time.Now()
+		gen, err := f.st.BumpHostGen("quay.io")
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv, _, _ := bearerRegistry(t, false)
+		if _, err := rawExec(t, f, `UPDATE sources SET base_url=? WHERE id=?`, srv.URL, f.srcID); err != nil {
+			t.Fatal(err)
+		}
+		guard := store.NewRecoveryGuard()
+		key := store.GuardKey{SourceID: f.srcID, Family: "registry", Scope: "quay.io"}
+		guard.Block(key, gen)
+		r := NewHostProbeRunner(HostProbeOptions{
+			Store: f.st, Creds: f.creds, Concurrency: 1,
+			Now:    func() time.Time { return f.now },
+			Guard:  guard,
+			Realms: map[string][]string{"quay.io": {srv.URL}},
+			Jobs: func(context.Context) ([]HostProbeJob, error) {
+				return []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", Gen: gen, BaseURL: srv.URL, Repo: "library/alpine"}}, nil
+			},
+		})
+		r.Once(context.Background())
+
+		src, _ := f.st.GetSource(f.srcID)
+		if src.RegistryCap == store.RegistryCapYes {
+			t.Fatal("Token 获取失败不得写 cap=1")
+		}
+		if !guard.Blocked(key) {
+			t.Fatal("Token 获取失败不得解除 Guard")
+		}
+		var state string
+		raw, err := sql.Open("sqlite", filepath.Join(f.dir, "hp.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer raw.Close()
+		if err := raw.QueryRow(`SELECT state FROM registry_host_recovery WHERE source_id=? AND family='registry'`, f.srcID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state == "ok" {
+			t.Fatal("认证失败不得写恢复成功状态")
+		}
+	})
+
 	t.Run("hard-excluded 不参与扫描", func(t *testing.T) {
 		f := newHostProbeFixture(t, "quay.io")
 		f.now = time.Now()
@@ -329,6 +436,72 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 			t.Fatalf("失败结论不得进入候选: %+v", cands)
 		}
 	})
+}
+
+// bearerRegistry 是带真实 Bearer 挑战的 registry：/v2/ 与 manifest 先回
+// 401 + WWW-Authenticate，token endpoint 发令牌后重试才放行。tokenOK=false
+// 时 token endpoint 直接 401，用于验证认证失败的落库行为。
+func bearerRegistry(t *testing.T, tokenOK bool) (*httptest.Server, *int32, *int32) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{{
+			"mediaType": "application/vnd.oci.image.manifest.v1+json",
+			"digest":    "sha256:" + strings.Repeat("a", 64),
+			"size":      1,
+		}},
+	})
+	sum := sha256.Sum256(body)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	var tokenHits, authHits int32
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		challenge := func() {
+			w.Header().Set("Www-Authenticate",
+				`Bearer realm="`+srv.URL+`/token",service="test",scope="repository:library/alpine:pull"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+		switch {
+		case r.URL.Path == "/token":
+			atomic.AddInt32(&tokenHits, 1)
+			if !tokenOK {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"token":"tok"}`)
+		case r.URL.Path == "/v2/":
+			if r.Header.Get("Authorization") != "Bearer tok" {
+				challenge()
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case strings.HasPrefix(r.URL.Path, "/v2/quay.io/"):
+			// host_prefix 路径不支持：先过认证，再回 UNSUPPORTED。
+			if r.Header.Get("Authorization") != "Bearer tok" {
+				challenge()
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errors":[{"code":"UNSUPPORTED"}]}`))
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			if r.Header.Get("Authorization") != "Bearer tok" {
+				challenge()
+				return
+			}
+			atomic.AddInt32(&authHits, 1)
+			w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.WriteHeader(http.StatusOK)
+			w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &tokenHits, &authHits
 }
 
 // fakeRegistry 是最小但真实的 registry：/v2/ 200，原生 manifest 200，
