@@ -1,4 +1,4 @@
-# Canonical Schema 字段映射（3.4.6 / 3.5.4 → 3.5.5）
+# Canonical Schema 字段映射（3.4.6 / 3.5.4 → 3.5.6）
 
 状态：P0 冻结事实。数据来源是本机真实库副本，不是纸面推断：
 
@@ -10,19 +10,19 @@
 
 | 输入 | 处理 | 输出 |
 |---|---|---|
-| 全新空库 | `db-migrate init` / 服务首启 `schema.EnsureFresh` | 3.5.5 Canonical |
-| 3.4.6 真实副本 | `db-migrate migrate --baseline 3.4.6` | 3.5.5 Canonical |
-| 3.5.4 真实副本 | `db-migrate migrate --baseline 3.5.4` | 3.5.5 Canonical |
+| 全新空库 | `db-migrate init` / 服务首启 `schema.EnsureFresh` | 3.5.6 Canonical |
+| 3.4.6 真实副本 | `db-migrate migrate --baseline 3.4.6` | 3.5.6 Canonical |
+| 3.5.4 真实副本 | `db-migrate migrate --baseline 3.5.4` | 3.5.6 Canonical |
 
 三份输出的 `schema_hash` 必须相同。本次实测均为
-`0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170`
+`7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e`
 （以实际 `verify` 输出为准；该值由 Canonical DDL 排序后 SHA-256 计算）。
 
-不存在“3.5.5 输入库”：3.5.5 是输出，不是升级输入。
+不存在“3.5.6 输入库”：3.5.6 是输出，不是升级输入。
 
 ## 2. 表级映射
 
-| 表 | 3.4.6 | 3.5.4 | Canonical 3.5.5 | 规则 |
+| 表 | 3.4.6 | 3.5.4 | Canonical 3.5.6 | 规则 |
 |---|---:|---:|---|---|
 | sources | 有 | 有 | 保留 | 唯一需要改写的表，见 §3 |
 | checks | 有 | 190,670 | 保留 | 公共列逐列拷贝；`kind` 按旧库已有值保留 |
@@ -39,9 +39,9 @@
 | registry_host_recovery / registry_host_gen | 有 | 0 | 保留 | 当前健康恢复模型，非遗留 |
 | trusted_relays | 有 | 0 | 保留 | 逐列拷贝 |
 | meta | 有 | 2 | 保留 | 逐列拷贝；schema 元数据不写这里 |
-| schema_migrations | 3 行 | 3 行 | **删除** | 由 `schema_meta` 取代；历史 migration 记录不进新库 |
+| schema_migrations | 无 | 3 行 | **只读审计** | 搬到 `schema_migrations_audit`，不恢复执行链；新库此表为空 |
 | `_writable` | 无 | 0 行 | **删除** | 旧版启动自检残留，正式库中不得存在 |
-| schema_meta | 无 | 无 | **新增** | schema_version / schema_hash / baseline / created_at |
+| schema_meta | 无 | 无 | **新增** | 单记录：schema_version / schema_hash / baseline_version / applied_at |
 
 `sqlite_sequence` 不拷贝行，按目标表最大 ID 由 SQLite 重建。
 
@@ -65,6 +65,17 @@ Canonical 默认值，并且必须在报告中列出 `skipped` 表/列。
 | `docker.io` | 34 |
 | `ghcr.io` | 2 |
 | `''` | 55 |
+
+3.4.6 的 `sources` 没有 `repo_host` 列，离线工具必须做显式 baseline 映射，
+不能把缺失列统一写成空串：
+
+| 3.4.6 能力 | 数量 | Canonical `repo_host` | 规则 |
+|---|---:|---|---|
+| `docker_cap=1` | 34 | `docker.io` | 具备 Docker Hub 服务能力；含双用途源 |
+| `docker_cap<>1 AND ghcr_cap=1` | 2 | `ghcr.io` | 仅 GHCR 源 |
+| 其余 | 55 | `''` | 没有 Registry 归属，不猜测 |
+
+这是对**缺失列**的 baseline 映射，不是对 3.5.4 空 Host 的回填。
 
 空 Host 的 55 条不是同一种状态：
 
@@ -99,8 +110,12 @@ Canonical 默认值，并且必须在报告中列出 `skipped` 表/列。
 旧版 `backfillRepoHost` 会在启动时把空 Host 批量写成 `docker.io`。新版本
 删除该行为：
 
-- 离线工具只复制 `repo_host` 原值。
-- 空 Host 的 55 条原样保留。
+- 3.5.4 的离线工具只复制 `repo_host` 原值；非空值先用 `registryhost.Check`
+  校验，合法别名（如 `registry-1.docker.io`）规范化为 Canonical 值，未知 Host
+  拒绝迁移。
+- 3.4.6 没有该列，按 §3.1 的能力映射显式生成；不把 3.4.6 的缺失列当成
+  “3.5.4 的空 Host”，也不做运行期回填。
+- 3.5.4 空 Host 的 55 条原样保留。
 - 只有用户显式设置 Host，或新增源走 `AddSource` 的显式默认，才写
   `docker.io`。
 - `AddSource` 未传 Host 时的默认映射是 `docker.io` + `identified`，这是
@@ -114,14 +129,16 @@ Canonical 默认值，并且必须在报告中列出 `skipped` 表/列。
 - `knownMigrationChecksums` 中的历史定义：保留。
 - `migrateLegacyRegistry`、`backfillRepoHost`、`ensureColumns`：从 `Open`
   调用链移除，冻结为离线工具职责。
-- `schema_migrations` 的历史行（3.5.3-phase-b-tables、
-  b1-archive-legacy-registry、3.5.4-registry-identity）不写入新库。
+- `schema_migrations` 的 3 条历史行（3.5.3-phase-b-tables、
+  b1-archive-legacy-registry、3.5.4-registry-identity）搬到 Canonical 的
+  `schema_migrations_audit`，只作审计事实；不调用旧 `runStep`，不执行旧
+  checksum 链，新库该表保持空表。
 
 ## 5. 无法确认时的拒绝规则
 
 离线工具遇到以下情况必须失败，不得填默认值：
 
-- 旧库缺少 `sources` 或 `repo_host`。
+- 旧库缺少 `sources`；或 3.5.4 缺 `repo_host`，或目标列无法映射。
 - 目标表存在但旧库列无法映射到 Canonical 公共列。
 - 目标文件已存在（拒绝覆盖）。
 - 旧库 `-wal` 非空且未对副本做 checkpoint。
@@ -140,11 +157,14 @@ Canonical 默认值，并且必须在报告中列出 `skipped` 表/列。
 
 ## 7. 验收证据
 
-- 3.4.6 → Canonical：`out/3.4.6-canonical.db`，249,856 字节，`verify` 通过。
-- 3.5.4 → Canonical：`out/3.5.4-canonical.db`，`verify` 通过。
-- 空库 → Canonical：`out/fresh.db`，`verify` 通过。
-- 三库 `schema_hash` 一致。
-- 新旧二进制互斥：3.5.5 打开旧库报
+- 3.4.6 → Canonical：`out/final-3.4.6.db`，`verify` 通过；164,369 checks。
+  3.4.6 缺少 `repo_host`，按能力映射后 34 条 `docker.io`、2 条 `ghcr.io`、
+  55 条空 Host；其余 6 张新增数据表为空、schema_meta 单行。
+- 3.5.4 → Canonical：`out/final-3.5.4.db`，`verify` 通过；190,670 checks，
+  55 条空 Host 原样保留，36 条非空 Host（34 docker.io + 2 ghcr.io）。
+- 空库 → Canonical：`init` + `verify` 通过。
+- 三库 `schema_hash` 一致：7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e。
+- 新旧二进制互斥：3.5.6 打开旧库报
   `数据库缺少 schema_meta（旧库必须先用离线工具升级）`。
-- 回滚只恢复 `mirror-lens.db.pre-3.5.5`（含 `-wal`/`-shm`）与**原 secret.key**，
+- 回滚只恢复 `mirror-lens.db.pre-3.5.6`（含 `-wal`/`-shm`）与**原 secret.key**，
   不做 DB/key 联合替换。

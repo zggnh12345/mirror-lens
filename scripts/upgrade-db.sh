@@ -1,34 +1,38 @@
 #!/usr/bin/env bash
-# 离线升级 mirror-lens 数据库到 Canonical Schema（3.5.5）。
+# 离线升级 mirror-lens 数据库到 Canonical Schema（3.5.6）。
 #
 #   upgrade-db.sh --data <数据目录> --tool <db-migrate> --container <容器> \
-#                  --expect-image <镜像> --baseline 3.4.6|3.5.4
+#                  --expect-image <镜像> --expect-image-id sha256:... --baseline 3.4.6|3.5.4
 #   upgrade-db.sh --recover --data <数据目录> --tool <db-migrate> --container <容器> \
-#                  --expect-image <镜像>
+#                  --expect-image <镜像> --expect-image-id sha256:...
 #
 # 约束：
 #   - 必须确认目标容器存在、镜像身份匹配且已经停止；脚本不会替你停容器。
-#     必须显式给出 --expect-image，不能只凭容器名通过身份校验。
+#     --expect-image-id 是必填的不可变身份；--expect-image 只做可选 tag 校验。
+#     绝不只比较可变 tag。
 #   - 不依赖旧版本不会创建的 .mirror-lens.lock 来判断服务状态。
 #   - 升级前检查没有进程仍持有正式库/WAL/SHM；有则拒绝。
+#     该检查需要 root 或能读取所有其他 UID 的 /proc/<pid>/fd；读不到就
+#     fail-closed（M6），不会把“未知”当成 0 个持有者。
 #   - 正式库从不被原地改写；先复制到 staging，checkpoint 后由 db-migrate 只读搬迁。
 #   - checkpoint 后 staging 不得残留 -wal/-shm。
-#   - 切换前把正式库复制成 mirror-lens.db.pre-3.5.5，并 fsync + sha256。
-#   - secret.key 不参与切换、不被替换；另存一份 600 的 secret.key.pre-3.5.5
+#   - 切换前把正式库复制成 mirror-lens.db.pre-3.5.6，并 fsync + sha256。
+#   - secret.key 不参与切换、不被替换；另存一份 600 的 secret.key.pre-3.5.6
 #     并写 manifest（DB/key 的 SHA-256），只用于灾难恢复核对。
 #   - 切换中间态写 .db-upgrade-journal.json；服务启动见到它会 fail closed，
 #     只能用 --recover 完成或回滚。
 set -euo pipefail
 
 DB_NAME=mirror-lens.db
-PRE_NAME=mirror-lens.db.pre-3.5.5
+PRE_NAME=mirror-lens.db.pre-3.5.6
 KEY_NAME=secret.key
-KEY_PRE_NAME=secret.key.pre-3.5.5
-MANIFEST_NAME=mirror-lens.db.pre-3.5.5.manifest
+KEY_PRE_NAME=secret.key.pre-3.5.6
+MANIFEST_NAME=mirror-lens.db.pre-3.5.6.manifest
 JOURNAL=.db-upgrade-journal.json
 TOOL=./db-migrate
 CONTAINER=""
 EXPECT_IMAGE=""
+EXPECT_IMAGE_ID=""
 DOCKER=${DOCKER:-docker}
 
 die() { echo "[upgrade-db] 错误: $*" >&2; exit 1; }
@@ -54,16 +58,26 @@ field() { # field <key> 从单行 journal 取字符串值
 check_container_stopped() {
   [ -n "$CONTAINER" ] || die "缺少 --container；升级/恢复必须指定生产容器"
   command -v "$DOCKER" >/dev/null 2>&1 || die "找不到 docker 命令: $DOCKER"
-  [ -n "$EXPECT_IMAGE" ] || die "缺少 --expect-image；不能只凭容器名通过身份校验"
-  local name image state
+  [ -n "$EXPECT_IMAGE_ID" ] ||
+    die "缺少 --expect-image-id；升级必须提供不可变镜像 ID（sha256:...），不能只凭可变 tag 通过身份校验"
+  local name image image_id state
   name=$("$DOCKER" inspect --format '{{.Name}}' "$CONTAINER" 2>/dev/null) ||
     die "目标容器不存在或不可 inspect: $CONTAINER"
   [ "$name" = "/$CONTAINER" ] || [ "$name" = "$CONTAINER" ] ||
     die "容器身份不匹配：请求 $CONTAINER，inspect 返回 $name"
-  image=$("$DOCKER" inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) ||
-    die "无法读取容器镜像: $CONTAINER"
-  [ "$image" = "$EXPECT_IMAGE" ] ||
-    die "容器镜像不匹配：期望 $EXPECT_IMAGE，实际 $image"
+  image_id=$("$DOCKER" inspect --format '{{.Image}}' "$CONTAINER" 2>/dev/null) ||
+    die "无法读取容器实际镜像 ID: $CONTAINER"
+  [ -n "$image_id" ] || die "容器实际镜像 ID 为空；拒绝继续: $CONTAINER"
+  if [ -n "$EXPECT_IMAGE_ID" ]; then
+    [ "$image_id" = "$EXPECT_IMAGE_ID" ] ||
+      die "容器镜像 ID 不匹配：期望 $EXPECT_IMAGE_ID，实际 $image_id"
+  fi
+  if [ -n "$EXPECT_IMAGE" ]; then
+    image=$("$DOCKER" inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) ||
+      die "无法读取容器镜像 tag: $CONTAINER"
+    [ "$image" = "$EXPECT_IMAGE" ] ||
+      die "容器镜像 tag 不匹配：期望 $EXPECT_IMAGE，实际 $image"
+  fi
   # 不只看 Running：restarting/dead/paused 的 Running 也可能是 false，
   # 但都不是可以安全搬运数据库的“已停止”状态。
   state=$("$DOCKER" inspect --format '{{.State.Status}}' "$CONTAINER" 2>/dev/null) ||
@@ -78,24 +92,25 @@ check_container_stopped() {
 # 注意：/proc 只能证明可见进程没有持有；它不能替代“停服窗口 + 禁止并发启动”的
 # 操作约束，也不能证明检查结束后不会再有进程打开数据库。
 check_no_db_holders() {
-  local fd target pids="" unreadable="" hidden=0 pid owner me
+  local fd target pids="" unreadable="" hidden=0 pid owner me procroot
   me=$(id -u)
-  for fd in /proc/[0-9]*/fd/*; do
+  procroot=${PROC_ROOT:-/proc}
+  for fd in "$procroot"/[0-9]*/fd/*; do
     # 先取链接再判断存在性：进程持有已被 unlink 的数据库时，fd 链接目标
     # 带 " (deleted)"，不能因为 [ -e ] 失败就把它当成没有持有。
     target=$(readlink "$fd" 2>/dev/null) || {
-      pid=${fd#/proc/}; pid=${pid%%/*}
+      pid=${fd#"$procroot"/}; pid=${pid%%/*}
       # 进程在扫描间隙退出时 fd 会消失；这不是“持有数据库”，不能误杀。
-      [ -d "/proc/$pid" ] || continue
+      [ -d "$procroot/$pid" ] || continue
       target=$(readlink "$fd" 2>/dev/null) || {
-        [ -d "/proc/$pid" ] || continue
-        owner=$(stat -c %u "/proc/$pid" 2>/dev/null || echo '?')
+        [ -d "$procroot/$pid" ] || continue
+        owner=$(stat -c %u "$procroot/$pid" 2>/dev/null || echo '?')
         # 扫描期间进程可能刚退出/变成僵尸，或某个 fd 刚关闭；再确认一次。
-        [ -d "/proc/$pid" ] || continue
+        [ -d "$procroot/$pid" ] || continue
         [ -e "$fd" ] || continue
-        [ "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null)" = "Z" ] && continue
+        [ "$(awk '{print $3}' "$procroot/$pid/stat" 2>/dev/null)" = "Z" ] && continue
         if [ "$owner" = "$me" ]; then
-          unreadable="$unreadable $pid($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
+          unreadable="$unreadable $pid($(cat "$procroot/$pid/comm" 2>/dev/null || echo '?'))"
         else
           hidden=$((hidden+1))
         fi
@@ -105,16 +120,33 @@ check_no_db_holders() {
     case "$target" in
       "$DB"|"$DB-wal"|"$DB-shm"|"$DB-journal"|\
       "$DB (deleted)"|"$DB-wal (deleted)"|"$DB-shm (deleted)"|"$DB-journal (deleted)")
-        pids="$pids ${fd#/proc/}"
+        pids="$pids ${fd#"$procroot"/}"
         ;;
     esac
+  done
+  # 目录本身不可读时，上面的通配符看不到任何 fd；这也是“状态不可确认”，
+  # 不能当作 0 个持有者。其他 UID 的进程尤其如此。
+  for p in "$procroot"/[0-9]*; do
+    [ -d "$p" ] || continue
+    owner=$(stat -c %u "$p" 2>/dev/null || echo '?')
+    [ "$owner" = "$me" ] && continue
+    if ! ls "$p/fd" >/dev/null 2>&1; then
+      hidden=$((hidden+1))
+    fi
   done
   [ -z "$pids" ] || die "仍有进程持有正式库/WAL/SHM/journal:$pids；先停服务并确认进程退出"
   # 同 UID 的 fd 本应可读；读不到说明权限/命名空间被限制，不能静默放行。
   [ -z "$unreadable" ] || die "同 UID 进程的数据库 fd 无法读取（pid:$unreadable）；请以宿主同 UID/root 运行"
-  if [ "$hidden" -gt 0 ]; then
-    log "警告：有 $hidden 个其他 UID 的进程 fd 不可读；请确认升级使用宿主 PID 视图并以足够权限运行"
-  fi
+  # 其他 UID 的 fd 不可读时也无法证明它没有持有数据库。带着未知写入者
+  # 切换就是把旧库交给一个看不见的进程，必须 fail-closed。
+  [ "$hidden" -eq 0 ] ||
+    die "有 $hidden 个其他 UID 的进程 fd 不可读，无法确认数据库持有者；请以宿主 root/足够权限运行后再升级"
+}
+
+# checkpoint 并关闭连接后，WAL/SHM 必须收敛；残留的 sidecar 不能被静默忽略。
+check_no_sidecar() { # check_no_sidecar <db-path> <stage>
+  [ ! -e "$1-wal" ] || die "$2 仍残留 -wal: $1-wal"
+  [ ! -e "$1-shm" ] || die "$2 仍残留 -shm: $1-shm"
 }
 
 mval() { # mval <key>：manifest 是 key=value，值可含等号
@@ -199,6 +231,7 @@ while [ $# -gt 0 ]; do
     --baseline) BASELINE=${2:-}; shift 2 ;;
     --container) CONTAINER=${2:-}; shift 2 ;;
     --expect-image) EXPECT_IMAGE=${2:-}; shift 2 ;;
+    --expect-image-id) EXPECT_IMAGE_ID=${2:-}; shift 2 ;;
     --recover) MODE=recover; shift ;;
     -h|--help) usage ;;
     *) die "未知参数 $1" ;;
@@ -217,12 +250,15 @@ KEY_PRE="$DATA/$KEY_PRE_NAME"
 MANIFEST="$DATA/$MANIFEST_NAME"
 
 check_container_stopped
-check_no_db_holders
 
-# 与服务、restore.sh、离线迁移共用同一把锁；但锁不再是服务运行状态的证据。
+# 先拿数据目录锁，再扫描 FD：服务、restore.sh 和离线迁移共用同一把锁。
+# 锁必须早于持有者扫描，否则扫描结束到 flock 之间可能有人打开数据库。
 exec 8>"$DATA/.mirror-lens.lock"
 chmod 600 "$DATA/.mirror-lens.lock" 2>/dev/null || true
 flock -n 8 || die "另一个迁移进程正在操作 $DATA（.mirror-lens.lock 被占用）"
+
+# 扫描结果只对“拿到锁之后”的时刻负责；切换前还会再扫描一次。
+check_no_db_holders
 
 check_work_dir() {
   [ -n "$WORK_SAVED" ] || return 0
@@ -334,11 +370,14 @@ cp --reflink=auto "$DB" "$WORK/old.db"
 fsync_path "$WORK/old.db"
 log "在 staging 上 checkpoint WAL"
 "$TOOL" checkpoint --db "$WORK/old.db"
-[ ! -e "$WORK/old.db-wal" ] || die "staging checkpoint 后仍残留 old.db-wal，拒绝迁移"
-[ ! -e "$WORK/old.db-shm" ] || die "staging checkpoint 后仍残留 old.db-shm，拒绝迁移"
+check_no_sidecar "$WORK/old.db" "staging 旧库 checkpoint 后"
 log "迁移到 Canonical"
 "$TOOL" migrate --in "$WORK/old.db" --out "$WORK/new.db" --baseline "$BASELINE"
+# 新库也必须 checkpoint 并关闭后再切换；否则 new.db-wal 会被遗留/删除，导致丢事务。
+"$TOOL" checkpoint --db "$WORK/new.db"
+check_no_sidecar "$WORK/new.db" "新库 checkpoint 后"
 VERIFY_OUT=$("$TOOL" verify --db "$WORK/new.db")
+check_no_sidecar "$WORK/new.db" "新库 verify 后"
 echo "$VERIFY_OUT"
 TARGET_HASH=$(printf '%s\n' "$VERIFY_OUT" | sed -n 's/.*hash=//p')
 [ -n "$TARGET_HASH" ] || die "无法从 verify 输出解析 target schema hash"
@@ -402,18 +441,26 @@ crashpoint after_journal
 
 # 真正 rename 前再校验一次，防止备份在 journal 写入后被改动。
 check_manifest
-# 正式库的 -wal/-shm 属于旧库，切换时一并移走，避免新库误读旧 WAL。
-rm -f "$DB" "$DB-wal" "$DB-shm"
+# 锁已持有，但仍要在动正式库前再确认一次：任何在前期扫描后打开数据库的
+# 进程都必须在切换前退出，不能把未知写入者带进切换窗口。
+check_no_db_holders
+# 正式库的 -wal/-shm 属于旧库。先把 sidecar 移到 work（不是删除），
+# 再由一次 rename 原子替换正式库；任一步崩溃都由 --recover 依据完整备份恢复。
+if [ -f "$DB-wal" ]; then mv -f "$DB-wal" "$WORK/old-wal"; fi
+if [ -f "$DB-shm" ]; then mv -f "$DB-shm" "$WORK/old-shm"; fi
 crashpoint after_remove_old
-mv "$WORK/new.db" "$DB"
+mv -f "$WORK/new.db" "$DB"
+crashpoint after_rename
 chmod 600 "$DB"
 fsync_path "$DB"
+fsync_path "$DATA"
 sync
 crashpoint after_switch
+rm -f "$WORK/old-wal" "$WORK/old-shm"
 
 "$TOOL" verify --db "$DB" || die "切换后校验失败；journal 保留，请运行 --recover"
 rm -f "$JOURNAL_PATH"
 rm -rf "$WORK"
 trap - EXIT
-log "完成：$DB -> Canonical 3.5.5；回滚副本 $PRE（含 -wal/-shm，如存在）"
+log "完成：$DB -> Canonical 3.5.6；回滚副本 $PRE（含 -wal/-shm，如存在）"
 log "灾难恢复材料：$KEY_PRE（600）、$MANIFEST；secret.key 本体未改动"

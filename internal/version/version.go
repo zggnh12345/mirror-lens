@@ -5,4 +5,4 @@
 package version
 
 // Version 由发布流程同步（见 .github/workflows/docker.yml 的校验步骤）。
-const Version = "3.5.5"
+const Version = "3.5.6"

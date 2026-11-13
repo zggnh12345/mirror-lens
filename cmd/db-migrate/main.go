@@ -5,11 +5,14 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +21,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/store/schema"
 )
 
@@ -50,11 +54,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `用法:
   db-migrate init    --out 新库 [--baseline fresh]
   db-migrate checkpoint --db 副本数据库
-  db-migrate migrate --in 旧库 --out 新库 --baseline 3.4.6|3.5.4 [--force-baseline]
+  db-migrate migrate --in 旧库 --out 新库 --baseline 3.4.6|3.5.4
   db-migrate verify  --db 数据库
   db-migrate inspect --db 数据库
 
-迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。`)
+迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。
+输入库必须匹配已冻结的 3.4.6/3.5.4 Schema 指纹；--force-baseline 不再绕过结构校验。`)
 	os.Exit(2)
 }
 
@@ -124,10 +129,11 @@ func runMigrate(args []string) error {
 	in := fs.String("in", "", "旧数据库路径（只读）")
 	out := fs.String("out", "", "新数据库路径")
 	baseline := fs.String("baseline", "", "旧库版本标识，例如 3.4.6 / 3.5.4")
-	force := fs.Bool("force-baseline", false, "允许覆盖 schema_meta 的 baseline 字符串（仅审计用途）")
+	force := fs.Bool("force-baseline", false, "已废弃；不再绕过输入 Schema 指纹校验")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	_ = force // 保留参数以拒绝旧脚本的“绕过”期待，但绝不改变校验路径。
 	if *in == "" || *out == "" || *baseline == "" {
 		return errors.New("migrate 需要 --in、--out、--baseline")
 	}
@@ -136,8 +142,10 @@ func runMigrate(args []string) error {
 	if *baseline == "3.5.3" {
 		return errors.New("3.5.3 是不支持的输入版本：缺少独立身份快照，docker_cap=1 且 repo_host='' 的 34 条记录会被静默归为无归属；--force-baseline 不能绕过")
 	}
-	if !*force && *baseline != "3.4.6" && *baseline != "3.5.4" {
-		return fmt.Errorf("未识别的 baseline %q；如确属受支持版本请加 --force-baseline", *baseline)
+	if expected, ok := inputSchemaFingerprints[*baseline]; !ok {
+		return fmt.Errorf("未识别的 baseline %q；只接受已冻结 Schema 指纹的 3.4.6 / 3.5.4", *baseline)
+	} else if expected == "" {
+		return fmt.Errorf("baseline %q 的 Schema 指纹尚未冻结", *baseline)
 	}
 	if _, err := os.Stat(*out); err == nil {
 		return fmt.Errorf("目标已存在，拒绝覆盖: %s", *out)
@@ -162,6 +170,19 @@ func runMigrate(args []string) error {
 	}
 	// 旧库只读：显式再开一次 query_only，并在整个搬迁期间保持该连接。
 	if _, err := src.Exec("PRAGMA query_only=ON"); err != nil {
+		return err
+	}
+	actualFingerprint, err := schema.Hash(src)
+	if err != nil {
+		return fmt.Errorf("计算输入 Schema 指纹: %w", err)
+	}
+	expectedFingerprint := inputSchemaFingerprints[*baseline]
+	if actualFingerprint != expectedFingerprint {
+		return fmt.Errorf("输入 Schema 指纹不匹配 baseline=%s：实际=%s，期望=%s；拒绝迁移未知结构（--force-baseline 不能绕过）",
+			*baseline, actualFingerprint, expectedFingerprint)
+	}
+	hostMap, err := validateRegistryHosts(src, *baseline)
+	if err != nil {
 		return err
 	}
 
@@ -193,7 +214,7 @@ func runMigrate(args []string) error {
 	fmt.Fprintln(os.Stderr, "step: attached")
 	defer target.Exec("DETACH DATABASE src")
 
-	plan, err := buildPlan(target, src)
+	plan, err := buildPlan(target, src, *baseline, hostMap)
 	if err != nil {
 		return err
 	}
@@ -311,11 +332,15 @@ func runInspect(args []string) error {
 }
 
 type tablePlan struct {
-	Name       string
-	SourceCols map[string]bool
-	TargetCols []string
-	Exprs      []string
-	Count      int64
+	Name        string
+	SourceName  string
+	SourceCols  map[string]bool
+	TargetCols  []string
+	Exprs       []string
+	KeyCols     []string
+	KeyExprs    []string
+	Count       int64
+	ContentHash string
 }
 
 type migrationPlan struct {
@@ -324,13 +349,17 @@ type migrationPlan struct {
 	Skipped []string
 }
 
-// 这些旧表有数据，但 Canonical 明确不保留；必须在报告里逐项列出，
-// 不能走“有数据就拒绝”的通用路径，也不能静默丢。
-var retiredTables = map[string]string{
-	"schema_migrations": "历史迁移记录已冻结到离线工具，不写入 Canonical",
+// inputSchemaFingerprints 是真实 3.4.6 / 3.5.4 副本的 Schema 指纹。
+// 它们由 schema.Hash 生成，包含表、列、主键、索引、触发器和外键定义；
+// 不包含业务行。迁移前必须逐字节匹配，--force-baseline 不能绕过。
+//
+// 这两个值必须与 docs/3.5.6-migration-hardening.md 中的冻结值一致。
+var inputSchemaFingerprints = map[string]string{
+	"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
+	"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
 }
 
-func buildPlan(target, src *sql.DB) (*migrationPlan, error) {
+func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) (*migrationPlan, error) {
 	targetTables, err := tableNames(target, "main")
 	if err != nil {
 		return nil, err
@@ -340,45 +369,71 @@ func buildPlan(target, src *sql.DB) (*migrationPlan, error) {
 		return nil, err
 	}
 	p := &migrationPlan{Counts: map[string]int64{}}
-	// sources 必须最先拷贝；其余表按名字排序，外键已关闭，顺序不影响正确性。
 	names := make([]string, 0, len(targetTables))
 	for name := range targetTables {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if name == "schema_meta" {
+		if name == "schema_meta" || name == "sqlite_sequence" {
 			continue
 		}
-		if name == "sqlite_sequence" {
-			continue
+		sourceName := name
+		if name == "schema_migrations_audit" {
+			// 3.5.4 的历史表名是 schema_migrations；3.4.6 没有该表。
+			sourceName = "schema_migrations"
 		}
-		if !srcTables[name] {
-			p.Skipped = append(p.Skipped, name+"（旧库无此表，保留空表）")
-			continue
+		if !srcTables[sourceName] {
+			if name == "schema_migrations_audit" || allowedMissingSourceTable(baseline, name) {
+				p.Skipped = append(p.Skipped, name+"（旧库无此表，保留空表）")
+				continue
+			}
+			return nil, fmt.Errorf("baseline=%s 缺少 Canonical 表 %s 的输入来源；拒绝把未知结构当成空库", baseline, name)
 		}
 		tcols, err := columns(target, "main", name)
 		if err != nil {
 			return nil, err
 		}
-		scols, err := columns(src, "main", name)
+		scols, err := columns(src, "main", sourceName)
 		if err != nil {
 			return nil, err
 		}
-		tp := &tablePlan{Name: name, SourceCols: map[string]bool{}}
+		tp := &tablePlan{Name: name, SourceName: sourceName, SourceCols: map[string]bool{}}
 		for _, c := range scols {
 			tp.SourceCols[c] = true
 		}
+		for _, c := range scols {
+			if !containsString(tcols, c) && !allowedSourceExtra(baseline, name, c) {
+				return nil, fmt.Errorf("表 %s 的源端多余列 %s 不在明确忽略清单；拒绝静默丢弃", sourceName, c)
+			}
+		}
 		for _, c := range tcols {
-			expr, ok := columnExpr(name, c, tp.SourceCols)
+			expr, ok := columnExpr(baseline, name, c, tp.SourceCols, hostMap)
 			if !ok {
-				continue // 目标列有默认值，省略即可
+				return nil, fmt.Errorf("表 %s 的目标列 %s 没有明确映射；拒绝依赖隐式默认值", name, c)
 			}
 			tp.TargetCols = append(tp.TargetCols, c)
 			tp.Exprs = append(tp.Exprs, expr)
 		}
 		if len(tp.TargetCols) == 0 {
 			return nil, fmt.Errorf("表 %s 没有可搬迁的列", name)
+		}
+		keyCols, err := primaryKey(target, "main", name)
+		if err != nil {
+			return nil, err
+		}
+		if len(keyCols) == 0 {
+			return nil, fmt.Errorf("表 %s 没有主键；无法做主键排序的确定性内容校验", name)
+		}
+		tp.KeyCols = keyCols
+		for _, c := range keyCols {
+			if !containsString(tp.TargetCols, c) {
+				return nil, fmt.Errorf("表 %s 的主键列 %s 不在目标列映射中", name, c)
+			}
+			if !tp.SourceCols[c] {
+				return nil, fmt.Errorf("表 %s 的源端缺少主键列 %s；拒绝用 rowid 猜测顺序", name, c)
+			}
+			tp.KeyExprs = append(tp.KeyExprs, qcol(c))
 		}
 		p.Tables = append(p.Tables, tp)
 	}
@@ -387,16 +442,11 @@ func buildPlan(target, src *sql.DB) (*migrationPlan, error) {
 		if name == "sqlite_sequence" || name == "_writable" {
 			continue
 		}
+		if name == "schema_migrations" && baseline == "3.5.4" {
+			// 已由 schema_migrations_audit 专项保留。
+			continue
+		}
 		if !targetTables[name] {
-			if reason, ok := retiredTables[name]; ok {
-				var n int64
-				if err := src.QueryRow(`SELECT count(*) FROM "` + strings.ReplaceAll(name, `"`, `""`) + `"`).Scan(&n); err == nil {
-					p.Skipped = append(p.Skipped, fmt.Sprintf("%s（%d 行；%s）", name, n, reason))
-				} else {
-					p.Skipped = append(p.Skipped, name+"（"+reason+"）")
-				}
-				continue
-			}
 			var n int64
 			if err := src.QueryRow(`SELECT count(*) FROM "` + strings.ReplaceAll(name, `"`, `""`) + `"`).Scan(&n); err != nil {
 				return nil, err
@@ -426,6 +476,102 @@ func (p *migrationPlan) validate() error {
 	return nil
 }
 
+// allowedMissingSourceTable 列出 3.4.6 明确没有、Canonical 允许以空表补齐的表。
+// 3.5.4 不应缺少任何 Canonical 业务表；缺少就拒绝。
+func allowedMissingSourceTable(baseline, table string) bool {
+	if baseline != "3.4.6" {
+		return false
+	}
+	switch table {
+	case "breaker_state", "registry_host_gen", "registry_host_recovery",
+		"source_health_archive", "source_health_scope", "schema_migrations_audit":
+		return true
+	}
+	return false
+}
+
+// allowedSourceExtra 是源端多余列的显式忽略清单。只允许已经确认没有 Canonical
+// 语义的列；任何新出现的多余列都必须先经过人工判断。
+func allowedSourceExtra(baseline, table, col string) bool {
+	return baseline == "3.5.4" && table == "sources" && col == "registry_identity_state"
+}
+
+// missingTargetExpr 是 3.4.6 缺失目标列的显式默认映射。不是“省略让 SQLite
+// 自己填”，而是把默认值写进 copy 的 SELECT，参与逐行内容校验。
+//
+// 3.4.6 没有 repo_host，但 docker_cap/ghcr_cap 已经表达了源的服务能力：
+// docker_cap=1 的 34 条历史记录就是 Docker Hub 镜像源；仅 ghcr_cap=1 的
+// 2 条是 GHCR 源；其余保持空串（没有 Registry 归属）。不能统一写空串，
+// 否则 Canonical 的 docker/ghcr 候选查询会把它们全部排除。
+func missingTargetExpr(baseline, table, col string) (string, bool) {
+	if baseline != "3.4.6" {
+		return "", false
+	}
+	switch table + "." + col {
+	case "sources.repo_host":
+		return `CASE WHEN "docker_cap" = 1 THEN 'docker.io' WHEN "ghcr_cap" = 1 THEN 'ghcr.io' ELSE '' END`, true
+	case "sources.registry_cap":
+		return "-1", true
+	case "sources.registry_path_mode":
+		return "''", true
+	case "sources.registry_probe_at":
+		return "0", true
+	case "sources.registry_probe_error":
+		return "''", true
+	case "source_events.neutral":
+		return "0", true
+	}
+	return "", false
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// validateRegistryHosts 对旧库 sources.repo_host 的每个非空值调用
+// registryhost.Check。空串是 3.5.4 的合法“无归属”，保持为空。
+// 这里不猜测历史 Hub 语义，也不把未知 Host 静默写成空串。
+func validateRegistryHosts(db *sql.DB, baseline string) (map[string]string, error) {
+	out := map[string]string{}
+	cols, err := columns(db, "main", "sources")
+	if err != nil {
+		return nil, fmt.Errorf("读取 sources 列: %w", err)
+	}
+	if !containsString(cols, "repo_host") {
+		// 3.4.6 没有 repo_host；目标库在 missingTargetExpr 中按能力做显式映射，
+		// 不存在需要校验的旧非空 Host。
+		return out, nil
+	}
+	rows, err := db.Query(`SELECT DISTINCT repo_host FROM sources`)
+	if err != nil {
+		return nil, fmt.Errorf("读取 sources.repo_host: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if raw == "" {
+			continue
+		}
+		norm, err := registryhost.Check(raw)
+		if err != nil {
+			return nil, fmt.Errorf("baseline=%s 的 sources.repo_host %q 未通过 Registry Host 校验: %w", baseline, raw, err)
+		}
+		out[raw] = norm
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func copyAll(db *sql.DB, p *migrationPlan) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -433,14 +579,14 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 	}
 	defer tx.Rollback()
 	for _, t := range p.Tables {
-		srcCount, err := countTable(tx, "src", t.Name)
+		srcCount, err := countTable(tx, "src", t.SourceName)
 		if err != nil {
 			return err
 		}
 		cols := quoteList(t.TargetCols)
 		exprs := strings.Join(t.Exprs, ",")
 		q := fmt.Sprintf(`INSERT INTO main."%s" (%s) SELECT %s FROM src."%s"`,
-			strings.ReplaceAll(t.Name, `"`, `""`), cols, exprs, strings.ReplaceAll(t.Name, `"`, `""`))
+			strings.ReplaceAll(t.Name, `"`, `""`), cols, exprs, strings.ReplaceAll(t.SourceName, `"`, `""`))
 		if _, err := tx.Exec(q); err != nil {
 			return fmt.Errorf("复制 %s: %w", t.Name, err)
 		}
@@ -451,10 +597,138 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 		if dstCount != srcCount {
 			return fmt.Errorf("表 %s 行数不一致：旧=%d 新=%d", t.Name, srcCount, dstCount)
 		}
+		srcHash, err := hashRows(tx, "src", t.SourceName, strings.Join(t.Exprs, ","), len(t.Exprs), t.KeyExprs)
+		if err != nil {
+			return fmt.Errorf("计算 %s 源端内容 hash: %w", t.Name, err)
+		}
+		dstHash, err := hashRows(tx, "main", t.Name, quoteList(t.TargetCols), len(t.TargetCols), t.KeyCols)
+		if err != nil {
+			return fmt.Errorf("计算 %s 目标端内容 hash: %w", t.Name, err)
+		}
+		if srcHash != dstHash {
+			return fmt.Errorf("表 %s 内容 hash 不一致：源=%s 目标=%s", t.Name, srcHash, dstHash)
+		}
+		t.ContentHash = dstHash
 		t.Count = dstCount
 		p.Counts[t.Name] = dstCount
 	}
 	return tx.Commit()
+}
+
+// hashRows 流式计算一张表在指定列上的内容 hash。列顺序固定，主键排序固定；
+// NULL、整数、浮点、字符串和 blob 都带类型与长度前缀，避免 "1" 与 1 混淆。
+func hashRows(tx *sql.Tx, schemaName, table, colsSQL string, ncols int, keyExprs []string) (string, error) {
+	q := `SELECT ` + colsSQL + ` FROM ` + schemaName + "." + qcol(table)
+	if len(keyExprs) > 0 {
+		q += ` ORDER BY ` + strings.Join(keyExprs, ",")
+	}
+	rows, err := tx.Query(q)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	h := sha256.New()
+	var n int64
+	for rows.Next() {
+		vals := make([]any, ncols)
+		ptrs := make([]any, ncols)
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return "", err
+		}
+		for _, v := range vals {
+			writeHashValue(h, v)
+		}
+		h.Write([]byte{0x1e})
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	h.Write([]byte(fmt.Sprintf("count=%d", n)))
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func writeHashValue(h interface{ Write([]byte) (int, error) }, v any) {
+	switch x := v.(type) {
+	case nil:
+		h.Write([]byte{'N'})
+	case int64:
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(x))
+		h.Write([]byte{'I'})
+		h.Write(b[:])
+	case int:
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(x))
+		h.Write([]byte{'I'})
+		h.Write(b[:])
+	case float64:
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], mathFloat64bits(x))
+		h.Write([]byte{'F'})
+		h.Write(b[:])
+	case bool:
+		if x {
+			h.Write([]byte{'B', 1})
+		} else {
+			h.Write([]byte{'B', 0})
+		}
+	case string:
+		writeHashBytes(h, 'S', []byte(x))
+	case []byte:
+		writeHashBytes(h, 'Y', x)
+	default:
+		writeHashBytes(h, 'X', []byte(fmt.Sprintf("%T:%v", x, x)))
+	}
+}
+
+func writeHashBytes(h interface{ Write([]byte) (int, error) }, tag byte, b []byte) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+	h.Write([]byte{tag})
+	h.Write(n[:])
+	h.Write(b)
+}
+
+func mathFloat64bits(f float64) uint64 {
+	return math.Float64bits(f)
+}
+
+func primaryKey(db *sql.DB, schemaName, table string) ([]string, error) {
+	q := `PRAGMA ` + schemaName + `.table_info(` + qcol(table) + `)`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type pkCol struct {
+		seq  int
+		name string
+	}
+	var cols []pkCol
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		if pk > 0 {
+			cols = append(cols, pkCol{pk, name})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].seq < cols[j].seq })
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.name
+	}
+	return out, nil
 }
 
 func rebuildSequences(db *sql.DB, p *migrationPlan) error {
@@ -521,55 +795,26 @@ func checkIntegrity(db *sql.DB) error {
 	return nil
 }
 
-func columnExpr(table, col string, src map[string]bool) (string, bool) {
-	if table == "sources" {
-		host := repoHostExpr(src)
-		switch col {
-		case "repo_host":
-			return host, true
-		case "registry_cap":
-			if src[col] {
-				return qcol(col), true
-			}
-			return "CASE WHEN " + host + " = 'ghcr.io' THEN 1 ELSE -1 END", true
-		case "registry_path_mode":
-			if src[col] {
-				return qcol(col), true
-			}
-			return "CASE WHEN " + host + " = 'ghcr.io' THEN 'native' ELSE '' END", true
-		case "registry_probe_at":
-			if src[col] {
-				return qcol(col), true
-			}
-			return "0", true
-		case "registry_probe_error":
-			if src[col] {
-				return qcol(col), true
-			}
-			return "''", true
-		}
-	}
+func columnExpr(baseline, table, col string, src map[string]bool, hostMap map[string]string) (string, bool) {
 	if src[col] {
+		if table == "sources" && col == "repo_host" && baseline == "3.5.4" && len(hostMap) > 0 {
+			var changed []string
+			for raw, norm := range hostMap {
+				if raw != norm {
+					changed = append(changed, sqlLiteral(raw)+" THEN "+sqlLiteral(norm))
+				}
+			}
+			if len(changed) > 0 {
+				sort.Strings(changed)
+				return "CASE " + qcol(col) + " WHEN " + strings.Join(changed, " WHEN ") + " ELSE " + qcol(col) + " END", true
+			}
+		}
 		return qcol(col), true
 	}
-	return "", false
+	return missingTargetExpr(baseline, table, col)
 }
 
-func repoHostExpr(src map[string]bool) string {
-	var host string
-	if src["repo_host"] {
-		host = "lower(trim(repo_host))"
-	} else {
-		host = "''"
-	}
-	h := "CASE " +
-		"WHEN " + host + " IN ('registry-1.docker.io','index.docker.io','docker.io') THEN 'docker.io' " +
-		"WHEN " + host + " = 'ghcr.io' THEN 'ghcr.io' " +
-		"WHEN " + host + " = '' AND docker_cap = 1 THEN 'docker.io' " +
-		"WHEN " + host + " = '' AND ghcr_cap = 1 AND docker_cap <> 1 THEN 'ghcr.io' " +
-		"ELSE " + host + " END"
-	return h
-}
+func sqlLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 func qcol(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 

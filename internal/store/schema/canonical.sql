@@ -1,4 +1,4 @@
--- Canonical schema for Mirror Lens 3.5.5.
+-- Canonical schema for Mirror Lens 3.5.6.
 --
 -- 这份 DDL 是新安装和所有旧库离线升级的唯一目标结构。运行时不执行任何
 -- ALTER TABLE / 回填 / 历史迁移；schema_meta 是唯一的结构版本入口。
@@ -10,10 +10,22 @@
 --   * 不存在 registry_identity_state，也不存在 _writable 表。
 
 CREATE TABLE schema_meta (
-  schema_version TEXT PRIMARY KEY,
+  -- id 固定为 1：schema_meta 是单记录模型，DDL 层直接拒绝第二行。
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  schema_version TEXT NOT NULL,
   schema_hash TEXT NOT NULL,
   baseline_version TEXT NOT NULL,
   applied_at INTEGER NOT NULL
+);
+
+-- 仅用于保留旧版本的迁移历史事实（3.5.4 的三条 schema_migrations）。
+-- 运行时和迁移工具都不读取它来执行迁移，也不校验旧 checksum 链；
+-- 它是只读审计表，不是新的迁移执行机制。新库此表为空。
+CREATE TABLE schema_migrations_audit (
+  name TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL,
+  checksum TEXT NOT NULL DEFAULT '',
+  checksum_origin TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE sources (

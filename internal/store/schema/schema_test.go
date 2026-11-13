@@ -86,4 +86,78 @@ func TestCanonicalHasNoIdentityOrWritable(t *testing.T) {
 	if n != 0 {
 		t.Fatal("canonical 不应包含 _writable")
 	}
+	// 新库必须保留审计表的空表结构；不能因为“没有旧历史”就把它当成
+	// schema_migrations 继续执行。
+	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations_audit`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("fresh 库的审计表应为空，实际 %d 行", n)
+	}
+	// 新库不能再出现旧的迁移执行表名；审计事实只进 schema_migrations_audit。
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='schema_migrations'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("Canonical 不应包含旧的 schema_migrations 执行表")
+	}
+}
+
+func TestReadMetaRequiresExactlyOneRow(t *testing.T) {
+	db, _ := open(t)
+	if err := EnsureFresh(db, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMeta(db); err != nil {
+		t.Fatalf("单记录应可读: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_meta`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMeta(db); err == nil {
+		t.Fatal("零条 schema_meta 必须拒绝启动")
+	}
+	// DDL 的 CHECK(id=1) 保证正常库不能出现第二行；这里重建一个不带
+	// 约束的同名表，专门验证 ReadMeta 自身的行数检查（而不是只依赖 DDL）。
+	if _, err := db.Exec(`DROP TABLE schema_meta`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_meta (schema_version TEXT NOT NULL, schema_hash TEXT NOT NULL, baseline_version TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_meta VALUES ('a','b','c',1),('d','e','f',2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMeta(db); err == nil {
+		t.Fatal("多条 schema_meta 必须拒绝启动")
+	}
+}
+
+func TestSchemaMetaSingleRowConstraint(t *testing.T) {
+	db, _ := open(t)
+	if err := EnsureFresh(db, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_meta(id,schema_version,schema_hash,baseline_version,applied_at) VALUES (2,'x','y','z',0)`); err == nil {
+		t.Fatal("schema_meta 的 id=1 约束必须拒绝第二行")
+	}
+}
+
+func TestEnsureFreshIsAtomic(t *testing.T) {
+	db, _ := open(t)
+	// 用同名 view 让 Canonical DDL 在事务中途失败；若 DDL 与 meta 不在同一
+	// 事务，残留的 Canonical 表会污染后续启动。
+	if _, err := db.Exec(`CREATE VIEW schema_meta AS SELECT 1 AS x`); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureFresh(db, "fresh"); err == nil {
+		t.Fatal("DDL 冲突时 EnsureFresh 应失败")
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sources'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("初始化失败后不应留下半成品 Canonical 表")
+	}
 }

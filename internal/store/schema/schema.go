@@ -16,7 +16,7 @@ import (
 )
 
 // Version 是当前 Canonical Schema 对应的应用版本。
-const Version = "3.5.5"
+const Version = "3.5.6"
 
 //go:embed canonical.sql
 var ddl string
@@ -44,6 +44,10 @@ func IsEmpty(db *sql.DB) (bool, error) {
 
 // EnsureFresh 只对空库执行 Canonical DDL，并写入 schema_meta。
 // baseline 是 "fresh"、"3.4.6"、"3.5.4" 等来源标识。
+//
+// DDL 和 schema_meta 必须处于同一个事务：初始化中途失败时不能留下
+// “有表但没有元数据”的半成品库。schema hash 也在事务内计算，保证它
+// 描述的就是即将提交的最终 Canonical Schema。
 func EnsureFresh(db *sql.DB, baseline string) error {
 	empty, err := IsEmpty(db)
 	if err != nil {
@@ -52,28 +56,43 @@ func EnsureFresh(db *sql.DB, baseline string) error {
 	if !empty {
 		return fmt.Errorf("数据库不是空库，拒绝执行 Canonical DDL")
 	}
-	if _, err := db.Exec(ddl); err != nil {
-		return fmt.Errorf("执行 Canonical DDL: %w", err)
-	}
-	h, err := Hash(db)
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO schema_meta(schema_version,schema_hash,baseline_version,applied_at)
-		VALUES(?,?,?,strftime('%s','now'))`, Version, h, baseline)
+	defer tx.Rollback()
+	if _, err := tx.Exec(ddl); err != nil {
+		return fmt.Errorf("执行 Canonical DDL: %w", err)
+	}
+	h, err := hashQuery(tx)
 	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_meta(schema_version,schema_hash,baseline_version,applied_at)
+		VALUES(?,?,?,strftime('%s','now'))`, Version, h, baseline); err != nil {
 		return fmt.Errorf("写入 schema_meta: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交 Canonical 初始化: %w", err)
 	}
 	return nil
 }
 
-// ReadMeta 读取并校验 schema_meta 存在且为单行。
+// ReadMeta 读取并校验 schema_meta 存在且为单行。单行是 Canonical 的硬约束，
+// 不能只取第一行而忽略第二行。
 func ReadMeta(db *sql.DB) (Meta, error) {
 	var m Meta
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM schema_meta`).Scan(&n); err != nil {
+		return m, fmt.Errorf("数据库缺少 schema_meta（旧库必须先用离线工具升级）: %w", err)
+	}
+	if n != 1 {
+		return m, fmt.Errorf("schema_meta 必须恰好一行，实际 %d 行；拒绝启动", n)
+	}
 	err := db.QueryRow(`SELECT schema_version,schema_hash,baseline_version,applied_at FROM schema_meta`).
 		Scan(&m.SchemaVersion, &m.SchemaHash, &m.BaselineVersion, &m.AppliedAt)
 	if err != nil {
-		return m, fmt.Errorf("数据库缺少 schema_meta（旧库必须先用离线工具升级）: %w", err)
+		return m, fmt.Errorf("读取 schema_meta: %w", err)
 	}
 	return m, nil
 }
@@ -154,8 +173,16 @@ func normSQL(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // Hash 对实际数据库结构做稳定 hash。hash 不包含任何业务行，也不包含
 // schema_meta 里的值和 sqlite_sequence 的当前值。
-func Hash(db *sql.DB) (string, error) {
-	rows, err := db.Query(`SELECT type,name,sql FROM sqlite_master
+func Hash(db *sql.DB) (string, error) { return hashQuery(db) }
+
+// queryer 让 *sql.DB 和 *sql.Tx 都能参与结构 hash。初始化事务需要在提交前
+// 计算 hash，不能用另一个连接读取尚未提交的 DDL。
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func hashQuery(q queryer) (string, error) {
+	rows, err := q.Query(`SELECT type,name,sql FROM sqlite_master
 		WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name <> '_writable'
 		ORDER BY type,name`)
 	if err != nil {
@@ -183,7 +210,7 @@ func Hash(db *sql.DB) (string, error) {
 	for _, m := range masters {
 		switch m.typ {
 		case "table":
-			t, err := inspectTable(db, m.name, m.sqlText)
+			t, err := inspectTable(q, m.name, m.sqlText)
 			if err != nil {
 				return "", err
 			}
@@ -211,9 +238,9 @@ func Hash(db *sql.DB) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func inspectTable(db *sql.DB, name, sqlText string) (table, error) {
+func inspectTable(q queryer, name, sqlText string) (table, error) {
 	t := table{Name: name, SQL: normSQL(sqlText)}
-	cr, err := db.Query(`PRAGMA table_info(` + quoteIdent(name) + `)`)
+	cr, err := q.Query(`PRAGMA table_info(` + quoteIdent(name) + `)`)
 	if err != nil {
 		return t, err
 	}
@@ -233,7 +260,7 @@ func inspectTable(db *sql.DB, name, sqlText string) (table, error) {
 	}
 	cr.Close()
 
-	fr, err := db.Query(`PRAGMA foreign_key_list(` + quoteIdent(name) + `)`)
+	fr, err := q.Query(`PRAGMA foreign_key_list(` + quoteIdent(name) + `)`)
 	if err != nil {
 		return t, err
 	}
@@ -252,7 +279,7 @@ func inspectTable(db *sql.DB, name, sqlText string) (table, error) {
 	}
 	fr.Close()
 
-	ir, err := db.Query(`PRAGMA index_list(` + quoteIdent(name) + `)`)
+	ir, err := q.Query(`PRAGMA index_list(` + quoteIdent(name) + `)`)
 	if err != nil {
 		return t, err
 	}
@@ -278,7 +305,7 @@ func inspectTable(db *sql.DB, name, sqlText string) (table, error) {
 	ir.Close()
 	for _, r := range idxs {
 		idx := index{Name: r.name, Unique: r.unique != 0, Origin: r.origin, Partial: r.partial != 0}
-		xr, err := db.Query(`PRAGMA index_info(` + quoteIdent(r.name) + `)`)
+		xr, err := q.Query(`PRAGMA index_info(` + quoteIdent(r.name) + `)`)
 		if err != nil {
 			return t, err
 		}

@@ -572,7 +572,7 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		URL  string `json:"url"`
 		Name string `json:"name"`
 		// Host 可选：显式声明源归属的 Registry Host（如 ghcr.io、quay.io）。
-		// 不传时按 3.5.5 语义默认 Docker Hub（docker.io），不再落空 Host。
+		// 不传时按 Canonical 语义默认 Docker Hub（docker.io），不再落空 Host。
 		Host string `json:"host"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {

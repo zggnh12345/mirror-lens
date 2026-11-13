@@ -202,7 +202,7 @@ func Open(path string) (*Store, error) {
 	// 运行时不迁移、不补列、不回填。空库按 Canonical DDL 新建；非空库必须
 	// 已由离线工具升级并写入 schema_meta，否则拒绝启动。旧二进制没有
 	// schema_meta 检查，因此发布流程禁止用旧二进制打开新库；回滚时恢复
-	// pre-3.5.5 数据库副本和原 secret.key，而不是让旧二进制直接读新库。
+	// pre-3.5.6 数据库副本和原 secret.key，而不是让旧二进制直接读新库。
 	empty, err := schema.IsEmpty(db)
 	if err != nil {
 		return nil, err
@@ -337,7 +337,7 @@ func (s *Store) verifyMigrationChecksums() error {
 	return nil
 }
 
-// 历史迁移冻结：3.5.5 起 Open 不再调用本函数，历史 SQL 与 checksum 原样保留
+// 历史迁移冻结：3.5.6 起 Open 不再调用本函数，历史 SQL 与 checksum 原样保留
 // 作为审计证据。禁止在运行时重新接入；数据搬迁只由 cmd/db-migrate 离线完成。
 func (s *Store) migrate() error {
 	// 迁移日志表必须先于任何 step 存在；它同时是 Phase B 的完成标记表。
@@ -992,7 +992,7 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.GhcrCap == 0 {
 		x.GhcrCap = CapUnknown
 	}
-	// 3.5.5 Canonical 语义：
+	// 3.5.6 Canonical 语义：
 	//   - 显式 Host：按 Host 归属；
 	//   - 纯 GHCR：ghcr.io；
 	//   - 仅 GitHub：Host 保持空（not_applicable）；
