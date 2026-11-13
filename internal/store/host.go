@@ -530,6 +530,7 @@ SELECT s.id, s.name, s.base_url, s.repo_host, s.registry_cap, s.registry_path_mo
 FROM sources s
 LEFT JOIN registry_host_gen g ON g.host = s.repo_host
 WHERE s.status<>'archived'
+  AND s.registry_identity_state='identified'
   AND s.repo_host<>''
   AND s.repo_host<>'ghcr.io'
   AND s.repo_host<>'docker.io' ` + extra + `

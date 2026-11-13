@@ -85,6 +85,43 @@ func TestRegistryIdentityMigration(t *testing.T) {
 	}
 }
 
+func TestHostCapsIdentityGate(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "caps.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	unclassified := insRaw(t, st, "https://u.example", "quay.io", -1, 0, 0)
+	known := insRaw(t, st, "https://k.example", "gcr.io", -1, 0, 0)
+	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='identified' WHERE id=?`, known); err != nil {
+		t.Fatal(err)
+	}
+	hub := insRaw(t, st, "https://h.example", "docker.io", -1, 0, 0)
+	ghcr := insRaw(t, st, "https://g.example", "ghcr.io", -1, 0, 0)
+	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='identified' WHERE id IN (?,?)`, hub, ghcr); err != nil {
+		t.Fatal(err)
+	}
+
+	caps, err := st.ListHostCaps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int64]bool{}
+	for _, c := range caps {
+		seen[c.SourceID] = true
+	}
+	if seen[unclassified] {
+		t.Error("unclassified 源出现在 Host 面板")
+	}
+	if seen[hub] || seen[ghcr] {
+		t.Error("docker.io/ghcr.io 出现在 Host 面板")
+	}
+	if !seen[known] {
+		t.Error("identified 的 foreign Host 未出现在 Host 面板")
+	}
+}
+
 // 未确认身份的源不得进入 Host Probe；docker.io 与空 Host 同样排除。
 func TestListDueHostProbesIdentityGate(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "due.db"))
