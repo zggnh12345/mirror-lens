@@ -11,6 +11,30 @@ ok() { PASS=$((PASS+1)); echo "ok   - $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL - $1"; }
 skip() { SKIP=$((SKIP+1)); echo "skip - $1"; }
 
+# 在已关闭的 fixture 上开启 WAL，提交一帧，再在连接仍打开时复制出 DB/WAL/SHM；
+# 这样升级脚本看到的是“有 sidecar 的旧库”，而不是 checkpoint 后的单文件。
+make_wal() {
+  python3 - "$1/mirror-lens.db" <<'PY'
+import os, shutil, sqlite3, sys
+db=sys.argv[1]
+c=sqlite3.connect(db)
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('PRAGMA wal_autocheckpoint=0')
+c.execute("INSERT INTO sources(base_url,name,repo_host,docker_cap,github_cap,ghcr_cap,status,enabled,created_at) VALUES('https://b.example','b','docker.io',1,-1,-1,'usable',1,2)")
+c.commit()
+tmp=db+'.seed'
+shutil.copyfile(db,tmp)
+for ext in ('-wal','-shm'):
+    if os.path.exists(db+ext):
+        shutil.copyfile(db+ext,tmp+ext)
+c.close()
+os.replace(tmp,db)
+for ext in ('-wal','-shm'):
+    if os.path.exists(tmp+ext):
+        os.replace(tmp+ext,db+ext)
+PY
+}
+
 [ -x "$TOOL" ] || { echo "缺少 db-migrate: $TOOL" >&2; exit 2; }
 
 # 假 docker 只提供升级脚本需要的四个 inspect 字段；它不启动/停止任何容器。
@@ -131,6 +155,38 @@ if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 &&
   ok "正常升级 + 完整 manifest + 回滚副本 + key 不动"
 else
   bad "正常升级失败: $(tail -5 "$r/log")"
+fi
+rm -rf "$r"
+
+# 2b. 备份保留 WAL/SHM 时：manifest 记录 present，回滚副本带 sidecar；篡改 sidecar 必须拒绝
+r=$(mktemp -d); fixture "$r"; make_wal "$r"
+if [ -f "$r/mirror-lens.db-wal" ]; then
+  if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 &&
+     grep -q '^wal_state=present$' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+     [ -f "$r/mirror-lens.db.pre-3.5.5-wal" ] &&
+     "$TOOL" verify --db "$r/mirror-lens.db" >/dev/null 2>&1; then
+    ok "WAL sidecar manifest=present、回滚副本保留 WAL"
+  else
+    bad "WAL sidecar 正常升级失败: $(tail -4 "$r/log")"
+  fi
+else
+  skip "make_wal 未生成 WAL sidecar"
+fi
+rm -rf "$r"
+
+r=$(mktemp -d); fixture "$r"; make_wal "$r"
+DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+if [ -f "$r/mirror-lens.db.pre-3.5.5-wal" ]; then
+  printf 'X' >>"$r/mirror-lens.db.pre-3.5.5-wal"
+  if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+    bad "WAL sidecar 被篡改仍恢复成功"
+  elif [ -f "$r/.db-upgrade-journal.json" ]; then
+    ok "WAL sidecar 篡改被拒绝且 journal 保留"
+  else
+    bad "WAL sidecar 篡改被拒绝但 journal 丢失"
+  fi
+else
+  skip "崩溃后没有 WAL 回滚副本，无法测 WAL 篡改"
 fi
 rm -rf "$r"
 
