@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # 离线升级 mirror-lens 数据库到 Canonical Schema（3.5.5）。
 #
-#   upgrade-db.sh --data <数据目录> --tool <db-migrate> --baseline 3.4.6|3.5.4
-#   upgrade-db.sh --recover --data <数据目录> --tool <db-migrate>
+#   upgrade-db.sh --data <数据目录> --tool <db-migrate> --container <容器> \\
+#                  [--expect-image <镜像>] --baseline 3.4.6|3.5.4
+#   upgrade-db.sh --recover --data <数据目录> --tool <db-migrate> --container <容器>
 #
 # 约束：
-#   - 必须先停服务；脚本拿数据目录单实例锁，服务在跑时会直接失败。
+#   - 必须确认目标容器存在、镜像身份匹配且已经停止；脚本不会替你停容器。
+#   - 不依赖旧版本不会创建的 .mirror-lens.lock 来判断服务状态。
+#   - 升级前检查没有进程仍持有正式库/WAL/SHM；有则拒绝。
 #   - 正式库从不被原地改写；先复制到 staging，checkpoint 后由 db-migrate 只读搬迁。
+#   - checkpoint 后 staging 不得残留 -wal/-shm。
 #   - 切换前把正式库复制成 mirror-lens.db.pre-3.5.5，并 fsync + sha256。
 #   - secret.key 不参与切换、不被替换；另存一份 600 的 secret.key.pre-3.5.5
 #     并写 manifest（DB/key 的 SHA-256），只用于灾难恢复核对。
@@ -21,6 +25,9 @@ KEY_PRE_NAME=secret.key.pre-3.5.5
 MANIFEST_NAME=mirror-lens.db.pre-3.5.5.manifest
 JOURNAL=.db-upgrade-journal.json
 TOOL=./db-migrate
+CONTAINER=""
+EXPECT_IMAGE=""
+DOCKER=${DOCKER:-docker}
 
 die() { echo "[upgrade-db] 错误: $*" >&2; exit 1; }
 log() { echo "[upgrade-db] $*"; }
@@ -40,6 +47,45 @@ field() { # field <key> 从单行 journal 取字符串值
     sed 's/.*:[[:space:]]*"//; s/"$//'
 }
 
+# 服务状态的唯一可信来源是容器本身，不是旧版本不一定创建的锁文件。
+# 本函数只检查，不停止、不重启容器；生产停机必须由操作者单独完成。
+check_container_stopped() {
+  [ -n "$CONTAINER" ] || die "缺少 --container；升级/恢复必须指定生产容器"
+  command -v "$DOCKER" >/dev/null 2>&1 || die "找不到 docker 命令: $DOCKER"
+  local name image running
+  name=$("$DOCKER" inspect --format '{{.Name}}' "$CONTAINER" 2>/dev/null) ||
+    die "目标容器不存在或不可 inspect: $CONTAINER"
+  [ "$name" = "/$CONTAINER" ] || [ "$name" = "$CONTAINER" ] ||
+    die "容器身份不匹配：请求 $CONTAINER，inspect 返回 $name"
+  image=$("$DOCKER" inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) ||
+    die "无法读取容器镜像: $CONTAINER"
+  if [ -n "$EXPECT_IMAGE" ] && [ "$image" != "$EXPECT_IMAGE" ]; then
+    die "容器镜像不匹配：期望 $EXPECT_IMAGE，实际 $image"
+  fi
+  running=$("$DOCKER" inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null) ||
+    die "无法读取容器运行状态: $CONTAINER"
+  case "$running" in
+    false) ;;
+    true) die "容器 $CONTAINER 仍在运行；请先单独停机，脚本不会替你停容器" ;;
+    *) die "无法识别容器运行状态: $CONTAINER=$running" ;;
+  esac
+}
+
+# 不依赖 fuser/lsof：直接扫描 /proc 的 fd 链接，能看到宿主上的服务进程。
+check_no_db_holders() {
+  local fd target pids=""
+  for fd in /proc/[0-9]*/fd/*; do
+    [ -e "$fd" ] || continue
+    target=$(readlink "$fd" 2>/dev/null) || continue
+    case "$target" in
+      "$DB"|"$DB-wal"|"$DB-shm"|"$DB (deleted)"|"$DB-wal (deleted)"|"$DB-shm (deleted)")
+        pids="$pids ${fd#/proc/}"
+        ;;
+    esac
+  done
+  [ -z "$pids" ] || die "仍有进程持有正式库/WAL/SHM:$pids；先停服务并确认进程退出"
+}
+
 usage() {
   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
@@ -56,6 +102,8 @@ while [ $# -gt 0 ]; do
     --data) DATA=${2:-}; shift 2 ;;
     --tool) TOOL=${2:-}; shift 2 ;;
     --baseline) BASELINE=${2:-}; shift 2 ;;
+    --container) CONTAINER=${2:-}; shift 2 ;;
+    --expect-image) EXPECT_IMAGE=${2:-}; shift 2 ;;
     --recover) MODE=recover; shift ;;
     -h|--help) usage ;;
     *) die "未知参数 $1" ;;
@@ -66,17 +114,20 @@ DATA_IN=$DATA
 DATA=$(cd "$DATA" 2>/dev/null && pwd) || die "数据目录不存在: $DATA_IN"
 [ -x "$TOOL" ] || die "db-migrate 不可执行: $TOOL"
 
-# 与服务、restore.sh、离线迁移共用同一把锁。
-exec 8>"$DATA/.mirror-lens.lock"
-chmod 600 "$DATA/.mirror-lens.lock" 2>/dev/null || true
-flock -n 8 || die "服务或另一个迁移进程正在操作 $DATA（.mirror-lens.lock 被占用）"
-
 JOURNAL_PATH="$DATA/$JOURNAL"
 DB="$DATA/$DB_NAME"
 PRE="$DATA/$PRE_NAME"
 KEY="$DATA/$KEY_NAME"
 KEY_PRE="$DATA/$KEY_PRE_NAME"
 MANIFEST="$DATA/$MANIFEST_NAME"
+
+check_container_stopped
+check_no_db_holders
+
+# 与服务、restore.sh、离线迁移共用同一把锁；但锁不再是服务运行状态的证据。
+exec 8>"$DATA/.mirror-lens.lock"
+chmod 600 "$DATA/.mirror-lens.lock" 2>/dev/null || true
+flock -n 8 || die "另一个迁移进程正在操作 $DATA（.mirror-lens.lock 被占用）"
 
 recover() {
   [ -f "$JOURNAL_PATH" ] || { log "没有未完成的升级，无需恢复"; return 0; }
@@ -150,7 +201,8 @@ cp --reflink=auto "$DB" "$WORK/old.db"
 fsync_path "$WORK/old.db"
 log "在 staging 上 checkpoint WAL"
 "$TOOL" checkpoint --db "$WORK/old.db"
-rm -f "$WORK/old.db-shm"
+[ ! -e "$WORK/old.db-wal" ] || die "staging checkpoint 后仍残留 old.db-wal，拒绝迁移"
+[ ! -e "$WORK/old.db-shm" ] || die "staging checkpoint 后仍残留 old.db-shm，拒绝迁移"
 log "迁移到 Canonical"
 "$TOOL" migrate --in "$WORK/old.db" --out "$WORK/new.db" --baseline "$BASELINE"
 "$TOOL" verify --db "$WORK/new.db"
