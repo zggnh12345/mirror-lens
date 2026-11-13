@@ -131,6 +131,11 @@ func runMigrate(args []string) error {
 	if *in == "" || *out == "" || *baseline == "" {
 		return errors.New("migrate 需要 --in、--out、--baseline")
 	}
+	// 3.5.3 的 docker_cap=1 + repo_host='' 记录没有可恢复的身份事实。
+	// 这条拒绝必须先于任何输入/输出操作，且 --force-baseline 不能绕过。
+	if *baseline == "3.5.3" {
+		return errors.New("3.5.3 是不支持的输入版本：缺少独立身份快照，docker_cap=1 且 repo_host='' 的 34 条记录会被静默归为无归属；--force-baseline 不能绕过")
+	}
 	if !*force && *baseline != "3.4.6" && *baseline != "3.5.4" {
 		return fmt.Errorf("未识别的 baseline %q；如确属受支持版本请加 --force-baseline", *baseline)
 	}
