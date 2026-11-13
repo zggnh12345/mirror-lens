@@ -131,7 +131,7 @@ func runMigrate(args []string) error {
 	if *in == "" || *out == "" || *baseline == "" {
 		return errors.New("migrate 需要 --in、--out、--baseline")
 	}
-	if !*force && *baseline != "3.4.6" && *baseline != "3.5.3" && *baseline != "3.5.4" {
+	if !*force && *baseline != "3.4.6" && *baseline != "3.5.4" {
 		return fmt.Errorf("未识别的 baseline %q；如确属受支持版本请加 --force-baseline", *baseline)
 	}
 	if _, err := os.Stat(*out); err == nil {
