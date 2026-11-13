@@ -220,6 +220,10 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 		if err != nil {
 			return nil, nil
 		}
+		// Hub 与 GHCR 有各自的候选池，永远不进入 foreign Registry 族。
+		if host == "" || host == "docker.io" || host == "ghcr.io" {
+			return nil, nil
+		}
 		return s.registryCandidates(host)
 	}
 	col := ""
@@ -288,6 +292,11 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 // 第 5 条是实时闸门：state 是 DB 投影，不会随时间自己变；Runner 没跑时
 // 也必须由查询挡住过期结论。
 func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
+	// 双保险：Hub/GHCR 有独立候选池，任何调用路径都不得把它们当 foreign Registry。
+	switch host {
+	case "", "docker.io", "ghcr.io":
+		return nil, nil
+	}
 	cutoff := s.nowTime().Unix() - int64(s.RecoveryTTL()/time.Second)
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
 		s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, s.registry_path_mode,
@@ -297,6 +306,7 @@ func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
 		JOIN registry_host_recovery r
 		  ON r.source_id = s.id AND r.family = 'registry' AND r.scope = ?
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
+		  AND s.registry_identity_state = 'identified'
 		  AND s.registry_cap = 1 AND s.repo_host = ?
 		  AND s.registry_path_mode IN ('native','host_prefix')
 		  AND r.state = 'ok'

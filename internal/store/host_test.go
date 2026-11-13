@@ -108,9 +108,10 @@ func TestBackfillRepoHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟 3.4.6 探测写回的结果：纯 ghcr 与「同时代 Hub」的源。
-	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1 WHERE id=?`, pure)
+	// 新库 AddSource 已默认 docker.io，这里把纯 ghcr/归档源还原成历史空 Host。
+	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1, repo_host='', registry_identity_state='unclassified' WHERE id=?`, pure)
 	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=0, docker_cap=1 WHERE id=?`, dual)
-	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1 WHERE id=?`, arch)
+	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1, repo_host='', registry_identity_state='unclassified' WHERE id=?`, arch)
 	st.Close()
 
 	st = openTestAt(t, path)
@@ -126,8 +127,8 @@ func TestBackfillRepoHost(t *testing.T) {
 	}
 
 	d := mustSource(t, st, dual)
-	if d.RepoHost != "" || d.RegistryCap != CapUnknown {
-		t.Fatalf("双能力源不应被改成 ghcr 归属: %+v", d)
+	if d.RepoHost != "docker.io" || d.RegistryCap != CapUnknown {
+		t.Fatalf("双能力源应保持 Hub 归属，不能被改成 ghcr: %+v", d)
 	}
 	if d.DockerCap != 1 || d.GhcrCap != 1 {
 		t.Fatalf("双能力源的旧列被改动: %+v", d)

@@ -19,6 +19,7 @@ func addRegSource(t *testing.T, st *Store, host, path string, cap int, enabled b
 		Status:    status,
 		Enabled:   enabled,
 		DockerCap: dockerCap,
+		RepoHost:  host,
 	})
 	if err != nil {
 		t.Fatalf("AddSource: %v", err)
@@ -96,6 +97,52 @@ func TestRegistryCandidatesOnlyVerifiedPaths(t *testing.T) {
 	}
 	if len(list) != 3 {
 		t.Errorf("候选数=%d，期望 3（%v）", len(list), got)
+	}
+}
+
+// 读路径必须自己挡住身份不明的源，不能只依赖写入端不变量。
+func TestRegistryCandidatesRequireIdentified(t *testing.T) {
+	st, _ := newTestStore(t)
+	ok := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	bad := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='unclassified' WHERE id=?`, bad); err != nil {
+		t.Fatal(err)
+	}
+	na := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
+	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='not_applicable' WHERE id=?`, na); err != nil {
+		t.Fatal(err)
+	}
+
+	m := candidatesIDs(mustCandidates(t, st, "registry:quay.io"))
+	if _, got := m[ok]; !got {
+		t.Error("identified foreign Registry 源应进入候选")
+	}
+	for name, id := range map[string]int64{"unclassified": bad, "not_applicable": na} {
+		if _, got := m[id]; got {
+			t.Errorf("%s 的源 %d 不应进入 Registry 候选", name, id)
+		}
+	}
+}
+
+// Hub/GHCR 即使被构造成「cap=1 + recovery ok」，也不能进入 foreign Registry 池。
+func TestRegistryCandidatesExcludeHubAndGHCR(t *testing.T) {
+	st, _ := newTestStore(t)
+	addRegSource(t, st, "docker.io", "native", 1, true, "usable", 0)
+	addRegSource(t, st, "ghcr.io", "native", 1, true, "usable", 0)
+	for _, kind := range []string{"registry:docker.io", "registry:ghcr.io"} {
+		if got := mustCandidates(t, st, kind); len(got) != 0 {
+			t.Errorf("%s 候选数=%d，期望 0", kind, len(got))
+		}
+	}
+	// 直接读路径也不得被绕过。
+	for _, host := range []string{"", "docker.io", "ghcr.io"} {
+		got, err := st.RegistryCandidatesRaw(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Errorf("RegistryCandidatesRaw(%q) 返回 %d 条，期望 0", host, len(got))
+		}
 	}
 }
 

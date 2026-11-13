@@ -262,10 +262,10 @@ func TestMaterializeExpiredSkipsNonCandidates(t *testing.T) {
 	st.SetRecoveryTTL(24 * time.Hour)
 	old := base.Unix() - int64(24*time.Hour/time.Second) - 1
 
-	hard := seedExpiredOK(t, st, "hard.example", old, 0)
+	hard := seedExpiredOK(t, st, "registry.k8s.io", old, 0)
 	seedExpireExec(t, st, `UPDATE sources SET registry_cap=2 WHERE id=?`, hard)
 
-	arch := seedExpiredOK(t, st, "arch.example", old, 0)
+	arch := seedExpiredOK(t, st, "quay.io", old, 0)
 	seedExpireExec(t, st, `UPDATE sources SET status='archived' WHERE id=?`, arch)
 
 	n, err := st.MaterializeExpired(base)

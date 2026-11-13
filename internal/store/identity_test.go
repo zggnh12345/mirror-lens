@@ -189,7 +189,8 @@ func TestSetRepoHostWritesIdentity(t *testing.T) {
 	}
 }
 
-// AddSource 只在有证据时映射 Hub；无证据保持 unclassified。
+// AddSource 的 2026-11-13 定版语义：未传 Host 默认 Docker Hub；
+// 纯 GHCR 归 ghcr.io；仅 GitHub 为 not_applicable；显式 Host 按 Host 归属。
 func TestAddSourceIdentity(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "add.db"))
 	if err != nil {
@@ -197,39 +198,56 @@ func TestAddSourceIdentity(t *testing.T) {
 	}
 	defer st.Close()
 
-	hubID, err := st.AddSource(Source{BaseURL: "https://a.example", Name: "a", DockerCap: RegistryCapYes})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		in   Source
+		host string
+		id   string
+	}{
+		{"default-unknown", Source{Name: "a"}, "docker.io", IdentityIdentified},
+		{"docker-cap", Source{Name: "b", DockerCap: RegistryCapYes}, "docker.io", IdentityIdentified},
+		{"github-only", Source{Name: "c", GithubCap: RegistryCapYes}, "", IdentityNotApplicable},
+		{"ghcr-only", Source{Name: "d", GhcrCap: RegistryCapYes, DockerCap: RegistryCapNo}, "ghcr.io", IdentityIdentified},
+		{"explicit-ghcr", Source{Name: "e", RepoHost: "ghcr.io"}, "ghcr.io", IdentityIdentified},
+		{"explicit-docker", Source{Name: "f", RepoHost: "docker.io"}, "docker.io", IdentityIdentified},
+		{"explicit-foreign", Source{Name: "g", RepoHost: "registry.k8s.io"}, "registry.k8s.io", IdentityIdentified},
+		{"github-plus-docker", Source{Name: "h", GithubCap: RegistryCapYes, DockerCap: RegistryCapYes}, "docker.io", IdentityIdentified},
 	}
-	h, i := sourceIdentity(t, st, hubID)
-	if h != "docker.io" || i != IdentityIdentified {
-		t.Errorf("docker 能力源 -> (%q,%q)", h, i)
+	for i, c := range cases {
+		c.in.BaseURL = "https://add" + c.name + ".example"
+		id, err := st.AddSource(c.in)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		h, got := sourceIdentity(t, st, id)
+		if h != c.host || got != c.id {
+			t.Errorf("%s (#%d) -> (%q,%q), want (%q,%q)", c.name, i, h, got, c.host, c.id)
+		}
 	}
+}
 
-	ghID, err := st.AddSource(Source{BaseURL: "https://b.example", Name: "b", GithubCap: RegistryCapYes})
+// 新增入口不能再产生空 Host（GitHub 专用源除外）。
+func TestAddSourceNoUnexpectedEmptyHost(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "add-empty.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, i = sourceIdentity(t, st, ghID)
-	if h != "" || i != IdentityNotApplicable {
-		t.Errorf("GitHub 源 -> (%q,%q)", h, i)
+	defer st.Close()
+	inputs := []Source{
+		{Name: "plain", BaseURL: "https://plain.example"},
+		{Name: "api", BaseURL: "https://api.example", DockerCap: CapUnknown, GithubCap: CapUnknown},
+		{Name: "discovered", BaseURL: "https://discovered.example", Origin: "discovered", Status: "pending"},
 	}
-
-	unkID, err := st.AddSource(Source{BaseURL: "https://c.example", Name: "c"})
-	if err != nil {
+	for _, in := range inputs {
+		if _, err := st.AddSource(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM sources WHERE repo_host=''`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	h, i = sourceIdentity(t, st, unkID)
-	if h != "" || i != IdentityUnclassified {
-		t.Errorf("未知源 -> (%q,%q)", h, i)
-	}
-
-	ghcrID, err := st.AddSource(Source{BaseURL: "https://d.example", Name: "d", GhcrCap: RegistryCapYes, DockerCap: RegistryCapNo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, i = sourceIdentity(t, st, ghcrID)
-	if h != "ghcr.io" || i != IdentityIdentified {
-		t.Errorf("ghcr 能力源 -> (%q,%q)", h, i)
+	if n != 0 {
+		t.Fatalf("新增源产生了 %d 条空 Host", n)
 	}
 }

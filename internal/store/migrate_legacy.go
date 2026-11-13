@@ -310,9 +310,9 @@ WHERE a.batch=?
 // 否则每次启动都会刷新，迁移记录就不再是「首次完成时间」。
 func recordLegacyMarker(ctx context.Context, tx dbtx, now int64) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)
+		`INSERT INTO schema_migrations(name, applied_at, checksum, checksum_origin) VALUES(?,?,?, 'legacy_data')
 		 ON CONFLICT(name) DO NOTHING`,
-		legacyArchiveMarker, now)
+		legacyArchiveMarker, now, migrationChecksum("legacy-archive-v1", legacyArchiveMarker))
 	return err
 }
 

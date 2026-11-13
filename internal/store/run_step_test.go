@@ -15,7 +15,7 @@ func TestRunStepAtomic(t *testing.T) {
 	ctx := context.Background()
 
 	var calls int
-	ran, err := st.runStep(ctx, "t-step", func(ctx context.Context, tx dbtx) error {
+	ran, err := st.runStep(ctx, "t-step", migrationChecksum("t-step"), func(ctx context.Context, tx dbtx) error {
 		calls++
 		_, err := tx.ExecContext(ctx, `INSERT INTO meta(k, v) VALUES('k1', 'v1')`)
 		return err
@@ -27,7 +27,7 @@ func TestRunStepAtomic(t *testing.T) {
 		t.Fatalf("调用次数 %d", calls)
 	}
 
-	ran, err = st.runStep(ctx, "t-step", func(ctx context.Context, tx dbtx) error {
+	ran, err = st.runStep(ctx, "t-step", migrationChecksum("t-step"), func(ctx context.Context, tx dbtx) error {
 		calls++
 		return nil
 	})
@@ -47,7 +47,7 @@ func TestRunStepRollback(t *testing.T) {
 	defer st.Close()
 	ctx := context.Background()
 
-	_, err := st.runStep(ctx, "t-fail", func(ctx context.Context, tx dbtx) error {
+	_, err := st.runStep(ctx, "t-fail", migrationChecksum("t-fail"), func(ctx context.Context, tx dbtx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k, v) VALUES('k2', 'v2')`); err != nil {
 			return err
 		}
@@ -64,7 +64,7 @@ func TestRunStepRollback(t *testing.T) {
 	}
 
 	// 失败后可以重试成功。
-	ran, err := st.runStep(ctx, "t-fail", func(ctx context.Context, tx dbtx) error { return nil })
+	ran, err := st.runStep(ctx, "t-fail", migrationChecksum("t-fail"), func(ctx context.Context, tx dbtx) error { return nil })
 	if err != nil || !ran {
 		t.Fatalf("重试: ran=%v err=%v", ran, err)
 	}
@@ -87,7 +87,7 @@ func TestRunStepCommitFailureRollsBack(t *testing.T) {
 		}
 	}
 
-	ran, err := st.runStep(ctx, "t-commit-fail", func(ctx context.Context, tx dbtx) error {
+	ran, err := st.runStep(ctx, "t-commit-fail", migrationChecksum("t-commit-fail"), func(ctx context.Context, tx dbtx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO cfc(id, pid) VALUES(1, 999)`)
 		return err
 	})
@@ -108,7 +108,7 @@ func TestRunStepCommitFailureRollsBack(t *testing.T) {
 	}
 
 	// 连接池仍可用：写走同一个 *sql.Conn，坏连接不该把后续步骤卡死。
-	ran, err = st.runStep(ctx, "t-after", func(ctx context.Context, tx dbtx) error {
+	ran, err = st.runStep(ctx, "t-after", migrationChecksum("t-after"), func(ctx context.Context, tx dbtx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO meta(k, v) VALUES('k3', 'v3')`)
 		return err
 	})

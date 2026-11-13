@@ -135,8 +135,8 @@ func TestAddSourceCreatesRecoveryRow(t *testing.T) {
 		t.Fatalf("新源应绑当前代次 3, got %d", v2.Gen)
 	}
 
-	// Hub 与 ghcr 不参与 Host 探测，不建行。
-	for _, h := range []string{"", "ghcr.io"} {
+	// Hub（显式 docker.io 与历史空 Host）及 ghcr 不参与 Host 探测，不建行。
+	for _, h := range []string{"docker.io", "ghcr.io"} {
 		id3 := addSourceAt(t, s, h, true, RegistryCapUnknown)
 		var n int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM registry_host_recovery WHERE source_id=?`, id3).Scan(&n); err != nil {

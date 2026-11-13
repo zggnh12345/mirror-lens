@@ -3,7 +3,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -215,12 +217,129 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// 3.5.4 M3：已登记迁移的内容校验。
+//
+// 校验对象是「迁移定义」本身（SQL 文本），不是执行结果。新建库在登记时写
+// verified；老库首次升级时原记录没有 checksum，只能做兼容登记（legacy_compat），
+// 这表示「从本版本起锁定」，不表示历史内容已被回溯验证。之后任何内容改动都会
+// 因 checksum 不匹配而拒绝启动。
+const (
+	identityMigrationName = "3.5.4-registry-identity"
+	phaseBMigrationName   = "3.5.3-phase-b-tables"
+)
+
+var identityMigrationStmts = []string{
+	`UPDATE sources SET repo_host='docker.io', registry_identity_state='identified'
+	 WHERE repo_host='' AND docker_cap=1`,
+	`UPDATE sources SET registry_identity_state='not_applicable'
+	 WHERE repo_host='' AND docker_cap<>1 AND github_cap=1`,
+	`UPDATE sources SET registry_identity_state='identified' WHERE repo_host<>''`,
+	`SELECT COUNT(*) FROM sources
+	 WHERE registry_identity_state NOT IN ('identified','not_applicable','unclassified')`,
+	`SELECT COUNT(*) FROM sources
+	 WHERE repo_host<>'' AND registry_identity_state<>'identified'`,
+}
+
+var phaseBMigrationStmts = []string{
+	`CREATE TABLE IF NOT EXISTS source_health_archive(
+	source_id INTEGER NOT NULL,
+	family TEXT NOT NULL,
+	fails INTEGER NOT NULL,
+	ok_at INTEGER NOT NULL,
+	last_at INTEGER NOT NULL,
+	archived_at INTEGER NOT NULL,
+	batch TEXT NOT NULL,
+	PRIMARY KEY (source_id, family, batch)
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_sha_batch ON source_health_archive(batch)`,
+}
+
+func migrationChecksum(parts ...string) string {
+	h := sha256.New()
+	for _, p := range parts {
+		h.Write([]byte(p))
+		h.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// knownMigrationChecksums 列出本二进制理解的迁移。未列出的历史行保持原样，
+// 不因为不认识就判定库损坏。
+func knownMigrationChecksums() map[string]string {
+	return map[string]string{
+		identityMigrationName: migrationChecksum(identityMigrationStmts...),
+		phaseBMigrationName:   migrationChecksum(phaseBMigrationStmts...),
+		// 历史归档标记是数据迁移，不是 schema 定义：校验批次契约，
+		// 不声称归档函数里的每条 SQL 都被逐字哈希。
+		legacyArchiveMarker: migrationChecksum("legacy-archive-v1", legacyArchiveMarker),
+	}
+}
+
+func (s *Store) verifyMigrationChecksums() error {
+	rows, err := s.db.Query(`SELECT name, checksum, checksum_origin FROM schema_migrations`)
+	if err != nil {
+		return fmt.Errorf("读取迁移校验和: %w", err)
+	}
+	type rec struct {
+		name, sum, origin string
+	}
+	var recs []rec
+	for rows.Next() {
+		var r rec
+		if err := rows.Scan(&r.name, &r.sum, &r.origin); err != nil {
+			rows.Close()
+			return err
+		}
+		recs = append(recs, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	known := knownMigrationChecksums()
+	for _, r := range recs {
+		want, ok := known[r.name]
+		if !ok {
+			continue
+		}
+		if r.sum == "" {
+			// 兼容登记：只发生一次，下一次启动起参与严格校验。
+			if _, err := s.db.Exec(`UPDATE schema_migrations
+				SET checksum=?, checksum_origin='legacy_compat'
+				WHERE name=? AND checksum=''`, want, r.name); err != nil {
+				return fmt.Errorf("登记历史迁移 %s 的校验和: %w", r.name, err)
+			}
+			log.Printf("迁移 %s：历史记录无校验和，已做兼容登记（legacy_compat）", r.name)
+			continue
+		}
+		if r.sum != want {
+			return fmt.Errorf("迁移 %s 内容校验失败：库中 %s，当前程序 %s（拒绝启动）",
+				r.name, r.sum, want)
+		}
+	}
+	return nil
+}
+
 func (s *Store) migrate() error {
 	// 迁移日志表必须先于任何 step 存在；它同时是 Phase B 的完成标记表。
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(
 		name TEXT PRIMARY KEY,
-		applied_at INTEGER NOT NULL
+		applied_at INTEGER NOT NULL,
+		checksum TEXT NOT NULL DEFAULT '',
+		checksum_origin TEXT NOT NULL DEFAULT ''
 	)`); err != nil {
+		return err
+	}
+	// 3.5.4 M3：老库补列。origin 区分「本版本登记」与「历史兼容登记」，
+	// 后者不假装原迁移内容已被回溯验证。
+	if err := s.ensureColumns("schema_migrations", map[string]string{
+		"checksum":        "TEXT NOT NULL DEFAULT ''",
+		"checksum_origin": "TEXT NOT NULL DEFAULT ''",
+	}); err != nil {
+		return err
+	}
+	if err := s.verifyMigrationChecksums(); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`
@@ -422,29 +541,20 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	// 3.5.4：身份显式化。空 Host 不再隐含 Hub：docker_cap=1 的存量源写为
 	// docker.io，GitHub 类型的源标 not_applicable，其余保留 unclassified。
 	// 迁移与标记同事务；失败整体回滚，下次启动重试。
-	if _, err := s.runStep(context.Background(), "3.5.4-registry-identity", func(ctx context.Context, tx dbtx) error {
-		stmts := []string{
-			`UPDATE sources SET repo_host='docker.io', registry_identity_state='identified'
-			 WHERE repo_host='' AND docker_cap=1`,
-			`UPDATE sources SET registry_identity_state='not_applicable'
-			 WHERE repo_host='' AND docker_cap<>1 AND github_cap=1`,
-			`UPDATE sources SET registry_identity_state='identified' WHERE repo_host<>''`,
-		}
-		for _, q := range stmts {
+	if _, err := s.runStep(context.Background(), identityMigrationName, migrationChecksum(identityMigrationStmts...), func(ctx context.Context, tx dbtx) error {
+		for _, q := range identityMigrationStmts[:3] {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				return err
 			}
 		}
 		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources
-			WHERE registry_identity_state NOT IN ('identified','not_applicable','unclassified')`).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, identityMigrationStmts[3]).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
 			return fmt.Errorf("迁移后仍有 %d 条非法身份状态", n)
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources
-			WHERE repo_host<>'' AND registry_identity_state<>'identified'`).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, identityMigrationStmts[4]).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
@@ -466,21 +576,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	}
 	// Phase B（3.5.3）：legacy registry 数据退出。表与标记先建好，迁移本身
 	// 在单事务内完成归档+清理+标记，失败整体回滚，下次启动重试。
-	if _, err := s.runStep(context.Background(), "3.5.3-phase-b-tables", func(ctx context.Context, tx dbtx) error {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS source_health_archive(
-		source_id INTEGER NOT NULL,
-		family TEXT NOT NULL,
-		fails INTEGER NOT NULL,
-		ok_at INTEGER NOT NULL,
-		last_at INTEGER NOT NULL,
-		archived_at INTEGER NOT NULL,
-		batch TEXT NOT NULL,
-		PRIMARY KEY (source_id, family, batch)
-	)`); err != nil {
-			return err
+	if _, err := s.runStep(context.Background(), phaseBMigrationName, migrationChecksum(phaseBMigrationStmts...), func(ctx context.Context, tx dbtx) error {
+		for _, q := range phaseBMigrationStmts {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
 		}
-		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_sha_batch ON source_health_archive(batch)`)
-		return err
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -496,7 +598,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 //
 // 只用于内容已冻结的步骤。加列/建表探测（ensureColumns、IF NOT EXISTS）
 // 每次启动都必须执行，因为它们会随新版本扩展，不能登记后跳过。
-func (s *Store) runStep(ctx context.Context, name string, fn func(context.Context, dbtx) error) (ran bool, err error) {
+func (s *Store) runStep(ctx context.Context, name, checksum string, fn func(context.Context, dbtx) error) (ran bool, err error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE name=?`, name).Scan(&n); err != nil {
 		return false, err
@@ -523,7 +625,8 @@ func (s *Store) runStep(ctx context.Context, name string, fn func(context.Contex
 		return false, fmt.Errorf("迁移步骤 %s: %w", name, err)
 	}
 	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO schema_migrations(name, applied_at) VALUES(?,?)`, name, s.nowTime().Unix()); err != nil {
+		`INSERT INTO schema_migrations(name, applied_at, checksum, checksum_origin) VALUES(?,?,?, 'verified')`,
+		name, s.nowTime().Unix(), checksum); err != nil {
 		return false, fmt.Errorf("登记迁移步骤 %s: %w", name, err)
 	}
 	ok = true // done 已结束事务，失败时也由它负责回滚/丢弃，defer 不再二次调用
@@ -857,31 +960,35 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.GhcrCap == 0 {
 		x.GhcrCap = CapUnknown
 	}
-	// 3.5.4: 身份显式化。只有明确证据（显式 Host，或 docker/ghcr 能力为 1）
-	// 才标 identified；GitHub 类型标 not_applicable；其余保持 unclassified，
-	// 不猜 Hub、不写猜测 Host。
-	identity := IdentityUnclassified
+	// 3.5.4: 身份显式化。2026-11-13 定版语义：
+	//   - 显式 Host：按 Host 归属，identified；
+	//   - 纯 GHCR：ghcr.io，identified；
+	//   - 仅 GitHub：not_applicable，Host 保持空；
+	//   - 其余（含未传 Host、能力未知）：默认 Docker Hub，docker.io + identified。
+	// 空 Host 不再表示 Hub，也不允许作为新增源的落库结果。
+	identity := IdentityIdentified
 	switch {
 	case x.RepoHost != "":
 		identity = IdentityIdentified
-	case x.DockerCap == RegistryCapYes, x.GhcrCap == RegistryCapYes:
+	case x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes:
 		identity = IdentityIdentified
-	case x.GithubCap == RegistryCapYes:
+	case x.GithubCap == RegistryCapYes && x.DockerCap != RegistryCapYes:
 		identity = IdentityNotApplicable
+	default:
+		identity = IdentityIdentified
 	}
 	host, err := registryhost.Check(x.RepoHost)
 	if err != nil {
 		return 0, err
 	}
-	if host == "" && identity == IdentityIdentified && (x.RepoHost != "" || x.DockerCap == RegistryCapYes) {
-		// docker.io 在 Normalize 中被折叠为空串（历史 Hub 语义）。3.5.4 起
-		// 空串不再代表 Hub，已确认的 Hub 源必须落为显式 docker.io。
-		host = "docker.io"
-	}
-	if host == "" && x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
-		// 只有 GHCR 能力的源归属 ghcr.io，与启动回填规则保持一致，
-		// 不留下「identified 但 Host 为空」的中间态。
+	if host == "" && identity == IdentityIdentified && x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
+		// 只有 GHCR 能力的源归属 ghcr.io。
 		host = "ghcr.io"
+	}
+	if host == "" && identity == IdentityIdentified {
+		// docker.io 在 Normalize 中被折叠为空串（历史 Hub 语义）。3.5.4 起
+		// 空串不再代表 Hub，新增源一律落显式 docker.io。
+		host = "docker.io"
 	}
 	x.RepoHost = host
 	x.RegistryIdentity = identity
@@ -916,8 +1023,8 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	id, _ := res.LastInsertId()
 	// 归属 Host 的源立即进入待探测集合：gen 取该 Host 当前代次，
 	// 没有代次行时按 0（与 CommitHostProbe 的缺行规则一致）。
-	// 空 Host（Docker Hub）与 ghcr.io 不参与 Host 探测，不建行。
-	if x.RepoHost != "" && x.RepoHost != "ghcr.io" {
+	// 空 Host（历史 Docker Hub）、docker.io 与 ghcr.io 不参与 Host 探测，不建行。
+	if x.RepoHost != "" && x.RepoHost != "ghcr.io" && x.RepoHost != "docker.io" {
 		now := time.Now().Unix()
 		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
 (source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
