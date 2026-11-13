@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "/src/internal/store/zz_s1_baseline_test.go": "/src/tools/candinv/s1_baseline_test.go"
+  }
+}
