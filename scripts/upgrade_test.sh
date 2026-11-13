@@ -83,5 +83,18 @@ else
 fi
 rm -rf "$r"
 
+# 4. manifest 保护：升级期间 secret.key 被换掉时拒绝自动回滚
+r=$(mktemp -d); fixture "$r"
+DB_UPGRADE_CRASH=after_journal "$UP" --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+printf 'OTHER-KEY' >"$r/secret.key"
+if "$UP" --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+  bad "key 与 manifest 不符时仍恢复成功"
+elif grep -q 'secret.key 与升级前 manifest 不符' "$r/recover.log"; then
+  ok "key 与 manifest 不符时拒绝回滚"
+else
+  bad "key 不符但错误不是 manifest 拒绝: $(tail -3 "$r/recover.log")"
+fi
+rm -rf "$r"
+
 echo "----"; echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
