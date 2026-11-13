@@ -594,12 +594,29 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 	}
+	// 显式 Host 优先。未传 Host 时，至少要识别出「纯 GitHub 仓库」：
+	// AddSource 的默认分支是 Docker Hub，若不在这里把 GitHub 能力标出来，
+	// 一个 github.com 源会被错标成 docker.io/identified。
+	host := strings.TrimSpace(in.Host)
+	dockerCap, githubCap := store.CapUnknown, store.CapUnknown
+	if host == "" {
+		if u, perr := url.Parse(base); perr == nil {
+			switch strings.ToLower(u.Hostname()) {
+			case "github.com", "www.github.com", "raw.githubusercontent.com", "gist.githubusercontent.com":
+				githubCap, dockerCap = store.CapYes, store.CapNo
+			case "ghcr.io":
+				host = "ghcr.io"
+			case "hub.docker.com", "registry-1.docker.io", "index.docker.io":
+				host = "docker.io"
+			}
+		}
+	}
 	id, err := s.st.AddSource(store.Source{
 		BaseURL: base, Name: name,
 		SiteName: discover.ResolveSiteName("", base),
 		Origin:   "manual", Enabled: true, Status: "pending",
-		DockerCap: store.CapUnknown, GithubCap: store.CapUnknown,
-		RepoHost: strings.TrimSpace(in.Host),
+		DockerCap: dockerCap, GithubCap: githubCap,
+		RepoHost: host,
 	})
 	if err == store.ErrExists {
 		writeJSON(w, 409, map[string]string{"error": "这个地址已经在列表里了"})

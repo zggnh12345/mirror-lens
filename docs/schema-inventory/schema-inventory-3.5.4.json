@@ -1,0 +1,2151 @@
+{
+  "indexes": [
+    {
+      "name": "idx_audit_ts",
+      "sql": "CREATE INDEX idx_audit_ts ON audit(ts DESC)"
+    },
+    {
+      "name": "idx_blob_integrity_failures_created",
+      "sql": "CREATE INDEX idx_blob_integrity_failures_created\n\t\t\tON blob_integrity_failures(created_at)"
+    },
+    {
+      "name": "idx_blobs_integrity",
+      "sql": "CREATE INDEX idx_blobs_integrity ON blobs(integrity_status)"
+    },
+    {
+      "name": "idx_cache_hit",
+      "sql": "CREATE INDEX idx_cache_hit ON cache_entries(last_hit)"
+    },
+    {
+      "name": "idx_cache_sha",
+      "sql": "CREATE INDEX idx_cache_sha ON cache_entries(sha256)"
+    },
+    {
+      "name": "idx_checks_kind_ts",
+      "sql": "CREATE INDEX idx_checks_kind_ts ON checks(kind, ts DESC)"
+    },
+    {
+      "name": "idx_checks_src_ts",
+      "sql": "CREATE INDEX idx_checks_src_ts ON checks(source_id, ts DESC)"
+    },
+    {
+      "name": "idx_live_speed_src",
+      "sql": "CREATE INDEX idx_live_speed_src ON live_speed(source_id, ts DESC)"
+    },
+    {
+      "name": "idx_proxy_speed_src",
+      "sql": "CREATE INDEX idx_proxy_speed_src ON proxy_speed(source_id, ts DESC)"
+    },
+    {
+      "name": "idx_recovery_due",
+      "sql": "CREATE INDEX idx_recovery_due ON registry_host_recovery(next_probe_at)"
+    },
+    {
+      "name": "idx_sev_src_ts",
+      "sql": "CREATE INDEX idx_sev_src_ts ON source_events(source_id, ts DESC)"
+    },
+    {
+      "name": "idx_sha_batch",
+      "sql": "CREATE INDEX idx_sha_batch ON source_health_archive(batch)"
+    },
+    {
+      "name": "idx_sources_repo_host",
+      "sql": "CREATE INDEX idx_sources_repo_host ON sources(repo_host, status)"
+    }
+  ],
+  "source": "3.5.4",
+  "sqlite_sequence": [
+    {
+      "name": "sources",
+      "seq": 3186
+    },
+    {
+      "name": "checks",
+      "seq": 193514
+    },
+    {
+      "name": "audit",
+      "seq": 167
+    },
+    {
+      "name": "source_groups",
+      "seq": 7
+    },
+    {
+      "name": "source_events",
+      "seq": 3169
+    },
+    {
+      "name": "proxy_speed",
+      "seq": 181
+    },
+    {
+      "name": "live_speed",
+      "seq": 30
+    },
+    {
+      "name": "tokens",
+      "seq": 1
+    }
+  ],
+  "tables": {
+    "_writable": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "x",
+          "notnull": false,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "rows": 0,
+      "sql": "CREATE TABLE _writable(x INTEGER)"
+    },
+    "audit": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "ts",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "ip",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "''",
+          "name": "user",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "action",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "default": "''",
+          "name": "target",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "default": "''",
+          "name": "detail",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "default": "1",
+          "name": "ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "ts"
+          ],
+          "name": "idx_audit_ts",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 167,
+      "sql": "CREATE TABLE audit (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts INTEGER NOT NULL,\n  ip TEXT NOT NULL DEFAULT '',\n  user TEXT NOT NULL DEFAULT '',\n  action TEXT NOT NULL,\n  target TEXT NOT NULL DEFAULT '',\n  detail TEXT NOT NULL DEFAULT '',\n  ok INTEGER NOT NULL DEFAULT 1\n)"
+    },
+    "blob_integrity_failures": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "expected_digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "actual_digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "digest_source",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "protocol",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "default": null,
+          "name": "source_id",
+          "notnull": false,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "''",
+          "name": "source_name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "default": "''",
+          "name": "cache_key",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "default": null,
+          "name": "error_code",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "created_at"
+          ],
+          "name": "idx_blob_integrity_failures_created",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE blob_integrity_failures(\n\t\t\tid INTEGER PRIMARY KEY AUTOINCREMENT,\n\t\t\texpected_digest TEXT NOT NULL,\n\t\t\tactual_digest TEXT NOT NULL,\n\t\t\tdigest_source TEXT NOT NULL,\n\t\t\tprotocol TEXT NOT NULL,\n\t\t\tsource_id INTEGER,\n\t\t\tsource_name TEXT NOT NULL DEFAULT '',\n\t\t\tcache_key TEXT NOT NULL DEFAULT '',\n\t\t\terror_code TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL)"
+    },
+    "blobs": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "sha256",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": "0",
+          "name": "size",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "'unknown'",
+          "name": "integrity_status",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "''",
+          "name": "expected_digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": "''",
+          "name": "actual_digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "default": "''",
+          "name": "digest_source",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "default": "''",
+          "name": "digest_algorithm",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "default": "0",
+          "name": "verified_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 8,
+          "default": "''",
+          "name": "verification_error",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "integrity_status"
+          ],
+          "name": "idx_blobs_integrity",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "sha256"
+          ],
+          "name": "sqlite_autoindex_blobs_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 476,
+      "sql": "CREATE TABLE blobs(\n\t\t\tsha256 TEXT PRIMARY KEY,\n\t\t\tsize INTEGER NOT NULL DEFAULT 0,\n\t\t\tintegrity_status TEXT NOT NULL DEFAULT 'unknown',\n\t\t\texpected_digest TEXT NOT NULL DEFAULT '',\n\t\t\tactual_digest TEXT NOT NULL DEFAULT '',\n\t\t\tdigest_source TEXT NOT NULL DEFAULT '',\n\t\t\tdigest_algorithm TEXT NOT NULL DEFAULT '',\n\t\t\tverified_at INTEGER NOT NULL DEFAULT 0,\n\t\t\tverification_error TEXT NOT NULL DEFAULT '')"
+    },
+    "breaker_state": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "kind",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "0",
+          "name": "fails",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "default": "0",
+          "name": "until",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": "0",
+          "name": "rev",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": "0",
+          "name": "updated_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "kind"
+          ],
+          "name": "sqlite_autoindex_breaker_state_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 2,
+      "sql": "CREATE TABLE breaker_state(\n\t\t\tsource_id INTEGER NOT NULL,\n\t\t\tkind TEXT NOT NULL,\n\t\t\tfails INTEGER NOT NULL DEFAULT 0,\n\t\t\tuntil INTEGER NOT NULL DEFAULT 0,\n\t\t\trev INTEGER NOT NULL DEFAULT 0,\n\t\t\tupdated_at INTEGER NOT NULL DEFAULT 0,\n\t\t\tPRIMARY KEY(source_id, kind))"
+    },
+    "cache_entries": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "key",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "sha256",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "size",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "default": "''",
+          "name": "content_type",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": "''",
+          "name": "etag",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "default": "''",
+          "name": "last_modified",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "default": "''",
+          "name": "upstream",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 8,
+          "default": "0",
+          "name": "last_hit",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "default": "0",
+          "name": "hits",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "default": "300",
+          "name": "ttl",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "default": "''",
+          "name": "verify",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "last_hit"
+          ],
+          "name": "idx_cache_hit",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "sha256"
+          ],
+          "name": "idx_cache_sha",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "key"
+          ],
+          "name": "sqlite_autoindex_cache_entries_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 346,
+      "sql": "CREATE TABLE cache_entries(\n\t\t\tkey TEXT PRIMARY KEY,\n\t\t\tsha256 TEXT NOT NULL,\n\t\t\tsize INTEGER NOT NULL,\n\t\t\tcontent_type TEXT NOT NULL DEFAULT '',\n\t\t\tetag TEXT NOT NULL DEFAULT '',\n\t\t\tlast_modified TEXT NOT NULL DEFAULT '',\n\t\t\tupstream TEXT NOT NULL DEFAULT '',\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tlast_hit INTEGER NOT NULL DEFAULT 0,\n\t\t\thits INTEGER NOT NULL DEFAULT 0,\n\t\t\tttl INTEGER NOT NULL DEFAULT 300,\n\t\t\tverify TEXT NOT NULL DEFAULT '')"
+    },
+    "checks": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "kind",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "ts",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "tier",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": null,
+          "name": "ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "0",
+          "name": "latency_ms",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "default": "0",
+          "name": "speed_kbps",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 8,
+          "default": "''",
+          "name": "digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "default": "-1",
+          "name": "digest_ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "default": "-1",
+          "name": "blob_ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "default": "0",
+          "name": "ttfb_ms",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 12,
+          "default": "1",
+          "name": "tls_ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 13,
+          "default": "0",
+          "name": "cert_days",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 14,
+          "default": "0",
+          "name": "http_code",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 15,
+          "default": "''",
+          "name": "error",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "kind",
+            "ts"
+          ],
+          "name": "idx_checks_kind_ts",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "source_id",
+            "ts"
+          ],
+          "name": "idx_checks_src_ts",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 190670,
+      "sql": "CREATE TABLE checks (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n  kind TEXT NOT NULL DEFAULT '',\n  ts INTEGER NOT NULL,\n  tier INTEGER NOT NULL,\n  ok INTEGER NOT NULL,\n  latency_ms INTEGER NOT NULL DEFAULT 0,\n  speed_kbps INTEGER NOT NULL DEFAULT 0,\n  digest TEXT NOT NULL DEFAULT '',\n  digest_ok INTEGER NOT NULL DEFAULT -1,\n  blob_ok INTEGER NOT NULL DEFAULT -1,\n  ttfb_ms INTEGER NOT NULL DEFAULT 0,\n  tls_ok INTEGER NOT NULL DEFAULT 1,\n  cert_days INTEGER NOT NULL DEFAULT 0,\n  http_code INTEGER NOT NULL DEFAULT 0,\n  error TEXT NOT NULL DEFAULT ''\n)"
+    },
+    "live_speed": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "kind",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "ts",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "bytes",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": null,
+          "name": "window_s",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "ts"
+          ],
+          "name": "idx_live_speed_src",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 30,
+      "sql": "CREATE TABLE live_speed (\n\tid INTEGER PRIMARY KEY AUTOINCREMENT,\n\tsource_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n\tkind TEXT NOT NULL DEFAULT '',\n\tts INTEGER NOT NULL,\n\tbytes INTEGER NOT NULL,\n\twindow_s INTEGER NOT NULL\n)"
+    },
+    "meta": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "k",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": "''",
+          "name": "v",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "k"
+          ],
+          "name": "sqlite_autoindex_meta_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 2,
+      "sql": "CREATE TABLE meta(\n\t\t\tk TEXT PRIMARY KEY,\n\t\t\tv TEXT NOT NULL DEFAULT '')"
+    },
+    "pending_blobs": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "sha",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "queued_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "sha"
+          ],
+          "name": "sqlite_autoindex_pending_blobs_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE pending_blobs(\n\t\t\tsha TEXT PRIMARY KEY,\n\t\t\tqueued_at INTEGER NOT NULL)"
+    },
+    "proxy_speed": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "kind",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "ts",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "bytes",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": null,
+          "name": "ms",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "ts"
+          ],
+          "name": "idx_proxy_speed_src",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 181,
+      "sql": "CREATE TABLE proxy_speed (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n  kind TEXT NOT NULL DEFAULT '',\n  ts INTEGER NOT NULL,\n  bytes INTEGER NOT NULL,\n  ms INTEGER NOT NULL\n)"
+    },
+    "registry_host_gen": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "host",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": "0",
+          "name": "gen",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "cred_digest",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "0",
+          "name": "updated_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "host"
+          ],
+          "name": "sqlite_autoindex_registry_host_gen_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE registry_host_gen (\n  host TEXT PRIMARY KEY,\n  gen INTEGER NOT NULL DEFAULT 0,\n  cred_digest TEXT NOT NULL DEFAULT '',\n  updated_at INTEGER NOT NULL DEFAULT 0\n)"
+    },
+    "registry_host_recovery": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": "'registry'",
+          "name": "family",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "scope",
+          "notnull": true,
+          "pk": 3,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "'initial'",
+          "name": "state",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": "0",
+          "name": "gen",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": "0",
+          "name": "last_probe_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "0",
+          "name": "last_success_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "default": "0",
+          "name": "next_probe_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 8,
+          "default": "0",
+          "name": "rec_failures",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "default": "0",
+          "name": "retry_failures",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "default": "''",
+          "name": "last_error",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 11,
+          "default": "0",
+          "name": "updated_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "next_probe_at"
+          ],
+          "name": "idx_recovery_due",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "source_id",
+            "family",
+            "scope"
+          ],
+          "name": "sqlite_autoindex_registry_host_recovery_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE registry_host_recovery (\n  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n  family TEXT NOT NULL DEFAULT 'registry',\n  scope TEXT NOT NULL DEFAULT '',\n  state TEXT NOT NULL DEFAULT 'initial',\n  gen INTEGER NOT NULL DEFAULT 0,\n  last_probe_at INTEGER NOT NULL DEFAULT 0,\n  last_success_at INTEGER NOT NULL DEFAULT 0,\n  next_probe_at INTEGER NOT NULL DEFAULT 0,\n  rec_failures INTEGER NOT NULL DEFAULT 0,\n  retry_failures INTEGER NOT NULL DEFAULT 0,\n  last_error TEXT NOT NULL DEFAULT '',\n  updated_at INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY(source_id, family, scope)\n)"
+    },
+    "schema_migrations": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "name",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "applied_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "checksum",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "''",
+          "name": "checksum_origin",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "name"
+          ],
+          "name": "sqlite_autoindex_schema_migrations_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 3,
+      "sql": "CREATE TABLE schema_migrations(\n\t\tname TEXT PRIMARY KEY,\n\t\tapplied_at INTEGER NOT NULL\n\t, checksum TEXT NOT NULL DEFAULT '', checksum_origin TEXT NOT NULL DEFAULT '')"
+    },
+    "sessions": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "token",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "expires_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "token"
+          ],
+          "name": "sqlite_autoindex_sessions_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 2,
+      "sql": "CREATE TABLE sessions (\n  token TEXT PRIMARY KEY,\n  created_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL\n)"
+    },
+    "settings": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "key",
+          "notnull": false,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "value",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "key"
+          ],
+          "name": "sqlite_autoindex_settings_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 10,
+      "sql": "CREATE TABLE settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)"
+    },
+    "source_events": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "kind",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "ts",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "ok",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": "0",
+          "name": "ms",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "0",
+          "name": "code",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "default": "0",
+          "name": "neutral",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "ts"
+          ],
+          "name": "idx_sev_src_ts",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        }
+      ],
+      "rows": 3169,
+      "sql": "CREATE TABLE source_events(\n\t\t\tid INTEGER PRIMARY KEY AUTOINCREMENT,\n\t\t\tsource_id INTEGER NOT NULL,\n\t\t\tkind TEXT NOT NULL DEFAULT '',\n\t\t\tts INTEGER NOT NULL,\n\t\t\tok INTEGER NOT NULL,\n\t\t\tms INTEGER NOT NULL DEFAULT 0,\n\t\t\tcode INTEGER NOT NULL DEFAULT 0, neutral INTEGER NOT NULL DEFAULT 0)"
+    },
+    "source_groups": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": "''",
+          "name": "name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "0",
+          "name": "rank",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "rows": 2,
+      "sql": "CREATE TABLE source_groups(\n\t\tid INTEGER PRIMARY KEY AUTOINCREMENT,\n\t\tname TEXT NOT NULL DEFAULT '',\n\t\trank INTEGER NOT NULL DEFAULT 0\n\t)"
+    },
+    "source_health": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "family",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "0",
+          "name": "fails",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "default": "0",
+          "name": "ok_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": "0",
+          "name": "last_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "family"
+          ],
+          "name": "sqlite_autoindex_source_health_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 255,
+      "sql": "CREATE TABLE source_health (\n  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n  family TEXT NOT NULL,\n  fails INTEGER NOT NULL DEFAULT 0,\n  ok_at INTEGER NOT NULL DEFAULT 0,\n  last_at INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY(source_id, family)\n)"
+    },
+    "source_health_archive": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "family",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "fails",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "ok_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "last_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": null,
+          "name": "archived_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": null,
+          "name": "batch",
+          "notnull": true,
+          "pk": 3,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "batch"
+          ],
+          "name": "idx_sha_batch",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "source_id",
+            "family",
+            "batch"
+          ],
+          "name": "sqlite_autoindex_source_health_archive_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE source_health_archive(\n\t\tsource_id INTEGER NOT NULL,\n\t\tfamily TEXT NOT NULL,\n\t\tfails INTEGER NOT NULL,\n\t\tok_at INTEGER NOT NULL,\n\t\tlast_at INTEGER NOT NULL,\n\t\tarchived_at INTEGER NOT NULL,\n\t\tbatch TEXT NOT NULL,\n\t\tPRIMARY KEY (source_id, family, batch)\n\t)"
+    },
+    "source_health_scope": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "source_id",
+          "notnull": true,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "family",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "scope",
+          "notnull": true,
+          "pk": 3,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "0",
+          "name": "gen",
+          "notnull": true,
+          "pk": 4,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": "0",
+          "name": "fails",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": "0",
+          "name": "ok_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "0",
+          "name": "last_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sources",
+          "to": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "family",
+            "scope",
+            "gen"
+          ],
+          "name": "sqlite_autoindex_source_health_scope_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE \"source_health_scope\" (\n  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,\n  family TEXT NOT NULL,\n  scope TEXT NOT NULL DEFAULT '',\n  gen INTEGER NOT NULL DEFAULT 0,\n  fails INTEGER NOT NULL DEFAULT 0,\n  ok_at INTEGER NOT NULL DEFAULT 0,\n  last_at INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY(source_id, family, scope, gen)\n)"
+    },
+    "sources": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "base_url",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "''",
+          "name": "site_name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": "'manual'",
+          "name": "origin",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "default": "1",
+          "name": "enabled",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "'pending'",
+          "name": "status",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "default": "''",
+          "name": "note",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "default": "-1",
+          "name": "docker_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "default": "-1",
+          "name": "github_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "default": "0",
+          "name": "git_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "default": "0",
+          "name": "status_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 12,
+          "default": "''",
+          "name": "status_reason",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "default": "0",
+          "name": "probe_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 14,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 15,
+          "default": "0",
+          "name": "group_id",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 16,
+          "default": "0",
+          "name": "preferred",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 17,
+          "default": "-1",
+          "name": "ghcr_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 18,
+          "default": "0",
+          "name": "ghcr_prefix",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 19,
+          "default": "0",
+          "name": "trusted",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 20,
+          "default": "0",
+          "name": "range_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 21,
+          "default": "-1",
+          "name": "range_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 22,
+          "default": "''",
+          "name": "pin_state",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 23,
+          "default": "''",
+          "name": "pin_ipv4",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 24,
+          "default": "''",
+          "name": "pin_host",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 25,
+          "default": "0",
+          "name": "pin_confirmed_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 26,
+          "default": "0",
+          "name": "pin_grace_until",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 27,
+          "default": "''",
+          "name": "pin_ipv6",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 28,
+          "default": "0",
+          "name": "pin_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 29,
+          "default": "''",
+          "name": "repo_host",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 30,
+          "default": "-1",
+          "name": "registry_cap",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 31,
+          "default": "''",
+          "name": "registry_path_mode",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 32,
+          "default": "''",
+          "name": "registry_probe_error",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 33,
+          "default": "0",
+          "name": "registry_probe_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 34,
+          "default": "'unclassified'",
+          "name": "registry_identity_state",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "repo_host",
+            "status"
+          ],
+          "name": "idx_sources_repo_host",
+          "origin": "c",
+          "partial": false,
+          "unique": false
+        },
+        {
+          "columns": [
+            "base_url"
+          ],
+          "name": "sqlite_autoindex_sources_1",
+          "origin": "u",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 91,
+      "sql": "CREATE TABLE sources (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  base_url TEXT NOT NULL,\n  name TEXT NOT NULL,\n  site_name TEXT NOT NULL DEFAULT '',\n  origin TEXT NOT NULL DEFAULT 'manual',\n  enabled INTEGER NOT NULL DEFAULT 1,\n  status TEXT NOT NULL DEFAULT 'pending',\n  note TEXT NOT NULL DEFAULT '',\n  docker_cap INTEGER NOT NULL DEFAULT -1,\n  github_cap INTEGER NOT NULL DEFAULT -1,\n  git_cap INTEGER NOT NULL DEFAULT 0,\n  status_at INTEGER NOT NULL DEFAULT 0,\n  status_reason TEXT NOT NULL DEFAULT '',\n  probe_at INTEGER NOT NULL DEFAULT 0,\n  created_at INTEGER NOT NULL, group_id INTEGER NOT NULL DEFAULT 0, preferred INTEGER NOT NULL DEFAULT 0, ghcr_cap INTEGER NOT NULL DEFAULT -1, ghcr_prefix INTEGER NOT NULL DEFAULT 0, trusted INTEGER NOT NULL DEFAULT 0, range_at INTEGER NOT NULL DEFAULT 0, range_cap INTEGER NOT NULL DEFAULT -1, pin_state TEXT NOT NULL DEFAULT '', pin_ipv4 TEXT NOT NULL DEFAULT '', pin_host TEXT NOT NULL DEFAULT '', pin_confirmed_at INTEGER NOT NULL DEFAULT 0, pin_grace_until INTEGER NOT NULL DEFAULT 0, pin_ipv6 TEXT NOT NULL DEFAULT '', pin_at INTEGER NOT NULL DEFAULT 0, repo_host TEXT NOT NULL DEFAULT '', registry_cap INTEGER NOT NULL DEFAULT -1, registry_path_mode TEXT NOT NULL DEFAULT '', registry_probe_error TEXT NOT NULL DEFAULT '', registry_probe_at INTEGER NOT NULL DEFAULT 0, registry_identity_state TEXT NOT NULL DEFAULT 'unclassified',\n  UNIQUE(base_url)\n)"
+    },
+    "tokens": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "hash",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": null,
+          "name": "prefix",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "default": "0",
+          "name": "last_used",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "default": "0",
+          "name": "revoked",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "hash"
+          ],
+          "name": "sqlite_autoindex_tokens_1",
+          "origin": "u",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 1,
+      "sql": "CREATE TABLE tokens(\n\t\t\tid INTEGER PRIMARY KEY AUTOINCREMENT,\n\t\t\tname TEXT NOT NULL,\n\t\t\thash TEXT NOT NULL UNIQUE,\n\t\t\tprefix TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tlast_used INTEGER NOT NULL DEFAULT 0,\n\t\t\trevoked INTEGER NOT NULL DEFAULT 0)"
+    },
+    "traffic_stats": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "day",
+          "notnull": true,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "default": null,
+          "name": "traffic",
+          "notnull": true,
+          "pk": 2,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": "''",
+          "name": "kind",
+          "notnull": true,
+          "pk": 3,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "0",
+          "name": "n",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": "0",
+          "name": "bytes",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "day",
+            "traffic",
+            "kind"
+          ],
+          "name": "sqlite_autoindex_traffic_stats_1",
+          "origin": "pk",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 65,
+      "sql": "CREATE TABLE traffic_stats(\n\t\t\tday TEXT NOT NULL,\n\t\t\ttraffic TEXT NOT NULL,\n\t\t\tkind TEXT NOT NULL DEFAULT '',\n\t\t\tn INTEGER NOT NULL DEFAULT 0,\n\t\t\tbytes INTEGER NOT NULL DEFAULT 0,\n\t\t\tPRIMARY KEY(day, traffic, kind))"
+    },
+    "trusted_relays": {
+      "columns": [
+        {
+          "cid": 0,
+          "default": null,
+          "name": "id",
+          "notnull": false,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "default": "''",
+          "name": "name",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "default": null,
+          "name": "url",
+          "notnull": true,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "default": "1",
+          "name": "enabled",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 4,
+          "default": null,
+          "name": "created_at",
+          "notnull": true,
+          "pk": 0,
+          "type": "INTEGER"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "columns": [
+            "url"
+          ],
+          "name": "sqlite_autoindex_trusted_relays_1",
+          "origin": "u",
+          "partial": false,
+          "unique": true
+        }
+      ],
+      "rows": 0,
+      "sql": "CREATE TABLE trusted_relays (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL DEFAULT '',\n  url TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1,\n  created_at INTEGER NOT NULL,\n  UNIQUE(url)\n)"
+    }
+  },
+  "triggers": [],
+  "views": []
+}

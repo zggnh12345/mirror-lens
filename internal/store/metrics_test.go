@@ -1,8 +1,6 @@
 package store
 
 import (
-	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -97,43 +95,3 @@ func TestListSourcesP95(t *testing.T) {
 
 // 老库升级：checks 表没有 blob_ok / ttfb_ms，Open 后要补上，
 // 默认值是「未校验 / 没测」而非 0（0 会被读成「字节不符」）。
-func TestMigrateAddsMetricColumns(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	st, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := addSrc(t, st)
-	st.Close()
-
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, col := range []string{"blob_ok", "ttfb_ms"} {
-		if _, err := raw.Exec(`ALTER TABLE checks DROP COLUMN ` + col); err != nil {
-			t.Fatalf("drop %s: %v", col, err)
-		}
-	}
-	if _, err := raw.Exec(`INSERT INTO checks(source_id,kind,ts,tier,ok,latency_ms) VALUES(?,?,?,?,?,?)`,
-		id, "docker", time.Now().Unix(), 3, 1, 100); err != nil {
-		t.Fatal(err)
-	}
-	raw.Close()
-
-	st2, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st2.Close()
-	c, err := st2.LastCheck(id, "docker")
-	if err != nil || c == nil {
-		t.Fatalf("LastCheck: %v %v", c, err)
-	}
-	if c.BlobOK != -1 {
-		t.Fatalf("补列后 blob_ok 默认应为 -1，实际 %d", c.BlobOK)
-	}
-	if c.TTFBMS != 0 {
-		t.Fatalf("补列后 ttfb_ms 默认应为 0，实际 %d", c.TTFBMS)
-	}
-}

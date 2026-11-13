@@ -85,7 +85,6 @@ func (s *Store) backfillRepoHost(ctx context.Context, tx dbtx) error {
 UPDATE sources
 SET repo_host='ghcr.io',
     registry_cap=1,
-    registry_identity_state='identified',
     registry_path_mode=CASE WHEN ghcr_prefix=1 THEN 'host_prefix' ELSE 'native' END
 WHERE repo_host=''
   AND ghcr_cap=1
@@ -125,8 +124,7 @@ WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
 		}
 
 		if _, err := tx.Exec(`UPDATE sources
-SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error='',
-    registry_identity_state='identified'
+SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
 WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
 			return err
 		}
@@ -484,7 +482,6 @@ SELECT s.id, s.name, s.base_url, s.repo_host, COALESCE(g.gen,0)
 FROM sources s
 LEFT JOIN registry_host_gen g ON g.host = s.repo_host
 WHERE s.status<>'archived'
-  AND s.registry_identity_state='identified'
   AND s.repo_host<>''
   AND s.repo_host<>'ghcr.io'
   AND s.repo_host<>'docker.io'
@@ -530,7 +527,6 @@ SELECT s.id, s.name, s.base_url, s.repo_host, s.registry_cap, s.registry_path_mo
 FROM sources s
 LEFT JOIN registry_host_gen g ON g.host = s.repo_host
 WHERE s.status<>'archived'
-  AND s.registry_identity_state='identified'
   AND s.repo_host<>''
   AND s.repo_host<>'ghcr.io'
   AND s.repo_host<>'docker.io' ` + extra + `

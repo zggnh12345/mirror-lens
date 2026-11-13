@@ -23,6 +23,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
 	"github.com/zggnh12345/mirror-lens/internal/config"
+	"github.com/zggnh12345/mirror-lens/internal/dblock"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/ghapi"
@@ -55,6 +56,23 @@ func checkRestoreJournal(dataDir string) error {
 		return nil
 	default:
 		return fmt.Errorf("无法确认恢复切换日志状态（%s）: %w；在确认前拒绝启动", jp, err)
+	}
+}
+
+// checkUpgradeJournal 拦住未完成的离线 DB 切换。升级脚本在动正式库之前
+// 写 journal，成功切换后才删除；只要它存在，正式库可能处在「旧库已移走、
+// 新库未就位」的中间态，必须先用脚本的 --recover 完成或回滚。
+func checkUpgradeJournal(dataDir string) error {
+	jp := filepath.Join(dataDir, ".db-upgrade-journal.json")
+	_, err := os.Stat(jp)
+	switch {
+	case err == nil:
+		return fmt.Errorf("检测到未完成的数据库升级切换（%s）：已拒绝启动；"+
+			"请先运行 scripts/upgrade-db.sh --recover --data %s", jp, dataDir)
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("无法确认数据库升级日志状态（%s）: %w；在确认前拒绝启动", jp, err)
 	}
 }
 
@@ -173,10 +191,20 @@ func main() {
 	if err := os.MkdirAll(cfg.Data, 0o755); err != nil {
 		log.Fatalf("创建数据目录: %v", err)
 	}
+	// 数据库单实例锁必须早于任何打开/创建数据库的动作。锁文件固定在数据
+	// 目录，不依赖数据库 inode；服务、离线迁移和恢复脚本共用同一把锁。
+	dbLock, lockErr := dblock.Acquire(filepath.Join(cfg.Data, dblock.Name))
+	if lockErr != nil {
+		log.Fatalf("数据目录已被占用: %v", lockErr)
+	}
+	defer dbLock.Close()
 	dbPath := filepath.Join(cfg.Data, "mirror-lens.db")
 	// 恢复脚本的切换日志存在即说明上次切换未完成；带着混合的 DB/key 启动
 	// 会把「能打开」误当成「数据完整」，必须在打开数据库、甚至生成密钥前拦住。
 	if err := checkRestoreJournal(cfg.Data); err != nil {
+		log.Fatalf("%v", err)
+	}
+	if err := checkUpgradeJournal(cfg.Data); err != nil {
 		log.Fatalf("%v", err)
 	}
 	// 必须在 store.Open（会创建空库）之前判定：已有库但缺 key 时 fail closed。

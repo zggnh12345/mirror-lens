@@ -16,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
+	"github.com/zggnh12345/mirror-lens/internal/store/schema"
 )
 
 // 能力标记：-1 还没测过，0 不支持，1 支持
@@ -70,8 +71,9 @@ type Source struct {
 	// 不得混进 probe_at（后者是旧协议族探测的字段）。
 	RegistryProbeAt    int64  `json:"registry_probe_at"`
 	RegistryProbeError string `json:"registry_probe_error"`
-	// RegistryIdentity 是 3.5.4 的身份状态：identified | unclassified | not_applicable。
-	// unclassified 表示身份未确认，不等于 Docker Hub。
+	// RegistryIdentity 是派生值，不落库：repo_host 非空即 identified；
+	// 空 Host + GitHub 能力为 not_applicable；其余空 Host 为 unclassified。
+	// 保留 JSON 字段是为了 API/UI 兼容，但唯一持久化事实是 repo_host。
 	RegistryIdentity string `json:"registry_identity_state"`
 	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
 	// 默认 0（不确定），实测通过后置 1。
@@ -197,13 +199,27 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1) // modernc/sqlite: 单写者最稳
 	s := &Store{db: db, recoveryTTL: RecoveryDefaultTTL, clock: time.Now}
-	if err := s.migrate(); err != nil {
+	// 运行时不迁移、不补列、不回填。空库按 Canonical DDL 新建；非空库必须
+	// 已由离线工具升级并写入 schema_meta，否则拒绝启动。旧二进制没有
+	// schema_meta 检查，因此发布流程禁止用旧二进制打开新库；回滚时恢复
+	// pre-3.5.5 数据库副本和原 secret.key，而不是让旧二进制直接读新库。
+	empty, err := schema.IsEmpty(db)
+	if err != nil {
+		return nil, err
+	}
+	if empty {
+		if err := schema.EnsureFresh(db, "fresh"); err != nil {
+			return nil, err
+		}
+	} else if _, err := schema.Verify(db); err != nil {
 		return nil, err
 	}
 	// 启动时验证可写：bind mount 权限不对时，SQLite 能读能建表，
-	// 却在首次写检测记录时才失败，会静默几分钟。
+	// 却在首次写检测记录时才失败，会静默几分钟。测试表必须用完即删，
+	// 不能把 _writable 留在 Canonical 库里。
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _writable(x INTEGER);
-		INSERT INTO _writable(x) VALUES(1); DELETE FROM _writable;`); err != nil {
+		INSERT INTO _writable(x) VALUES(1); DELETE FROM _writable;
+		DROP TABLE IF EXISTS _writable;`); err != nil {
 		return nil, fmt.Errorf("数据目录不可写（%v）：容器内以 uid 10001 运行，请先 chown -R 10001:10001 挂载目录，或改用 named volume", err)
 	}
 	s.startAuditor()
@@ -321,6 +337,8 @@ func (s *Store) verifyMigrationChecksums() error {
 	return nil
 }
 
+// 历史迁移冻结：3.5.5 起 Open 不再调用本函数，历史 SQL 与 checksum 原样保留
+// 作为审计证据。禁止在运行时重新接入；数据搬迁只由 cmd/db-migrate 离线完成。
 func (s *Store) migrate() error {
 	// 迁移日志表必须先于任何 step 存在；它同时是 Phase B 的完成标记表。
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -747,7 +765,7 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error,registry_identity_state`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error`
 
 const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
 
@@ -755,8 +773,21 @@ func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
 		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted,
-		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError, &x.RegistryIdentity)
+		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError)
+	x.RegistryIdentity = deriveRegistryIdentity(x)
 	return x, err
+}
+
+// deriveRegistryIdentity 只从持久化事实推导身份，不读取旧的身份列。
+// 空 repo_host 永远表示没有 Registry 归属；GitHub-only 源才标 not_applicable。
+func deriveRegistryIdentity(x Source) string {
+	if x.RepoHost != "" {
+		return IdentityIdentified
+	}
+	if x.GithubCap == CapYes {
+		return IdentityNotApplicable
+	}
+	return IdentityUnclassified
 }
 
 func (s *Store) ListSources() ([]Source, error) {
@@ -960,38 +991,24 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.GhcrCap == 0 {
 		x.GhcrCap = CapUnknown
 	}
-	// 3.5.4: 身份显式化。2026-11-13 定版语义：
-	//   - 显式 Host：按 Host 归属，identified；
-	//   - 纯 GHCR：ghcr.io，identified；
-	//   - 仅 GitHub：not_applicable，Host 保持空；
-	//   - 其余（含未传 Host、能力未知）：默认 Docker Hub，docker.io + identified。
-	// 空 Host 不再表示 Hub，也不允许作为新增源的落库结果。
-	identity := IdentityIdentified
-	switch {
-	case x.RepoHost != "":
-		identity = IdentityIdentified
-	case x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes:
-		identity = IdentityIdentified
-	case x.GithubCap == RegistryCapYes && x.DockerCap != RegistryCapYes:
-		identity = IdentityNotApplicable
-	default:
-		identity = IdentityIdentified
+	// 3.5.5 Canonical 语义：
+	//   - 显式 Host：按 Host 归属；
+	//   - 纯 GHCR：ghcr.io；
+	//   - 仅 GitHub：Host 保持空（not_applicable）；
+	//   - 其余（含未传 Host、能力未知）：默认 Docker Hub，docker.io。
+	// 空 Host 不再表示 Hub，也不允许作为新增源的落库结果（GitHub-only 除外）。
+	if x.RepoHost == "" {
+		if x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
+			x.RepoHost = "ghcr.io"
+		} else if x.GithubCap != RegistryCapYes {
+			x.RepoHost = "docker.io"
+		}
 	}
 	host, err := registryhost.Check(x.RepoHost)
 	if err != nil {
 		return 0, err
 	}
-	if host == "" && identity == IdentityIdentified && x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
-		// 只有 GHCR 能力的源归属 ghcr.io。
-		host = "ghcr.io"
-	}
-	if host == "" && identity == IdentityIdentified {
-		// docker.io 在 Normalize 中被折叠为空串（历史 Hub 语义）。3.5.4 起
-		// 空串不再代表 Hub，新增源一律落显式 docker.io。
-		host = "docker.io"
-	}
 	x.RepoHost = host
-	x.RegistryIdentity = identity
 	if x.RegistryCap == 0 {
 		x.RegistryCap = CapUnknown
 	}
@@ -1005,9 +1022,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode,registry_identity_state)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath, x.RegistryIdentity)
+	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath)
 	if err != nil {
 		return 0, err
 	}

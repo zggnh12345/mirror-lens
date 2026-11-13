@@ -1,10 +1,7 @@
 package store
 
 import (
-	"database/sql"
-	"path/filepath"
 	"testing"
-	"time"
 )
 
 func rateOf(t *testing.T, st *Store, id int64, kind string) *float64 {
@@ -126,38 +123,3 @@ func TestRecordSourceEventKeepsCode(t *testing.T) {
 }
 
 // 老库的 source_events 没有 code 列，Open 之后要补上且默认 0。
-func TestMigrateAddsEventCode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old2.db")
-	st, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := addSrc(t, st)
-	st.Close()
-
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := raw.Exec(`ALTER TABLE source_events DROP COLUMN code`); err != nil {
-		t.Fatalf("drop code: %v", err)
-	}
-	if _, err := raw.Exec(`INSERT INTO source_events(source_id,kind,ts,ok,ms) VALUES(?,?,?,?,?)`,
-		id, "docker", time.Now().Unix(), 0, 10); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	raw.Close()
-
-	st2, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st2.Close()
-	codes, err := st2.SourceEventCodes(id, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(codes) != 1 || codes[0] != 0 {
-		t.Fatalf("补列后老事件应读成 0，实际 %v", codes)
-	}
-}

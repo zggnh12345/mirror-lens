@@ -306,7 +306,7 @@ func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
 		JOIN registry_host_recovery r
 		  ON r.source_id = s.id AND r.family = 'registry' AND r.scope = ?
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
-		  AND s.registry_identity_state = 'identified'
+		  AND s.repo_host <> ''
 		  AND s.registry_cap = 1 AND s.repo_host = ?
 		  AND s.registry_path_mode IN ('native','host_prefix')
 		  AND r.state = 'ok'

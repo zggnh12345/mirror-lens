@@ -28,16 +28,21 @@ func Hosts() []string {
 
 // Normalize 把用户/上游给的 Host 收敛成存储用的规范形式。
 //
-// 规范里 "" 代表 Docker Hub：现有 sources 表 34 条 Hub 源 repo_host 都是空串，
-// 改成存 "docker.io" 会让 3.4.6 回滚后读到不一致的归属。
+// Canonical Schema 的约定：
+//   - "" 表示没有 Registry 归属，不再是 Docker Hub 的隐式写法；
+//   - Docker Hub 必须显式存 "docker.io"；
+//   - GHCR 存 "ghcr.io"。
+//
 // 注意：本函数只做标识规范化，不是 URL 安全校验器——不解析路径、不解析凭据。
 func Normalize(raw string) (string, error) {
 	h := strings.ToLower(strings.TrimSpace(raw))
 	h = strings.TrimSuffix(h, ".")
 
 	switch h {
-	case "", "docker.io", "registry-1.docker.io":
+	case "":
 		return "", nil
+	case "docker.io", "registry-1.docker.io", "index.docker.io":
+		return "docker.io", nil
 	}
 
 	if err := checkHost(h); err != nil {

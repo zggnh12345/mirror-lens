@@ -65,6 +65,24 @@ func TestCheckRestoreJournal(t *testing.T) {
 	}
 }
 
+func TestCheckUpgradeJournal(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkUpgradeJournal(dir); err != nil {
+		t.Fatalf("无 journal 时不应拦截: %v", err)
+	}
+	jp := filepath.Join(dir, ".db-upgrade-journal.json")
+	if err := os.WriteFile(jp, []byte(`{"state":"switching"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := checkUpgradeJournal(dir)
+	if err == nil {
+		t.Fatal("升级 journal 存在时必须拒绝启动")
+	}
+	if !strings.Contains(err.Error(), "upgrade-db.sh --recover") || !strings.Contains(err.Error(), jp) {
+		t.Fatalf("错误信息应指路 --recover 与路径，得到: %v", err)
+	}
+}
+
 // 启动早期顺序：先看 journal，再碰密钥。数据目录里同时有 journal 和
 // 「有库无 key」时，绝不能先生成新 key。
 func TestJournalCheckedBeforeKeyCreation(t *testing.T) {

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,7 @@ func openTestAt(t *testing.T, path string) *Store {
 	return st
 }
 
-// 3.5.0 的五个列必须同时存在于新建库与老库补列两条路径上。
+// 3.5.0 起的五个归属列必须存在于 Canonical 新建库中。
 func TestHostColumnsExist(t *testing.T) {
 	st := openTestAt(t, filepath.Join(t.TempDir(), "h.db"))
 	defer st.Close()
@@ -30,148 +29,6 @@ func TestHostColumnsExist(t *testing.T) {
 		if !cols[c] {
 			t.Fatalf("缺列 %s", c)
 		}
-	}
-}
-
-// V1 库升级：重建表后必须补上新列，且原有数据不丢。
-func TestMigrationFromV1KeepsData(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stmts := []string{
-		`CREATE TABLE sources (
-		  id INTEGER PRIMARY KEY AUTOINCREMENT,
-		  base_url TEXT NOT NULL,
-		  name TEXT NOT NULL,
-		  kind TEXT NOT NULL,
-		  origin TEXT NOT NULL DEFAULT 'manual',
-		  enabled INTEGER NOT NULL DEFAULT 1,
-		  status TEXT NOT NULL DEFAULT 'pending',
-		  note TEXT NOT NULL DEFAULT '',
-		  created_at INTEGER NOT NULL,
-		  UNIQUE(base_url, kind)
-		)`,
-		`INSERT INTO sources(id,base_url,name,kind,origin,enabled,status,note,created_at)
-		 VALUES(7,'https://old.example','old','docker','seed',1,'usable','n',1000)`,
-	}
-	for _, q := range stmts {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	db.Close()
-
-	st := openTestAt(t, path)
-	defer st.Close()
-
-	x, err := st.GetSource(7)
-	if err != nil {
-		t.Fatalf("V1 升级后取源失败: %v", err)
-	}
-	if x.BaseURL != "https://old.example" || x.Name != "old" || x.Status != "usable" {
-		t.Fatalf("V1 升级丢了字段: %+v", x)
-	}
-	if x.RepoHost != "docker.io" || x.RegistryIdentity != IdentityIdentified ||
-		x.RegistryCap != CapUnknown || x.RegistryPath != "" {
-		t.Fatalf("新列默认值不对: %+v", x)
-	}
-	// 迁移必须可重复：再开一次不报错、不改变结果。
-	st.Close()
-	st2 := openTestAt(t, path)
-	defer st2.Close()
-	y, err := st2.GetSource(7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sameCore(t, *x, *y) {
-		t.Fatalf("重复迁移改变了数据:\n%+v\n%+v", x, y)
-	}
-}
-
-// GHCR 回填：只回填纯 ghcr 源，双能力源保持 Hub 归属，旧列一律不动。
-func TestBackfillRepoHost(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bf.db")
-	st := openTestAt(t, path)
-
-	pure, err := st.AddSource(Source{Name: "pure-ghcr", BaseURL: "https://g1.example", Status: "usable"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dual, err := st.AddSource(Source{Name: "dual", BaseURL: "https://g2.example", Status: "usable"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	arch, err := st.AddSource(Source{Name: "arch", BaseURL: "https://g3.example", Status: "archived"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 模拟 3.4.6 探测写回的结果：纯 ghcr 与「同时代 Hub」的源。
-	// 新库 AddSource 已默认 docker.io，这里把纯 ghcr/归档源还原成历史空 Host。
-	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1, repo_host='', registry_identity_state='unclassified' WHERE id=?`, pure)
-	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=0, docker_cap=1 WHERE id=?`, dual)
-	mustExec(t, st, `UPDATE sources SET ghcr_cap=1, ghcr_prefix=1, repo_host='', registry_identity_state='unclassified' WHERE id=?`, arch)
-	st.Close()
-
-	st = openTestAt(t, path)
-	defer st.Close()
-
-	x := mustSource(t, st, pure)
-	if x.RepoHost != "ghcr.io" || x.RegistryCap != RegistryCapYes || x.RegistryPath != PathHostPrefix {
-		t.Fatalf("纯 ghcr 源回填不对: %+v", x)
-	}
-	// 旧列必须原样保留：3.5.1 之前 ghcr 调度仍读它们。
-	if x.GhcrCap != 1 || !x.GhcrPrefix {
-		t.Fatalf("回填改动了旧列: %+v", x)
-	}
-
-	d := mustSource(t, st, dual)
-	if d.RepoHost != "docker.io" || d.RegistryCap != CapUnknown {
-		t.Fatalf("双能力源应保持 Hub 归属，不能被改成 ghcr: %+v", d)
-	}
-	if d.DockerCap != 1 || d.GhcrCap != 1 {
-		t.Fatalf("双能力源的旧列被改动: %+v", d)
-	}
-
-	a := mustSource(t, st, arch)
-	if a.RepoHost != "" || a.RegistryCap != CapUnknown {
-		t.Fatalf("归档源不应回填: %+v", a)
-	}
-
-	// 幂等：再开一次，值不变。
-	st.Close()
-	st = openTestAt(t, path)
-	defer st.Close()
-	if got := mustSource(t, st, pure); !sameCore(t, got, x) {
-		t.Fatalf("重复回填改变了结果:\n%+v\n%+v", x, got)
-	}
-}
-
-// 阶段 1 建的库没有 cred_digest 列，升级时必须补上且不丢原有 gen。
-func TestRegistryHostGenGetsDigestColumn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "gen.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE registry_host_gen (
-		host TEXT PRIMARY KEY, gen INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO registry_host_gen(host,gen,updated_at) VALUES('quay.io',7,1)`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	st := openTestAt(t, path)
-	defer st.Close()
-	gen, digest, err := st.HostGenState("quay.io")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gen != 7 || digest != "" {
-		t.Fatalf("升级后应保留 gen=7、摘要为空，得到 gen=%d digest=%q", gen, digest)
 	}
 }
 

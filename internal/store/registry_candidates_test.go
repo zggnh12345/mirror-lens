@@ -100,24 +100,24 @@ func TestRegistryCandidatesOnlyVerifiedPaths(t *testing.T) {
 	}
 }
 
-// 读路径必须自己挡住身份不明的源，不能只依赖写入端不变量。
-func TestRegistryCandidatesRequireIdentified(t *testing.T) {
+// 读路径必须自己挡住没有 Host 归属的源，不能只依赖写入端不变量。
+func TestRegistryCandidatesRequireHost(t *testing.T) {
 	st, _ := newTestStore(t)
 	ok := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
 	bad := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
-	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='unclassified' WHERE id=?`, bad); err != nil {
+	if _, err := st.db.Exec(`UPDATE sources SET repo_host='' WHERE id=?`, bad); err != nil {
 		t.Fatal(err)
 	}
 	na := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
-	if _, err := st.db.Exec(`UPDATE sources SET registry_identity_state='not_applicable' WHERE id=?`, na); err != nil {
+	if _, err := st.db.Exec(`UPDATE sources SET repo_host='' WHERE id=?`, na); err != nil {
 		t.Fatal(err)
 	}
 
 	m := candidatesIDs(mustCandidates(t, st, "registry:quay.io"))
 	if _, got := m[ok]; !got {
-		t.Error("identified foreign Registry 源应进入候选")
+		t.Error("有 Host 的 foreign Registry 源应进入候选")
 	}
-	for name, id := range map[string]int64{"unclassified": bad, "not_applicable": na} {
+	for name, id := range map[string]int64{"empty-host": bad, "not-applicable": na} {
 		if _, got := m[id]; got {
 			t.Errorf("%s 的源 %d 不应进入 Registry 候选", name, id)
 		}

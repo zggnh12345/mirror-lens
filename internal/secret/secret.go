@@ -32,11 +32,22 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err == nil {
-		key, derr := decodeKey(b)
-		if derr != nil {
-			return nil, fmt.Errorf("密钥文件 %s 损坏: %w", path, derr)
+		// 并发首次创建时，另一个进程可能刚建好文件但还没写完。读到 0 字节
+		// 或半截内容不能立刻判损坏，先给写入方一个短暂的完成窗口。
+		var derr error
+		for i := 0; i < 100; i++ {
+			key, e := decodeKey(b)
+			if e == nil {
+				return key, nil
+			}
+			derr = e
+			time.Sleep(10 * time.Millisecond)
+			b, err = os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("读密钥文件: %w", err)
+			}
 		}
-		return key, nil
+		return nil, fmt.Errorf("密钥文件 %s 损坏: %w", path, derr)
 	}
 	if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("读密钥文件: %w", err)

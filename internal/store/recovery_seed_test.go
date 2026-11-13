@@ -18,13 +18,9 @@ func seedSource(t *testing.T, s *Store, host string, cap int, status string, ena
 	if host != "" {
 		base += "/" + host
 	}
-	identity := IdentityUnclassified
-	if host != "" {
-		identity = IdentityIdentified
-	}
-	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,repo_host,registry_identity_state,registry_cap,registry_path_mode,status,enabled,created_at)
-		VALUES(?,?,?,?,?,'native',?,?,?)`,
-		base, fmt.Sprintf("seed-%d", n), host, identity, cap, status, enabled, 1)
+	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,repo_host,registry_cap,registry_path_mode,status,enabled,created_at)
+		VALUES(?,?,?,?,'native',?,?,?)`,
+		base, fmt.Sprintf("seed-%d", n), host, cap, status, enabled, 1)
 	if err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
@@ -353,28 +349,6 @@ func TestSeedRecoveryScopeEqualsNormalizedRepoHost(t *testing.T) {
 	}
 	if state != RecoveryInitial {
 		t.Fatalf("seed 状态=%s，应为 initial", state)
-	}
-}
-
-func TestSeedRecoveryRunsOnOpen(t *testing.T) {
-	s, path := openTestStore(t)
-	id := seedSource(t, s, "reg-a.example", RegistryCapYes, "usable", 1)
-
-	if _, err := s.db.Exec(`DELETE FROM meta WHERE k=?`, recoverySeedKey); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	s2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer s2.Close()
-
-	if state, _, _, _, _, _ := readRecovery(t, s2, id); state != RecoveryInitial {
-		t.Fatalf("Open 后没有种子行: %s", state)
 	}
 }
 

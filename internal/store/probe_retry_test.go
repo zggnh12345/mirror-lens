@@ -346,31 +346,3 @@ ON registry_host_recovery BEGIN SELECT RAISE(ABORT, 'boom'); END;`); err != nil 
 	})
 }
 
-func TestMigrationAddsRetryFailuresColumn(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "migrate.db")
-	st, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := st.AddSource(Source{Name: "m", BaseURL: "https://m.example", Status: "usable", Enabled: true, RepoHost: "quay.io"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 模拟 3.5.1 的库：没有 retry_failures 列。
-	if _, err := st.db.Exec(`ALTER TABLE registry_host_recovery DROP COLUMN retry_failures`); err != nil {
-		t.Fatalf("drop column: %v", err)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	st2, err := Open(path)
-	if err != nil {
-		t.Fatalf("重开老库: %v", err)
-	}
-	defer st2.Close()
-	if failures, _, found, err := st2.HostProbeRetryState(id, "quay.io"); err != nil || !found || failures != 0 {
-		t.Fatalf("补列后应为 0: failures=%d found=%v err=%v", failures, found, err)
-	}
-}

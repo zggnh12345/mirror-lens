@@ -62,6 +62,10 @@ DATA=$(cd "$DATA" 2>/dev/null && pwd) || die "数据目录不存在: $DATA_IN"
 mkdir -p "$DATA"
 exec 9>"$DATA/.restore.lock"
 flock -n 9 || die "另一个恢复进程正在操作 $DATA（.restore.lock 被占用）"
+# 与服务、离线迁移工具共用数据目录锁：服务运行期间禁止恢复。
+exec 8>"$DATA/.mirror-lens.lock"
+chmod 600 "$DATA/.mirror-lens.lock" 2>/dev/null || true
+flock -n 8 || die "服务或迁移进程正在操作 $DATA（.mirror-lens.lock 被占用）"
 
 JOURNAL_PATH="$DATA/$JOURNAL"
 
@@ -177,10 +181,17 @@ rollback() {
     set -e; return 1
   fi
   # 故障注入点：测试用 SIGKILL 打断「已保存现场、尚未落回旧配对」。
-  if [ "${RESTORE_TEST_PAUSE_AFTER_FAILED:-0}" = 1 ]; then
-    : >"$DATA/.restore-test-paused"
-    # bash 内建 read：不起子进程，SIGKILL 父进程时不会留下仍持有 flock 的 sleep。
-    read -r -t 120 _ </dev/null || true
+  # 用两个真实 FIFO 做握手：READY 表示进程确实到达这里；测试收到 READY 后
+  # 再决定 kill 或放行。不能用 /dev/null + timeout，否则 read 立即 EOF，
+  # 进程会在测试发信号前继续执行。
+  if [ -n "${RESTORE_TEST_HOLD:-}" ]; then
+    local hold="$DATA/.restore-test-hold"
+    rm -rf "$hold"
+    mkdir -m 700 "$hold" || { log "错误: 无法创建故障注入握手目录"; set -e; return 1; }
+    mkfifo "$hold/ready" "$hold/go" || { log "错误: 无法创建故障注入 FIFO"; set -e; return 1; }
+    printf 'READY\n' >"$hold/ready"
+    read -r _ <"$hold/go" || true
+    rm -rf "$hold"
   fi
   mv -f "$chk/$DB_NAME" "$DATA/$DB_NAME" || rc=1
   for f in "$DB_NAME-wal" "$DB_NAME-shm"; do

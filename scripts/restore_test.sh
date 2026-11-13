@@ -201,15 +201,22 @@ tx=$(sed -n 's/.*"txid":"\([^"]*\)".*/\1/p' "$r/data/.restore-journal.json")
 mkdir -p "$r/data/.restore-failed-$tx"
 printf 'SENTINEL' >"$r/data/.restore-failed-$tx/keep"
 printf 'BROKEN-KEY' >"$r"/.ml-restore-stage-*/secret.key
-RESTORE_TEST_PAUSE_AFTER_FAILED=1 "$RESTORE" --recover --data "$r/data" >"$r/recover1.log" 2>&1 &
+RESTORE_TEST_HOLD=1 "$RESTORE" --recover --data "$r/data" >"$r/recover1.log" 2>&1 &
 pid=$!
-for _ in $(seq 1 200); do [ -f "$r/data/.restore-test-paused" ] && break; sleep 0.05; done
-if [ ! -f "$r/data/.restore-test-paused" ]; then
-  bad "回滚故障注入未到达暂停点: $(tail -2 "$r/recover1.log")"
+ready=""
+for _ in $(seq 1 200); do
+  if [ -p "$r/data/.restore-test-hold/ready" ]; then
+    read -r -t 5 ready <"$r/data/.restore-test-hold/ready" || true
+    break
+  fi
+  sleep 0.05
+done
+if [ "$ready" != "READY" ]; then
+  bad "回滚故障注入未到达 FIFO 握手点: $(tail -2 "$r/recover1.log")"
   kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 else
   kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-  rm -f "$r/data/.restore-test-paused"
+  rm -rf "$r/data/.restore-test-hold"
   if run_recover "$r" && pair_is "$r/data" OLD-DB-CONTENT OLD-KEY-CONTENT &&
      [ ! -f "$r/data/.restore-journal.json" ] &&
      [ "$(cat "$r/data/.restore-failed-$tx/keep" 2>/dev/null)" = SENTINEL ] &&
@@ -223,7 +230,7 @@ rm -rf "$r"
 
 # 8. 非 root 服务用户恢复
 r=$(mktemp -d); make_fixture "$r"
-if command -v setpriv >/dev/null 2>&1; then
+if command -v setpriv >/dev/null 2>&1 && setpriv --reuid=1000 --regid=1000 --clear-groups true >/dev/null 2>&1; then
   chown -R 1000:1000 "$r"
   if setpriv --reuid=1000 --regid=1000 --clear-groups "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1 &&
      pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT; then
@@ -232,7 +239,7 @@ if command -v setpriv >/dev/null 2>&1; then
     bad "uid 1000 恢复失败: $(tail -3 "$r/log")"
   fi
 else
-  ok "无 uid 1000，跳过（环境不支持）"
+  echo "skip - 当前容器不允许切换到 uid 1000（缺 CAP_SETUID/CAP_CHOWN）"
 fi
 rm -rf "$r"
 

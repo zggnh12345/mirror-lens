@@ -8,9 +8,9 @@ func TestNormalize(t *testing.T) {
 		bad      bool
 	}{
 		{"", "", false},
-		{"  docker.io ", "", false},
-		{"registry-1.docker.io", "", false},
-		{"DOCKER.IO.", "", false},
+		{"  docker.io ", "docker.io", false},
+		{"registry-1.docker.io", "docker.io", false},
+		{"DOCKER.IO.", "docker.io", false},
 		{"ghcr.io", "ghcr.io", false},
 		{"GHCR.IO.", "ghcr.io", false},
 		{"lscr.io", "lscr.io", false},
