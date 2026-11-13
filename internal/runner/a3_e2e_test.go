@@ -182,7 +182,8 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 			t.Fatal("陈旧代次不得写成功结论")
 		}
 		failures, next, _, _ := f.st.HostProbeRetryState(f.srcID, "quay.io")
-		if failures != 0 || next > f.now.Unix() {
+		// BumpHostGen 走真实时钟，不能用 f.now 快照比较：两者可能跨秒。
+		if failures != 0 || next > time.Now().Unix() {
 			t.Fatalf("陈旧快照不得退避: failures=%d next=%d", failures, next)
 		}
 		var state string

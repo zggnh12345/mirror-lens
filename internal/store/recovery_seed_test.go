@@ -18,9 +18,13 @@ func seedSource(t *testing.T, s *Store, host string, cap int, status string, ena
 	if host != "" {
 		base += "/" + host
 	}
-	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,repo_host,registry_cap,registry_path_mode,status,enabled,created_at)
-		VALUES(?,?,?,?,'native',?,?,?)`,
-		base, fmt.Sprintf("seed-%d", n), host, cap, status, enabled, 1)
+	identity := IdentityUnclassified
+	if host != "" {
+		identity = IdentityIdentified
+	}
+	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,repo_host,registry_identity_state,registry_cap,registry_path_mode,status,enabled,created_at)
+		VALUES(?,?,?,?,?,'native',?,?,?)`,
+		base, fmt.Sprintf("seed-%d", n), host, identity, cap, status, enabled, 1)
 	if err != nil {
 		t.Fatalf("insert source: %v", err)
 	}

@@ -68,6 +68,9 @@ type Source struct {
 	// 不得混进 probe_at（后者是旧协议族探测的字段）。
 	RegistryProbeAt    int64  `json:"registry_probe_at"`
 	RegistryProbeError string `json:"registry_probe_error"`
+	// RegistryIdentity 是 3.5.4 的身份状态：identified | unclassified | not_applicable。
+	// unclassified 表示身份未确认，不等于 Docker Hub。
+	RegistryIdentity string `json:"registry_identity_state"`
 	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
 	// 默认 0（不确定），实测通过后置 1。
 	GitCap int `json:"git_cap"`
@@ -237,6 +240,7 @@ CREATE TABLE IF NOT EXISTS sources (
   -- 3.5.0: 源归属的 Registry Host（'' = Docker Hub）与独立 Host Probe 的结果。
   -- 与 docker_cap/ghcr_cap 并存：Hub/ghcr 仍以旧列为权威，新列只服务新 Host。
   repo_host TEXT NOT NULL DEFAULT '',
+  registry_identity_state TEXT NOT NULL DEFAULT 'unclassified',
   registry_cap INTEGER NOT NULL DEFAULT -1,
   registry_path_mode TEXT NOT NULL DEFAULT '',
   registry_probe_at INTEGER NOT NULL DEFAULT 0,
@@ -366,30 +370,31 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 		return err
 	}
 	if err := s.ensureColumns("sources", map[string]string{
-		"git_cap":              "INTEGER NOT NULL DEFAULT 0",
-		"ghcr_cap":             "INTEGER NOT NULL DEFAULT -1",
-		"ghcr_prefix":          "INTEGER NOT NULL DEFAULT 0",
-		"preferred":            "INTEGER NOT NULL DEFAULT 0",
-		"status_at":            "INTEGER NOT NULL DEFAULT 0",
-		"status_reason":        "TEXT NOT NULL DEFAULT ''",
-		"probe_at":             "INTEGER NOT NULL DEFAULT 0",
-		"site_name":            "TEXT NOT NULL DEFAULT ''",
-		"group_id":             "INTEGER NOT NULL DEFAULT 0",
-		"trusted":              "INTEGER NOT NULL DEFAULT 0",
-		"range_cap":            "INTEGER NOT NULL DEFAULT -1",
-		"range_at":             "INTEGER NOT NULL DEFAULT 0",
-		"pin_host":             "TEXT NOT NULL DEFAULT ''",
-		"pin_ipv4":             "TEXT NOT NULL DEFAULT ''",
-		"pin_ipv6":             "TEXT NOT NULL DEFAULT ''",
-		"pin_state":            "TEXT NOT NULL DEFAULT ''",
-		"pin_at":               "INTEGER NOT NULL DEFAULT 0",
-		"pin_confirmed_at":     "INTEGER NOT NULL DEFAULT 0",
-		"pin_grace_until":      "INTEGER NOT NULL DEFAULT 0",
-		"repo_host":            "TEXT NOT NULL DEFAULT ''",
-		"registry_cap":         "INTEGER NOT NULL DEFAULT -1",
-		"registry_path_mode":   "TEXT NOT NULL DEFAULT ''",
-		"registry_probe_at":    "INTEGER NOT NULL DEFAULT 0",
-		"registry_probe_error": "TEXT NOT NULL DEFAULT ''",
+		"git_cap":                 "INTEGER NOT NULL DEFAULT 0",
+		"ghcr_cap":                "INTEGER NOT NULL DEFAULT -1",
+		"ghcr_prefix":             "INTEGER NOT NULL DEFAULT 0",
+		"preferred":               "INTEGER NOT NULL DEFAULT 0",
+		"status_at":               "INTEGER NOT NULL DEFAULT 0",
+		"status_reason":           "TEXT NOT NULL DEFAULT ''",
+		"probe_at":                "INTEGER NOT NULL DEFAULT 0",
+		"site_name":               "TEXT NOT NULL DEFAULT ''",
+		"group_id":                "INTEGER NOT NULL DEFAULT 0",
+		"trusted":                 "INTEGER NOT NULL DEFAULT 0",
+		"range_cap":               "INTEGER NOT NULL DEFAULT -1",
+		"range_at":                "INTEGER NOT NULL DEFAULT 0",
+		"pin_host":                "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv4":                "TEXT NOT NULL DEFAULT ''",
+		"pin_ipv6":                "TEXT NOT NULL DEFAULT ''",
+		"pin_state":               "TEXT NOT NULL DEFAULT ''",
+		"pin_at":                  "INTEGER NOT NULL DEFAULT 0",
+		"pin_confirmed_at":        "INTEGER NOT NULL DEFAULT 0",
+		"pin_grace_until":         "INTEGER NOT NULL DEFAULT 0",
+		"repo_host":               "TEXT NOT NULL DEFAULT ''",
+		"registry_identity_state": "TEXT NOT NULL DEFAULT 'unclassified'",
+		"registry_cap":            "INTEGER NOT NULL DEFAULT -1",
+		"registry_path_mode":      "TEXT NOT NULL DEFAULT ''",
+		"registry_probe_at":       "INTEGER NOT NULL DEFAULT 0",
+		"registry_probe_error":    "TEXT NOT NULL DEFAULT ''",
 	}); err != nil {
 		return err
 	}
@@ -412,6 +417,41 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts DESC);
 	// V1 升级会重建表，新表里没有 ghcr_cap/ghcr_prefix，提前读会 no such column。
 	// 不能登记为一次性 step：运行期新增的源也可能满足条件，每次启动都要收敛。
 	if err := s.backfillRepoHost(context.Background(), s.db); err != nil {
+		return err
+	}
+	// 3.5.4：身份显式化。空 Host 不再隐含 Hub：docker_cap=1 的存量源写为
+	// docker.io，GitHub 类型的源标 not_applicable，其余保留 unclassified。
+	// 迁移与标记同事务；失败整体回滚，下次启动重试。
+	if _, err := s.runStep(context.Background(), "3.5.4-registry-identity", func(ctx context.Context, tx dbtx) error {
+		stmts := []string{
+			`UPDATE sources SET repo_host='docker.io', registry_identity_state='identified'
+			 WHERE repo_host='' AND docker_cap=1`,
+			`UPDATE sources SET registry_identity_state='not_applicable'
+			 WHERE repo_host='' AND docker_cap<>1 AND github_cap=1`,
+			`UPDATE sources SET registry_identity_state='identified' WHERE repo_host<>''`,
+		}
+		for _, q := range stmts {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources
+			WHERE registry_identity_state NOT IN ('identified','not_applicable','unclassified')`).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("迁移后仍有 %d 条非法身份状态", n)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources
+			WHERE repo_host<>'' AND registry_identity_state<>'identified'`).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("迁移后仍有 %d 条已归属源身份未确认", n)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS source_groups(
@@ -604,7 +644,7 @@ func (s *Store) columns(table string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error`
+const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error,registry_identity_state`
 
 const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
 
@@ -612,7 +652,7 @@ func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
 		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted,
-		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError)
+		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError, &x.RegistryIdentity)
 	return x, err
 }
 
@@ -817,13 +857,34 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.GhcrCap == 0 {
 		x.GhcrCap = CapUnknown
 	}
-	// 3.5.0: 源归属的 Registry Host 必须规范化并命中白名单，
-	// 否则能写进去、3.5.1 却回源不了。默认 "" = Docker Hub。
+	// 3.5.4: 身份显式化。只有明确证据（显式 Host，或 docker/ghcr 能力为 1）
+	// 才标 identified；GitHub 类型标 not_applicable；其余保持 unclassified，
+	// 不猜 Hub、不写猜测 Host。
+	identity := IdentityUnclassified
+	switch {
+	case x.RepoHost != "":
+		identity = IdentityIdentified
+	case x.DockerCap == RegistryCapYes, x.GhcrCap == RegistryCapYes:
+		identity = IdentityIdentified
+	case x.GithubCap == RegistryCapYes:
+		identity = IdentityNotApplicable
+	}
 	host, err := registryhost.Check(x.RepoHost)
 	if err != nil {
 		return 0, err
 	}
+	if host == "" && identity == IdentityIdentified && (x.RepoHost != "" || x.DockerCap == RegistryCapYes) {
+		// docker.io 在 Normalize 中被折叠为空串（历史 Hub 语义）。3.5.4 起
+		// 空串不再代表 Hub，已确认的 Hub 源必须落为显式 docker.io。
+		host = "docker.io"
+	}
+	if host == "" && x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
+		// 只有 GHCR 能力的源归属 ghcr.io，与启动回填规则保持一致，
+		// 不留下「identified 但 Host 为空」的中间态。
+		host = "ghcr.io"
+	}
 	x.RepoHost = host
+	x.RegistryIdentity = identity
 	if x.RegistryCap == 0 {
 		x.RegistryCap = CapUnknown
 	}
@@ -837,9 +898,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath)
+	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode,registry_identity_state)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath, x.RegistryIdentity)
 	if err != nil {
 		return 0, err
 	}

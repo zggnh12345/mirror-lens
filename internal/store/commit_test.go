@@ -515,7 +515,7 @@ func TestSetRepoHostCleansOldScope(t *testing.T) {
 		})
 	}
 
-	if err := s.SetRepoHost(a, "docker.io"); err != nil {
+	if err := s.SetRepoHost(a, "gcr.io"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,7 +528,7 @@ func TestSetRepoHostCleansOldScope(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("旧 Host 的 scoped 未清理: %d", n)
 	}
-	v, err := s.RecoveryState(a, "registry", "docker.io")
+	v, err := s.RecoveryState(a, "registry", "gcr.io")
 	if err != nil {
 		t.Fatal(err)
 	}

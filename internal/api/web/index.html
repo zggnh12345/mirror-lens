@@ -425,9 +425,9 @@ function regPathRow(label, p, sel){
     + '</div>';
 }
 
-/* Hub 源（repo_host 为空）不渲染本区域；没有诊断时只给一行「尚未探测」。 */
+/* Hub 源（3.5.4 起 repo_host='docker.io'，旧数据可能为空）不渲染本区域。 */
 function regDiagHtml(x){
-  if (!x || !x.repo_host) return '';
+  if (!x || !x.repo_host || x.repo_host === 'docker.io') return '';
   var cap = regCap(x.registry_cap);
   var ts = x.registry_probe_at || 0;
   var h = '<div class="rdiag"><div class="rdh"><b>镜像仓库探测</b>'

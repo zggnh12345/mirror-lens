@@ -73,7 +73,8 @@ func TestMigrationFromV1KeepsData(t *testing.T) {
 	if x.BaseURL != "https://old.example" || x.Name != "old" || x.Status != "usable" {
 		t.Fatalf("V1 升级丢了字段: %+v", x)
 	}
-	if x.RepoHost != "" || x.RegistryCap != CapUnknown || x.RegistryPath != "" {
+	if x.RepoHost != "docker.io" || x.RegistryIdentity != IdentityIdentified ||
+		x.RegistryCap != CapUnknown || x.RegistryPath != "" {
 		t.Fatalf("新列默认值不对: %+v", x)
 	}
 	// 迁移必须可重复：再开一次不报错、不改变结果。

@@ -23,6 +23,14 @@ const (
 	RegistryCapMismatch = 2  // Manifest 内容与官方不一致，硬排除
 )
 
+// Registry 身份状态：显式区分「已确认归属」「类型不适用」「尚未确认」。
+// 空 Host 不再隐含 Docker Hub；unclassified 不得被写入猜测 Host。
+const (
+	IdentityIdentified    = "identified"
+	IdentityUnclassified  = "unclassified"
+	IdentityNotApplicable = "not_applicable"
+)
+
 // 路径格式。native = /v2/<repo>/...；host_prefix = /v2/<host>/<repo>/...。
 const (
 	PathNative     = "native"
@@ -77,6 +85,7 @@ func (s *Store) backfillRepoHost(ctx context.Context, tx dbtx) error {
 UPDATE sources
 SET repo_host='ghcr.io',
     registry_cap=1,
+    registry_identity_state='identified',
     registry_path_mode=CASE WHEN ghcr_prefix=1 THEN 'host_prefix' ELSE 'native' END
 WHERE repo_host=''
   AND ghcr_cap=1
@@ -92,6 +101,10 @@ func (s *Store) SetRepoHost(id int64, rawHost string) error {
 	host, err := registryhost.Check(rawHost)
 	if err != nil {
 		return err
+	}
+	if host == "" {
+		// 显式选择 Hub：落为 docker.io，避免空串继续隐含 Hub。
+		host = "docker.io"
 	}
 	return s.withSourceLive(id, func(tx *sql.Tx) error {
 		var oldHost string
@@ -112,13 +125,18 @@ WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
 		}
 
 		if _, err := tx.Exec(`UPDATE sources
-SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
+SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error='',
+    registry_identity_state='identified'
 WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
 			return err
 		}
 
 		// 新 Host 的恢复行：state=initial、gen 取新 Host 的当前代次、
 		// next_probe_at=now，等待新的有效探测证据；没有代次行时按 0 处理。
+		// Hub 与 ghcr.io 走旧通道，不建 Host Probe 恢复行。
+		if host == "docker.io" || host == "ghcr.io" {
+			return nil
+		}
 		var gen int64
 		err := tx.QueryRow(`SELECT gen FROM registry_host_gen WHERE host=?`, host).Scan(&gen)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -466,8 +484,10 @@ SELECT s.id, s.name, s.base_url, s.repo_host, COALESCE(g.gen,0)
 FROM sources s
 LEFT JOIN registry_host_gen g ON g.host = s.repo_host
 WHERE s.status<>'archived'
+  AND s.registry_identity_state='identified'
   AND s.repo_host<>''
   AND s.repo_host<>'ghcr.io'
+  AND s.repo_host<>'docker.io'
   AND s.enabled = 1
   AND s.registry_cap <> ?
   AND NOT EXISTS (SELECT 1 FROM registry_host_recovery r
@@ -511,7 +531,8 @@ FROM sources s
 LEFT JOIN registry_host_gen g ON g.host = s.repo_host
 WHERE s.status<>'archived'
   AND s.repo_host<>''
-  AND s.repo_host<>'ghcr.io' ` + extra + `
+  AND s.repo_host<>'ghcr.io'
+  AND s.repo_host<>'docker.io' ` + extra + `
 ORDER BY s.repo_host, s.name`
 	rows, err := s.db.Query(q)
 	if err != nil {

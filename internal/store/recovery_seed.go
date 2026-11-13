@@ -59,8 +59,10 @@ func (s *Store) seedRecoveryFromScope() error {
 SELECT s.id, s.repo_host, s.registry_cap
 FROM sources s
 WHERE s.status <> 'archived'
+  AND s.registry_identity_state = 'identified'
   AND s.repo_host <> ''
-  AND s.repo_host <> 'ghcr.io'`)
+  AND s.repo_host <> 'ghcr.io'
+  AND s.repo_host <> 'docker.io'`)
 	if err != nil {
 		return fmt.Errorf("读存量 Host: %w", err)
 	}
