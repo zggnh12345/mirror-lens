@@ -241,10 +241,14 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	}
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
-	// Docker Hub / GHCR 也是 Registry 归属，空 Host 不得再被当作 Hub 候选。
+	// Docker 源可以同时是一个 foreign Registry 源（docker_cap 与 repo_host 独立）；
+	// GHCR 池则必须精确匹配 ghcr.io，不能仅凭非空 Host 把 quay/gcr 混进来。
 	hostFilter := ""
-	if kind == "docker" || kind == "ghcr" {
+	switch kind {
+	case "docker":
 		hostFilter = " AND s.repo_host <> ''"
+	case "ghcr":
+		hostFilter = " AND s.repo_host = 'ghcr.io'"
 	}
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
 			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at

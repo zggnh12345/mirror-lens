@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # 离线升级 mirror-lens 数据库到 Canonical Schema（3.5.5）。
 #
-#   upgrade-db.sh --data <数据目录> --tool <db-migrate> --container <容器> \\
-#                  [--expect-image <镜像>] --baseline 3.4.6|3.5.4
-#   upgrade-db.sh --recover --data <数据目录> --tool <db-migrate> --container <容器>
+#   upgrade-db.sh --data <数据目录> --tool <db-migrate> --container <容器> \
+#                  --expect-image <镜像> --baseline 3.4.6|3.5.4
+#   upgrade-db.sh --recover --data <数据目录> --tool <db-migrate> --container <容器> \
+#                  --expect-image <镜像>
 #
 # 约束：
 #   - 必须确认目标容器存在、镜像身份匹配且已经停止；脚本不会替你停容器。
+#     必须显式给出 --expect-image，不能只凭容器名通过身份校验。
 #   - 不依赖旧版本不会创建的 .mirror-lens.lock 来判断服务状态。
 #   - 升级前检查没有进程仍持有正式库/WAL/SHM；有则拒绝。
 #   - 正式库从不被原地改写；先复制到 staging，checkpoint 后由 db-migrate 只读搬迁。
@@ -52,38 +54,67 @@ field() { # field <key> 从单行 journal 取字符串值
 check_container_stopped() {
   [ -n "$CONTAINER" ] || die "缺少 --container；升级/恢复必须指定生产容器"
   command -v "$DOCKER" >/dev/null 2>&1 || die "找不到 docker 命令: $DOCKER"
-  local name image running
+  [ -n "$EXPECT_IMAGE" ] || die "缺少 --expect-image；不能只凭容器名通过身份校验"
+  local name image state
   name=$("$DOCKER" inspect --format '{{.Name}}' "$CONTAINER" 2>/dev/null) ||
     die "目标容器不存在或不可 inspect: $CONTAINER"
   [ "$name" = "/$CONTAINER" ] || [ "$name" = "$CONTAINER" ] ||
     die "容器身份不匹配：请求 $CONTAINER，inspect 返回 $name"
   image=$("$DOCKER" inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) ||
     die "无法读取容器镜像: $CONTAINER"
-  if [ -n "$EXPECT_IMAGE" ] && [ "$image" != "$EXPECT_IMAGE" ]; then
+  [ "$image" = "$EXPECT_IMAGE" ] ||
     die "容器镜像不匹配：期望 $EXPECT_IMAGE，实际 $image"
-  fi
-  running=$("$DOCKER" inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null) ||
+  # 不只看 Running：restarting/dead/paused 的 Running 也可能是 false，
+  # 但都不是可以安全搬运数据库的“已停止”状态。
+  state=$("$DOCKER" inspect --format '{{.State.Status}}' "$CONTAINER" 2>/dev/null) ||
     die "无法读取容器运行状态: $CONTAINER"
-  case "$running" in
-    false) ;;
-    true) die "容器 $CONTAINER 仍在运行；请先单独停机，脚本不会替你停容器" ;;
-    *) die "无法识别容器运行状态: $CONTAINER=$running" ;;
+  case "$state" in
+    exited|created) ;;
+    *) die "容器 $CONTAINER 状态是 $state，不是已停止的 exited/created；请先单独停机，脚本不会替你停容器" ;;
   esac
 }
 
 # 不依赖 fuser/lsof：直接扫描 /proc 的 fd 链接，能看到宿主上的服务进程。
+# 注意：/proc 只能证明可见进程没有持有；它不能替代“停服窗口 + 禁止并发启动”的
+# 操作约束，也不能证明检查结束后不会再有进程打开数据库。
 check_no_db_holders() {
-  local fd target pids=""
+  local fd target pids="" unreadable="" hidden=0 pid owner me
+  me=$(id -u)
   for fd in /proc/[0-9]*/fd/*; do
-    [ -e "$fd" ] || continue
-    target=$(readlink "$fd" 2>/dev/null) || continue
+    # 先取链接再判断存在性：进程持有已被 unlink 的数据库时，fd 链接目标
+    # 带 " (deleted)"，不能因为 [ -e ] 失败就把它当成没有持有。
+    target=$(readlink "$fd" 2>/dev/null) || {
+      pid=${fd#/proc/}; pid=${pid%%/*}
+      # 进程在扫描间隙退出时 fd 会消失；这不是“持有数据库”，不能误杀。
+      [ -d "/proc/$pid" ] || continue
+      target=$(readlink "$fd" 2>/dev/null) || {
+        [ -d "/proc/$pid" ] || continue
+        owner=$(stat -c %u "/proc/$pid" 2>/dev/null || echo '?')
+        # 扫描期间进程可能刚退出/变成僵尸，或某个 fd 刚关闭；再确认一次。
+        [ -d "/proc/$pid" ] || continue
+        [ -e "$fd" ] || continue
+        [ "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null)" = "Z" ] && continue
+        if [ "$owner" = "$me" ]; then
+          unreadable="$unreadable $pid($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
+        else
+          hidden=$((hidden+1))
+        fi
+        continue
+      }
+    }
     case "$target" in
-      "$DB"|"$DB-wal"|"$DB-shm"|"$DB (deleted)"|"$DB-wal (deleted)"|"$DB-shm (deleted)")
+      "$DB"|"$DB-wal"|"$DB-shm"|"$DB-journal"|\
+      "$DB (deleted)"|"$DB-wal (deleted)"|"$DB-shm (deleted)"|"$DB-journal (deleted)")
         pids="$pids ${fd#/proc/}"
         ;;
     esac
   done
-  [ -z "$pids" ] || die "仍有进程持有正式库/WAL/SHM:$pids；先停服务并确认进程退出"
+  [ -z "$pids" ] || die "仍有进程持有正式库/WAL/SHM/journal:$pids；先停服务并确认进程退出"
+  # 同 UID 的 fd 本应可读；读不到说明权限/命名空间被限制，不能静默放行。
+  [ -z "$unreadable" ] || die "同 UID 进程的数据库 fd 无法读取（pid:$unreadable）；请以宿主同 UID/root 运行"
+  if [ "$hidden" -gt 0 ]; then
+    log "警告：有 $hidden 个其他 UID 的进程 fd 不可读；请确认升级使用宿主 PID 视图并以足够权限运行"
+  fi
 }
 
 mval() { # mval <key>：manifest 是 key=value，值可含等号
@@ -113,6 +144,8 @@ check_manifest() {
     absent)
       [ ! -e "$PRE-wal" ] || die "manifest 声明无 WAL，但备份 sidecar 存在: $PRE-wal"
       [ "$(mval wal_file)" = "absent" ] || die "WAL 状态字段不一致"
+      [ "$(mval wal_size)" = "absent" ] || die "WAL absent 时 wal_size 必须是 absent"
+      [ "$(mval wal_sha)" = "absent" ] || die "WAL absent 时 wal_sha 必须是 absent"
       ;;
     present)
       file=$(mval wal_file); size=$(mval wal_size); hash=$(mval wal_sha)
@@ -129,6 +162,8 @@ check_manifest() {
     absent)
       [ ! -e "$PRE-shm" ] || die "manifest 声明无 SHM，但备份 sidecar 存在: $PRE-shm"
       [ "$(mval shm_file)" = "absent" ] || die "SHM 状态字段不一致"
+      [ "$(mval shm_size)" = "absent" ] || die "SHM absent 时 shm_size 必须是 absent"
+      [ "$(mval shm_sha)" = "absent" ] || die "SHM absent 时 shm_sha 必须是 absent"
       ;;
     present)
       file=$(mval shm_file); size=$(mval shm_size); hash=$(mval shm_sha)
@@ -189,27 +224,65 @@ exec 8>"$DATA/.mirror-lens.lock"
 chmod 600 "$DATA/.mirror-lens.lock" 2>/dev/null || true
 flock -n 8 || die "另一个迁移进程正在操作 $DATA（.mirror-lens.lock 被占用）"
 
+check_work_dir() {
+  [ -n "$WORK_SAVED" ] || return 0
+  case "$WORK_SAVED" in
+    "$DATA"/.db-upgrade-*) ;;
+    *) die "journal work_dir 不在数据目录的 .db-upgrade-* 下，拒绝删除: $WORK_SAVED" ;;
+  esac
+  case "$WORK_SAVED" in
+    *..*) die "journal work_dir 含 ..，拒绝删除: $WORK_SAVED" ;;
+  esac
+}
+
+remove_work() {
+  [ -n "$WORK_SAVED" ] || return 0
+  check_work_dir
+  rm -rf "$WORK_SAVED"
+}
+
 recover() {
   [ -f "$JOURNAL_PATH" ] || { log "没有未完成的升级，无需恢复"; return 0; }
   STATE=$(field state)
   WORK_SAVED=$(field work_dir)
-  # 备份阶段中断：正式库还没有被移动，直接清掉半成品备份后重跑即可。
-  if [ "$STATE" = "backup" ]; then
-    if [ -f "$DB" ] && ! "$TOOL" verify --db "$DB" >/dev/null 2>&1; then
-      log "备份阶段中断，正式库未改动；清理半成品备份"
-      rm -f "$PRE" "$PRE-wal" "$PRE-shm" "$JOURNAL_PATH" "$KEY_PRE" "$MANIFEST"
-      [ -n "$WORK_SAVED" ] && rm -rf "$WORK_SAVED"
+  case "$STATE" in
+    staging|migrating)
+      [ -n "$WORK_SAVED" ] || die "journal 处于 $STATE 但缺少 work_dir，拒绝恢复"
+      check_work_dir
+      [ -f "$DB" ] || die "journal 处于 $STATE 但正式库不存在，拒绝清理 staging"
+      if "$TOOL" verify --db "$DB" >/dev/null 2>&1; then
+        die "journal 处于 $STATE 但正式库已是 Canonical，拒绝自动清理"
+      fi
+      log "迁移前/迁移中崩溃，正式库未改动；清理 staging"
+      rm -f "$JOURNAL_PATH"
+      remove_work
       return 0
-    fi
-    die "journal 处于 backup 状态但正式库已是 Canonical，拒绝自动处理"
-  fi
+      ;;
+    backup)
+      # 备份阶段中断：正式库还没有被移动，直接清掉半成品备份后重跑即可。
+      if [ -f "$DB" ] && ! "$TOOL" verify --db "$DB" >/dev/null 2>&1; then
+        log "备份阶段中断，正式库未改动；清理半成品备份"
+        check_work_dir
+        rm -f "$PRE" "$PRE-wal" "$PRE-shm" "$JOURNAL_PATH" "$KEY_PRE" "$MANIFEST"
+        remove_work
+        return 0
+      fi
+      die "journal 处于 backup 状态但正式库已是 Canonical，拒绝自动处理"
+      ;;
+    switching)
+      ;;
+    *)
+      die "journal state 非法: ${STATE:-<empty>}；拒绝按未知状态恢复"
+      ;;
+  esac
   PRE_SAVED=$(field backup_db)
   PRE_SHA=$(field backup_sha)
   [ -n "$PRE_SAVED" ] && [ -n "$PRE_SHA" ] || die "journal 不完整，拒绝自动恢复"
+  check_work_dir
   if [ -f "$DB" ] && "$TOOL" verify --db "$DB" >/dev/null 2>&1; then
     log "正式库已是完整 Canonical 库，清除 journal"
     rm -f "$JOURNAL_PATH"
-    [ -n "$WORK_SAVED" ] && rm -rf "$WORK_SAVED"
+    remove_work
     return 0
   fi
   [ "$PRE_SAVED" = "$PRE" ] || die "journal 备份路径不是预期备份单元: $PRE_SAVED"
@@ -227,7 +300,7 @@ recover() {
   sync
   [ "$(sha "$DB")" = "$PRE_SHA" ] || die "回滚后 SHA-256 不符，请人工处理"
   rm -f "$JOURNAL_PATH"
-  [ -n "$WORK_SAVED" ] && rm -rf "$WORK_SAVED"
+  remove_work
   log "回滚完成；secret.key 未改动"
   return 0
 }
@@ -247,6 +320,10 @@ fi
 
 TS=$(date +%Y%m%d-%H%M%S)
 WORK="$DATA/.db-upgrade-$TS"
+# 先落 journal 再创建 staging：SIGKILL 发生在迁移前也能让 --recover 找到并清理
+# 残留目录，而不是留下一个没有 journal 的 .db-upgrade-*。
+printf '{"state":"staging","work_dir":"%s"}\n' "$WORK" >"$JOURNAL_PATH"
+fsync_path "$JOURNAL_PATH"
 mkdir -p "$WORK"
 trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
 

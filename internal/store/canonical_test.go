@@ -50,14 +50,14 @@ func TestAddSourceCanonicalHostSemantics(t *testing.T) {
 	defer st.Close()
 
 	cases := []struct {
-		name    string
-		in      Source
-		host    string
-		ident   string
+		name  string
+		in    Source
+		host  string
+		ident string
 	}{
 		{"github-only", Source{Name: "gh", BaseURL: "https://github.com/a/b", GithubCap: CapYes, DockerCap: CapNo}, "", IdentityNotApplicable},
 		{"ghcr", Source{Name: "ghcr", BaseURL: "https://ghcr.io/a/b", GhcrCap: RegistryCapYes, DockerCap: CapNo}, "ghcr.io", IdentityIdentified},
-		{"default-hub", Source{Name: "hub", BaseURL: "https://hub.example", DockerCap: CapUnknown, GithubCap: CapUnknown}, "docker.io", IdentityIdentified},
+		{"unknown-stays-unclassified", Source{Name: "hub", BaseURL: "https://hub.example", DockerCap: CapUnknown, GithubCap: CapUnknown}, "", IdentityUnclassified},
 		{"explicit", Source{Name: "quay", BaseURL: "https://quay.example", RepoHost: "quay.io"}, "quay.io", IdentityIdentified},
 	}
 	for _, c := range cases {
@@ -96,6 +96,25 @@ func TestEmptyHostStaysUnclassified(t *testing.T) {
 	}
 	if x.RepoHost != "" || x.RegistryIdentity != IdentityUnclassified {
 		t.Fatalf("空 Host 源被错误归类: host=%q identity=%q", x.RepoHost, x.RegistryIdentity)
+	}
+}
+
+// 双用途源清空 Host 后仍是 unclassified，不能仅凭 github_cap=yes 冒充 GitHub-only。
+func TestEmptyHostDualCapStaysUnclassified(t *testing.T) {
+	st, _ := newTestStore(t)
+	defer st.Close()
+	res, err := st.db.Exec(`INSERT INTO sources(base_url,name,docker_cap,github_cap,ghcr_cap,status,enabled,created_at,repo_host)
+		VALUES('https://dual.example','dual',1,1,-1,'usable',1,1,'')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	x, err := st.GetSource(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x.RepoHost != "" || x.RegistryIdentity != IdentityUnclassified {
+		t.Fatalf("双用途空 Host 源被错误归类: host=%q identity=%q", x.RepoHost, x.RegistryIdentity)
 	}
 }
 

@@ -23,7 +23,14 @@ skip() { SKIP=$((SKIP+1)); echo "skip - $1"; }
 [ -f "$UPGRADE" ] || { echo "缺少 upgrade-db.sh: $UPGRADE" >&2; exit 2; }
 [ -f "$OLD_DB" ] || { echo "缺少 3.4.6 备份副本: $OLD_DB" >&2; exit 2; }
 case "$ROOT" in /data/*) : ;; *) echo "TEST_ROOT 必须在 /data 下: $ROOT" >&2; exit 2 ;; esac
+# 证明测试目录不是容器可写层/临时文件系统；/data 的挂载源由生产容器提供。
+mount_fs=$(awk '$2=="/data"{print $3; exit}' /proc/mounts 2>/dev/null)
+case "$mount_fs" in
+  ""|overlay|tmpfs|rootfs) echo "/data 不是独立真实挂载（fstype=${mount_fs:-missing}），拒绝冒充 /vol1 测试" >&2; exit 2 ;;
+  *) : ;;
+esac
 mkdir -p "$ROOT" || exit 2
+ok "/data 是独立 $mount_fs 挂载（非容器可写层）"
 
 d=$(mktemp -d "$ROOT/fs.XXXXXX") || exit 2
 trap 'rm -rf "$d" "$ROOT/bin"' EXIT
@@ -33,6 +40,7 @@ cat >"$ROOT/bin/docker" <<'FAKE'
 case "$3" in
   *Name*) echo /test ;;
   *Image*) echo test:1 ;;
+  *Status*) echo exited ;;
   *Running*) echo false ;;
   *) echo unknown ;;
 esac
@@ -46,8 +54,8 @@ chmod 600 "$d/f"
 [ "$(stat -c '%a' "$d/f")" = "600" ] && ok "chmod 600 生效" || bad "chmod 未生效"
 dd if=/dev/zero of="$d/fsync.bin" bs=4096 count=1 conv=fsync 2>/dev/null &&
   [ "$(stat -c %s "$d/fsync.bin")" = 4096 ] && ok "dd conv=fsync 写入 4096 字节" || bad "fsync 写入失败"
-mv "$d/fsync.bin" "$d/fsync.renamed" && sync &&
-  [ "$(stat -c %s "$d/fsync.renamed")" = 4096 ] && ok "rename 后 sync 可读且长度正确" || bad "rename/sync 失败"
+mv "$d/fsync.bin" "$d/fsync.renamed" && sync -f "$d" && sync &&
+  [ "$(stat -c %s "$d/fsync.renamed")" = 4096 ] && ok "rename 后目录 fsync + sync 可读且长度正确" || bad "rename/fsync 失败"
 
 # 2. flock 竞争：持锁进程存在时第二个必须失败，释放后必须成功
 flock -n "$d/flock" -c 'sleep 2' & lp=$!
@@ -85,8 +93,9 @@ for point in after_migrate after_journal; do
   fi
   if run_up --recover >"$d/recover.log" 2>&1 &&
      [ "$(sha256sum "$d/mirror-lens.db" | awk '{print $1}')" = "$old_sha" ] &&
-     [ ! -f "$d/.db-upgrade-journal.json" ]; then
-    ok "$point 崩溃后 recover 回到完整旧库并清 journal"
+     [ ! -f "$d/.db-upgrade-journal.json" ] &&
+     [ -z "$(find "$d" -maxdepth 1 -name '.db-upgrade-*' -print -quit 2>/dev/null)" ]; then
+    ok "$point 崩溃后 recover 回到完整旧库、清 journal 且无 staging 残留"
   else
     bad "$point recover 后状态不正确: $(tail -3 "$d/recover.log")"
   fi

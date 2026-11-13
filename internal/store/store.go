@@ -779,12 +779,13 @@ func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 }
 
 // deriveRegistryIdentity 只从持久化事实推导身份，不读取旧的身份列。
-// 空 repo_host 永远表示没有 Registry 归属；GitHub-only 源才标 not_applicable。
+// 空 repo_host 永远表示没有 Registry 归属；只有“纯 GitHub”源才标 not_applicable：
+// Docker/GHCR 能力未知或为 yes 时不能冒充 GitHub-only。
 func deriveRegistryIdentity(x Source) string {
 	if x.RepoHost != "" {
 		return IdentityIdentified
 	}
-	if x.GithubCap == CapYes {
+	if x.GithubCap == CapYes && x.DockerCap == CapNo && x.GhcrCap != RegistryCapYes {
 		return IdentityNotApplicable
 	}
 	return IdentityUnclassified
@@ -995,14 +996,14 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	//   - 显式 Host：按 Host 归属；
 	//   - 纯 GHCR：ghcr.io；
 	//   - 仅 GitHub：Host 保持空（not_applicable）；
-	//   - 其余（含未传 Host、能力未知）：默认 Docker Hub，docker.io。
-	// 空 Host 不再表示 Hub，也不允许作为新增源的落库结果（GitHub-only 除外）。
+	//   - 能力未知且没有显式 Host：Host 保持空（unclassified），不能把未知类型
+	//     无条件当成 Docker Hub；手工新增入口如需 Hub 默认，应由调用方显式写入
+	//     docker.io（api 层已经这样做）。
 	if x.RepoHost == "" {
 		if x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
 			x.RepoHost = "ghcr.io"
-		} else if x.DockerCap == RegistryCapYes || x.GithubCap != RegistryCapYes {
-			// 有 Docker 能力，或不是纯 GitHub 源：默认 Hub，不能留空。
-			// 纯 GitHub（GithubCap=yes 且 DockerCap 非 yes）才保持空归属。
+		} else if x.DockerCap == RegistryCapYes || x.GithubCap == CapNo {
+			// 有 Docker 能力，或明确不是 GitHub 源：默认 Hub。
 			x.RepoHost = "docker.io"
 		}
 	}

@@ -345,4 +345,3 @@ ON registry_host_recovery BEGIN SELECT RAISE(ABORT, 'boom'); END;`); err != nil 
 		}
 	})
 }
-

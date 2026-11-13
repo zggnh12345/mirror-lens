@@ -610,6 +610,11 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 				host = "docker.io"
 			}
 		}
+		// 手工新增入口保留“未写 Host 即 Docker Hub 镜像”的产品默认；
+		// 这是 api 层显式决定，不把未知类型的默认归属下沉到 store。
+		if host == "" && githubCap != store.CapYes {
+			host = "docker.io"
+		}
 	}
 	id, err := s.st.AddSource(store.Source{
 		BaseURL: base, Name: name,

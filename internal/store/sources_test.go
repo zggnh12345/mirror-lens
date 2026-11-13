@@ -201,3 +201,47 @@ func TestProxySpeedHalfLife(t *testing.T) {
 		t.Fatalf("72h 半衰期加权应约 11000，实际 %d", spd)
 	}
 }
+
+// docker/ghcr 候选池必须按语义 Host 精确取源；非空 Host 不等于 GHCR/Hub。
+func TestDockerAndGhcrPoolsRequireSemanticHost(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	foreign, err := st.AddSource(Source{Name: "quay", BaseURL: "https://quay.example", RepoHost: "quay.io",
+		DockerCap: 1, GhcrCap: 1, Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := st.AddSource(Source{Name: "hub", BaseURL: "https://hub.example", DockerCap: 1,
+		Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ghcr, err := st.AddSource(Source{Name: "ghcr", BaseURL: "https://ghcr.example", GhcrCap: 1,
+		Status: "usable", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		kind string
+		want map[int64]bool
+	}{
+		{"docker", map[int64]bool{hub: true, foreign: true}},
+		{"ghcr", map[int64]bool{ghcr: true}},
+	} {
+		got, err := st.SourceCandidates(tc.kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s 候选=%+v，期望 %v", tc.kind, got, tc.want)
+		}
+		for _, c := range got {
+			if !tc.want[c.ID] {
+				t.Fatalf("%s 候选混入了 %d（期望 %v，foreign=%d）", tc.kind, c.ID, tc.want, foreign)
+			}
+		}
+	}
+}

@@ -46,6 +46,7 @@ cat >"$FAKEBIN/docker" <<'FAKE'
 case "$*" in
   *'{{.Name}}'*)          echo "${FAKE_NAME:-/test}" ;;
   *'{{.Config.Image}}'*)  echo "${FAKE_IMAGE:-test:1}" ;;
+  *'{{.State.Status}}'*)  echo "${FAKE_STATUS:-exited}" ;;
   *'{{.State.Running}}'*) echo "${FAKE_RUNNING:-false}" ;;
   *) exit 1 ;;
 esac
@@ -87,14 +88,20 @@ untouched() { # 旧库仍可读、未被升级、没有留下 journal
     [ ! -f "$1/.db-upgrade-journal.json" ]
 }
 
-# 0. 停服/身份门禁：运行中、缺失、身份不符、镜像不符都必须拒绝
-for kind in running missing identity image; do
+no_staging() {
+  [ -z "$(find "$1" -maxdepth 1 -name '.db-upgrade-*' -print -quit 2>/dev/null)" ]
+}
+
+# 0. 停服/身份门禁：运行中、restarting、paused、缺失、身份不符、镜像不符都必须拒绝
+for kind in running restarting paused missing identity image; do
   r=$(mktemp -d); fixture "$r"
   case $kind in
-    running)  FAKE_RUNNING=true run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
-    missing)  FAKE_MISSING=1 run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
-    identity) FAKE_NAME=/other run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
-    image)    FAKE_IMAGE=other run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    running)    FAKE_STATUS=running run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    restarting) FAKE_STATUS=restarting run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    paused)     FAKE_STATUS=paused run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    missing)    FAKE_MISSING=1 run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    identity)   FAKE_NAME=/other run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
+    image)      FAKE_IMAGE=other run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 ;;
   esac
   if [ $? -eq 0 ]; then
     bad "$kind 状态应被停服门禁拒绝却成功"
@@ -105,6 +112,17 @@ for kind in running missing identity image; do
   fi
   rm -rf "$r"
 done
+
+# 0a. 不带 --expect-image 也必须拒绝，不能只凭容器名通过身份校验
+r=$(mktemp -d); fixture "$r"
+if "$UP" --container test --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1; then
+  bad "缺少 --expect-image 仍执行了升级"
+elif grep -q '缺少 --expect-image' "$r/log" && untouched "$r"; then
+  ok "缺少 --expect-image 被拒绝"
+else
+  bad "缺少 --expect-image 的拒绝信息/状态不对: $(tail -3 "$r/log")"
+fi
+rm -rf "$r"
 
 # 0b. 没有 --container 不允许执行；不能留下绕过口
 r=$(mktemp -d); fixture "$r"
@@ -138,6 +156,28 @@ fi
 kill "$hp" 2>/dev/null; wait "$hp" 2>/dev/null || true
 rm -rf "$r"
 
+# 0d. 库被 unlink 但进程仍持有 fd：readlink 目标带 " (deleted)"，也必须拒绝
+r=$(mktemp -d); fixture "$r"
+python3 - "$r/mirror-lens.db" <<'PY' >"$r/holder.log" 2>&1 &
+import os,sqlite3,sys,time
+c=sqlite3.connect(sys.argv[1])
+c.execute('select count(*) from sources').fetchone()
+os.unlink(sys.argv[1])
+print('READY', flush=True)
+time.sleep(10)
+PY
+hp=$!
+for _ in $(seq 1 100); do grep -q READY "$r/holder.log" 2>/dev/null && break; sleep 0.05; done
+if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1; then
+  bad "库已 unlink 但 fd 仍被持有时执行了升级"
+elif grep -q '仍有进程持有' "$r/log" && [ ! -f "$r/.db-upgrade-journal.json" ]; then
+  ok "已删除但仍被持有：拒绝升级"
+else
+  bad "deleted fd 检查拒绝信息/状态不对: $(tail -3 "$r/log")"
+fi
+kill "$hp" 2>/dev/null; wait "$hp" 2>/dev/null || true
+rm -rf "$r"
+
 # 1. 正常升级
 r=$(mktemp -d); fixture "$r"
 if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 &&
@@ -151,6 +191,8 @@ if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 &&
    grep -q '^shm_state=absent$' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
    grep -q '^target_schema_hash=' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
    [ ! -e "$r/mirror-lens.db.pre-3.5.5-wal" ] && [ ! -e "$r/mirror-lens.db.pre-3.5.5-shm" ] &&
+   [ "$(stat -c %a "$r/mirror-lens.db.pre-3.5.5")" = 600 ] &&
+   no_staging "$r" &&
    [ ! -f "$r/.db-upgrade-journal.json" ]; then
   ok "正常升级 + 完整 manifest + 回滚副本 + key 不动"
 else
@@ -212,7 +254,55 @@ for kind in db-tamper db-truncate manifest-missing db-filename; do
   rm -rf "$r"
 done
 
-# 2. 故障点：恢复后必须回到完整旧库或完整新库，journal 必须清掉
+# 2a. manifest 声明 absent 时必须连 size/hash 一起 absent，不能接受虚构哈希
+r=$(mktemp -d); fixture "$r"
+DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+sed -i 's/^wal_size=.*/wal_size=123/; s/^wal_sha=.*/wal_sha=deadbeef/' "$r/mirror-lens.db.pre-3.5.5.manifest"
+if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+  bad "manifest absent 却带虚构 size/hash 仍恢复成功"
+elif [ -f "$r/.db-upgrade-journal.json" ] && [ "$(count_sources "$r/mirror-lens.db")" = 1 ]; then
+  ok "manifest absent 虚构 size/hash 被拒绝"
+else
+  bad "manifest absent 虚构字段被拒绝但状态不对: $(tail -3 "$r/recover.log")"
+fi
+rm -rf "$r"
+
+# 2b. journal 的 work_dir 必须限制在数据目录的 .db-upgrade-* 下
+r=$(mktemp -d); fixture "$r"
+DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+mkdir -p "$r/canary"; printf 'keep' >"$r/canary/keep"
+python3 - "$r" <<'PY'
+import json,sys
+p=sys.argv[1]+'/.db-upgrade-journal.json'
+j=json.load(open(p)); j['work_dir']=sys.argv[1]+'/canary'; json.dump(j,open(p,'w'))
+PY
+if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+  bad "恶意 work_dir 仍被接受"
+elif [ -f "$r/canary/keep" ] && [ -f "$r/.db-upgrade-journal.json" ]; then
+  ok "work_dir 越界被拒绝且 canary 保留"
+else
+  bad "work_dir 越界被拒绝但 canary/journal 状态不对"
+fi
+rm -rf "$r"
+
+# 2c. 未知 journal state 必须 fail-closed，不能落入回滚分支
+r=$(mktemp -d); fixture "$r"
+DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+python3 - "$r" <<'PY'
+import json,sys
+p=sys.argv[1]+'/.db-upgrade-journal.json'
+j=json.load(open(p)); j['state']='garbage'; json.dump(j,open(p,'w'))
+PY
+if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+  bad "未知 journal state 仍恢复成功"
+elif grep -q 'journal state 非法' "$r/recover.log" && [ -f "$r/.db-upgrade-journal.json" ]; then
+  ok "未知 journal state 被拒绝且 journal 保留"
+else
+  bad "未知 journal state 的拒绝信息/状态不对: $(tail -3 "$r/recover.log")"
+fi
+rm -rf "$r"
+
+# 3. 故障点：恢复后必须回到完整旧库或完整新库，journal 必须清掉
 for point in after_migrate after_backup after_journal after_remove_old after_switch; do
   r=$(mktemp -d); fixture "$r"
   DB_UPGRADE_CRASH=$point run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
@@ -223,6 +313,8 @@ for point in after_migrate after_backup after_journal after_remove_old after_swi
     bad "$point 恢复失败: $(tail -3 "$r/recover.log")"
   elif [ -f "$r/.db-upgrade-journal.json" ] || [ "$(count_sources "$r/mirror-lens.db")" != 1 ]; then
     bad "$point 恢复后 journal/数据不完整"
+  elif ! no_staging "$r"; then
+    bad "$point 恢复后 staging 残留: $(find "$r" -maxdepth 1 -name '.db-upgrade-*' -print)"
   elif [ "$point" = after_switch ] && ! "$TOOL" verify --db "$r/mirror-lens.db" >/dev/null 2>&1; then
     bad "$point 恢复后新库不可用"
   elif [ "$point" != after_switch ] && "$TOOL" verify --db "$r/mirror-lens.db" >/dev/null 2>&1; then

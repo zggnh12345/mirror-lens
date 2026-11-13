@@ -137,11 +137,11 @@ type index struct {
 }
 
 type table struct {
-	Name       string       `json:"name"`
-	SQL        string       `json:"sql"`
-	Columns    []column     `json:"columns"`
+	Name        string       `json:"name"`
+	SQL         string       `json:"sql"`
+	Columns     []column     `json:"columns"`
 	ForeignKeys []foreignKey `json:"foreign_keys"`
-	Indexes    []index      `json:"indexes"`
+	Indexes     []index      `json:"indexes"`
 }
 
 type object struct {
@@ -257,9 +257,9 @@ func inspectTable(db *sql.DB, name, sqlText string) (table, error) {
 		return t, err
 	}
 	type idxRow struct {
-		name          string
+		name            string
 		unique, partial int
-		origin        string
+		origin          string
 	}
 	var idxs []idxRow
 	for ir.Next() {

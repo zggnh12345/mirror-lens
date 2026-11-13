@@ -3,6 +3,11 @@
 # 用法: BIN=/path/to/mirror-lens scripts/startup_test.sh
 set -uo pipefail
 BIN=${BIN:?需要 BIN=/path/to/mirror-lens}
+# 用例会 cd 到临时目录；相对路径必须先用调用时的 cwd 解析成绝对路径。
+case "$BIN" in
+  /*) ;;
+  *) BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")" ;;
+esac
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "ok   - $1"; }
