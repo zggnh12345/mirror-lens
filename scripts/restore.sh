@@ -71,7 +71,7 @@ read_manifest() {
   # manifest 是缩进 JSON，grep 按行工作会把嵌套对象截断；先压成单行。
   MFLAT=$(tr '\n' ' ' <"$MANIFEST_PATH" | tr -s ' ')
   SCHEMA=$(printf '%s' "$MFLAT" | grep -o '"schema"[[:space:]]*:[[:space:]]*[0-9]*' | head -1 | sed 's/.*:[[:space:]]*//')
-  APP_VERSION=$(printf '%s' "$MFLAT" | grep -o '"app_version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
+  APP_VERSION=$(printf '%s' "$MFLAT" | grep -o '"app_version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//' || true)
   DB_FILE=$(printf '%s' "$MFLAT" | grep -o '"file"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
   DB_SHA=$(printf '%s' "$MFLAT" | grep -o '"db"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
   KEY_SHA=$(printf '%s' "$MFLAT" | grep -o '"key"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
@@ -108,20 +108,88 @@ verify_pair() { # verify_pair <db> <key> <sha_db> <sha_key>
 }
 
 rollback() {
-  log "回滚到恢复前配对"
-  rm -f "$DATA/$DB_NAME" "$DATA/$DB_NAME-wal" "$DATA/$DB_NAME-shm" "$DATA/$KEY_NAME"
-  [ -f "$OLD/$DB_NAME" ] && mv -f "$OLD/$DB_NAME" "$DATA/$DB_NAME"
-  [ -f "$OLD/$DB_NAME-wal" ] && mv -f "$OLD/$DB_NAME-wal" "$DATA/$DB_NAME-wal"
-  [ -f "$OLD/$DB_NAME-shm" ] && mv -f "$OLD/$DB_NAME-shm" "$DATA/$DB_NAME-shm"
-  [ -f "$OLD/$KEY_NAME" ] && mv -f "$OLD/$KEY_NAME" "$DATA/$KEY_NAME"
-  sync
-  if [ -n "${OLD_DB_SHA:-}" ] && [ -n "${OLD_KEY_SHA:-}" ]; then
-    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA" ||
-      die "回滚后校验失败，现场保留在 $OLD，请人工处理"
+  # 重入保护：trap 触发的失败不能再来一次回滚。
+  if [ "${ROLLBACK_ACTIVE:-0}" = 1 ]; then
+    log "回滚已在进行，跳过重入"
+    return 1
   fi
+  ROLLBACK_ACTIVE=1
+  set +e
+  log "回滚到恢复前配对（不删除任何现存文件）"
+  local rc=0 chk failed
+  chk="$(dirname "$DATA")/.ml-rollback-check-${TX:-$$}"
+  failed="$DATA/.restore-failed-${TX:-$$}"
+
+  # 1. 旧配对必须可证明完整：有记录的哈希、两个文件都在、内容匹配。
+  #    任何一项不满足都保持正式目录与 OLD 原样，journal 保留。
+  if [ -z "${OLD_DB_SHA:-}" ] || [ -z "${OLD_KEY_SHA:-}" ]; then
+    log "错误: 没有可校验的旧配对（old_db_sha/old_key_sha 为空）；正式目录与 $OLD 保持原样，journal 保留"
+    set -e; return 1
+  fi
+  if [ ! -f "$OLD/$DB_NAME" ] || [ ! -f "$OLD/$KEY_NAME" ]; then
+    log "错误: 旧配对不完整（$OLD 缺 DB 或 key）；正式目录与现场保持原样，journal 保留"
+    set -e; return 1
+  fi
+  if ! verify_pair "$OLD/$DB_NAME" "$OLD/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+    log "错误: 旧配对 SHA-256 校验失败；正式目录与现场保持原样，journal 保留"
+    set -e; return 1
+  fi
+
+  # 2. 在数据目录外复制一份并通过复核，之后所有切换都基于这份副本。
+  rm -rf "$chk"
+  if ! mkdir -p "$chk" || ! chmod 700 "$chk"; then
+    log "错误: 无法创建回滚暂存目录 $chk；未改动任何文件"
+    set -e; return 1
+  fi
+  cp -f "$OLD/$DB_NAME" "$chk/$DB_NAME" || rc=1
+  cp -f "$OLD/$KEY_NAME" "$chk/$KEY_NAME" || rc=1
+  for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
+    [ -f "$OLD/$f" ] && { cp -f "$OLD/$f" "$chk/$f" || rc=1; }
+  done
+  sync
+  if [ $rc -ne 0 ] || ! verify_pair "$chk/$DB_NAME" "$chk/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+    log "错误: 回滚副本复制/校验失败；正式目录与现场保持原样，journal 保留"
+    set -e; return 1
+  fi
+
+  # 3. 当前正式文件移入失败现场（不删除），再从副本落回旧配对。
+  if ! mkdir -p "$failed" || ! chmod 700 "$failed"; then
+    log "错误: 无法创建失败现场目录 $failed；未改动任何文件"
+    set -e; return 1
+  fi
+  for f in "$DB_NAME" "$DB_NAME-wal" "$DB_NAME-shm" "$KEY_NAME"; do
+    if [ -f "$DATA/$f" ]; then
+      mv -f "$DATA/$f" "$failed/$f" || rc=1
+    fi
+  done
+  sync
+  if [ $rc -ne 0 ]; then
+    log "错误: 保存当前配对失败；$failed 与 $chk 均保留，journal 保留"
+    set -e; return 1
+  fi
+  mv -f "$chk/$DB_NAME" "$DATA/$DB_NAME" || rc=1
+  for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
+    [ -f "$chk/$f" ] && { mv -f "$chk/$f" "$DATA/$f" || rc=1; }
+  done
+  mv -f "$chk/$KEY_NAME" "$DATA/$KEY_NAME" || rc=1
+  chmod 600 "$DATA/$DB_NAME" "$DATA/$KEY_NAME" 2>/dev/null
+  sync
+  if [ $rc -ne 0 ] || ! verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+    log "错误: 回滚后校验失败；$failed、$OLD、$chk 均保留，journal 保留，请人工处理"
+    set -e; return 1
+  fi
+
   rm -f "$JOURNAL_PATH"
   sync
-  log "已回滚；恢复前配对仍在 $OLD"
+  rmdir "$chk" 2>/dev/null
+  log "已回滚；失败现场保留在 $failed，恢复前配对仍在 $OLD"
+  set -e; return 0
+}
+
+fail_restore() { # $1=错误信息：先尝试回滚，回滚失败则保留现场
+  local msg=$1
+  rollback || true
+  die "$msg"
 }
 
 trap 'rc=$?; if [ $rc -ne 0 ] && [ -f "$JOURNAL_PATH" ]; then rollback || true; fi; exit $rc' ERR
@@ -148,11 +216,22 @@ if [ "$MODE" = recover ]; then
   elif [ -f "$STAGE/$KEY_NAME" ] && [ "$(sha "$DATA/$DB_NAME" 2>/dev/null)" = "$DB_SHA" ]; then
     mv -f "$STAGE/$KEY_NAME" "$DATA/$KEY_NAME"; sync
     verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
-      die "补齐 key 后校验失败，现场保留，请人工处理"
+      fail_restore "补齐 key 后校验失败，已尝试回滚"
     rm -f "$JOURNAL_PATH"; sync
     log "已补完新配对（DB 已切换，key 先前未落位）"
+  elif [ ! -f "$DATA/$DB_NAME" ] && [ -f "$STAGE/$DB_NAME" ] && [ -f "$STAGE/$KEY_NAME" ]; then
+    # 数据目录里还没有 DB（切换前中断，或首次安装）：暂存区仍完整，
+    # 继续向前完成比回滚更安全，旧配对（若有）仍原样留在 $OLD。
+    mv -f "$STAGE/$DB_NAME" "$DATA/$DB_NAME"
+    mv -f "$STAGE/$KEY_NAME" "$DATA/$KEY_NAME"
+    chmod 600 "$DATA/$DB_NAME" "$DATA/$KEY_NAME"
+    sync
+    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
+      fail_restore "补齐新配对后校验失败，已尝试回滚"
+    rm -f "$JOURNAL_PATH"; sync
+    log "已补完新配对（数据目录此前没有 DB）"
   elif [ -f "$OLD/$DB_NAME" ] || [ -f "$OLD/$KEY_NAME" ]; then
-    rollback
+    rollback || die "回滚失败：正式目录与 $OLD 均保持原样、journal 未清除，请人工处理"
   else
     die "无法自动判定恢复方向；DB/key/日志均保留，请人工处理"
   fi
@@ -199,11 +278,11 @@ sync
 crashpoint after_key
 
 verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
-  die "切换后校验失败"
+  fail_restore "切换后校验失败，已尝试回滚"
 # 旧 WAL/SHM 已随旧配对移入 OLD；正式目录里再出现就是被错误关联的残留。
 for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
   if [ -f "$DATA/$f" ]; then
-    die "恢复后数据目录仍有 $f，拒绝清除切换日志"
+    fail_restore "恢复后数据目录仍有 $f，拒绝清除切换日志，已尝试回滚"
   fi
 done
 crashpoint after_verify

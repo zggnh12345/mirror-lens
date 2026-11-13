@@ -130,22 +130,73 @@ else
 fi
 rm -rf "$r"
 
-# 11. --recover 自身失败时，journal 必须保留（服务仍被拦）
+# 11a. 切换前中断（暂存区完整）且旧现场丢失：向前补完是安全的
 r=$(mktemp -d); make_fixture "$r"
 RESTORE_TEST_CRASH=after_save "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1
 rm -rf "$r/data"/.restore-old-*
-if run_recover "$r"; then
-  bad "--recover 现场缺失时不应成功"
-elif [ ! -f "$r/data/.restore-journal.json" ]; then
-  bad "--recover 失败后 journal 被删，服务会绕过拦截"
+if run_recover "$r" && pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT && [ ! -f "$r/data/.restore-journal.json" ]; then
+  ok "旧现场缺失但暂存区完整：向前补完"
 else
-  ok "--recover 失败保留 journal"
+  bad "向前补完用例: $(tail -2 "$r/recover.log")"
+fi
+rm -rf "$r"
+
+# 11b. 新配对与旧现场都不可用：必须失败并保留 journal
+r=$(mktemp -d); make_fixture "$r"
+RESTORE_TEST_CRASH=after_save "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1
+rm -rf "$r/data"/.restore-old-* "$r"/.ml-restore-stage-*
+if run_recover "$r"; then
+  bad "无可恢复材料时 --recover 不应成功"
+elif [ ! -f "$r/data/.restore-journal.json" ]; then
+  bad "无可恢复材料时 journal 被删，服务会绕过拦截"
+else
+  ok "无可恢复材料：失败且保留 journal"
+fi
+rm -rf "$r"
+
+# 12-14. 回滚前必须能证明旧配对完整；不完整时不得破坏正式目录
+rollback_guard() { # $1=db|key|hash
+  local mode=$1 r h0 c0
+  r=$(mktemp -d); make_fixture "$r"
+  RESTORE_TEST_CRASH=after_db "$RESTORE" --backup "$r/unit" --data "$r/data" >/dev/null 2>&1
+  rm -f "$r"/.ml-restore-stage-*/secret.key   # 断掉「向前补完」路径，强制回滚
+  case $mode in
+    db)   rm -f "$r/data"/.restore-old-*/mirror-lens.db ;;
+    key)  rm -f "$r/data"/.restore-old-*/secret.key ;;
+    hash) printf 'TAMPERED' >"$r/data"/.restore-old-*/mirror-lens.db ;;
+  esac
+  h0=$(sha "$r/data/mirror-lens.db"); c0=$(cat "$r/data/mirror-lens.db")
+  if run_recover "$r"; then
+    bad "旧配对 $mode 不完整时 --recover 不应成功"
+  elif [ "$(sha "$r/data/mirror-lens.db")" != "$h0" ] || [ "$(cat "$r/data/mirror-lens.db")" != "$c0" ]; then
+    bad "旧配对 $mode 不完整时正式目录被改动"
+  elif [ ! -f "$r/data/.restore-journal.json" ]; then
+    bad "旧配对 $mode 不完整时 journal 被清除"
+  else
+    ok "旧配对 $mode 不完整：拒绝回滚且未破坏正式目录"
+  fi
+  rm -rf "$r"
+}
+rollback_guard db
+rollback_guard key
+rollback_guard hash
+
+# 15. 向前补完失败时回滚：旧配对恢复，新配对移入失败现场（不删除）
+r=$(mktemp -d); make_fixture "$r"
+RESTORE_TEST_CRASH=after_db "$RESTORE" --backup "$r/unit" --data "$r/data" >/dev/null 2>&1
+printf 'BROKEN-KEY' >"$r"/.ml-restore-stage-*/secret.key
+run_recover "$r"; rc=$?
+if [ $rc -ne 0 ] && pair_is "$r/data" OLD-DB-CONTENT OLD-KEY-CONTENT && [ ! -f "$r/data/.restore-journal.json" ] &&
+   [ "$(cat "$r"/data/.restore-failed-*/mirror-lens.db)" = NEW-DB-CONTENT ]; then
+  ok "补完失败回滚：旧配对恢复且新配对留档"
+else
+  bad "回滚成功路径: rc=$rc $(tail -3 "$r/recover.log")"
 fi
 rm -rf "$r"
 
 # 8. 非 root 服务用户恢复
 r=$(mktemp -d); make_fixture "$r"
-if id -u 1000 >/dev/null 2>&1; then
+if command -v setpriv >/dev/null 2>&1; then
   chown -R 1000:1000 "$r"
   if setpriv --reuid=1000 --regid=1000 --clear-groups "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1 &&
      pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT; then

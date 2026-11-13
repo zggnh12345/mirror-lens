@@ -82,3 +82,20 @@ func TestJournalCheckedBeforeKeyCreation(t *testing.T) {
 		t.Fatal("拦截路径不应产生 secret.key")
 	}
 }
+
+// os.Stat 的失败不只有「文件不存在」：权限、I/O、符号链接环都必须按
+// fail-closed 处理，否则会在配对状态未知时继续启动。
+func TestCheckRestoreJournalStatErrorFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	// 自指符号链接让 os.Stat 返回 ELOOP（非 ErrNotExist），且不依赖 root 权限。
+	if err := os.Symlink(".restore-journal.json", filepath.Join(dir, ".restore-journal.json")); err != nil {
+		t.Fatal(err)
+	}
+	err := checkRestoreJournal(dir)
+	if err == nil {
+		t.Fatal("无法确认 journal 状态时必须拒绝启动")
+	}
+	if !strings.Contains(err.Error(), "无法确认恢复切换日志状态") {
+		t.Fatalf("错误信息应说明检查失败: %v", err)
+	}
+}

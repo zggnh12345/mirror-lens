@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -37,21 +38,24 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 // checkRestoreJournal 在启动最早期拦住未完成的恢复切换。
 // journal 只在 DB/key 成对校验通过后才由 restore.sh 删除，所以「存在」就
 // 意味着配对状态未知；此时允许启动会把混合状态当成正常数据继续写。
+//
+// 只有明确的「文件不存在」才放行：权限错误、I/O 错误、路径不是目录等
+// 情况无法确认状态，按 fail-closed 处理。
 func checkRestoreJournal(dataDir string) error {
 	jp := filepath.Join(dataDir, ".restore-journal.json")
-	if !fileExists(jp) {
+	_, err := os.Stat(jp)
+	switch {
+	case err == nil:
+		return fmt.Errorf("检测到未完成的恢复切换（%s）：已拒绝启动以免 DB/key 配对不一致；"+
+			"请先运行 scripts/restore.sh --recover --data %s 完成或回滚该次恢复", jp, dataDir)
+	case errors.Is(err, fs.ErrNotExist):
 		return nil
+	default:
+		return fmt.Errorf("无法确认恢复切换日志状态（%s）: %w；在确认前拒绝启动", jp, err)
 	}
-	return fmt.Errorf("检测到未完成的恢复切换（%s）：已拒绝启动以免 DB/key 配对不一致；"+
-		"请先运行 scripts/restore.sh --recover --data %s 完成或回滚该次恢复", jp, dataDir)
 }
 
 // mustSecretKey 加载或创建数据目录里的密钥文件。Host 凭据与设置页 Token

@@ -54,6 +54,17 @@ else
 fi
 rm -rf "$d"
 
+# 5. 无法确认 journal 状态（自指符号链接 → ELOOP，非 ENOENT）：拒绝启动
+base=$(mktemp -d); mkdir -p "$base/data"
+ln -s .restore-journal.json "$base/data/.restore-journal.json"
+out=$(timeout 10 "$BIN" -config /dev/null -data "$base/data" -addr 127.0.0.1:0 2>&1); rc=$?
+if [ $rc -ne 0 ] && grep -q "无法确认恢复切换日志状态" <<<"$out" && [ ! -f "$base/data/secret.key" ]; then
+  ok "journal 状态不可判定时拒绝启动"
+else
+  bad "Stat 错误用例: rc=$rc out=$(tail -1 <<<"$out")"
+fi
+rm -rf "$base"
+
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
