@@ -6,9 +6,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 RESTORE="$HERE/restore.sh"
 PASS=0
 FAIL=0
+SKIP=0
 
 ok() { PASS=$((PASS + 1)); echo "ok   - $1"; }
 bad() { FAIL=$((FAIL + 1)); echo "FAIL - $1"; }
+skip() { SKIP=$((SKIP + 1)); echo "skip - $1"; }
 sha() { sha256sum "$1" | awk '{print $1}'; }
 
 make_fixture() { # $1=root; 生成 data 旧配对 + unit 新配对
@@ -239,10 +241,10 @@ if command -v setpriv >/dev/null 2>&1 && setpriv --reuid=1000 --regid=1000 --cle
     bad "uid 1000 恢复失败: $(tail -3 "$r/log")"
   fi
 else
-  echo "skip - 当前容器不允许切换到 uid 1000（缺 CAP_SETUID/CAP_CHOWN）"
+  skip "当前容器不允许切换到 uid 1000（缺 CAP_SETUID/CAP_CHOWN）；由 scripts/nas_uid_test.sh 在真实 UID 1000 容器执行"
 fi
 rm -rf "$r"
 
 echo "----"
-echo "PASS=$PASS FAIL=$FAIL"
+echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ "$FAIL" -eq 0 ]
