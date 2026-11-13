@@ -194,6 +194,33 @@ else
 fi
 rm -rf "$r"
 
+# 16. 回滚中途 SIGKILL：已有失败现场不得被覆盖，二次 --recover 必须收敛
+r=$(mktemp -d); make_fixture "$r"
+RESTORE_TEST_CRASH=after_db "$RESTORE" --backup "$r/unit" --data "$r/data" >/dev/null 2>&1
+tx=$(sed -n 's/.*"txid":"\([^"]*\)".*/\1/p' "$r/data/.restore-journal.json")
+mkdir -p "$r/data/.restore-failed-$tx"
+printf 'SENTINEL' >"$r/data/.restore-failed-$tx/keep"
+printf 'BROKEN-KEY' >"$r"/.ml-restore-stage-*/secret.key
+RESTORE_TEST_PAUSE_AFTER_FAILED=1 "$RESTORE" --recover --data "$r/data" >"$r/recover1.log" 2>&1 &
+pid=$!
+for _ in $(seq 1 200); do [ -f "$r/data/.restore-test-paused" ] && break; sleep 0.05; done
+if [ ! -f "$r/data/.restore-test-paused" ]; then
+  bad "回滚故障注入未到达暂停点: $(tail -2 "$r/recover1.log")"
+  kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+else
+  kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  rm -f "$r/data/.restore-test-paused"
+  if run_recover "$r" && pair_is "$r/data" OLD-DB-CONTENT OLD-KEY-CONTENT &&
+     [ ! -f "$r/data/.restore-journal.json" ] &&
+     [ "$(cat "$r/data/.restore-failed-$tx/keep" 2>/dev/null)" = SENTINEL ] &&
+     [ -n "$(grep -l NEW-DB-CONTENT "$r/data"/.restore-failed-*/mirror-lens.db 2>/dev/null)" ]; then
+    ok "回滚 SIGKILL 后二次恢复：旧现场保留且配对完整"
+  else
+    bad "回滚 SIGKILL 重入: $(tail -3 "$r/recover.log")"
+  fi
+fi
+rm -rf "$r"
+
 # 8. 非 root 服务用户恢复
 r=$(mktemp -d); make_fixture "$r"
 if command -v setpriv >/dev/null 2>&1; then

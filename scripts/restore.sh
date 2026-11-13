@@ -119,6 +119,15 @@ rollback() {
   local rc=0 chk failed
   chk="$(dirname "$DATA")/.ml-rollback-check-${TX:-$$}"
   failed="$DATA/.restore-failed-${TX:-$$}"
+  # 重入保护：上一次回滚可能已被 SIGKILL，现场目录里已有文件。绝不覆盖它，
+  # 换一个同事务的新目录继续保存本次现场。
+  if [ -d "$failed" ] && [ -n "$(ls -A "$failed" 2>/dev/null)" ]; then
+    local base=$failed n=1
+    while [ -e "$failed" ]; do
+      failed="$base.$n"
+      n=$((n + 1))
+    done
+  fi
 
   # 1. 旧配对必须可证明完整：有记录的哈希、两个文件都在、内容匹配。
   #    任何一项不满足都保持正式目录与 OLD 原样，journal 保留。
@@ -166,6 +175,12 @@ rollback() {
   if [ $rc -ne 0 ]; then
     log "错误: 保存当前配对失败；$failed 与 $chk 均保留，journal 保留"
     set -e; return 1
+  fi
+  # 故障注入点：测试用 SIGKILL 打断「已保存现场、尚未落回旧配对」。
+  if [ "${RESTORE_TEST_PAUSE_AFTER_FAILED:-0}" = 1 ]; then
+    : >"$DATA/.restore-test-paused"
+    # bash 内建 read：不起子进程，SIGKILL 父进程时不会留下仍持有 flock 的 sleep。
+    read -r -t 120 _ </dev/null || true
   fi
   mv -f "$chk/$DB_NAME" "$DATA/$DB_NAME" || rc=1
   for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
