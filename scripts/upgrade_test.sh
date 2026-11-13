@@ -120,12 +120,41 @@ if run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1 &&
    "$TOOL" verify --db "$r/mirror-lens.db" >/dev/null &&
    [ "$(count_sources "$r/mirror-lens.db")" = 1 ] &&
    [ -f "$r/mirror-lens.db.pre-3.5.5" ] && [ "$(cat "$r/secret.key")" = TEST-KEY ] &&
+   [ -f "$r/mirror-lens.db.pre-3.5.5.manifest" ] &&
+   grep -q '^manifest_version=2$' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+   grep -q '^db_size=' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+   grep -q '^wal_state=absent$' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+   grep -q '^shm_state=absent$' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+   grep -q '^target_schema_hash=' "$r/mirror-lens.db.pre-3.5.5.manifest" &&
+   [ ! -e "$r/mirror-lens.db.pre-3.5.5-wal" ] && [ ! -e "$r/mirror-lens.db.pre-3.5.5-shm" ] &&
    [ ! -f "$r/.db-upgrade-journal.json" ]; then
-  ok "正常升级 + 回滚副本 + key 不动"
+  ok "正常升级 + 完整 manifest + 回滚副本 + key 不动"
 else
   bad "正常升级失败: $(tail -5 "$r/log")"
 fi
 rm -rf "$r"
+
+# 2. 备份单元篡改/缺失/截断/文件名不匹配：必须拒绝恢复且保留 journal
+for kind in db-tamper db-truncate manifest-missing db-filename; do
+  r=$(mktemp -d); fixture "$r"
+  DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.6 >"$r/log" 2>&1
+  case $kind in
+    db-tamper)       printf 'X' >>"$r/mirror-lens.db.pre-3.5.5" ;;
+    db-truncate)     truncate -s 3 "$r/mirror-lens.db.pre-3.5.5" ;;
+    manifest-missing) rm -f "$r/mirror-lens.db.pre-3.5.5.manifest" ;;
+    db-filename)     sed -i 's/^db_file=.*/db_file=wrong.db/' "$r/mirror-lens.db.pre-3.5.5.manifest" ;;
+  esac
+  if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
+    bad "$kind 应被拒绝却恢复成功"
+  elif [ "$(count_sources "$r/mirror-lens.db")" = 1 ] &&
+       ! "$TOOL" verify --db "$r/mirror-lens.db" >/dev/null 2>&1 &&
+       [ -f "$r/.db-upgrade-journal.json" ]; then
+    ok "$kind 被拒绝且正式库未坏、journal 保留"
+  else
+    bad "$kind 被拒绝但状态不对: $(tail -3 "$r/recover.log")"
+  fi
+  rm -rf "$r"
+done
 
 # 2. 故障点：恢复后必须回到完整旧库或完整新库，journal 必须清掉
 for point in after_migrate after_backup after_journal after_remove_old after_switch; do
@@ -163,7 +192,7 @@ DB_UPGRADE_CRASH=after_journal run_up --data "$r" --tool "$TOOL" --baseline 3.4.
 printf 'OTHER-KEY' >"$r/secret.key"
 if run_up --recover --data "$r" --tool "$TOOL" >"$r/recover.log" 2>&1; then
   bad "key 与 manifest 不符时仍恢复成功"
-elif grep -q 'secret.key 与升级前 manifest 不符' "$r/recover.log"; then
+elif grep -Eq 'secret\.key .*manifest 不符' "$r/recover.log"; then
   ok "key 与 manifest 不符时拒绝回滚"
 else
   bad "key 不符但错误不是 manifest 拒绝: $(tail -3 "$r/recover.log")"

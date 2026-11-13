@@ -86,6 +86,66 @@ check_no_db_holders() {
   [ -z "$pids" ] || die "仍有进程持有正式库/WAL/SHM:$pids；先停服务并确认进程退出"
 }
 
+mval() { # mval <key>：manifest 是 key=value，值可含等号
+  awk -v k="$1" 'index($0, k"=")==1 { print substr($0, length(k)+2); exit }' "$MANIFEST"
+}
+
+# 备份单元一致性：文件名、大小、哈希、sidecar 状态都必须与 manifest 一致。
+# 这个函数只读，不修改任何文件；rename 前和回滚前都调用。
+check_manifest() {
+  [ -f "$MANIFEST" ] || die "备份 manifest 缺失，拒绝继续: $MANIFEST"
+  [ "$(mval manifest_version)" = "2" ] || die "manifest 版本不是 2，拒绝继续"
+  [ -n "$(mval backup_id)" ] || die "manifest 缺少 backup_id"
+  [ "$(mval db_file)" = "$DB_NAME" ] ||
+    die "manifest DB 文件名不匹配：$(mval db_file) != $DB_NAME"
+  [ -f "$PRE" ] || die "manifest 指向的备份库不存在: $PRE"
+  [ "$(stat -c %s "$PRE")" = "$(mval db_size)" ] || die "备份 DB 大小与 manifest 不符"
+  [ "$(sha "$PRE")" = "$(mval db_sha)" ] || die "备份 DB SHA-256 与 manifest 不符"
+  [ "$(mval key_file)" = "$KEY_NAME" ] ||
+    die "manifest key 文件名不匹配：$(mval key_file) != $KEY_NAME"
+  [ -f "$KEY" ] || die "manifest 存在但 secret.key 缺失，拒绝继续"
+  [ "$(stat -c %s "$KEY")" = "$(mval key_size)" ] || die "secret.key 大小与 manifest 不符"
+  [ "$(sha "$KEY")" = "$(mval key_sha)" ] || die "secret.key 与升级前 manifest 不符"
+
+  local state file size hash
+  state=$(mval wal_state)
+  case "$state" in
+    absent)
+      [ ! -e "$PRE-wal" ] || die "manifest 声明无 WAL，但备份 sidecar 存在: $PRE-wal"
+      [ "$(mval wal_file)" = "absent" ] || die "WAL 状态字段不一致"
+      ;;
+    present)
+      file=$(mval wal_file); size=$(mval wal_size); hash=$(mval wal_sha)
+      [ "$file" = "$PRE_NAME-wal" ] || die "manifest WAL 文件名不匹配: $file"
+      [ -f "$PRE-wal" ] || die "manifest 声明有 WAL，但备份 sidecar 缺失: $PRE-wal"
+      [ "$(stat -c %s "$PRE-wal")" = "$size" ] || die "备份 WAL 大小与 manifest 不符"
+      [ "$(sha "$PRE-wal")" = "$hash" ] || die "备份 WAL SHA-256 与 manifest 不符"
+      ;;
+    *) die "manifest WAL 状态非法: $state" ;;
+  esac
+
+  state=$(mval shm_state)
+  case "$state" in
+    absent)
+      [ ! -e "$PRE-shm" ] || die "manifest 声明无 SHM，但备份 sidecar 存在: $PRE-shm"
+      [ "$(mval shm_file)" = "absent" ] || die "SHM 状态字段不一致"
+      ;;
+    present)
+      file=$(mval shm_file); size=$(mval shm_size); hash=$(mval shm_sha)
+      [ "$file" = "$PRE_NAME-shm" ] || die "manifest SHM 文件名不匹配: $file"
+      [ -f "$PRE-shm" ] || die "manifest 声明有 SHM，但备份 sidecar 缺失: $PRE-shm"
+      [ "$(stat -c %s "$PRE-shm")" = "$size" ] || die "备份 SHM 大小与 manifest 不符"
+      [ "$(sha "$PRE-shm")" = "$hash" ] || die "备份 SHM SHA-256 与 manifest 不符"
+      ;;
+    *) die "manifest SHM 状态非法: $state" ;;
+  esac
+
+  [ -n "$(mval tool_sha)" ] || die "manifest 缺少 tool_sha"
+  [ -n "$(mval baseline)" ] || die "manifest 缺少 baseline"
+  [ -n "$(mval target_schema_hash)" ] || die "manifest 缺少 target_schema_hash"
+  [ -n "$(mval created)" ] || die "manifest 缺少 created"
+}
+
 usage() {
   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
@@ -152,15 +212,11 @@ recover() {
     [ -n "$WORK_SAVED" ] && rm -rf "$WORK_SAVED"
     return 0
   fi
+  [ "$PRE_SAVED" = "$PRE" ] || die "journal 备份路径不是预期备份单元: $PRE_SAVED"
   [ -f "$PRE_SAVED" ] || die "备份库不存在: $PRE_SAVED"
-  [ "$(sha "$PRE_SAVED")" = "$PRE_SHA" ] || die "备份库 SHA-256 不符，拒绝恢复"
-  # key 不在切换中替换；manifest 只用来发现“升级期间 key 被换过”的情况。
-  if [ -f "$MANIFEST" ]; then
-    KEY_SHA_SAVED=$(grep '^key_sha=' "$MANIFEST" | cut -d= -f2)
-    [ -f "$KEY" ] || die "manifest 存在但 secret.key 缺失，拒绝自动恢复"
-    [ -z "$KEY_SHA_SAVED" ] || [ "$(sha "$KEY")" = "$KEY_SHA_SAVED" ] ||
-      die "secret.key 与升级前 manifest 不符，拒绝自动恢复"
-  fi
+  # 回滚前再次校验完整备份单元：DB、key、manifest、sidecar 必须互相一致。
+  check_manifest
+  [ "$(sha "$PRE_SAVED")" = "$PRE_SHA" ] || die "备份库 SHA-256 与 journal 不符，拒绝恢复"
   log "回滚到升级前数据库"
   rm -f "$DB" "$DB-wal" "$DB-shm"
   cp --reflink=auto "$PRE_SAVED" "$DB"
@@ -205,7 +261,10 @@ log "在 staging 上 checkpoint WAL"
 [ ! -e "$WORK/old.db-shm" ] || die "staging checkpoint 后仍残留 old.db-shm，拒绝迁移"
 log "迁移到 Canonical"
 "$TOOL" migrate --in "$WORK/old.db" --out "$WORK/new.db" --baseline "$BASELINE"
-"$TOOL" verify --db "$WORK/new.db"
+VERIFY_OUT=$("$TOOL" verify --db "$WORK/new.db")
+echo "$VERIFY_OUT"
+TARGET_HASH=$(printf '%s\n' "$VERIFY_OUT" | sed -n 's/.*hash=//p')
+[ -n "$TARGET_HASH" ] || die "无法从 verify 输出解析 target schema hash"
 crashpoint after_migrate
 
 log "备份正式库到 $PRE_NAME"
@@ -217,18 +276,46 @@ cp --reflink=auto "$DB" "$PRE"
 [ -f "$DB-shm" ] && cp --reflink=auto "$DB-shm" "$PRE-shm"
 chmod 600 "$PRE" "$PRE-wal" "$PRE-shm" 2>/dev/null || true
 fsync_path "$PRE"
+[ -f "$PRE-wal" ] && fsync_path "$PRE-wal"
+[ -f "$PRE-shm" ] && fsync_path "$PRE-shm"
 sync
 PRE_SHA=$(sha "$PRE")
+PRE_SIZE=$(stat -c %s "$PRE")
 # key 不参与切换；只额外留一份 600 的灾难恢复副本，并记录它和 DB 的哈希。
 cp --reflink=auto "$KEY" "$KEY_PRE"
 chmod 600 "$KEY_PRE"
 fsync_path "$KEY_PRE"
 KEY_SHA=$(sha "$KEY")
-printf 'db_sha=%s\nkey_sha=%s\ntool_sha=%s\nbaseline=%s\ncreated=%s\n' \
-  "$PRE_SHA" "$KEY_SHA" "$(sha "$TOOL")" "$BASELINE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$MANIFEST"
+KEY_SIZE=$(stat -c %s "$KEY")
+
+WAL_STATE=absent; WAL_FILE=absent; WAL_SIZE=absent; WAL_SHA=absent
+if [ -f "$PRE-wal" ]; then
+  WAL_STATE=present; WAL_FILE=$PRE_NAME-wal
+  WAL_SIZE=$(stat -c %s "$PRE-wal"); WAL_SHA=$(sha "$PRE-wal")
+fi
+SHM_STATE=absent; SHM_FILE=absent; SHM_SIZE=absent; SHM_SHA=absent
+if [ -f "$PRE-shm" ]; then
+  SHM_STATE=present; SHM_FILE=$PRE_NAME-shm
+  SHM_SIZE=$(stat -c %s "$PRE-shm"); SHM_SHA=$(sha "$PRE-shm")
+fi
+
+MANIFEST_TMP="$MANIFEST.tmp-$$"
+printf 'manifest_version=2\nbackup_id=%s-%s\ndb_file=%s\ndb_size=%s\ndb_sha=%s\nkey_file=%s\nkey_size=%s\nkey_sha=%s\nwal_state=%s\nwal_file=%s\nwal_size=%s\nwal_sha=%s\nshm_state=%s\nshm_file=%s\nshm_size=%s\nshm_sha=%s\ntool_sha=%s\nbaseline=%s\ntarget_schema_hash=%s\ncreated=%s\n' \
+  "$TS" "${PRE_SHA:0:12}" "$DB_NAME" "$PRE_SIZE" "$PRE_SHA" \
+  "$KEY_NAME" "$KEY_SIZE" "$KEY_SHA" \
+  "$WAL_STATE" "$WAL_FILE" "$WAL_SIZE" "$WAL_SHA" \
+  "$SHM_STATE" "$SHM_FILE" "$SHM_SIZE" "$SHM_SHA" \
+  "$(sha "$TOOL")" "$BASELINE" "$TARGET_HASH" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$MANIFEST_TMP"
+chmod 600 "$MANIFEST_TMP"
+fsync_path "$MANIFEST_TMP"
+mv "$MANIFEST_TMP" "$MANIFEST"
 fsync_path "$MANIFEST"
 sync
 crashpoint after_backup
+
+# 备份单元必须自洽后才能把 journal 推进到 switching。
+log "校验备份单元 manifest"
+check_manifest
 
 # 备份已完成；journal 切换到 switching 后才能动正式库，并 fsync 目录项。
 printf '{"state":"switching","backup_db":"%s","backup_sha":"%s","work_dir":"%s"}\n' \
@@ -236,6 +323,8 @@ printf '{"state":"switching","backup_db":"%s","backup_sha":"%s","work_dir":"%s"}
 fsync_path "$JOURNAL_PATH"
 crashpoint after_journal
 
+# 真正 rename 前再校验一次，防止备份在 journal 写入后被改动。
+check_manifest
 # 正式库的 -wal/-shm 属于旧库，切换时一并移走，避免新库误读旧 WAL。
 rm -f "$DB" "$DB-wal" "$DB-shm"
 crashpoint after_remove_old
