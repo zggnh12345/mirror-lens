@@ -241,10 +241,15 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	}
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
+	// Docker Hub / GHCR 也是 Registry 归属，空 Host 不得再被当作 Hub 候选。
+	hostFilter := ""
+	if kind == "docker" || kind == "ghcr" {
+		hostFilter = " AND s.repo_host <> ''"
+	}
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
 			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at
 		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
-		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1
+		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1`+hostFilter+`
 		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
 		ORDER BY s.id`, Family(kind), HealthFails)
 	if err != nil {

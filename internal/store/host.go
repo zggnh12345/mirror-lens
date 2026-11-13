@@ -101,10 +101,9 @@ func (s *Store) SetRepoHost(id int64, rawHost string) error {
 	if err != nil {
 		return err
 	}
-	if host == "" {
-		// 显式选择 Hub：落为 docker.io，避免空串继续隐含 Hub。
-		host = "docker.io"
-	}
+	// 空 Host 是“清除 Registry 归属”，不是“选择 Docker Hub”。
+	// 显式选择 Hub 必须传 "docker.io"；这里不做空串到 Hub 的兼容映射，
+	// 否则同一个入口同时承担设置 Hub 与清除归属两种职责。
 	return s.withSourceLive(id, func(tx *sql.Tx) error {
 		var oldHost string
 		if err := tx.QueryRow(`SELECT COALESCE(repo_host,'') FROM sources WHERE id=?`, id).
@@ -131,8 +130,8 @@ WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
 
 		// 新 Host 的恢复行：state=initial、gen 取新 Host 的当前代次、
 		// next_probe_at=now，等待新的有效探测证据；没有代次行时按 0 处理。
-		// Hub 与 ghcr.io 走旧通道，不建 Host Probe 恢复行。
-		if host == "docker.io" || host == "ghcr.io" {
+		// Hub、ghcr.io 和“无归属”都走旧/无恢复行通道。
+		if host == "" || host == "docker.io" || host == "ghcr.io" {
 			return nil
 		}
 		var gen int64

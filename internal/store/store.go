@@ -59,8 +59,8 @@ type Source struct {
 	// 探测时两种都试，据此写回；调度回源时按它拼路径。
 	GhcrPrefix bool `json:"ghcr_prefix"`
 
-	// RepoHost 是该源归属的 Registry Host（"" = Docker Hub）。
-	// 3.5.0 起只有一个值：一个源只服务一个 Registry，通用多仓代理留到后续版本。
+	// RepoHost 是该源归属的 Registry Host（"": 无 Registry 归属）。
+	// Docker Hub 必须显式落 "docker.io"；3.5.0 起一个源只服务一个 Registry。
 	RepoHost string `json:"repo_host"`
 	// RegistryCap 是该源对 RepoHost 的能力三态（0..2 见 store 常量），
 	// 与 docker_cap/ghcr_cap 并行存在：Hub 与 ghcr 仍以旧列权威，
@@ -1000,7 +1000,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 	if x.RepoHost == "" {
 		if x.GhcrCap == RegistryCapYes && x.DockerCap != RegistryCapYes {
 			x.RepoHost = "ghcr.io"
-		} else if x.GithubCap != RegistryCapYes {
+		} else if x.DockerCap == RegistryCapYes || x.GithubCap != RegistryCapYes {
+			// 有 Docker 能力，或不是纯 GitHub 源：默认 Hub，不能留空。
+			// 纯 GitHub（GithubCap=yes 且 DockerCap 非 yes）才保持空归属。
 			x.RepoHost = "docker.io"
 		}
 	}

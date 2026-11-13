@@ -425,7 +425,8 @@ function regPathRow(label, p, sel){
     + '</div>';
 }
 
-/* Hub 源（3.5.4 起 repo_host='docker.io'，旧数据可能为空）不渲染本区域。 */
+/* 无归属源（repo_host=''）和 Hub 源（docker.io）不渲染 Registry 探测区域；
+   3.5.4 旧数据的空串也不再被当成 Hub 展示。 */
 function regDiagHtml(x){
   if (!x || !x.repo_host || x.repo_host === 'docker.io') return '';
   var cap = regCap(x.registry_cap);

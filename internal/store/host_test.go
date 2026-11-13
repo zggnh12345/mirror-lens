@@ -67,6 +67,50 @@ func TestSetRepoHostClearsCaps(t *testing.T) {
 	}
 }
 
+func TestSetRepoHostEmptyClearsOwnership(t *testing.T) {
+	st := openTestAt(t, filepath.Join(t.TempDir(), "rh-empty.db"))
+	defer st.Close()
+	id := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 1)
+
+	if err := st.SetRepoHost(id, ""); err != nil {
+		t.Fatalf("SetRepoHost(id, \"\"): %v", err)
+	}
+	var host string
+	if err := st.db.QueryRow(`SELECT COALESCE(repo_host,'') FROM sources WHERE id=?`, id).Scan(&host); err != nil {
+		t.Fatal(err)
+	}
+	if host != "" {
+		t.Fatalf("清除归属后 repo_host=%q，期望空串", host)
+	}
+	for _, kind := range []string{"registry:quay.io", "docker", "ghcr"} {
+		for _, c := range mustCandidates(t, st, kind) {
+			if c.ID == id {
+				t.Fatalf("清除归属后源仍出现在 %s 候选池", kind)
+			}
+		}
+	}
+
+	// 显式设置 Docker Hub 必须落 docker.io，而不是复用空串。
+	if err := st.SetRepoHost(id, "docker.io"); err != nil {
+		t.Fatalf("SetRepoHost(id, docker.io): %v", err)
+	}
+	if err := st.db.QueryRow(`SELECT repo_host FROM sources WHERE id=?`, id).Scan(&host); err != nil {
+		t.Fatal(err)
+	}
+	if host != "docker.io" {
+		t.Fatalf("显式 Hub 后 repo_host=%q，期望 docker.io", host)
+	}
+	found := false
+	for _, c := range mustCandidates(t, st, "docker") {
+		if c.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("显式设置 docker.io 后源不在 docker 候选池")
+	}
+}
+
 func TestSetRepoHostRejectsBadHostAndArchived(t *testing.T) {
 	st := openTestAt(t, filepath.Join(t.TempDir(), "rh2.db"))
 	defer st.Close()
