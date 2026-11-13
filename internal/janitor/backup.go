@@ -47,47 +47,51 @@ type backupManifest struct {
 // backupDaily 每天留一份完整备份单元（DB + key + manifest），失败只记日志：
 // 备份坏了不能影响主流程。
 func (j *Janitor) backupDaily(now time.Time) {
+	if err := j.BackupNow(now); err != nil {
+		logging.Errorf("janitor: 备份失败: %v", err)
+	}
+}
+
+// BackupNow 立即生成一份备份单元。备份目录或保留份数未配置时是空操作。
+// 返回错误供需要确认结果的调用方（发布验证、运维脚本）使用。
+func (j *Janitor) BackupNow(now time.Time) error {
 	dir := j.opt.BackupDir
 	keep := j.opt.BackupKeep
 	if dir == "" || keep <= 0 {
-		return
+		return nil
 	}
 	units := filepath.Join(dir, backupUnitsDir)
 	if err := os.MkdirAll(units, 0o700); err != nil {
-		logging.Errorf("janitor: 建备份目录失败: %v", err)
-		return
+		return fmt.Errorf("建备份目录: %w", err)
 	}
 	final := filepath.Join(units, backupPrefix+now.Format("20060102"))
 	if ok, _ := validBackupUnit(final); ok {
 		j.pruneBackups(units, keep)
-		return
+		return nil
 	}
 	stage, err := os.MkdirTemp(units, ".tmp-"+backupPrefix+now.Format("20060102")+"-")
 	if err != nil {
-		logging.Errorf("janitor: 建备份暂存目录失败: %v", err)
-		return
+		return fmt.Errorf("建备份暂存目录: %w", err)
 	}
 	// rename 成功后 stage 已不存在，RemoveAll 是空操作。
 	defer os.RemoveAll(stage)
 	if err := j.buildBackupUnit(stage, now); err != nil {
-		logging.Errorf("janitor: 生成备份单元失败: %v", err)
-		return
+		return err
 	}
 	// 同名目录存在但校验不通过：是上次中断的半成品，整目录替换。
 	if _, err := os.Stat(final); err == nil {
 		if err := os.RemoveAll(final); err != nil {
-			logging.Errorf("janitor: 清理半成品备份失败: %v", err)
-			return
+			return fmt.Errorf("清理半成品备份: %w", err)
 		}
 	}
 	if err := os.Rename(stage, final); err != nil {
-		logging.Errorf("janitor: 发布备份单元失败: %v", err)
-		return
+		return fmt.Errorf("发布备份单元: %w", err)
 	}
 	if err := syncDir(units); err != nil {
-		logging.Errorf("janitor: 同步备份目录失败: %v", err)
+		return fmt.Errorf("同步备份目录: %w", err)
 	}
 	j.pruneBackups(units, keep)
+	return nil
 }
 
 // buildBackupUnit 在暂存目录里按「数据文件 → key → manifest」的顺序落盘。

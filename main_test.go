@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/config"
@@ -41,5 +44,41 @@ func TestOverridesOrder(t *testing.T) {
 	applyOverrides(cfg2, func(string) bool { return false }, func(string) string { return "" }, "", "", false)
 	if cfg2.Addr != ":8080" {
 		t.Fatalf("没人覆盖时应保持原值: %+v", cfg2)
+	}
+}
+
+func TestCheckRestoreJournal(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkRestoreJournal(dir); err != nil {
+		t.Fatalf("无 journal 时不应拦截: %v", err)
+	}
+	jp := filepath.Join(dir, ".restore-journal.json")
+	if err := os.WriteFile(jp, []byte(`{"txid":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := checkRestoreJournal(dir)
+	if err == nil {
+		t.Fatal("journal 存在时必须拒绝启动")
+	}
+	if !strings.Contains(err.Error(), "--recover") || !strings.Contains(err.Error(), jp) {
+		t.Fatalf("错误信息应指路 --recover 与路径，得到: %v", err)
+	}
+}
+
+// 启动早期顺序：先看 journal，再碰密钥。数据目录里同时有 journal 和
+// 「有库无 key」时，绝不能先生成新 key。
+func TestJournalCheckedBeforeKeyCreation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mirror-lens.db"), []byte("db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".restore-journal.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRestoreJournal(dir); err == nil {
+		t.Fatal("应拦截")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secret.key")); !os.IsNotExist(err) {
+		t.Fatal("拦截路径不应产生 secret.key")
 	}
 }

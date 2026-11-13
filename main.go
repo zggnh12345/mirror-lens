@@ -42,6 +42,18 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// checkRestoreJournal 在启动最早期拦住未完成的恢复切换。
+// journal 只在 DB/key 成对校验通过后才由 restore.sh 删除，所以「存在」就
+// 意味着配对状态未知；此时允许启动会把混合状态当成正常数据继续写。
+func checkRestoreJournal(dataDir string) error {
+	jp := filepath.Join(dataDir, ".restore-journal.json")
+	if !fileExists(jp) {
+		return nil
+	}
+	return fmt.Errorf("检测到未完成的恢复切换（%s）：已拒绝启动以免 DB/key 配对不一致；"+
+		"请先运行 scripts/restore.sh --recover --data %s 完成或回滚该次恢复", jp, dataDir)
+}
+
 // mustSecretKey 加载或创建数据目录里的密钥文件。Host 凭据与设置页 Token
 // 共用同一把密钥，AEAD 的 AAD 已经区分用途。
 func mustSecretKey(dir string) []byte {
@@ -158,16 +170,15 @@ func main() {
 		log.Fatalf("创建数据目录: %v", err)
 	}
 	dbPath := filepath.Join(cfg.Data, "mirror-lens.db")
+	// 恢复脚本的切换日志存在即说明上次切换未完成；带着混合的 DB/key 启动
+	// 会把「能打开」误当成「数据完整」，必须在打开数据库、甚至生成密钥前拦住。
+	if err := checkRestoreJournal(cfg.Data); err != nil {
+		log.Fatalf("%v", err)
+	}
 	// 必须在 store.Open（会创建空库）之前判定：已有库但缺 key 时 fail closed。
 	startupKey, kerr := secret.LoadKeyForStartup(cfg.Data, dbPath)
 	if kerr != nil {
 		log.Fatalf("启动被拒绝: %v", kerr)
-	}
-	// 恢复脚本的切换日志存在即说明上次切换未完成；带着混合的 DB/key 启动
-	// 会把「能打开」误当成「数据完整」，必须在打开数据库前拦住。
-	if jp := filepath.Join(cfg.Data, ".restore-journal.json"); fileExists(jp) {
-		log.Fatalf("检测到未完成的恢复切换（%s）：已拒绝启动以免 DB/key 配对不一致。"+
-			"请先运行 scripts/restore.sh --recover 完成或回滚该次恢复", jp)
 	}
 	// 设置页保存的 Token 是密文；密钥在数据目录里，跟着数据卷走。
 	// 解不开时按「未配置」继续跑：不能因为一个可选凭据让服务起不来。

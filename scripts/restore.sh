@@ -57,7 +57,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$DATA" ] || usage
-DATA=$(cd "$DATA" 2>/dev/null && pwd) || die "数据目录不存在: $DATA"
+DATA_IN=$DATA
+DATA=$(cd "$DATA" 2>/dev/null && pwd) || die "数据目录不存在: $DATA_IN"
 mkdir -p "$DATA"
 exec 9>"$DATA/.restore.lock"
 flock -n 9 || die "另一个恢复进程正在操作 $DATA（.restore.lock 被占用）"
@@ -67,13 +68,15 @@ JOURNAL_PATH="$DATA/$JOURNAL"
 read_manifest() {
   MANIFEST_PATH="$UNIT/$MANIFEST"
   [ -f "$MANIFEST_PATH" ] || die "备份单元缺少 $MANIFEST: $UNIT"
-  SCHEMA=$(numfield schema)
-  APP_VERSION=$(field app_version)
-  DB_FILE=$(field file | head -1)
-  DB_SHA=$(grep -o '"db"[^}]*' "$MANIFEST_PATH" | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
-  KEY_SHA=$(grep -o '"key"[^}]*' "$MANIFEST_PATH" | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
-  DB_SIZE=$(grep -o '"db"[^}]*' "$MANIFEST_PATH" | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
-  KEY_SIZE=$(grep -o '"key"[^}]*' "$MANIFEST_PATH" | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
+  # manifest 是缩进 JSON，grep 按行工作会把嵌套对象截断；先压成单行。
+  MFLAT=$(tr '\n' ' ' <"$MANIFEST_PATH" | tr -s ' ')
+  SCHEMA=$(printf '%s' "$MFLAT" | grep -o '"schema"[[:space:]]*:[[:space:]]*[0-9]*' | head -1 | sed 's/.*:[[:space:]]*//')
+  APP_VERSION=$(printf '%s' "$MFLAT" | grep -o '"app_version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
+  DB_FILE=$(printf '%s' "$MFLAT" | grep -o '"file"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
+  DB_SHA=$(printf '%s' "$MFLAT" | grep -o '"db"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
+  KEY_SHA=$(printf '%s' "$MFLAT" | grep -o '"key"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
+  DB_SIZE=$(printf '%s' "$MFLAT" | grep -o '"db"[^}]*' | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
+  KEY_SIZE=$(printf '%s' "$MFLAT" | grep -o '"key"[^}]*' | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
   [ "$SCHEMA" = "1" ] || die "manifest schema 不支持: $SCHEMA"
   [ -n "$APP_VERSION" ] || die "manifest 缺少 app_version"
   [ -n "$DB_SHA" ] && [ -n "$KEY_SHA" ] || die "manifest 缺少 sha256"
@@ -124,7 +127,10 @@ rollback() {
 trap 'rc=$?; if [ $rc -ne 0 ] && [ -f "$JOURNAL_PATH" ]; then rollback || true; fi; exit $rc' ERR
 
 if [ "$MODE" = recover ]; then
-  [ -f "$JOURNAL_PATH" ] || die "没有未完成的恢复（$JOURNAL_PATH 不存在）"
+  if [ ! -f "$JOURNAL_PATH" ]; then
+    log "没有未完成的恢复（$JOURNAL_PATH 不存在），无需处理"
+    exit 0
+  fi
   # 极简解析：脚本自己写出的扁平 JSON。
   get() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*\(\"[^\"]*\"\|[0-9]*\)" "$JOURNAL_PATH" | head -1 | sed 's/.*:[[:space:]]*//; s/"//g'; }
   TX=$(get txid); UNIT=$(get unit); STAGE=$(get stage); OLD=$(get old_dir)
@@ -194,6 +200,12 @@ crashpoint after_key
 
 verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
   die "切换后校验失败"
+# 旧 WAL/SHM 已随旧配对移入 OLD；正式目录里再出现就是被错误关联的残留。
+for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
+  if [ -f "$DATA/$f" ]; then
+    die "恢复后数据目录仍有 $f，拒绝清除切换日志"
+  fi
+done
 crashpoint after_verify
 
 rm -f "$JOURNAL_PATH"

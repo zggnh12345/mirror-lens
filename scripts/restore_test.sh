@@ -29,8 +29,16 @@ make_fixture() { # $1=root; 生成 data 旧配对 + unit 新配对
   "app_version": "test",
   "created_at": "2026-11-13T00:00:00+08:00",
   "created_at_unix": 1,
-  "db": { "file": "mirror-lens.db", "sha256": "$ds", "size": $dn },
-  "key": { "file": "secret.key", "sha256": "$ks", "size": $kn }
+  "db": {
+    "file": "mirror-lens.db",
+    "sha256": "$ds",
+    "size": $dn
+  },
+  "key": {
+    "file": "secret.key",
+    "sha256": "$ks",
+    "size": $kn
+  }
 }
 EOF
 }
@@ -90,6 +98,50 @@ for point in after_journal after_stage after_save after_db after_key after_verif
   fi
   rm -rf "$r"
 done
+
+# 9. 旧 WAL/SHM 必须随旧配对移走，不能挂到新库上
+r=$(mktemp -d); make_fixture "$r"
+printf 'OLD-WAL' >"$r/data/mirror-lens.db-wal"
+printf 'OLD-SHM' >"$r/data/mirror-lens.db-shm"
+if "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1 &&
+   pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT &&
+   [ ! -f "$r/data/mirror-lens.db-wal" ] && [ ! -f "$r/data/mirror-lens.db-shm" ] &&
+   [ "$(cat "$r/data"/.restore-old-*/mirror-lens.db-wal 2>/dev/null)" = OLD-WAL ] &&
+   [ "$(cat "$r/data"/.restore-old-*/mirror-lens.db-shm 2>/dev/null)" = OLD-SHM ]; then
+  ok "旧 WAL/SHM 随旧配对归档"
+else
+  bad "WAL/SHM 处理失败: $(tail -3 "$r/log")"
+fi
+rm -rf "$r"
+
+# 10. 已完成恢复后重复 --recover 不得改变结果
+r=$(mktemp -d); make_fixture "$r"
+"$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1
+h1=$(sha "$r/data/mirror-lens.db"):$(sha "$r/data/secret.key")
+if run_recover "$r" && run_recover "$r"; then
+  h2=$(sha "$r/data/mirror-lens.db"):$(sha "$r/data/secret.key")
+  if [ "$h1" = "$h2" ] && pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT; then
+    ok "重复 --recover 幂等"
+  else
+    bad "重复 --recover 改变了结果"
+  fi
+else
+  bad "重复 --recover 报错: $(tail -2 "$r/recover.log")"
+fi
+rm -rf "$r"
+
+# 11. --recover 自身失败时，journal 必须保留（服务仍被拦）
+r=$(mktemp -d); make_fixture "$r"
+RESTORE_TEST_CRASH=after_save "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1
+rm -rf "$r/data"/.restore-old-*
+if run_recover "$r"; then
+  bad "--recover 现场缺失时不应成功"
+elif [ ! -f "$r/data/.restore-journal.json" ]; then
+  bad "--recover 失败后 journal 被删，服务会绕过拦截"
+else
+  ok "--recover 失败保留 journal"
+fi
+rm -rf "$r"
 
 # 8. 非 root 服务用户恢复
 r=$(mktemp -d); make_fixture "$r"
