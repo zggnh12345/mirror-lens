@@ -37,6 +37,11 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // mustSecretKey 加载或创建数据目录里的密钥文件。Host 凭据与设置页 Token
 // 共用同一把密钥，AEAD 的 AAD 已经区分用途。
 func mustSecretKey(dir string) []byte {
@@ -152,13 +157,22 @@ func main() {
 	if err := os.MkdirAll(cfg.Data, 0o755); err != nil {
 		log.Fatalf("创建数据目录: %v", err)
 	}
+	dbPath := filepath.Join(cfg.Data, "mirror-lens.db")
+	// 必须在 store.Open（会创建空库）之前判定：已有库但缺 key 时 fail closed。
+	startupKey, kerr := secret.LoadKeyForStartup(cfg.Data, dbPath)
+	if kerr != nil {
+		log.Fatalf("启动被拒绝: %v", kerr)
+	}
+	// 恢复脚本的切换日志存在即说明上次切换未完成；带着混合的 DB/key 启动
+	// 会把「能打开」误当成「数据完整」，必须在打开数据库前拦住。
+	if jp := filepath.Join(cfg.Data, ".restore-journal.json"); fileExists(jp) {
+		log.Fatalf("检测到未完成的恢复切换（%s）：已拒绝启动以免 DB/key 配对不一致。"+
+			"请先运行 scripts/restore.sh --recover 完成或回滚该次恢复", jp)
+	}
 	// 设置页保存的 Token 是密文；密钥在数据目录里，跟着数据卷走。
 	// 解不开时按「未配置」继续跑：不能因为一个可选凭据让服务起不来。
 	if cfg.GitHub.TokenEnc != "" {
-		key, kerr := secret.LoadOrCreateKey(filepath.Join(cfg.Data, "secret.key"))
-		if kerr != nil {
-			log.Printf("读取 Token 密钥失败，按未配置处理: %v", kerr)
-		} else if plain, derr := secret.Decrypt(key, cfg.GitHub.TokenEnc); derr != nil {
+		if plain, derr := secret.Decrypt(startupKey, cfg.GitHub.TokenEnc); derr != nil {
 			log.Printf("解密 GitHub Token 失败，按未配置处理: %v", derr)
 		} else {
 			cfg.GitHub.TokenPlain = plain
@@ -173,7 +187,7 @@ func main() {
 	if n, err := cstore.SweepTemp(time.Now().Add(-time.Hour).Unix()); err == nil && n > 0 {
 		log.Printf("清理了 %d 个残留临时文件", n)
 	}
-	st, err := store.Open(filepath.Join(cfg.Data, "mirror-lens.db"))
+	st, err := store.Open(dbPath)
 	if err != nil {
 		log.Fatalf("打开数据库: %v", err)
 	}

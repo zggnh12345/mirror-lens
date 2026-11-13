@@ -401,7 +401,9 @@ B 档（官方源、信任中转、Git upload-pack）和预检有各自独立配
 
 ## 备份与恢复
 
-数据库（源列表、缓存索引、统计）每天自动做一份快照：`VACUUM INTO` 出一个独立文件，落在 `<data>/backup/mirror-lens-YYYYMMDD.db`，按日期保留最近 `backup.keep` 份（默认 7）。`secret.key` 会一起复制——库里的源凭据用它加密，只恢复数据库而丢了 key，token 就解不开了。
+数据库（源列表、缓存索引、统计）每天自动做一份备份单元：`VACUUM INTO` 出独立快照，加上当前的 `secret.key`，最后写一份 `manifest.json`（两份文件的 SHA-256、字节数、应用版本、备份时间、格式版本）。单元落在 `<data>/backup/units/mirror-lens-YYYYMMDD/`，按单元保留最近 `backup.keep` 份（默认 7）。
+
+manifest 是最后落盘的文件，所以「manifest 有效」= 整份备份完整。没有有效 manifest 的目录一律视为不完整，**不允许恢复**；恢复只接受通过 manifest 校验的单元，绝不接受把今天的 DB 和昨天的 key 拼在一起。
 
 ```yaml
 backup:
@@ -414,11 +416,15 @@ backup:
 
 ```bash
 docker compose stop
-mv data/mirror-lens.db data/mirror-lens.db.bad
-cp data/backup/mirror-lens-20261110.db data/mirror-lens.db
-rm -f data/mirror-lens.db-wal data/mirror-lens.db-shm   # 必须删，否则会回放旧事务
+./scripts/restore.sh --backup data/backup/units/mirror-lens-20261110 --data data
 docker compose start
 ```
+
+`restore.sh` 会先校验 manifest、大小与 SHA-256，再在数据目录之外暂存、保存当前配对现场、成对切换 DB/key，最后复核校验和。任何一步失败都回滚到原配对；切换中途被 SIGKILL 会留下 `.restore-journal.json`，服务检测到它会拒绝启动，执行 `./scripts/restore.sh --recover --data data` 完成或回滚后再启动。手工 `cp` 单文件不再受支持——只换 DB 不换 key 会让已有凭据永久解不开。
+
+旧版本（3.5.3 及更早）留下的 `<data>/backup/mirror-lens-YYYYMMDD.db` 平铺备份不会被自动删除，但没有 manifest，`restore.sh` 不接受；需要时按旧流程（DB + 当时的 `secret.key`）手工恢复。
+
+首次安装（数据库不存在）会自动生成 `secret.key`；已有数据库但 key 缺失时服务直接拒绝启动，不会生成新 key，也不会碰现有数据库。
 
 这是防误删、迁移失败、索引损坏的。备份和数据库在同一块盘上，**不防磁盘故障**——那一层靠 NAS 的 RAID/快照，把整个 `data/` 目录纳入快照即可。
 

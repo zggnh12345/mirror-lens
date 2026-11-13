@@ -33,7 +33,8 @@ type Options struct {
 	// BackupDir 为空表示不备份；BackupKeep 是保留份数。
 	BackupDir  string
 	BackupKeep int
-	// BackupKey 是 secret.key 的路径，随快照一起复制（可为空）。
+	// BackupKey 是 secret.key 的路径，随快照一起复制；为空时跳过备份，
+	// 绝不生成缺 key 的「不完整备份」。
 	BackupKey string
 }
 

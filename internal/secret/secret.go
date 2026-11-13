@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // KeySize 是 AES-256 的密钥长度。
@@ -51,11 +52,17 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			b, rerr := os.ReadFile(path)
-			if rerr != nil {
-				return nil, fmt.Errorf("读密钥文件: %w", rerr)
+			// 另一个进程刚创建文件、可能还没写完；短暂重试，避免读到空文件。
+			for i := 0; i < 100; i++ {
+				b, rerr := os.ReadFile(path)
+				if rerr == nil {
+					if key, derr := decodeKey(b); derr == nil {
+						return key, nil
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			return decodeKey(b)
+			return nil, fmt.Errorf("并发创建密钥后仍无法读取: %s", path)
 		}
 		return nil, fmt.Errorf("创建密钥文件: %w", err)
 	}
@@ -71,6 +78,32 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("收紧密钥文件权限: %w", err)
 	}
 	return key, nil
+}
+
+// ErrKeyMissingWithDB 表示数据目录里已有数据库，但密钥文件缺失。
+// 这种状态下绝不能生成新密钥：旧库里的凭据会永久解不开。
+var ErrKeyMissingWithDB = errors.New("secret.key 缺失")
+
+// LoadKeyForStartup 是服务启动时唯一的密钥入口。
+//
+// 判断顺序很重要：必须在 SQLite 打开（从而创建空库）之前，用数据库文件
+// 是否已存在来区分「首次安装」和「已有安装缺 key」。已有非空数据库而密钥
+// 缺失时 fail closed，不生成新密钥、不碰数据库。
+func LoadKeyForStartup(dataDir, dbPath string) ([]byte, error) {
+	keyPath := filepath.Join(dataDir, "secret.key")
+	if _, err := os.Stat(keyPath); err == nil {
+		return LoadOrCreateKey(keyPath)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("检查密钥文件: %w", err)
+	}
+	if fi, err := os.Stat(dbPath); err == nil && fi.Size() > 0 {
+		return nil, fmt.Errorf("%w：数据目录 %s 已有数据库 %s，但没有 secret.key。"+
+			"为避免生成新密钥导致库内凭据永久无法解密，拒绝启动；请从与该库配对的备份恢复 secret.key",
+			ErrKeyMissingWithDB, dataDir, dbPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("检查数据库文件: %w", err)
+	}
+	return LoadOrCreateKey(keyPath)
 }
 
 func decodeKey(b []byte) ([]byte, error) {

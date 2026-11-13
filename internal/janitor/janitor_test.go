@@ -257,21 +257,18 @@ func TestPurgeScopeOnlyTouchesOneKind(t *testing.T) {
 }
 
 func TestPruneBackupsKeepMoreThanExists(t *testing.T) {
-	dir := t.TempDir()
-	for _, d := range []string{"20261108", "20261109"} {
-		if err := os.WriteFile(filepath.Join(dir, backupPrefix+d+".db"), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	units := t.TempDir()
+	writeTestUnit(t, units, "20261108")
+	writeTestUnit(t, units, "20261109")
 	j := &Janitor{opt: Options{BackupKeep: 5}}
-	j.pruneBackups(dir, 5) // keep 比现有份数多，不能越界
-	ents, _ := os.ReadDir(dir)
+	j.pruneBackups(units, 5) // keep 比现有份数多，不能越界
+	ents, _ := os.ReadDir(units)
 	if len(ents) != 2 {
 		t.Fatalf("不足保留数时不应删除，剩 %d", len(ents))
 	}
-	j.pruneBackups(dir, 1)
-	ents, _ = os.ReadDir(dir)
-	if len(ents) != 1 || ents[0].Name() != backupPrefix+"20261109.db" {
+	j.pruneBackups(units, 1)
+	ents, _ = os.ReadDir(units)
+	if len(ents) != 1 || ents[0].Name() != backupPrefix+"20261109" {
 		t.Fatalf("应只留最新一份，得到 %v", ents)
 	}
 }
