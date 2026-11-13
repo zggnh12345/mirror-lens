@@ -8,13 +8,17 @@
 #   - 必须先停服务；脚本拿数据目录单实例锁，服务在跑时会直接失败。
 #   - 正式库从不被原地改写；先复制到 staging，checkpoint 后由 db-migrate 只读搬迁。
 #   - 切换前把正式库复制成 mirror-lens.db.pre-3.5.5，并 fsync + sha256。
-#   - secret.key 不参与切换，不复制、不替换。
+#   - secret.key 不参与切换、不被替换；另存一份 600 的 secret.key.pre-3.5.5
+#     并写 manifest（DB/key 的 SHA-256），只用于灾难恢复核对。
 #   - 切换中间态写 .db-upgrade-journal.json；服务启动见到它会 fail closed，
 #     只能用 --recover 完成或回滚。
 set -euo pipefail
 
 DB_NAME=mirror-lens.db
 PRE_NAME=mirror-lens.db.pre-3.5.5
+KEY_NAME=secret.key
+KEY_PRE_NAME=secret.key.pre-3.5.5
+MANIFEST_NAME=mirror-lens.db.pre-3.5.5.manifest
 JOURNAL=.db-upgrade-journal.json
 TOOL=./db-migrate
 
@@ -70,6 +74,9 @@ flock -n 8 || die "服务或另一个迁移进程正在操作 $DATA（.mirror-le
 JOURNAL_PATH="$DATA/$JOURNAL"
 DB="$DATA/$DB_NAME"
 PRE="$DATA/$PRE_NAME"
+KEY="$DATA/$KEY_NAME"
+KEY_PRE="$DATA/$KEY_PRE_NAME"
+MANIFEST="$DATA/$MANIFEST_NAME"
 
 recover() {
   [ -f "$JOURNAL_PATH" ] || { log "没有未完成的升级，无需恢复"; return 0; }
@@ -79,7 +86,7 @@ recover() {
   if [ "$STATE" = "backup" ]; then
     if [ -f "$DB" ] && ! "$TOOL" verify --db "$DB" >/dev/null 2>&1; then
       log "备份阶段中断，正式库未改动；清理半成品备份"
-      rm -f "$PRE" "$PRE-wal" "$PRE-shm" "$JOURNAL_PATH"
+      rm -f "$PRE" "$PRE-wal" "$PRE-shm" "$JOURNAL_PATH" "$KEY_PRE" "$MANIFEST"
       [ -n "$WORK_SAVED" ] && rm -rf "$WORK_SAVED"
       return 0
     fi
@@ -96,11 +103,19 @@ recover() {
   fi
   [ -f "$PRE_SAVED" ] || die "备份库不存在: $PRE_SAVED"
   [ "$(sha "$PRE_SAVED")" = "$PRE_SHA" ] || die "备份库 SHA-256 不符，拒绝恢复"
+  # key 不在切换中替换；manifest 只用来发现“升级期间 key 被换过”的情况。
+  if [ -f "$MANIFEST" ]; then
+    KEY_SHA_SAVED=$(grep '^key_sha=' "$MANIFEST" | cut -d= -f2)
+    [ -f "$KEY" ] || die "manifest 存在但 secret.key 缺失，拒绝自动恢复"
+    [ -z "$KEY_SHA_SAVED" ] || [ "$(sha "$KEY")" = "$KEY_SHA_SAVED" ] ||
+      die "secret.key 与升级前 manifest 不符，拒绝自动恢复"
+  fi
   log "回滚到升级前数据库"
   rm -f "$DB" "$DB-wal" "$DB-shm"
   cp --reflink=auto "$PRE_SAVED" "$DB"
   [ -f "$PRE_SAVED-wal" ] && cp --reflink=auto "$PRE_SAVED-wal" "$DB-wal"
   [ -f "$PRE_SAVED-shm" ] && cp --reflink=auto "$PRE_SAVED-shm" "$DB-shm"
+  chmod 600 "$DB" "$DB-wal" "$DB-shm" 2>/dev/null || true
   fsync_path "$DB"
   sync
   [ "$(sha "$DB")" = "$PRE_SHA" ] || die "回滚后 SHA-256 不符，请人工处理"
@@ -117,8 +132,11 @@ fi
 
 [ -n "$BASELINE" ] || die "缺少 --baseline 3.4.6|3.5.4"
 [ -f "$DB" ] || die "正式库不存在: $DB"
+[ -f "$KEY" ] || die "secret.key 不存在；拒绝在缺少配对密钥时升级"
 [ ! -f "$JOURNAL_PATH" ] || die "存在未完成的升级 journal，先运行 --recover"
 [ ! -e "$PRE" ] || die "备份已存在，拒绝覆盖: $PRE"
+[ ! -e "$KEY_PRE" ] || die "key 备份已存在，拒绝覆盖: $KEY_PRE"
+[ ! -e "$MANIFEST" ] || die "备份 manifest 已存在，拒绝覆盖: $MANIFEST"
 
 TS=$(date +%Y%m%d-%H%M%S)
 WORK="$DATA/.db-upgrade-$TS"
@@ -145,9 +163,19 @@ fsync_path "$JOURNAL_PATH"
 cp --reflink=auto "$DB" "$PRE"
 [ -f "$DB-wal" ] && cp --reflink=auto "$DB-wal" "$PRE-wal"
 [ -f "$DB-shm" ] && cp --reflink=auto "$DB-shm" "$PRE-shm"
+chmod 600 "$PRE" "$PRE-wal" "$PRE-shm" 2>/dev/null || true
 fsync_path "$PRE"
 sync
 PRE_SHA=$(sha "$PRE")
+# key 不参与切换；只额外留一份 600 的灾难恢复副本，并记录它和 DB 的哈希。
+cp --reflink=auto "$KEY" "$KEY_PRE"
+chmod 600 "$KEY_PRE"
+fsync_path "$KEY_PRE"
+KEY_SHA=$(sha "$KEY")
+printf 'db_sha=%s\nkey_sha=%s\ntool_sha=%s\nbaseline=%s\ncreated=%s\n' \
+  "$PRE_SHA" "$KEY_SHA" "$(sha "$TOOL")" "$BASELINE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$MANIFEST"
+fsync_path "$MANIFEST"
+sync
 crashpoint after_backup
 
 # 备份已完成；journal 切换到 switching 后才能动正式库，并 fsync 目录项。
@@ -160,6 +188,7 @@ crashpoint after_journal
 rm -f "$DB" "$DB-wal" "$DB-shm"
 crashpoint after_remove_old
 mv "$WORK/new.db" "$DB"
+chmod 600 "$DB"
 fsync_path "$DB"
 sync
 crashpoint after_switch
@@ -169,3 +198,4 @@ rm -f "$JOURNAL_PATH"
 rm -rf "$WORK"
 trap - EXIT
 log "完成：$DB -> Canonical 3.5.5；回滚副本 $PRE（含 -wal/-shm，如存在）"
+log "灾难恢复材料：$KEY_PRE（600）、$MANIFEST；secret.key 本体未改动"
