@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -21,12 +22,27 @@ func openTestAt(t *testing.T, path string) *Store {
 func TestHostColumnsExist(t *testing.T) {
 	st := openTestAt(t, filepath.Join(t.TempDir(), "h.db"))
 	defer st.Close()
-	cols, err := st.columns("sources")
+	rows, err := st.db.Query(`PRAGMA table_info(sources)`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
+	got := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []string{"repo_host", "registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error"} {
-		if !cols[c] {
+		if !got[c] {
 			t.Fatalf("缺列 %s", c)
 		}
 	}

@@ -2,48 +2,9 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"strings"
 	"time"
 )
-
-// upgradeTrafficKind 给老库流量表补 kind 列。
-// 主键从 (day,traffic) 变成 (day,traffic,kind)，SQLite 改不了主键，
-// 只能整表重建。
-// 历史的 proxy 改成 bypass：老代码记 proxy 的三处全在「不落盘直接透传」路径上。
-func (s *Store) upgradeTrafficKind() error {
-	have, err := s.columns("traffic_stats")
-	if err != nil {
-		return err
-	}
-	if have["kind"] {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, q := range []string{
-		`ALTER TABLE traffic_stats RENAME TO traffic_stats_v1`,
-		`CREATE TABLE traffic_stats(
-			day TEXT NOT NULL,
-			traffic TEXT NOT NULL,
-			kind TEXT NOT NULL DEFAULT '',
-			n INTEGER NOT NULL DEFAULT 0,
-			bytes INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY(day, traffic, kind))`,
-		`INSERT INTO traffic_stats(day, traffic, kind, n, bytes)
-			SELECT day, CASE WHEN traffic='proxy' THEN 'bypass' ELSE traffic END, '', n, bytes
-			FROM traffic_stats_v1`,
-		`DROP TABLE traffic_stats_v1`,
-	} {
-		if _, err := tx.Exec(q); err != nil {
-			return fmt.Errorf("迁移流量表: %w", err)
-		}
-	}
-	return tx.Commit()
-}
 
 // ---- 批量删除与对账 ----
 

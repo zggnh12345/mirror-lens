@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -41,6 +42,8 @@ func main() {
 		err = runInit(os.Args[2:])
 	case "checkpoint":
 		err = runCheckpoint(os.Args[2:])
+	case "upgrade356":
+		err = runUpgrade356(os.Args[2:])
 	default:
 		usage()
 	}
@@ -52,14 +55,16 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `用法:
-  db-migrate init    --out 新库 [--baseline fresh]
+  db-migrate init       --out 新库 [--baseline fresh]
   db-migrate checkpoint --db 副本数据库
-  db-migrate migrate --in 旧库 --out 新库 --baseline 3.4.6|3.5.4
-  db-migrate verify  --db 数据库
-  db-migrate inspect --db 数据库
+  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5
+  db-migrate upgrade356 --in 3.5.6库 --out 新库
+  db-migrate verify     --db 数据库
+  db-migrate inspect    --db 数据库
 
 迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。
-输入库必须匹配已冻结的 3.4.6/3.5.4 Schema 指纹；--force-baseline 不再绕过结构校验。`)
+migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5 Schema 指纹；--force-baseline 不再绕过结构校验。
+upgrade356 要求源库为 3.5.6 Canonical（结构 hash 已等于 3.5.7 Canonical），只改版本标签。`)
 	os.Exit(2)
 }
 
@@ -128,7 +133,7 @@ func runMigrate(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	in := fs.String("in", "", "旧数据库路径（只读）")
 	out := fs.String("out", "", "新数据库路径")
-	baseline := fs.String("baseline", "", "旧库版本标识，例如 3.4.6 / 3.5.4")
+	baseline := fs.String("baseline", "", "旧库版本标识，例如 3.4.6 / 3.5.4 / 3.5.5")
 	force := fs.Bool("force-baseline", false, "已废弃；不再绕过输入 Schema 指纹校验")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -143,7 +148,7 @@ func runMigrate(args []string) error {
 		return errors.New("3.5.3 是不支持的输入版本：缺少独立身份快照，docker_cap=1 且 repo_host='' 的 34 条记录会被静默归为无归属；--force-baseline 不能绕过")
 	}
 	if expected, ok := inputSchemaFingerprints[*baseline]; !ok {
-		return fmt.Errorf("未识别的 baseline %q；只接受已冻结 Schema 指纹的 3.4.6 / 3.5.4", *baseline)
+		return fmt.Errorf("未识别的 baseline %q；只接受已冻结 Schema 指纹的 3.4.6 / 3.5.4 / 3.5.5", *baseline)
 	} else if expected == "" {
 		return fmt.Errorf("baseline %q 的 Schema 指纹尚未冻结", *baseline)
 	}
@@ -184,6 +189,19 @@ func runMigrate(args []string) error {
 	hostMap, err := validateRegistryHosts(src, *baseline)
 	if err != nil {
 		return err
+	}
+
+	// 3.5.5 源库需要读取并保留其真实 baseline_version，不能让 EnsureFresh 的默认值覆盖。
+	var srcBaselineVersion string
+	if *baseline == "3.5.5" {
+		srcMeta, err := readMetaRaw(src)
+		if err != nil {
+			return fmt.Errorf("读取 3.5.5 源元数据: %w", err)
+		}
+		if srcMeta.SchemaVersion != "3.5.5" {
+			return fmt.Errorf("3.5.5 升级要求源 schema_version=3.5.5，实际 %q", srcMeta.SchemaVersion)
+		}
+		srcBaselineVersion = srcMeta.BaselineVersion
 	}
 
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
@@ -242,8 +260,7 @@ func runMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := target.Exec(`UPDATE schema_meta SET schema_hash=?, applied_at=? WHERE schema_version=?`,
-		h, time.Now().Unix(), schema.Version); err != nil {
+	if err := finalizeTargetMeta(target, h, srcBaselineVersion); err != nil {
 		return err
 	}
 	if _, err := schema.Verify(target); err != nil {
@@ -259,6 +276,160 @@ func runMigrate(args []string) error {
 	report := map[string]any{
 		"ok": true, "baseline": *baseline, "schema_hash": h,
 		"tables": plan.Counts, "skipped": plan.Skipped,
+	}
+	b, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Println(string(b))
+	return nil
+}
+
+// readMetaRaw 读取 schema_meta 的当前值，不强制目标版本；用于读取尚未升级的源库元数据。
+func readMetaRaw(db *sql.DB) (schema.Meta, error) {
+	var m schema.Meta
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM schema_meta`).Scan(&n); err != nil {
+		return m, fmt.Errorf("数据库缺少 schema_meta: %w", err)
+	}
+	if n != 1 {
+		return m, fmt.Errorf("schema_meta 必须恰好一行，实际 %d 行", n)
+	}
+	if err := db.QueryRow(`SELECT schema_version, schema_hash, baseline_version, applied_at FROM schema_meta`).
+		Scan(&m.SchemaVersion, &m.SchemaHash, &m.BaselineVersion, &m.AppliedAt); err != nil {
+		return m, fmt.Errorf("读取 schema_meta: %w", err)
+	}
+	return m, nil
+}
+
+// finalizeTargetMeta 写入升级后的 schema_meta。
+// baselineOverride 为空时只刷新 schema_hash/applied_at（保留 EnsureFresh 写入的 baseline_version）；
+// 非空时（3.5.5 路径）用源库真实 baseline_version 显式覆盖，并确认 schema_version 与目标版本一致。
+func finalizeTargetMeta(target *sql.DB, h, baselineOverride string) error {
+	if baselineOverride == "" {
+		_, err := target.Exec(`UPDATE schema_meta SET schema_hash=?, applied_at=? WHERE schema_version=?`,
+			h, time.Now().Unix(), schema.Version)
+		return err
+	}
+	_, err := target.Exec(`UPDATE schema_meta SET schema_version=?, schema_hash=?, baseline_version=?, applied_at=? WHERE id=1`,
+		schema.Version, h, baselineOverride, time.Now().Unix())
+	return err
+}
+
+// copyFile 逐字节复制文件，用于 metadata-only 升级的 staging 拷贝。
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+// runUpgrade356 是 3.5.6 → 3.5.7 的 metadata-only 升级：源库已经是 Canonical 结构
+// （hash == canonicalSchemaHash，仅 schema_version=3.5.6），不涉及 DDL 变化。
+// 它只把版本标签从 3.5.6 改为 3.5.7，schema_hash / baseline_version / applied_at 原值保留。
+// 升级在 staging 副本上完成，校验通过后才原子替换，失败可完整回滚。
+func runUpgrade356(args []string) error {
+	fs := flag.NewFlagSet("upgrade356", flag.ContinueOnError)
+	in := fs.String("in", "", "3.5.6 Canonical 数据库路径（只读）")
+	out := fs.String("out", "", "新数据库路径")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *in == "" || *out == "" {
+		return errors.New("upgrade356 需要 --in、--out")
+	}
+	if _, err := os.Stat(*out); err == nil {
+		return fmt.Errorf("目标已存在，拒绝覆盖: %s", *out)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if wal, err := os.Stat(*in + "-wal"); err == nil && wal.Size() > 0 {
+		return fmt.Errorf("旧库存在未合并的 WAL（%s，%d 字节）；请先停服务并在副本上 checkpoint", *in+"-wal", wal.Size())
+	}
+	src, err := sql.Open("sqlite", "file:"+*in+"?mode=ro&_pragma=query_only(1)")
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	src.SetMaxOpenConns(1)
+	if err := src.Ping(); err != nil {
+		return fmt.Errorf("打开旧库: %w", err)
+	}
+	if _, err := src.Exec("PRAGMA query_only=ON"); err != nil {
+		return err
+	}
+	m, err := readMetaRaw(src)
+	if err != nil {
+		return fmt.Errorf("读取源元数据: %w", err)
+	}
+	if m.SchemaVersion != "3.5.6" {
+		return fmt.Errorf("upgrade356 要求源 schema_version=3.5.6，实际 %q", m.SchemaVersion)
+	}
+	if err := schema.VerifyStructure(src, canonicalSchemaHash); err != nil {
+		return fmt.Errorf("源结构不是 Canonical（hash=%s）: %w", canonicalSchemaHash, err)
+	}
+	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
+	_ = os.Remove(tmp)
+	if err := copyFile(*in, tmp); err != nil {
+		return fmt.Errorf("复制源库到 staging: %w", err)
+	}
+	target, err := sql.Open("sqlite", "file:"+tmp+"?mode=rwc")
+	if err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	done := false
+	defer func() {
+		target.Close()
+		if !done {
+			os.Remove(tmp)
+		}
+	}()
+	target.SetMaxOpenConns(1)
+	if _, err := target.Exec("PRAGMA foreign_keys=OFF"); err != nil {
+		return err
+	}
+	tx, err := target.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE schema_meta SET schema_version=? WHERE id=1`, schema.Version); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if _, err := target.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		return err
+	}
+	if err := checkIntegrity(target); err != nil {
+		return err
+	}
+	if _, err := schema.Verify(target); err != nil {
+		return fmt.Errorf("升级后校验失败: %w", err)
+	}
+	if err := target.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, *out); err != nil {
+		return fmt.Errorf("发布升级结果: %w", err)
+	}
+	done = true
+	report := map[string]any{
+		"ok":                   true,
+		"from":                 "3.5.6",
+		"to":                   schema.Version,
+		"schema_hash":          m.SchemaHash,
+		"baseline_version":     m.BaselineVersion,
+		"applied_at_unchanged": m.AppliedAt,
 	}
 	b, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Println(string(b))
@@ -349,14 +520,19 @@ type migrationPlan struct {
 	Skipped []string
 }
 
-// inputSchemaFingerprints 是真实 3.4.6 / 3.5.4 副本的 Schema 指纹。
-// 它们由 schema.Hash 生成，包含表、列、主键、索引、触发器和外键定义；
-// 不包含业务行。迁移前必须逐字节匹配，--force-baseline 不能绕过。
+// canonicalSchemaHash 是 3.5.7 Canonical DDL（internal/store/schema/canonical.sql）经
+// schema.Hash 计算得到的冻结结构指纹；与 canonical.sql 字节级绑定，任何 DDL 改动都会改变它。
+const canonicalSchemaHash = "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e"
+
+// inputSchemaFingerprints 是真实历史副本的 Schema 指纹。
+// 它们由 schema.Hash 生成，包含表、列、主键、索引、触发器和外键定义；不包含业务行。
+// 迁移前必须逐字节匹配，--force-baseline 不能绕过。
 //
-// 这两个值必须与 docs/3.5.6-migration-hardening.md 中的冻结值一致。
+// 这些值必须与 docs/3.5.6-migration-hardening.md / 3.5.7 升级说明中的冻结值一致。
 var inputSchemaFingerprints = map[string]string{
 	"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
 	"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
+	"3.5.5": "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
 }
 
 func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) (*migrationPlan, error) {
@@ -476,15 +652,18 @@ func (p *migrationPlan) validate() error {
 	return nil
 }
 
-// allowedMissingSourceTable 列出 3.4.6 明确没有、Canonical 允许以空表补齐的表。
+// allowedMissingSourceTable 列出各 baseline 明确没有、Canonical 允许以空表补齐的表。
 // 3.5.4 不应缺少任何 Canonical 业务表；缺少就拒绝。
 func allowedMissingSourceTable(baseline, table string) bool {
-	if baseline != "3.4.6" {
-		return false
+	if baseline == "3.4.6" {
+		switch table {
+		case "breaker_state", "registry_host_gen", "registry_host_recovery",
+			"source_health_archive", "source_health_scope", "schema_migrations_audit":
+			return true
+		}
 	}
-	switch table {
-	case "breaker_state", "registry_host_gen", "registry_host_recovery",
-		"source_health_archive", "source_health_scope", "schema_migrations_audit":
+	// 3.5.5 Canonical 业务表已与 3.5.7 完全一致，仅缺 schema_migrations_audit（升级后保持空表）。
+	if baseline == "3.5.5" && table == "schema_migrations_audit" {
 		return true
 	}
 	return false

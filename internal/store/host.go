@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -70,27 +69,6 @@ func (r HostCapsCommitResult) String() string {
 	default:
 		return "unknown"
 	}
-}
-
-// backfillRepoHost 把历史上只打了 ghcr_cap 的源标成 ghcr.io 归属。
-//
-// 只回填「纯 ghcr」源：docker_cap=1 的源同时服务 Docker Hub（实测 8 条 ghcr
-// 源里有 6 条 docker_cap 也是 1），把它们改成 ghcr.io 会让 Hub 候选池少 6 条，
-// 违反「3.4.6 行为不变」。它们的 ghcr 能力继续由 ghcr_cap/ghcr_prefix 权威。
-//
-// 幂等：第二次执行时 repo_host 已经是 ghcr.io，不再命中。
-// 不触碰 docker_cap / ghcr_cap / ghcr_prefix。
-func (s *Store) backfillRepoHost(ctx context.Context, tx dbtx) error {
-	_, err := tx.ExecContext(ctx, `
-UPDATE sources
-SET repo_host='ghcr.io',
-    registry_cap=1,
-    registry_path_mode=CASE WHEN ghcr_prefix=1 THEN 'host_prefix' ELSE 'native' END
-WHERE repo_host=''
-  AND ghcr_cap=1
-  AND docker_cap<>1
-  AND status<>'archived'`)
-	return err
 }
 
 // SetRepoHost 修改源归属的 Registry Host。

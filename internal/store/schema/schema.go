@@ -16,7 +16,7 @@ import (
 )
 
 // Version 是当前 Canonical Schema 对应的应用版本。
-const Version = "3.5.6"
+const Version = "3.5.7"
 
 //go:embed canonical.sql
 var ddl string

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// preferred 是后加的列：老库要靠 ensureColumns 补上，写入后调度查询必须读得到。
+// preferred 是后加的列：Canonical 新建库已含该列，写入后调度查询必须读得到。
 func TestPreferredSourceRoundTrip(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
