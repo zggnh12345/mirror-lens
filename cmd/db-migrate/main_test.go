@@ -683,6 +683,46 @@ func TestUpgrade356CopyFailureCleansTmp(t *testing.T) {
 	}
 }
 
+// TestCopyHookWriterHonorsWriterContract 验证测试 writer 不违反 io.Writer 契约：
+// 未注入错误时必须写满当前输入缓冲区；只有注入错误时才返回短写加实际错误。
+func TestCopyHookWriterHonorsWriterContract(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 10*1024)
+
+	var buf bytes.Buffer
+	w := &copyHookWriter{dst: &buf}
+	copyFileWriteHook = func(int64) error { return nil }
+	defer func() { copyFileWriteHook = nil }()
+	n, err := w.Write(payload)
+	if err != nil {
+		t.Fatalf("未注入错误时不应返回错误: %v", err)
+	}
+	if n != len(payload) {
+		t.Fatalf("未注入错误时必须写满整个缓冲区：n=%d，期望=%d", n, len(payload))
+	}
+	if !bytes.Equal(buf.Bytes(), payload) {
+		t.Fatal("写入内容与输入不一致")
+	}
+
+	buf.Reset()
+	w = &copyHookWriter{dst: &buf}
+	copyFileWriteHook = func(written int64) error {
+		if written >= 4096 {
+			return errors.New("injected copy failure")
+		}
+		return nil
+	}
+	n, err = w.Write(payload)
+	if err == nil {
+		t.Fatal("注入错误时必须返回错误")
+	}
+	if n != 4096 {
+		t.Fatalf("注入错误时应返回已写入的 4096 字节，实际 %d", n)
+	}
+	if buf.Len() != 4096 {
+		t.Fatalf("注入错误时底层只应写入 4096 字节，实际 %d", buf.Len())
+	}
+}
+
 // TestUpgrade356HandlesWalModeSource 覆盖 WAL 模式 3.5.6 源库：
 // 在源库 checkpoint 完成、没有未合并 WAL 的前提下，metadata-only 升级仍应成功，
 // 源文件 SHA-256 不变，目标元数据语义保持。

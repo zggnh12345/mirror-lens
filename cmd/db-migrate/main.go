@@ -353,20 +353,30 @@ type copyHookWriter struct {
 }
 
 func (w *copyHookWriter) Write(p []byte) (int, error) {
-	if len(p) > 4096 {
-		p = p[:4096]
-	}
-	n, err := w.dst.Write(p)
-	w.written += int64(n)
-	if err != nil {
-		return n, err
-	}
-	if copyFileWriteHook != nil {
-		if herr := copyFileWriteHook(w.written); herr != nil {
-			return n, herr
+	written := 0
+	for written < len(p) {
+		chunk := p[written:]
+		if len(chunk) > 4096 {
+			chunk = chunk[:4096]
+		}
+		n, err := w.dst.Write(chunk)
+		if n > 0 {
+			written += n
+			w.written += int64(n)
+		}
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrShortWrite
+		}
+		if copyFileWriteHook != nil {
+			if herr := copyFileWriteHook(w.written); herr != nil {
+				return written, herr
+			}
 		}
 	}
-	return n, nil
+	return written, nil
 }
 
 // copyFile 逐字节复制文件，用于 metadata-only 升级的 staging 拷贝。
