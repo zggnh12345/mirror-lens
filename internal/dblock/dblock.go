@@ -31,6 +31,10 @@ func Acquire(path string) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库锁 %s: %w", path, err)
 	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("设置锁文件权限: %w", err)
+	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		holder := readHolder(f)
 		f.Close()

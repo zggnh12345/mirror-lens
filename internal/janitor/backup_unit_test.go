@@ -2,6 +2,7 @@ package janitor
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,8 +20,14 @@ func writeTestUnit(t *testing.T, units, day string) string {
 	if err := os.WriteFile(filepath.Join(dir, unitDBName), db, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filepath.Join(dir, unitDBName), 0o600); err != nil {
+		t.Fatalf("设置数据库文件权限: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, unitKeyName), key, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, unitKeyName), 0o600); err != nil {
+		t.Fatalf("设置密钥文件权限: %v", err)
 	}
 	dbSum, dbSize, err := hashFile(filepath.Join(dir, unitDBName))
 	if err != nil {
@@ -41,6 +48,9 @@ func writeTestUnit(t *testing.T, units, day string) string {
 	body, _ := json.Marshal(m)
 	if err := os.WriteFile(filepath.Join(dir, manifestName), body, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, manifestName), 0o600); err != nil {
+		t.Fatalf("设置 manifest 权限: %v", err)
 	}
 	return dir
 }
@@ -123,6 +133,78 @@ func TestBackupUnitRequiresKey(t *testing.T) {
 	ents, _ := os.ReadDir(filepath.Join(j.opt.BackupDir, backupUnitsDir))
 	if len(ents) != 0 {
 		t.Fatalf("缺 key 时不应生成备份单元，得到 %v", ents)
+	}
+}
+
+func TestBuildBackupUnitManifestChmodFailure(t *testing.T) {
+	_, _, _, j := setup(t, 1<<30)
+	root := t.TempDir()
+	keySrc := filepath.Join(root, "secret.key")
+	if err := os.WriteFile(keySrc, []byte("test-key-material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j.opt.BackupDir = filepath.Join(root, "backup")
+	j.opt.BackupKeep = 3
+	j.opt.BackupKey = keySrc
+
+	stage := t.TempDir()
+	injected := errors.New("injected manifest chmod failure")
+	old := manifestChmod
+	manifestChmod = func(string, os.FileMode) error { return injected }
+	defer func() { manifestChmod = old }()
+
+	err := j.buildBackupUnit(stage, time.Date(2026, 11, 13, 3, 0, 0, 0, time.Local))
+	if !errors.Is(err, injected) {
+		t.Fatalf("应返回注入的 manifest 权限错误，实际 %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(stage, manifestName)); !os.IsNotExist(statErr) {
+		t.Fatalf("Chmod 失败后不应存在正式 manifest，stat=%v", statErr)
+	}
+}
+
+func TestBackupNowCleansStageOnManifestChmodFailure(t *testing.T) {
+	_, _, _, j := setup(t, 1<<30)
+	root := t.TempDir()
+	keySrc := filepath.Join(root, "secret.key")
+	if err := os.WriteFile(keySrc, []byte("test-key-material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j.opt.BackupDir = filepath.Join(root, "backup")
+	j.opt.BackupKeep = 3
+	j.opt.BackupKey = keySrc
+
+	existingDay := time.Date(2026, 11, 12, 3, 0, 0, 0, time.Local)
+	if err := j.BackupNow(existingDay); err != nil {
+		t.Fatalf("生成既有备份单元失败: %v", err)
+	}
+	units := filepath.Join(j.opt.BackupDir, backupUnitsDir)
+	existing := filepath.Join(units, backupPrefix+"20261112")
+	if ok, err := validBackupUnit(existing); err != nil || !ok {
+		t.Fatalf("既有备份单元无效: ok=%v err=%v", ok, err)
+	}
+
+	injected := errors.New("injected manifest chmod failure")
+	old := manifestChmod
+	manifestChmod = func(string, os.FileMode) error { return injected }
+	defer func() { manifestChmod = old }()
+
+	err := j.BackupNow(time.Date(2026, 11, 13, 3, 0, 0, 0, time.Local))
+	if !errors.Is(err, injected) {
+		t.Fatalf("应返回注入的 manifest 权限错误，实际 %v", err)
+	}
+
+	ents, err := os.ReadDir(units)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 || ents[0].Name() != backupPrefix+"20261112" {
+		t.Fatalf("失败后暂存目录应清理且既有备份保留，得到 %v", ents)
+	}
+	if ok, err := validBackupUnit(existing); err != nil || !ok {
+		t.Fatalf("既有备份单元被破坏: ok=%v err=%v", ok, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(units, backupPrefix+"20261113")); !os.IsNotExist(statErr) {
+		t.Fatalf("失败后不应发布新的正式备份单元，stat=%v", statErr)
 	}
 }
 

@@ -26,6 +26,9 @@ const (
 	unitKeyName    = "secret.key"
 )
 
+// manifestChmod 是 manifest 权限设置的测试注入点；生产默认行为与 os.Chmod 一致。
+var manifestChmod = os.Chmod
+
 // manifestFile 是备份单元里单个文件的完整性记录。
 type manifestFile struct {
 	File   string `json:"file"`
@@ -150,6 +153,9 @@ func (j *Janitor) buildBackupUnit(stage string, now time.Time) error {
 	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if err := manifestChmod(tmp, 0o600); err != nil {
+		return fmt.Errorf("设置 manifest 权限: %w", err)
 	}
 	if err := os.Rename(tmp, filepath.Join(stage, manifestName)); err != nil {
 		return err
