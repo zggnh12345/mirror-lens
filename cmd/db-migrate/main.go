@@ -192,7 +192,8 @@ func runMigrate(args []string) error {
 	}
 
 	// 3.5.5 源库需要读取并保留其真实 baseline_version，不能让 EnsureFresh 的默认值覆盖。
-	var srcBaselineVersion string
+	// 用指针区分“非 3.5.5 路径没有源值”（nil）和“3.5.5 源值就是空字符串”（非 nil 指向 ""）。
+	var srcBaselineVersion *string
 	if *baseline == "3.5.5" {
 		srcMeta, err := readMetaRaw(src)
 		if err != nil {
@@ -201,7 +202,8 @@ func runMigrate(args []string) error {
 		if srcMeta.SchemaVersion != "3.5.5" {
 			return fmt.Errorf("3.5.5 升级要求源 schema_version=3.5.5，实际 %q", srcMeta.SchemaVersion)
 		}
-		srcBaselineVersion = srcMeta.BaselineVersion
+		v := srcMeta.BaselineVersion
+		srcBaselineVersion = &v
 	}
 
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
@@ -307,16 +309,18 @@ func readMetaRaw(db *sql.DB) (schema.Meta, error) {
 }
 
 // finalizeTargetMeta 写入升级后的 schema_meta。
-// baselineOverride 为空时只刷新 schema_hash/applied_at（保留 EnsureFresh 写入的 baseline_version）；
-// 非空时（3.5.5 路径）用源库真实 baseline_version 显式覆盖，并确认 schema_version 与目标版本一致。
-func finalizeTargetMeta(target *sql.DB, h, baselineOverride string) error {
-	if baselineOverride == "" {
+// srcBaseline 为 nil 时（3.4.6/3.5.4 路径）只刷新 schema_hash/applied_at，
+// 保留 EnsureFresh 写入的 baseline_version；
+// 非 nil 时（3.5.5 路径）用源库真实 baseline_version 显式覆盖，
+// 空字符串也是合法源值，必须原样写入。
+func finalizeTargetMeta(target *sql.DB, h string, srcBaseline *string) error {
+	if srcBaseline == nil {
 		_, err := target.Exec(`UPDATE schema_meta SET schema_hash=?, applied_at=? WHERE schema_version=?`,
 			h, time.Now().Unix(), schema.Version)
 		return err
 	}
 	_, err := target.Exec(`UPDATE schema_meta SET schema_version=?, schema_hash=?, baseline_version=?, applied_at=? WHERE id=1`,
-		schema.Version, h, baselineOverride, time.Now().Unix())
+		schema.Version, h, *srcBaseline, time.Now().Unix())
 	return err
 }
 
@@ -338,6 +342,33 @@ func requireCanonicalMetadataHash(h string) error {
 	return nil
 }
 
+// copyFileWriteHook 是仅供测试的复制中断注入点；生产为 nil。
+// 设置后，copyFile 每次最多写入 4 KiB，并在每次写入后调用钩子，
+// 使测试能确定性触发“发生部分写入后失败”。
+var copyFileWriteHook func(written int64) error
+
+type copyHookWriter struct {
+	dst     io.Writer
+	written int64
+}
+
+func (w *copyHookWriter) Write(p []byte) (int, error) {
+	if len(p) > 4096 {
+		p = p[:4096]
+	}
+	n, err := w.dst.Write(p)
+	w.written += int64(n)
+	if err != nil {
+		return n, err
+	}
+	if copyFileWriteHook != nil {
+		if herr := copyFileWriteHook(w.written); herr != nil {
+			return n, herr
+		}
+	}
+	return n, nil
+}
+
 // copyFile 逐字节复制文件，用于 metadata-only 升级的 staging 拷贝。
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
@@ -350,7 +381,11 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
+	w := io.Writer(out)
+	if copyFileWriteHook != nil {
+		w = &copyHookWriter{dst: out}
+	}
+	if _, err := io.Copy(w, in); err != nil {
 		return err
 	}
 	return out.Sync()
@@ -406,21 +441,21 @@ func runUpgrade356(args []string) error {
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
 	_ = os.Remove(tmp)
+	// 必须在第一次写 staging 之前注册清理；copyFile 中途失败时也要删除本次的精确临时路径。
+	published := false
+	defer func() {
+		if !published {
+			_ = os.Remove(tmp)
+		}
+	}()
 	if err := copyFile(*in, tmp); err != nil {
 		return fmt.Errorf("复制源库到 staging: %w", err)
 	}
 	target, err := sql.Open("sqlite", "file:"+tmp+"?mode=rwc")
 	if err != nil {
-		os.Remove(tmp)
 		return err
 	}
-	done := false
-	defer func() {
-		target.Close()
-		if !done {
-			os.Remove(tmp)
-		}
-	}()
+	defer target.Close()
 	target.SetMaxOpenConns(1)
 	if _, err := target.Exec("PRAGMA foreign_keys=OFF"); err != nil {
 		return err
@@ -451,7 +486,7 @@ func runUpgrade356(args []string) error {
 	if err := os.Rename(tmp, *out); err != nil {
 		return fmt.Errorf("发布升级结果: %w", err)
 	}
-	done = true
+	published = true
 	report := map[string]any{
 		"ok":                   true,
 		"from":                 "3.5.6",
