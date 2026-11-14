@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/zggnh12345/mirror-lens/internal/store/schema"
 )
 
 // Canonical Schema 的核心不变量：新库、旧库升级后必须是同一份 schema。
@@ -131,5 +133,47 @@ func TestOpenRejectsLegacyWithoutSchemaMeta(t *testing.T) {
 	db.Close()
 	if _, err := Open(path); err == nil {
 		t.Fatal("旧 Schema 数据库被错误接受")
+	}
+}
+
+// 运行时的终态不是“版本正确且自洽”，而是“精确等于 Canonical”。
+// 这里复现 overlay 发现：改了结构并把 metadata hash 改成自洽值，Open 必须拒绝。
+func TestOpenRejectsSelfConsistentNonCanonicalSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "self-consistent.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("首次创建: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE sources ADD COLUMN extra_col TEXT`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	h, err := schema.Hash(db)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if h == schema.CanonicalSchemaHash {
+		db.Close()
+		t.Fatal("测试前提错误：改动结构后 hash 不应等于 Canonical")
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET schema_hash=?`, h); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Open(path); err == nil {
+		t.Fatal("自洽但非 Canonical 的数据库必须被 Open 拒绝")
 	}
 }

@@ -351,6 +351,9 @@ func TestMigrate355Fidelity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dst.Close()
+	if _, err := schema.Verify(dst); err != nil {
+		t.Fatalf("db-migrate 生成的 3.5.7 目标库未通过运行时校验: %v", err)
+	}
 
 	// 终态 schema_meta 映射
 	var version, hash, baseline string
@@ -361,8 +364,8 @@ func TestMigrate355Fidelity(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != canonicalSchemaHash {
-		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", canonicalSchemaHash, hash)
+	if hash != schema.CanonicalSchemaHash {
+		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
 	}
 	if baseline != "src-baseline-3.5.5" {
 		t.Fatalf("baseline_version 必须保留源值，实际 %q", baseline)
@@ -448,8 +451,8 @@ func TestMigrate355PreservesEmptyBaseline(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != canonicalSchemaHash {
-		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", canonicalSchemaHash, hash)
+	if hash != schema.CanonicalSchemaHash {
+		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
 	}
 	if baseline != "" {
 		t.Fatalf("源 baseline_version 为空串时必须原样保留，实际 %q", baseline)
@@ -608,8 +611,8 @@ func TestUpgrade356MetadataOnly(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != canonicalSchemaHash {
-		t.Fatalf("schema_hash 必须保持不变（%s），实际 %s", canonicalSchemaHash, hash)
+	if hash != schema.CanonicalSchemaHash {
+		t.Fatalf("schema_hash 必须保持不变（%s），实际 %s", schema.CanonicalSchemaHash, hash)
 	}
 	if baseline != "keep-me-356" {
 		t.Fatalf("baseline_version 必须原值保留，实际 %q", baseline)
@@ -793,8 +796,8 @@ func TestUpgrade356HandlesWalModeSource(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != canonicalSchemaHash {
-		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", canonicalSchemaHash, hash)
+	if hash != schema.CanonicalSchemaHash {
+		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
 	}
 	if baseline != "keep-me-356" {
 		t.Fatalf("baseline_version 必须原值保留，实际 %q", baseline)
@@ -858,7 +861,7 @@ func TestRequireCanonicalOutputHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if altHash == canonicalSchemaHash {
+	if altHash == schema.CanonicalSchemaHash {
 		t.Fatal("测试前提错误：改动结构后哈希不应等于 Canonical")
 	}
 	if err := requireCanonicalOutputHash(altHash); err == nil {

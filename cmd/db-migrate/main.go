@@ -327,8 +327,8 @@ func finalizeTargetMeta(target *sql.DB, h string, srcBaseline *string) error {
 // requireCanonicalOutputHash 校验输出库的实际结构哈希必须等于冻结的 Canonical 哈希。
 // 仅自洽校验（实际哈希 == schema_meta.schema_hash）不能证明输出符合冻结的 3.5.7 结构。
 func requireCanonicalOutputHash(h string) error {
-	if h != canonicalSchemaHash {
-		return fmt.Errorf("输出结构 hash=%s 与冻结的 Canonical hash=%s 不一致；拒绝发布", h, canonicalSchemaHash)
+	if h != schema.CanonicalSchemaHash {
+		return fmt.Errorf("输出结构 hash=%s 与冻结的 Canonical hash=%s 不一致；拒绝发布", h, schema.CanonicalSchemaHash)
 	}
 	return nil
 }
@@ -336,8 +336,8 @@ func requireCanonicalOutputHash(h string) error {
 // requireCanonicalMetadataHash 校验 3.5.6 源元数据中声明的结构哈希必须等于 Canonical 哈希。
 // 它验证「声明」，VerifyStructure 验证「实际结构」，两者不能互相替代。
 func requireCanonicalMetadataHash(h string) error {
-	if h != canonicalSchemaHash {
-		return fmt.Errorf("源元数据 schema_hash=%s 与 Canonical hash=%s 不一致；拒绝迁移", h, canonicalSchemaHash)
+	if h != schema.CanonicalSchemaHash {
+		return fmt.Errorf("源元数据 schema_hash=%s 与 Canonical hash=%s 不一致；拒绝迁移", h, schema.CanonicalSchemaHash)
 	}
 	return nil
 }
@@ -402,7 +402,7 @@ func copyFile(src, dst string) error {
 }
 
 // runUpgrade356 是 3.5.6 → 3.5.7 的 metadata-only 升级：源库已经是 Canonical 结构
-// （hash == canonicalSchemaHash，仅 schema_version=3.5.6），不涉及 DDL 变化。
+// （hash == schema.CanonicalSchemaHash，仅 schema_version=3.5.6），不涉及 DDL 变化。
 // 它只把版本标签从 3.5.6 改为 3.5.7，schema_hash / baseline_version / applied_at 原值保留。
 // 升级在 staging 副本上完成，校验通过后才原子替换，失败可完整回滚。
 func runUpgrade356(args []string) error {
@@ -446,8 +446,8 @@ func runUpgrade356(args []string) error {
 	if err := requireCanonicalMetadataHash(m.SchemaHash); err != nil {
 		return err
 	}
-	if err := schema.VerifyStructure(src, canonicalSchemaHash); err != nil {
-		return fmt.Errorf("源结构不是 Canonical（hash=%s）: %w", canonicalSchemaHash, err)
+	if err := schema.VerifyStructure(src, schema.CanonicalSchemaHash); err != nil {
+		return fmt.Errorf("源结构不是 Canonical（hash=%s）: %w", schema.CanonicalSchemaHash, err)
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
 	_ = os.Remove(tmp)
@@ -593,10 +593,6 @@ type migrationPlan struct {
 	Counts  map[string]int64
 	Skipped []string
 }
-
-// canonicalSchemaHash 是 3.5.7 Canonical DDL（internal/store/schema/canonical.sql）经
-// schema.Hash 计算得到的冻结结构指纹；与 canonical.sql 字节级绑定，任何 DDL 改动都会改变它。
-const canonicalSchemaHash = "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e"
 
 // inputSchemaFingerprints 是真实历史副本的 Schema 指纹。
 // 它们由 schema.Hash 生成，包含表、列、主键、索引、触发器和外键定义；不包含业务行。

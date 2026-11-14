@@ -18,6 +18,12 @@ import (
 // Version 是当前 Canonical Schema 对应的应用版本。
 const Version = "3.5.7"
 
+// CanonicalSchemaHash 是 3.5.7 Canonical DDL 经 Hash 计算得到的冻结结构指纹。
+//
+// 注意：canonical.sql 文件自身的 SHA-256 是另一个值，不能用于数据库结构校验。
+// 运行时、离线迁移工具和测试都必须引用这一个常量，避免各自维护终态指纹。
+const CanonicalSchemaHash = "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e"
+
 //go:embed canonical.sql
 var ddl string
 
@@ -97,7 +103,9 @@ func ReadMeta(db *sql.DB) (Meta, error) {
 	return m, nil
 }
 
-// Verify 校验 schema_meta 的版本和实际结构 hash。
+// Verify 校验运行时的唯一终态：版本、实际结构、元数据声明都必须等于
+// 冻结的 Canonical Schema。仅检查实际 hash 与 schema_meta 自洽是不够的，
+// 因为两者可以被同时改写成另一个自洽值。
 func Verify(db *sql.DB) (Meta, error) {
 	m, err := ReadMeta(db)
 	if err != nil {
@@ -110,8 +118,11 @@ func Verify(db *sql.DB) (Meta, error) {
 	if err != nil {
 		return m, err
 	}
-	if h != m.SchemaHash {
-		return m, fmt.Errorf("Schema hash 不匹配: 数据库=%s，schema_meta=%s", h, m.SchemaHash)
+	if h != CanonicalSchemaHash {
+		return m, fmt.Errorf("Schema hash 不是 Canonical: 实际=%s，Canonical=%s", h, CanonicalSchemaHash)
+	}
+	if m.SchemaHash != CanonicalSchemaHash {
+		return m, fmt.Errorf("schema_meta.schema_hash 不是 Canonical: 数据库=%s，Canonical=%s", m.SchemaHash, CanonicalSchemaHash)
 	}
 	return m, nil
 }

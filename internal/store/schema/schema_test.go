@@ -38,6 +38,9 @@ func TestEnsureFreshAndVerify(t *testing.T) {
 	if h1 != m.SchemaHash {
 		t.Fatalf("hash=%s meta=%s", h1, m.SchemaHash)
 	}
+	if h1 != CanonicalSchemaHash {
+		t.Fatalf("Canonical 新库 hash=%s，冻结值=%s", h1, CanonicalSchemaHash)
+	}
 	// 再开一次 hash 必须稳定。
 	m2, err := Verify(db)
 	if err != nil || m2.SchemaHash != h1 {
@@ -65,6 +68,59 @@ func TestHashDetectsSchemaChange(t *testing.T) {
 	}
 	if _, err := Verify(db); err == nil {
 		t.Fatal("结构变化后 Verify 应失败")
+	}
+}
+
+// 结构被改动后，即使把 schema_meta.schema_hash 也改成新的自洽值，也必须拒绝。
+// 这正是 overlay 发现过的运行时缺口：自洽不等于 Canonical。
+func TestVerifyRejectsSelfConsistentNonCanonical(t *testing.T) {
+	db, _ := open(t)
+	if err := EnsureFresh(db, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE sources ADD COLUMN extra_col TEXT`); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Hash(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h == CanonicalSchemaHash {
+		t.Fatal("测试前提错误：改动结构后 hash 不应等于 Canonical")
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET schema_hash=?`, h); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(db); err == nil {
+		t.Fatal("自洽但非 Canonical 的结构必须被 Verify 拒绝")
+	}
+}
+
+// 实际结构是 Canonical，但 schema_meta 声明的 hash 被篡改时，必须拒绝。
+func TestVerifyRejectsTamperedMetadataHash(t *testing.T) {
+	db, _ := open(t)
+	if err := EnsureFresh(db, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET schema_hash='deadbeef'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(db); err == nil {
+		t.Fatal("schema_meta.schema_hash 不是 Canonical 时必须拒绝")
+	}
+}
+
+// 实际结构和 metadata hash 都正确，但版本错误时，必须拒绝。
+func TestVerifyRejectsWrongVersion(t *testing.T) {
+	db, _ := open(t)
+	if err := EnsureFresh(db, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET schema_version='3.5.6'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(db); err == nil {
+		t.Fatal("版本不是 3.5.7 时必须拒绝")
 	}
 }
 
