@@ -157,8 +157,8 @@ func runMigrate(args []string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if wal, err := os.Stat(*in + "-wal"); err == nil && wal.Size() > 0 {
-		return fmt.Errorf("旧库存在未合并的 WAL（%s，%d 字节）；请先停服务并在副本上 checkpoint", *in+"-wal", wal.Size())
+	if err := rejectDirtySidecars(*in); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
 		return err
@@ -275,11 +275,19 @@ func runMigrate(args []string) error {
 	if _, err := schema.Verify(target); err != nil {
 		return fmt.Errorf("迁移后校验失败: %w", err)
 	}
+	if targetVerifyHook != nil {
+		if err := targetVerifyHook(target); err != nil {
+			return err
+		}
+	}
 	if err := target.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, *out); err != nil {
-		return fmt.Errorf("发布迁移结果: %w", err)
+	if err := removeSQLiteSidecars(tmp); err != nil {
+		return fmt.Errorf("清理 staging sidecar: %w", err)
+	}
+	if err := publishNoClobber(tmp, *out); err != nil {
+		return err
 	}
 	done = true
 	report := map[string]any{
@@ -347,6 +355,15 @@ func requireCanonicalMetadataHash(h string) error {
 // 使测试能确定性触发“发生部分写入后失败”。
 var copyFileWriteHook func(written int64) error
 
+// targetVerifyHook / targetPublishHook / upgradeCommitHook 是仅供测试的
+// 故障注入点；生产均为 nil。它们分别覆盖校验、发布和事务提交阶段，
+// 让清理路径可以在不破坏生产逻辑的前提下被确定性验证。
+var (
+	targetVerifyHook  func(*sql.DB) error
+	targetPublishHook func() error
+	upgradeCommitHook func(*sql.Tx) error
+)
+
 type copyHookWriter struct {
 	dst     io.Writer
 	written int64
@@ -401,6 +418,78 @@ func copyFile(src, dst string) error {
 	return out.Sync()
 }
 
+// rejectDirtySidecars 明确冻结旧库 sidecar 策略：只要 -wal 或 -shm 非空，
+// 就拒绝迁移。离线工具不在一个有活跃/未合并写入的库上“猜”一致性。
+func rejectDirtySidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if err == nil && info.Size() > 0 {
+			return fmt.Errorf("旧库存在非空 %s（%d 字节）；请先停服务并在副本上 checkpoint/清理 sidecar", path+suffix, info.Size())
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeSQLiteSidecars 只删除 staging 的 WAL/SHM，不触碰源库。
+func removeSQLiteSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+func syncDir(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// publishNoClobber 用硬链接完成原子、no-clobber 发布：
+// - 目标已存在时 Link 返回 EEXIST，不会覆盖；
+// - 同目录临时文件的硬链接与 rename 一样是原子可见的；
+// - 发布后再删除临时名，并同步父目录。
+// 单纯 os.Stat + os.Rename 存在并发创建目标文件的竞争窗口，不能使用。
+func publishNoClobber(tmp, out string) error {
+	if targetPublishHook != nil {
+		if err := targetPublishHook(); err != nil {
+			return err
+		}
+	}
+	if err := syncFile(tmp); err != nil {
+		return fmt.Errorf("同步 staging: %w", err)
+	}
+	if err := os.Link(tmp, out); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("目标已存在，拒绝覆盖: %s", out)
+		}
+		return fmt.Errorf("发布迁移结果: %w", err)
+	}
+	if err := os.Remove(tmp); err != nil {
+		return fmt.Errorf("已发布但清理 staging 失败: %w", err)
+	}
+	if err := syncDir(filepath.Dir(out)); err != nil {
+		return fmt.Errorf("同步目标父目录: %w", err)
+	}
+	return nil
+}
+
 // runUpgrade356 是 3.5.6 → 3.5.7 的 metadata-only 升级：源库已经是 Canonical 结构
 // （hash == schema.CanonicalSchemaHash，仅 schema_version=3.5.6），不涉及 DDL 变化。
 // 它只把版本标签从 3.5.6 改为 3.5.7，schema_hash / baseline_version / applied_at 原值保留。
@@ -420,8 +509,8 @@ func runUpgrade356(args []string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if wal, err := os.Stat(*in + "-wal"); err == nil && wal.Size() > 0 {
-		return fmt.Errorf("旧库存在未合并的 WAL（%s，%d 字节）；请先停服务并在副本上 checkpoint", *in+"-wal", wal.Size())
+	if err := rejectDirtySidecars(*in); err != nil {
+		return err
 	}
 	src, err := sql.Open("sqlite", "file:"+*in+"?mode=ro&_pragma=query_only(1)")
 	if err != nil {
@@ -478,6 +567,12 @@ func runUpgrade356(args []string) error {
 		tx.Rollback()
 		return err
 	}
+	if upgradeCommitHook != nil {
+		if err := upgradeCommitHook(tx); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -490,11 +585,19 @@ func runUpgrade356(args []string) error {
 	if _, err := schema.Verify(target); err != nil {
 		return fmt.Errorf("升级后校验失败: %w", err)
 	}
+	if targetVerifyHook != nil {
+		if err := targetVerifyHook(target); err != nil {
+			return err
+		}
+	}
 	if err := target.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, *out); err != nil {
-		return fmt.Errorf("发布升级结果: %w", err)
+	if err := removeSQLiteSidecars(tmp); err != nil {
+		return fmt.Errorf("清理 staging sidecar: %w", err)
+	}
+	if err := publishNoClobber(tmp, *out); err != nil {
+		return err
 	}
 	published = true
 	report := map[string]any{
