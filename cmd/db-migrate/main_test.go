@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	_ "embed"
 	"os"
@@ -486,5 +487,88 @@ func TestUpgrade356RejectsWrongVersion(t *testing.T) {
 	}
 	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
 		t.Fatalf("拒绝后仍产生了目标文件: %v", statErr)
+	}
+}
+
+// TestRequireCanonicalOutputHash 覆盖 3.5.5 输出结构校验：
+// 规范结构的输出通过；结构被改动（哈希不等于冻结值）的输出被拒绝。
+func TestRequireCanonicalOutputHash(t *testing.T) {
+	// 规范结构：由 Canonical DDL 创建，哈希应等于冻结值。
+	canonPath := filepath.Join(t.TempDir(), "canon.db")
+	cdb, err := sql.Open("sqlite", canonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.EnsureFresh(cdb, "fresh"); err != nil {
+		cdb.Close()
+		t.Fatal(err)
+	}
+	h, err := schema.Hash(cdb)
+	cdb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := requireCanonicalOutputHash(h); err != nil {
+		t.Fatalf("规范结构应通过: %v", err)
+	}
+
+	// 被改动的结构：加一列后哈希必然不等于冻结值，必须被拒绝。
+	altPath := filepath.Join(t.TempDir(), "alt.db")
+	adb, err := sql.Open("sqlite", altPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adb.Close()
+	if err := schema.EnsureFresh(adb, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adb.Exec(`ALTER TABLE sources ADD COLUMN extra_col TEXT`); err != nil {
+		t.Fatal(err)
+	}
+	altHash, err := schema.Hash(adb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if altHash == canonicalSchemaHash {
+		t.Fatal("测试前提错误：改动结构后哈希不应等于 Canonical")
+	}
+	if err := requireCanonicalOutputHash(altHash); err == nil {
+		t.Fatal("非 Canonical 输出结构必须被拒绝发布")
+	}
+}
+
+// TestUpgrade356RejectsWrongMetadataHash 覆盖 3.5.6 元数据声明校验：
+// 实际结构正确但元数据 schema_hash 被篡改时，必须拒绝迁移，且不产生输出、源文件字节不变。
+func TestUpgrade356RejectsWrongMetadataHash(t *testing.T) {
+	srcPath := filepath.Join(t.TempDir(), "src356-badhash.db")
+	build356Fixture(t, srcPath)
+	// 篡改元数据声明的结构哈希；实际结构仍是 Canonical。
+	db, err := sql.Open("sqlite", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET schema_hash='deadbeef' WHERE id=1`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	before, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "must-not-exist.db")
+	if err := runUpgrade356([]string{"--in", srcPath, "--out", outPath}); err == nil {
+		t.Fatal("元数据 schema_hash 错误时必须拒绝迁移")
+	}
+	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
+		t.Fatalf("失败路径不应产生目标文件: %v", statErr)
+	}
+	after, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("失败路径不得改动源文件")
 	}
 }

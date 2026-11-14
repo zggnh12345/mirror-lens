@@ -260,6 +260,13 @@ func runMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
+	// 3.5.5 路径：实际输出结构必须等于冻结的 Canonical 哈希，
+	// 而不只是与 schema_meta 自洽（后者只能证明结构与元数据一致，不能证明符合 Canonical）。
+	if *baseline == "3.5.5" {
+		if err := requireCanonicalOutputHash(h); err != nil {
+			return err
+		}
+	}
 	if err := finalizeTargetMeta(target, h, srcBaselineVersion); err != nil {
 		return err
 	}
@@ -311,6 +318,24 @@ func finalizeTargetMeta(target *sql.DB, h, baselineOverride string) error {
 	_, err := target.Exec(`UPDATE schema_meta SET schema_version=?, schema_hash=?, baseline_version=?, applied_at=? WHERE id=1`,
 		schema.Version, h, baselineOverride, time.Now().Unix())
 	return err
+}
+
+// requireCanonicalOutputHash 校验输出库的实际结构哈希必须等于冻结的 Canonical 哈希。
+// 仅自洽校验（实际哈希 == schema_meta.schema_hash）不能证明输出符合冻结的 3.5.7 结构。
+func requireCanonicalOutputHash(h string) error {
+	if h != canonicalSchemaHash {
+		return fmt.Errorf("输出结构 hash=%s 与冻结的 Canonical hash=%s 不一致；拒绝发布", h, canonicalSchemaHash)
+	}
+	return nil
+}
+
+// requireCanonicalMetadataHash 校验 3.5.6 源元数据中声明的结构哈希必须等于 Canonical 哈希。
+// 它验证「声明」，VerifyStructure 验证「实际结构」，两者不能互相替代。
+func requireCanonicalMetadataHash(h string) error {
+	if h != canonicalSchemaHash {
+		return fmt.Errorf("源元数据 schema_hash=%s 与 Canonical hash=%s 不一致；拒绝迁移", h, canonicalSchemaHash)
+	}
+	return nil
 }
 
 // copyFile 逐字节复制文件，用于 metadata-only 升级的 staging 拷贝。
@@ -371,6 +396,10 @@ func runUpgrade356(args []string) error {
 	}
 	if m.SchemaVersion != "3.5.6" {
 		return fmt.Errorf("upgrade356 要求源 schema_version=3.5.6，实际 %q", m.SchemaVersion)
+	}
+	// 元数据声明的结构哈希必须等于 Canonical；与 VerifyStructure（实际结构）分别验证，不能互相替代。
+	if err := requireCanonicalMetadataHash(m.SchemaHash); err != nil {
+		return err
 	}
 	if err := schema.VerifyStructure(src, canonicalSchemaHash); err != nil {
 		return fmt.Errorf("源结构不是 Canonical（hash=%s）: %w", canonicalSchemaHash, err)
