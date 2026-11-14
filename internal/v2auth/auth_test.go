@@ -28,15 +28,15 @@ func TestRealmAllowed(t *testing.T) {
 	a := New(nil, map[string][]string{
 		"quay.io": {"https://quay.io"},
 		"gcr.io":  {"https://*.googleapis.com"},
-		"lscr.io": {"https://lscr.io/"},
+		"lscr.io": {"https://ghcr.io/"},
 	})
 	u := func(s string) *url.URL { p, _ := url.Parse(s); return p }
 
 	if err := a.RealmAllowed("quay.io", u("https://quay.io/v2/auth")); err != nil {
 		t.Fatalf("白名单内 Realm 被拒: %v", err)
 	}
-	if err := a.RealmAllowed("lscr.io", u("https://lscr.io/v2/token")); err != nil {
-		t.Fatalf("尾部斜杠应被容忍: %v", err)
+	if err := a.RealmAllowed("lscr.io", u("https://ghcr.io/v2/token")); err != nil {
+		t.Fatalf("lscr.io 的实际 Realm 应放行: %v", err)
 	}
 	if err := a.RealmAllowed("gcr.io", u("https://storage.googleapis.com/v2/token")); err != nil {
 		t.Fatalf("通配域名应放行: %v", err)
@@ -59,7 +59,83 @@ func TestRealmAllowed(t *testing.T) {
 	}
 }
 
-// 每条资源请求独立换 Token：两次 Do 必须打两次 token 端点。
+func TestRealmAllowedArtifactRegistryDynamic(t *testing.T) {
+	a := New(nil, nil)
+	u := func(s string) *url.URL { p, _ := url.Parse(s); return p }
+
+	for _, host := range []string{"us-docker.pkg.dev", "europe-west1-docker.pkg.dev"} {
+		if err := a.RealmAllowed(host, u("https://"+host+"/v2/token")); err != nil {
+			t.Fatalf("%s 的同 Host Realm 应放行: %v", host, err)
+		}
+		if err := a.RealmAllowed(host, u("https://evil.example/token")); !errors.Is(err, ErrRealmDenied) {
+			t.Fatalf("%s 的外部 Realm 应拒绝，得到 %v", host, err)
+		}
+		if err := a.RealmAllowed(host, u("http://"+host+"/token")); !errors.Is(err, ErrRealmDenied) {
+			t.Fatalf("%s 的非 https Realm 应拒绝，得到 %v", host, err)
+		}
+	}
+	// 不同 Artifact Registry Host 不能互相放行；lscr.io 的 Realm 修正
+	// 不改变这条边界。
+	if err := a.RealmAllowed("us-docker.pkg.dev", u("https://foo-docker.pkg.dev/token")); !errors.Is(err, ErrRealmDenied) {
+		t.Fatalf("不同 Artifact Registry Host 不应互相放行，得到 %v", err)
+	}
+}
+
+// 用实际 /v2/ 响应里的 WWW-Authenticate 值校验 Realm，而不是只验证
+// 静态 map 自己和自己一致。这些字符串来自 2026-11-14 的匿名探测。
+func TestRealChallengeRealms(t *testing.T) {
+	a := New(nil, nil)
+	cases := []struct {
+		host      string
+		challenge string
+	}{
+		{"gcr.io", `Bearer realm="https://gcr.io/v2/token",service=gcr.io`},
+		{"registry.k8s.io", `Bearer realm="https://registry.k8s.io/token",service="registry.k8s.io"`},
+		{"us-docker.pkg.dev", `Bearer realm="https://us-docker.pkg.dev/v2/token"`},
+		{"quay.io", `Bearer realm="https://quay.io/v2/auth",service="quay.io"`},
+		{"registry.gitlab.com", `Bearer realm="https://gitlab.com/jwt/auth",service="container_registry"`},
+		{"public.ecr.aws", `Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws",scope="aws"`},
+		{"cgr.dev", `Bearer realm="https://cgr.dev/token",service="cgr.dev"`},
+		{"lscr.io", `Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/image:pull"`},
+	}
+	for _, c := range cases {
+		ch := ParseChallenge(c.challenge)
+		realm, err := url.Parse(ch.Realm)
+		if err != nil {
+			t.Fatalf("%s: Realm 解析失败: %v", c.host, err)
+		}
+		if err := a.RealmAllowed(c.host, realm); err != nil {
+			t.Errorf("%s 的实际 Challenge 被拒: %v", c.host, err)
+		}
+	}
+}
+
+// MCR 的匿名 /v2/ 直接 200，没有 Bearer Challenge；不能因此去请求 token。
+func TestMCRNoBearerChallenge(t *testing.T) {
+	var tokenHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			atomic.AddInt32(&tokenHits, 1)
+			w.Write([]byte(`{"token":"unexpected"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	a := New(srv.Client(), nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
+	resp, err := a.Do(context.Background(), "mcr.microsoft.com", req, CredentialSnapshot{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || atomic.LoadInt32(&tokenHits) != 0 {
+		t.Fatalf("MCR 无 Challenge 应直接 200 且不请求 token，status=%d token=%d", resp.StatusCode, tokenHits)
+	}
+}
+
 func TestDoFetchesTokenPerRequest(t *testing.T) {
 	var tokenHits, manifestHits int32
 	var lastAuth string

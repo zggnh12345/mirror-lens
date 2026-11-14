@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 )
 
 var (
@@ -141,13 +143,27 @@ func New(client *http.Client, realms map[string][]string) *Authenticator {
 // DefaultRealms 是内置白名单，只覆盖已知 Registry 的官方认证端点。
 func DefaultRealms() map[string][]string {
 	return map[string][]string{
-		"quay.io":              {"https://quay.io"},
-		"gcr.io":               {"https://gcr.io", "https://storage.googleapis.com"},
-		"registry.k8s.io":      {"https://registry.k8s.io"},
-		"lscr.io":              {"https://lscr.io"},
+		"quay.io":         {"https://quay.io"},
+		"gcr.io":          {"https://gcr.io", "https://storage.googleapis.com"},
+		"registry.k8s.io": {"https://registry.k8s.io"},
+		// lscr.io 的实际 Challenge 指向 ghcr.io，不是 lscr.io。
+		"lscr.io":              {"https://ghcr.io"},
+		"registry.gitlab.com":  {"https://gitlab.com"},
+		"public.ecr.aws":       {"https://public.ecr.aws"},
+		"cgr.dev":              {"https://cgr.dev"},
 		"docker.io":            {"https://auth.docker.io"},
 		"registry-1.docker.io": {"https://auth.docker.io"},
 	}
+}
+
+// DefaultRealmsFor 返回某个 Host 的内置 Realm 列表。Artifact Registry 的
+// Host 由 location 动态决定，不能预先枚举，因此只允许与请求 Host 完全
+// 相同的 https://<host>；其他 Host 继续查静态表。
+func DefaultRealmsFor(host string) []string {
+	if registryhost.IsArtifactRegistry(host) {
+		return []string{"https://" + host}
+	}
+	return DefaultRealms()[host]
 }
 
 // RealmAllowed 校验 Challenge 的 Realm 是否属于该 Host 的白名单条目。
@@ -162,7 +178,11 @@ func (a *Authenticator) RealmAllowed(host string, realm *url.URL) error {
 		return fmt.Errorf("%w: Realm 带 userinfo", ErrRealmDenied)
 	}
 	got := strings.ToLower(realm.Scheme + "://" + realm.Host)
-	for _, allow := range a.realms[host] {
+	allows := a.realms[host]
+	if len(allows) == 0 {
+		allows = DefaultRealmsFor(host)
+	}
+	for _, allow := range allows {
 		want := strings.ToLower(strings.TrimSuffix(allow, "/"))
 		if got == want {
 			return nil

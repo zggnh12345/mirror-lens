@@ -23,6 +23,7 @@ type moFixture struct {
 	ad     *registryadapter.Adapter
 	token  string
 	dbPath string
+	host   string // 逻辑 Host，默认 quay.io
 	// officialStatus/officialHdr 让 HEAD 用例控制官方源的状态与挑战头；
 	// 默认 0 表示照旧返回 200 清单。
 	officialStatus int
@@ -81,7 +82,7 @@ const (
 
 func newMOFixture(t *testing.T) *moFixture {
 	t.Helper()
-	f := &moFixture{}
+	f := &moFixture{host: "quay.io"}
 	dir := t.TempDir()
 	f.dbPath = filepath.Join(dir, "t.db")
 	st, err := store.Open(f.dbPath)
@@ -113,7 +114,7 @@ func newMOFixture(t *testing.T) *moFixture {
 	host := strings.TrimPrefix(official.URL, "http://")
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
-	ad.MultiOrigin = true
+	ad.MultiOriginHosts = []string{f.host}
 
 	f.gw = New(st, Options{
 		Cache:    cs,
@@ -126,7 +127,7 @@ func newMOFixture(t *testing.T) *moFixture {
 	// 否则会打真实外网，回一个 401 挑战。
 	off := official.URL
 	f.gw.cli = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if strings.EqualFold(r.URL.Host, "quay.io") {
+		if strings.EqualFold(r.URL.Host, f.host) {
 			u := *r.URL
 			u.Scheme, u.Host = "http", strings.TrimPrefix(off, "http://")
 			r2 := r.Clone(r.Context())
@@ -152,17 +153,17 @@ func (f *moFixture) addRegistrySource(t *testing.T, srv *httptest.Server, mode s
 	if err != nil {
 		t.Fatalf("加源: %v", err)
 	}
-	if err := f.st.SetRepoHost(id, "quay.io"); err != nil {
+	if err := f.st.SetRepoHost(id, f.host); err != nil {
 		t.Fatalf("repo_host: %v", err)
 	}
-	gen, dig, err := f.st.HostGenState("quay.io")
+	gen, dig, err := f.st.HostGenState(f.host)
 	if err != nil {
 		t.Fatalf("gen: %v", err)
 	}
 	// C5 起候选准入要求 recovery 证据：走真实提交路径同时写 cap、path
 	// 与 recovery=ok，而不是只改 sources 的展示列。
 	if res, err := f.st.CommitHostProbe(store.HostProbeCommit{
-		SourceID: id, Host: "quay.io", Cap: store.RegistryCapYes, PathMode: mode,
+		SourceID: id, Host: f.host, Cap: store.RegistryCapYes, PathMode: mode,
 		At: time.Now().Unix(), Gen: gen, CredDigest: dig, HasCredential: dig != "",
 	}); err != nil || res != store.HostCapsCommitted {
 		t.Fatalf("CommitHostProbe: %v %v", res, err)
@@ -271,6 +272,104 @@ func TestMultiOriginFailureKeepsDockerHealthClean(t *testing.T) {
 	// 这是调度器的预期行为，不是健康度被污染。
 	if n := len(f.gw.sched.Candidates("registry:quay.io")); n != 0 {
 		t.Errorf("失败后应进入冷却，registry 候选池=%d", n)
+	}
+}
+
+// Phase 1 目标 Host：候选失败仍要能回官方，且不会被当成 Docker 通道。
+func TestMultiOriginGcrFallsBackOfficial(t *testing.T) {
+	f := newMOFixture(t)
+	f.host = "gcr.io"
+	f.ad.MultiOriginHosts = []string{"gcr.io"}
+
+	n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
+	srv := httptest.NewServer(n)
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/gcr.io/foo/bar/manifests/latest")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"official":true`) {
+		t.Fatalf("候选失败应回官方: status=%d body=%q", w.Code, w.Body.String())
+	}
+	if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+		t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
+	}
+}
+
+// 没有 Source 的 Host 不能因为开启多源而改变回源结果：仍应直接回官方。
+func TestMultiOriginNoSourceFallsBackOfficial(t *testing.T) {
+	f := newMOFixture(t)
+	f.ad.MultiOriginHosts = []string{
+		"gcr.io", "registry.k8s.io", "*.pkg.dev", "quay.io",
+		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev",
+	}
+	for _, host := range []string{
+		"gcr.io", "registry.k8s.io", "us-docker.pkg.dev", "quay.io",
+		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev",
+	} {
+		f.host = host
+		w := f.get(t, "/v2/foo/bar/manifests/latest")
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"official":true`) {
+			t.Fatalf("%s 无 Source 时应回官方: status=%d body=%q", host, w.Code, w.Body.String())
+		}
+	}
+	if n := f.nativeHits.Load() + f.prefixHits.Load(); n != 0 {
+		t.Fatalf("没有 Source 时不应命中候选，实际 %d", n)
+	}
+}
+
+// 第一批每个 Host 都要能完成“候选失败 → 官方成功”，不能只验证 gcr。
+func TestMultiOriginFirstBatchCandidateFailureFallsBackOfficial(t *testing.T) {
+	for _, host := range []string{
+		"gcr.io", "registry.k8s.io", "us-docker.pkg.dev", "quay.io",
+		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev",
+	} {
+		t.Run(host, func(t *testing.T) {
+			f := newMOFixture(t)
+			f.host = host
+			f.ad.MultiOriginHosts = []string{host}
+			n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
+			srv := httptest.NewServer(n)
+			defer srv.Close()
+			f.addRegistrySource(t, srv, "native")
+
+			w := f.get(t, "/v2/"+host+"/foo/bar/manifests/latest")
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"official":true`) {
+				t.Fatalf("候选失败应回官方: status=%d body=%q", w.Code, w.Body.String())
+			}
+			if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+				t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
+			}
+		})
+	}
+}
+
+// 每个 Host 的失败只进入自己的 registry:<host> 冷却，不污染 Docker 族。
+func TestMultiOriginFirstBatchFailureIsolation(t *testing.T) {
+	for _, host := range []string{
+		"gcr.io", "registry.k8s.io", "us-docker.pkg.dev", "quay.io",
+		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev",
+	} {
+		t.Run(host, func(t *testing.T) {
+			f := newMOFixture(t)
+			f.host = host
+			f.ad.MultiOriginHosts = []string{host}
+			n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
+			srv := httptest.NewServer(n)
+			defer srv.Close()
+			id := f.addRegistrySource(t, srv, "native")
+
+			if w := f.get(t, "/v2/"+host+"/foo/bar/manifests/latest"); w.Code != http.StatusOK {
+				t.Fatalf("应回官方 200，得到 %d", w.Code)
+			}
+			for fam, v := range mustHealth(t, f.st, id) {
+				if fam == "docker" && v > 0 {
+					t.Errorf("registry 失败污染 docker 健康: %d", v)
+				}
+			}
+			if n := len(f.gw.sched.Candidates("registry:" + host)); n != 0 {
+				t.Errorf("失败源应进入 %s 冷却，候选=%d", host, n)
+			}
+		})
 	}
 }
 

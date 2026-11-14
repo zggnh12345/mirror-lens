@@ -15,6 +15,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/limits"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"gopkg.in/yaml.v3"
 )
 
@@ -94,6 +95,14 @@ type Registry struct {
 	Upstream  string   `yaml:"upstream"`
 	MaxFileMB int64    `yaml:"max_file_mb"`
 	TagTTL    Duration `yaml:"tag_ttl"`
+
+	// MultiOriginHosts 是 Foreign Registry 多源调度的唯一范围来源。
+	// 支持精确 Host 和 Artifact Registry 的 "*.pkg.dev" 受限模式；
+	// 空列表表示没有任何 Host 使用多源，不表示“全部”。
+	MultiOriginHosts []string `yaml:"multi_origin_hosts"`
+	// DisabledHosts 是访问准入的拒绝列表；只接受精确 Host，且不接管
+	// docker.io / registry-1.docker.io / ghcr.io（它们有各自开关）。
+	DisabledHosts []string `yaml:"disabled_hosts"`
 }
 
 // GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。
@@ -339,6 +348,16 @@ func Default() *Config {
 			Upstream:  "registry-1.docker.io",
 			MaxFileMB: 4096,
 			TagTTL:    Duration{300 * time.Second},
+			MultiOriginHosts: []string{
+				"gcr.io",
+				"registry.k8s.io",
+				"*.pkg.dev",
+				"quay.io",
+				"mcr.microsoft.com",
+				"registry.gitlab.com",
+				"public.ecr.aws",
+				"cgr.dev",
+			},
 		},
 		Sources: Sources{
 			Enabled:              true,
@@ -555,7 +574,64 @@ func (c *Config) Validate() error {
 		if strings.Contains(u, "://") || strings.Contains(u, "/") {
 			return fmt.Errorf("registry.upstream 只写主机名，比如 registry-1.docker.io")
 		}
+		if err := c.normalizeHostPolicy(); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// normalizeHostPolicy 把多源范围和访问拒绝列表收敛成运行时可直接比较的
+// 规范形式。multi_origin_hosts 允许一个受限的 Artifact Registry 模式
+// "*.pkg.dev"；它不表示所有 *.pkg.dev，运行时仍要过 IsArtifactRegistry。
+func (c *Config) normalizeHostPolicy() error {
+	scope := make([]string, 0, len(c.Registry.MultiOriginHosts))
+	seenScope := map[string]bool{}
+	for _, raw := range c.Registry.MultiOriginHosts {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		if v == "" {
+			return fmt.Errorf("registry.multi_origin_hosts 不能包含空项")
+		}
+		if v == "*.pkg.dev" {
+			if !seenScope[v] {
+				seenScope[v] = true
+				scope = append(scope, v)
+			}
+			continue
+		}
+		h, err := registryhost.Check(v)
+		if err != nil {
+			return fmt.Errorf("registry.multi_origin_hosts 中的 %q 无效: %w", raw, err)
+		}
+		if h == "docker.io" || h == "registry-1.docker.io" || h == "ghcr.io" {
+			return fmt.Errorf("registry.multi_origin_hosts 不接受 %s；请使用对应的通道开关", h)
+		}
+		if !seenScope[h] {
+			seenScope[h] = true
+			scope = append(scope, h)
+		}
+	}
+	c.Registry.MultiOriginHosts = scope
+
+	disabled := make([]string, 0, len(c.Registry.DisabledHosts))
+	seenDisabled := map[string]bool{}
+	for _, raw := range c.Registry.DisabledHosts {
+		h, err := registryhost.Check(raw)
+		if err != nil {
+			return fmt.Errorf("registry.disabled_hosts 中的 %q 无效: %w", raw, err)
+		}
+		if h == "" {
+			return fmt.Errorf("registry.disabled_hosts 不能包含空项")
+		}
+		if h == "docker.io" || h == "registry-1.docker.io" || h == "ghcr.io" {
+			return fmt.Errorf("registry.disabled_hosts 不接受 %s；请使用对应的通道开关", h)
+		}
+		if !seenDisabled[h] {
+			seenDisabled[h] = true
+			disabled = append(disabled, h)
+		}
+	}
+	c.Registry.DisabledHosts = disabled
 	return nil
 }
 

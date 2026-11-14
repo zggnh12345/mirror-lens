@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +22,8 @@ const (
 	KindPing Kind = iota
 	KindManifest
 	KindBlob
-	KindWrite // 上传/删除，一律 405
+	KindWrite     // 上传/删除，一律 405
+	KindReferrers // OCI referrers，网关回空索引
 	KindUnknown
 )
 
@@ -40,12 +40,11 @@ type Adapter struct {
 	Scheme   string          // 回源协议，默认 https；内网/测试可以改 http
 	MaxBytes int64           // 单个 blob 上限，超了只透传
 	TagTTL   time.Duration   // tag 的重新验证间隔；digest 永久
-	Hosts    map[string]bool // 允许 /v2/<host>/... 前缀的站；nil 用 DefaultHosts
+	Hosts    map[string]bool // 额外的精确 Host 限制；nil 表示只依赖 registryhost 全局白名单
 
-	// MultiOrigin 打开后，非 ghcr 的 foreign Host 走独立调度族 registry:<host>：
-	// 只有 registry_cap=1 且路径已验证的源会入选，没有候选时仍回官方。
-	// 关闭时行为与 3.4.6 逐字一致。
-	MultiOrigin bool
+	// MultiOriginHosts 是允许进入 registry:<host> 的范围；空表示没有
+	// Foreign Host 使用多源。
+	MultiOriginHosts []string
 
 	mu       sync.RWMutex
 	repoHost map[string]string // 裸格式镜像名 → 实测所在站点（Docker Hub 没有时自动找 ghcr）
@@ -57,48 +56,61 @@ type Adapter struct {
 var DefaultHosts = registryhost.Hosts()
 
 func (a *Adapter) hostAllowed(h string) bool {
-	if a.Hosts != nil {
-		return a.Hosts[h]
+	// 全局白名单永远是第一道闸：旧 Hosts map 不能把不在白名单里的站
+	// 放进来，也不能因为它是非 nil 就把 Artifact Registry 模式关掉。
+	if !registryhost.Allowed(h) {
+		return false
 	}
-	for _, x := range DefaultHosts {
-		if x == h {
-			return true
-		}
+	if a.Hosts == nil {
+		return true
 	}
-	return false
+	if a.Hosts[h] {
+		return true
+	}
+	// Hosts 是额外的精确 Host 限制；Artifact Registry 的动态模式由全局
+	// 白名单统一负责，旧 map 不能重新关掉它。
+	return registryhost.IsArtifactRegistry(h)
 }
 
-// splitHost 拆出路径里的仓库站前缀；没有或不在白名单就回落到默认上游。
-func (a *Adapter) splitHost(repo string) (host, name string) {
+// parseRepo 是 Host 解析的唯一入口。首段出现 "." 表示客户端显式带了
+// Registry Host；不在白名单时必须报错，不能静默回落成 Docker Hub 仓库名。
+func (a *Adapter) parseRepo(repo string) (host, name string, err error) {
 	def := a.Upstream
 	if def == "" {
 		def = "registry-1.docker.io"
 	}
 	i := strings.IndexByte(repo, '/')
 	if i <= 0 || !strings.Contains(repo[:i], ".") {
-		return def, repo
+		return def, repo, nil
 	}
 	h := strings.ToLower(repo[:i])
 	if h == "docker.io" {
 		h = "registry-1.docker.io"
 	}
 	if !a.hostAllowed(h) {
+		return "", "", fmt.Errorf("%w: 未支持的 Registry Host %q", adapter.ErrBadPath, h)
+	}
+	return h, repo[i+1:], nil
+}
+
+// splitHost 保留给内部兼容调用；Plan 不再使用它做第二次解析。
+func (a *Adapter) splitHost(repo string) (host, name string) {
+	h, n, err := a.parseRepo(repo)
+	if err != nil {
+		def := a.Upstream
+		if def == "" {
+			def = "registry-1.docker.io"
+		}
 		return def, repo
 	}
-	return h, repo[i+1:]
+	return h, n
 }
 
 func New(upstream string, maxBytes int64, tagTTL time.Duration) *Adapter {
 	if tagTTL < 0 {
 		tagTTL = 0
 	}
-	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL, repoHost: map[string]string{}, MultiOrigin: multiOriginFromEnv()}
-}
-
-// rememberedHost 返回之前实测到的归属站点（裸格式镜像名）。
-// multiOriginFromEnv 只认精确的 "1"：未设置、空串、其他值一律保持旧行为。
-func multiOriginFromEnv() bool {
-	return strings.TrimSpace(os.Getenv("ML_REGISTRY_MULTI_ORIGIN")) == "1"
+	return &Adapter{Upstream: upstream, Scheme: "https", MaxBytes: maxBytes, TagTTL: tagTTL, repoHost: map[string]string{}}
 }
 
 func (a *Adapter) rememberedHost(name string) string {
@@ -143,60 +155,122 @@ func (a *Adapter) Match(path string) bool {
 	return path == "/v2" || strings.HasPrefix(path, "/v2/")
 }
 
-// Route 把路径拆成 repo / ref / digest。
-func (a *Adapter) Route(path string) (Kind, string, string, error) {
+// ParsedPath 是一次请求路径的唯一解析结果。Host、Repo、Name、Ref 和
+// referrers 判断都从这里出去，Gateway 与 Plan 不再各自拆路径。
+type ParsedPath struct {
+	Kind Kind
+	Host string // 逻辑 Host；ping 为空
+	Repo string // 原始 repo（含 Host 前缀）
+	Name string // 去掉 Host 前缀后的上游仓库名
+	Ref  string // manifest tag/digest，或 blob digest
+}
+
+// ParsePath 把 /v2/... 解析成唯一结果。
+func (a *Adapter) ParsePath(path string) (ParsedPath, error) {
 	if path == "/v2" || path == "/v2/" {
-		return KindPing, "", "", nil
+		return ParsedPath{Kind: KindPing}, nil
 	}
 	if !strings.HasPrefix(path, "/v2/") {
-		return KindUnknown, "", "", adapter.ErrNoMatch
+		return ParsedPath{}, adapter.ErrNoMatch
 	}
 	p := strings.TrimPrefix(path, "/v2/")
 
-	// 上传三段都先判掉，否则会被 /blobs/ 误吞
-	if strings.Contains(p, "/blobs/uploads/") || strings.HasSuffix(p, "/blobs/uploads") {
-		return KindWrite, "", "", nil
+	// referrers 必须和 manifest/blob 共用同一套 Host 解析；它不能在
+	// Gateway 里用另一套字符串规则提前返回。
+	if i := strings.LastIndex(p, "/referrers/"); i > 0 {
+		repo, digest := p[:i], p[i+len("/referrers/"):]
+		if !strings.Contains(digest, "/") {
+			if !validDigest(digest) {
+				return ParsedPath{}, adapter.ErrBadPath
+			}
+			if err := checkRepo(repo); err != nil {
+				return ParsedPath{}, err
+			}
+			host, name, err := a.parseRepo(repo)
+			if err != nil {
+				return ParsedPath{}, err
+			}
+			return ParsedPath{Kind: KindReferrers, Host: host, Repo: repo, Name: name, Ref: digest}, nil
+		}
+	}
+
+	// 上传三段都先判掉，否则会被 /blobs/ 误吞。
+	if i := strings.Index(p, "/blobs/uploads"); i > 0 && (i+len("/blobs/uploads") == len(p) || p[i+len("/blobs/uploads")] == '/') {
+		repo := p[:i]
+		if err := checkRepo(repo); err != nil {
+			return ParsedPath{}, err
+		}
+		host, name, err := a.parseRepo(repo)
+		if err != nil {
+			return ParsedPath{}, err
+		}
+		return ParsedPath{Kind: KindWrite, Host: host, Repo: repo, Name: name}, nil
 	}
 	if i := strings.LastIndex(p, "/manifests/"); i > 0 {
 		repo, ref := p[:i], p[i+len("/manifests/"):]
 		if err := checkRepo(repo); err != nil {
-			return KindUnknown, "", "", err
+			return ParsedPath{}, err
 		}
 		if ref == "" || strings.ContainsAny(ref, "/?#") {
-			return KindUnknown, "", "", adapter.ErrBadPath
+			return ParsedPath{}, adapter.ErrBadPath
 		}
 		// docker 26 拉 attestation manifest 时用的是 sha256-<hex> 这种 tag 形式，
 		// 上游按 tag 查必然 404；它本意就是 digest，这里还原成冒号形式。
 		if d, ok := dashDigest(ref); ok {
 			ref = d
 		}
-		return KindManifest, repo, ref, nil
+		host, name, err := a.parseRepo(repo)
+		if err != nil {
+			return ParsedPath{}, err
+		}
+		return ParsedPath{Kind: KindManifest, Host: host, Repo: repo, Name: name, Ref: ref}, nil
 	}
 	if i := strings.LastIndex(p, "/blobs/"); i > 0 {
 		repo, dig := p[:i], p[i+len("/blobs/"):]
 		if err := checkRepo(repo); err != nil {
-			return KindUnknown, "", "", err
+			return ParsedPath{}, err
 		}
 		if !validDigest(dig) {
-			return KindUnknown, "", "", adapter.ErrBadPath
+			return ParsedPath{}, adapter.ErrBadPath
 		}
-		return KindBlob, repo, dig, nil
+		host, name, err := a.parseRepo(repo)
+		if err != nil {
+			return ParsedPath{}, err
+		}
+		return ParsedPath{Kind: KindBlob, Host: host, Repo: repo, Name: name, Ref: dig}, nil
 	}
-	return KindUnknown, "", "", adapter.ErrBadPath
+	return ParsedPath{}, adapter.ErrBadPath
 }
 
-// Plan 只负责 manifest 和 blob；ping 由网关直接答。
+// Route 是 ParsePath 的兼容包装，保留原有调用签名。
+func (a *Adapter) Route(path string) (Kind, string, string, error) {
+	p, err := a.ParsePath(path)
+	if err != nil {
+		return KindUnknown, "", "", err
+	}
+	return p.Kind, p.Repo, p.Ref, nil
+}
+
+// Plan 只负责 manifest 和 blob；ping / referrers / write 由网关处理。
 func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
-	kind, repo, ref, err := a.Route(r.URL.Path)
+	p, err := a.ParsePath(r.URL.Path)
 	if err != nil {
 		return nil, err
+	}
+	return a.PlanParsed(r, p)
+}
+
+// PlanParsed 使用已经解析好的 ParsedPath，避免 Gateway 与 Plan 各自解析
+// Host / Repo / Ref 而产生身份分裂。
+func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan, error) {
+	if parsed.Kind != KindManifest && parsed.Kind != KindBlob {
+		return nil, adapter.ErrNoMatch
 	}
 	scheme := a.Scheme
 	if scheme == "" {
 		scheme = "https"
 	}
-	// 路径里可能带 ghcr.io / quay.io 之类前缀，回源站跟着它走。
-	host, name := a.splitHost(repo)
+	host, name, ref := parsed.Host, parsed.Name, parsed.Ref
 	// origin 是客户端请求的逻辑仓库（ghcr.io / docker.io），不随后续
 	// 记住的镜像站点漂移；缓存身份只认它，否则同一 tag 会因为这次
 	// 命中南京大学、下次命中凤凰城而算出两个 key，反复回源。
@@ -215,7 +289,7 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 	}
 	up := &url.URL{Scheme: scheme, Host: host}
 
-	switch kind {
+	switch parsed.Kind {
 	case KindManifest:
 		accept := UpstreamAccept(r.Header.Get("Accept"), foreign)
 		up.Path = "/v2/" + name + "/manifests/" + ref
@@ -276,13 +350,29 @@ func (a *Adapter) Plan(r *http.Request) (*adapter.Plan, error) {
 func isGhcrHost(host string) bool { return strings.EqualFold(host, "ghcr.io") }
 
 // sched 决定一次回源的调度身份。
-// 多源开启且是真正的 foreign Host（非 ghcr）时，kind 固定为 registry，
-// SchedKey 带上 Host：调度按 Host 隔离，健康族仍是单一 registry。
+// 多源开启且 Host 在 MultiOriginHosts 范围内、且是真正的 foreign Host
+// （非 ghcr）时，kind 固定为 registry，SchedKey 带上 Host：调度按 Host
+// 隔离，健康族仍是单一 registry。
 func (a *Adapter) sched(host string, foreign bool) (kind, schedKey string, officialOnly bool) {
-	if a.MultiOrigin && foreign && !isGhcrHost(host) {
+	if a.multiOriginHost(host) && foreign && !isGhcrHost(host) {
 		return "registry", "registry:" + host, false
 	}
 	return a.kindForHost(host, foreign), "", a.officialOnly(host, foreign)
+}
+
+// multiOriginHost 判断 Host 是否在 Phase 1 的多源范围内。
+// "*.pkg.dev" 只匹配 IsArtifactRegistry 认可的三段 Artifact Registry Host，
+// 不是任意 *.pkg.dev 通配。
+func (a *Adapter) multiOriginHost(host string) bool {
+	for _, h := range a.MultiOriginHosts {
+		if h == host {
+			return true
+		}
+		if h == "*.pkg.dev" && registryhost.IsArtifactRegistry(host) {
+			return true
+		}
+	}
+	return false
 }
 
 // kindForHost 决定回源类型：ghcr.io 走 ghcr 源池，docker hub 与其余 foreign

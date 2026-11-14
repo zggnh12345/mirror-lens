@@ -34,6 +34,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
 	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -82,6 +83,7 @@ type Gateway struct {
 	cdn           CDNOptions                                 // 边缘缓存策略（阶段 8）
 	dockerOff     bool                                       // /v2/ 的 Docker Hub 通道关闭
 	ghcrOff       bool                                       // /v2/ 的 GHCR 通道关闭
+	disabledHosts map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	trusted       atomic.Value                               // []TrustedRelay，面板热更新
@@ -170,6 +172,9 @@ type Options struct {
 	DockerOff bool
 	GHCROff   bool
 	GitHubOff bool
+	// DisabledHosts 是 /v2/ Foreign Host 的访问拒绝列表；只接受精确 Host。
+	// 它只影响访问准入，不影响 Adapter 的多源范围。
+	DisabledHosts []string
 	// GHMetadata 为 nil 或未配置 Token 时，Release 下载完全不碰 GitHub API。
 	GHMetadata *ghapi.Client
 }
@@ -194,16 +199,25 @@ func New(st *store.Store, o Options) *Gateway {
 		cli = &http.Client{
 			Transport: &bearerTransport{
 				base:   cli.Transport,
-				host:   o.Registry.Upstream,
 				tokens: newTokenCache(),
 			},
 			CheckRedirect: cli.CheckRedirect,
 		}
 	}
+	disabledHosts := make(map[string]bool, len(o.DisabledHosts))
+	for _, raw := range o.DisabledHosts {
+		h, err := registryhost.Check(raw)
+		if err != nil || h == "" {
+			slog.Warn("忽略非法的 registry.disabled_hosts 项", "host", raw, "error", err)
+			continue
+		}
+		disabledHosts[h] = true
+	}
 	gw := &Gateway{
 		ghMeta:        o.GHMetadata,
 		dockerOff:     o.DockerOff,
 		ghcrOff:       o.GHCROff,
+		disabledHosts: disabledHosts,
 		githubOff:     o.GitHubOff,
 		locks:         keymutex.New(),
 		st:            st,

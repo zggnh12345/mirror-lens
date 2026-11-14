@@ -47,6 +47,21 @@ func TestOverridesOrder(t *testing.T) {
 	}
 }
 
+func TestCopyMultiOriginHosts(t *testing.T) {
+	hosts := []string{"gcr.io", "quay.io"}
+	got := copyMultiOriginHosts(hosts)
+	if len(got) != len(hosts) || got[0] != hosts[0] || got[1] != hosts[1] {
+		t.Fatalf("copy=%v want=%v", got, hosts)
+	}
+	got[0] = "mutated"
+	if hosts[0] != "gcr.io" {
+		t.Fatal("返回值不能修改原切片")
+	}
+	if empty := copyMultiOriginHosts(nil); empty != nil {
+		t.Fatalf("空范围应保持 nil，得到 %v", empty)
+	}
+}
+
 func TestCheckRestoreJournal(t *testing.T) {
 	dir := t.TempDir()
 	if err := checkRestoreJournal(dir); err != nil {

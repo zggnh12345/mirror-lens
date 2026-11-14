@@ -152,6 +152,10 @@ var cfgSchema = []cfgField{
 		Hint: "作用：单个 layer 超过这个大小就不缓存，直接透传给客户端。用法：MB；0 = 不限制", Get: func(c *config.Config) string { return i64(c.Registry.MaxFileMB) }, Set: func(c *config.Config, v string) error { return setInt(&c.Registry.MaxFileMB, v, 0, 1<<20, true, false) }},
 	{Section: "Registry 加速", Key: "registry.tag_ttl", Label: "tag 重新验证", Kind: "duration", Restart: true,
 		Hint: "作用：tag 可能被覆盖，隔多久回源复验一次。用法：时间格式 30s / 5m / 1h", Get: func(c *config.Config) string { return durStr(c.Registry.TagTTL.Duration) }, Set: func(c *config.Config, v string) error { return setDur(&c.Registry.TagTTL.Duration, v) }},
+	{Section: "Registry 加速", Key: "registry.multi_origin_hosts", Label: "多源 Host 范围", Kind: "list", Restart: true,
+		Hint: "第一批 8 个匹配项；一行一个，空 = 没有 Host 使用多源；可写精确 Host 或 *.pkg.dev（仅匹配 Artifact Registry）", Get: func(c *config.Config) string { return strings.Join(c.Registry.MultiOriginHosts, "\n") }, Set: func(c *config.Config, v string) error { c.Registry.MultiOriginHosts = splitLines(v); return nil }},
+	{Section: "Registry 加速", Key: "registry.disabled_hosts", Label: "禁用 Host", Kind: "list", Restart: true,
+		Hint: "一行一个精确 Host；空 = 不关闭任何 Host，禁用后缓存命中也会 404", Get: func(c *config.Config) string { return strings.Join(c.Registry.DisabledHosts, "\n") }, Set: func(c *config.Config, v string) error { c.Registry.DisabledHosts = splitLines(v); return nil }},
 
 	// GitHub
 	{Section: "GitHub 加速", Key: "github.enabled", Label: "开启 GitHub 加速", Kind: "bool", Restart: true,

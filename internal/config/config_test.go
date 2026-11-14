@@ -107,6 +107,64 @@ registry:
 	}
 }
 
+func TestRegistryHostPolicyDefaults(t *testing.T) {
+	c, err := Load("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"gcr.io",
+		"registry.k8s.io",
+		"*.pkg.dev",
+		"quay.io",
+		"mcr.microsoft.com",
+		"registry.gitlab.com",
+		"public.ecr.aws",
+		"cgr.dev",
+	}
+	if len(c.Registry.MultiOriginHosts) != len(want) {
+		t.Fatalf("默认多源范围: %v", c.Registry.MultiOriginHosts)
+	}
+	for i := range want {
+		if c.Registry.MultiOriginHosts[i] != want[i] {
+			t.Fatalf("默认多源范围[%d]=%q，期望 %q", i, c.Registry.MultiOriginHosts[i], want[i])
+		}
+	}
+	if len(c.Registry.DisabledHosts) != 0 {
+		t.Fatalf("默认禁用列表应为空: %v", c.Registry.DisabledHosts)
+	}
+}
+
+func TestRegistryHostPolicyValidation(t *testing.T) {
+	p := write(t, `
+registry:
+  disabled_hosts: ["QUAY.IO", "us-docker.pkg.dev", "QUAY.IO"]
+  multi_origin_hosts: ["gcr.io", "europe-west1-docker.pkg.dev", "gcr.io"]
+`)
+	c, err := Load(p, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Registry.DisabledHosts) != 2 || c.Registry.DisabledHosts[0] != "quay.io" || c.Registry.DisabledHosts[1] != "us-docker.pkg.dev" {
+		t.Fatalf("disabled_hosts 未规范化/去重: %v", c.Registry.DisabledHosts)
+	}
+	if len(c.Registry.MultiOriginHosts) != 2 || c.Registry.MultiOriginHosts[0] != "gcr.io" || c.Registry.MultiOriginHosts[1] != "europe-west1-docker.pkg.dev" {
+		t.Fatalf("multi_origin_hosts 未规范化/去重: %v", c.Registry.MultiOriginHosts)
+	}
+
+	for _, body := range []string{
+		"registry:\n  disabled_hosts: [\"ghcr.io\"]\n",
+		"registry:\n  disabled_hosts: [\"ghcr.io:443\"]\n",
+		"registry:\n  disabled_hosts: [\"nvcr.io\"]\n",
+		"registry:\n  multi_origin_hosts: [\"foo.pkg.dev\"]\n",
+		"registry:\n  multi_origin_hosts: [\"nvcr.io\"]\n",
+	} {
+		if _, err := Load(write(t, body), true); err == nil {
+			t.Fatalf("非法 Registry Host 应被拒绝: %s", body)
+		}
+	}
+}
+
 func TestDurationForms(t *testing.T) {
 	p := write(t, `
 raw:

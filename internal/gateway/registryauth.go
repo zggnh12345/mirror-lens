@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // registry 上游（Docker Hub/ghcr/quay）先回 401 + Bearer 挑战：
@@ -135,11 +137,10 @@ func (e *tokenError) Error() string {
 	return "上游 token 申请失败: HTTP " + strconv.Itoa(e.code)
 }
 
-// bearerTransport 只对指定上游生效：401 + Bearer 挑战时换 token 重发。
-// 其他 401（如 GitHub 的 Basic）原样返回。
+// bearerTransport 对所有 Registry 上游生效：401 + Bearer 挑战时换 token 重发。
+// Realm 只接受同 Host 或内置官方白名单，避免把凭据交给第三方。
 type bearerTransport struct {
 	base   http.RoundTripper
-	host   string
 	tokens *tokenCache
 }
 
@@ -157,7 +158,9 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	// 官方源的 realm 可跨主机（auth.docker.io）；镜像源只接受同主机
 	// realm，把镜像站给的 realm 发到别处等于把凭据递给第三方。
-	if !strings.EqualFold(req.URL.Host, t.host) && !sameHost(realm, req.URL.Host) {
+	// 第一批公开 Registry 的官方 Realm 可能和请求 Host 不同（例如
+	// registry.gitlab.com → gitlab.com），只对内置白名单放行。
+	if !realmAllowedForHost(req.URL.Host, req.URL.Scheme, realm) {
 		return resp, nil
 	}
 	if scope == "" {
@@ -175,12 +178,21 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r2)
 }
 
-func sameHost(raw, host string) bool {
+// realmAllowedForHost 只允许同 Host、同 scheme 的 Realm，或内置白名单里该 Host
+// 的官方 Realm。GitLab 的 registry.gitlab.com 会把 Challenge 指到
+// gitlab.com，这是第一批里唯一的跨 Host 官方 Realm；不能用“同 Host”
+// 一刀切，也不能无条件信任上游给的任意 Realm。
+var defaultRealmAuth = v2auth.New(nil, nil)
+
+func realmAllowedForHost(host, scheme, raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || u.User != nil {
 		return false
 	}
-	return strings.EqualFold(u.Host, host)
+	if strings.EqualFold(u.Host, host) && strings.EqualFold(u.Scheme, scheme) {
+		return true
+	}
+	return defaultRealmAuth.RealmAllowed(host, u) == nil
 }
 
 // parseBearer 解析 `Bearer realm="x",service="y",scope="z"`。

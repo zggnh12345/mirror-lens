@@ -31,8 +31,8 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 		{"/v2/quay.io/coreos/etcd/manifests/v3.5.0", "quay.io", "/v2/coreos/etcd/manifests/v3.5.0"},
 		{"/v2/docker.io/library/nginx/manifests/latest", "registry-1.docker.io", "/v2/library/nginx/manifests/latest"},
 		{"/v2/library/nginx/manifests/latest", "registry-1.docker.io", "/v2/library/nginx/manifests/latest"},
-		// 不在白名单：整段都当 Docker Hub 仓库名，回源站不变
-		{"/v2/evil.example.com/a/b/manifests/latest", "registry-1.docker.io", "/v2/evil.example.com/a/b/manifests/latest"},
+		// 不在白名单：不再静默当成 Docker Hub 仓库名
+		// （见 TestPlanRejectsUnknownHostPrefix）
 	}
 	for _, c := range cases {
 		got := plan(t, c.path)
@@ -47,6 +47,90 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 		if got.key != "" && !contains(got.key, c.host) {
 			t.Fatalf("%s 的缓存键没带站点：%s", c.path, got.key)
 		}
+	}
+}
+
+func TestHostAllowedDynamicWithNonNilHosts(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	// 生产装配可能把自定义 Hosts 设成非 nil；动态 Artifact Registry
+	// 不能因为这张旧 map 里没有它就被重新关掉。
+	a.Hosts = map[string]bool{"gcr.io": true}
+	for _, h := range []string{"gcr.io", "us-docker.pkg.dev", "europe-west1-docker.pkg.dev"} {
+		if !a.hostAllowed(h) {
+			t.Errorf("%s 应通过", h)
+		}
+	}
+	if a.hostAllowed("ghcr.io") {
+		t.Error("自定义 Hosts 不能绕过全局白名单逻辑之外的任意 Host")
+	}
+	if a.hostAllowed("evil.example.com") {
+		t.Error("未知 Host 不应通过")
+	}
+}
+
+func TestParsePathSingleIdentity(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	cases := []struct {
+		path       string
+		kind       Kind
+		host, name string
+		ref        string
+	}{
+		{"/v2/gcr.io/foo/bar/manifests/latest", KindManifest, "gcr.io", "foo/bar", "latest"},
+		{"/v2/us-docker.pkg.dev/foo/bar/manifests/latest", KindManifest, "us-docker.pkg.dev", "foo/bar", "latest"},
+		{"/v2/foo/bar/manifests/latest", KindManifest, "registry-1.docker.io", "foo/bar", "latest"},
+		{"/v2/gcr.io/foo/bar/blobs/sha256:" + strings.Repeat("a", 64), KindBlob, "gcr.io", "foo/bar", "sha256:" + strings.Repeat("a", 64)},
+		{"/v2/gcr.io/foo/bar/referrers/sha256:" + strings.Repeat("b", 64), KindReferrers, "gcr.io", "foo/bar", "sha256:" + strings.Repeat("b", 64)},
+		{"/v2/gcr.io/foo/bar/blobs/uploads/", KindWrite, "gcr.io", "foo/bar", ""},
+	}
+	for _, c := range cases {
+		p, err := a.ParsePath(c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		if p.Kind != c.kind || p.Host != c.host || p.Name != c.name || p.Ref != c.ref {
+			t.Errorf("%s → %+v，期望 %v/%s/%s/%s", c.path, p, c.kind, c.host, c.name, c.ref)
+		}
+	}
+}
+
+func TestBlobCacheKeySharedAcrossOrigins(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	digest := "sha256:" + strings.Repeat("d", 64)
+	paths := []string{
+		"/v2/gcr.io/foo/bar/blobs/" + digest,
+		"/v2/registry.k8s.io/foo/bar/blobs/" + digest,
+		"/v2/us-docker.pkg.dev/foo/bar/blobs/" + digest,
+	}
+	var first string
+	for _, path := range paths {
+		r, _ := http.NewRequest(http.MethodGet, "http://gw"+path, nil)
+		p, err := a.Plan(r)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if p.CacheKey != "docker:blob:"+digest {
+			t.Fatalf("%s 的 blob 键没按内容寻址: %s", path, p.CacheKey)
+		}
+		if p.ExpectSHA != strings.TrimPrefix(digest, "sha256:") {
+			t.Fatalf("%s 未绑定 digest 校验", path)
+		}
+		if first == "" {
+			first = p.CacheKey
+		} else if p.CacheKey != first {
+			t.Fatalf("跨 Host 的同一 digest 键不一致: %s vs %s", first, p.CacheKey)
+		}
+	}
+}
+
+func TestPlanRejectsUnknownHostPrefix(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	r, _ := http.NewRequest(http.MethodGet, "http://gw/v2/evil.example.com/a/b/manifests/latest", nil)
+	if _, err := a.Plan(r); err == nil {
+		t.Fatal("未知 Host 前缀应被拒绝，不能回落成 Docker Hub 仓库名")
+	}
+	if _, err := a.ParsePath("/v2/evil.example.com/a/b/manifests/latest"); err == nil {
+		t.Fatal("ParsePath 也应拒绝未知 Host 前缀")
 	}
 }
 

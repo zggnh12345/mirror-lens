@@ -27,16 +27,23 @@ func (g *Gateway) ServeRegistry(w http.ResponseWriter, r *http.Request) {
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) { g.serveRegistry(w, r) })(w, r)
 }
 
-// registryChannelOff 判断某仓库属于哪条通道、该通道是否被关掉。
-func (g *Gateway) registryChannelOff(repo string) (string, bool) {
-	if strings.HasPrefix(repo, "ghcr.io/") {
+// registryChannelOff 判断逻辑 Host 对应的访问通道是否被关掉。
+// foreign Host 走 disabledHosts，不再统一落到 Docker 开关。
+func (g *Gateway) registryChannelOff(host string) (string, bool) {
+	if strings.EqualFold(host, "ghcr.io") {
 		if g.ghcrOff {
 			return "GHCR 加速未开启", true
 		}
 		return "", false
 	}
-	if g.dockerOff {
-		return "Docker 加速未开启", true
+	if host == "" || strings.EqualFold(host, "docker.io") || strings.EqualFold(host, "registry-1.docker.io") {
+		if g.dockerOff {
+			return "Docker 加速未开启", true
+		}
+		return "", false
+	}
+	if g.disabledHosts[host] {
+		return host + " 加速未开启", true
 	}
 	return "", false
 }
@@ -46,40 +53,41 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "404 Docker 加速未开启", http.StatusNotFound)
 		return
 	}
-	// OCI referrers（SBOM/签名索引）我们不做。回一个合法的空索引而不是 404：
-	// 部分 docker/containerd 版本在 404 时仍会解析正文，body 一空就报
-	// "failed to decode referrers index: unexpected EOF"，整次 pull 失败。
-	if isReferrersPath(r.URL.Path) {
-		w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`))
-		return
-	}
-	kind, repo, _, err := g.regAd.Route(r.URL.Path)
+	parsed, err := g.regAd.ParsePath(r.URL.Path)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// 通道开关按请求里的站前缀判：/v2/ghcr.io/... 走 GHCR 开关，
-	// 其余（裸名或别的 registry）走 Docker 开关。Ping 不受影响，
-	// 否则 docker 客户端连"能不能连"都判不出来。
-	switch kind {
-	case registryadapter.KindManifest, registryadapter.KindBlob:
-		if msg, off := g.registryChannelOff(repo); off {
-			http.Error(w, "404 "+msg, http.StatusNotFound)
-			return
-		}
-	}
-	switch kind {
-	case registryadapter.KindPing:
-		// docker 第一件事就是探这个；401 时它才会去 docker login
+
+	// ping 不受通道开关影响，否则 docker 客户端连"能不能连"都判不出来。
+	if parsed.Kind == registryadapter.KindPing {
 		w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, "{}")
+		return
+	}
+
+	// Host 准入必须在 referrers、缓存和回源之前：禁用 Host 不能靠已有
+	// Manifest/Blob 缓存或 referrers 的提前 200 绕过。
+	if msg, off := g.registryChannelOff(parsed.Host); off {
+		http.Error(w, "404 "+msg, http.StatusNotFound)
+		return
+	}
+
+	switch parsed.Kind {
+	case registryadapter.KindReferrers:
+		// OCI referrers（SBOM/签名索引）我们不做。回一个合法的空索引而不是 404：
+		// 部分 docker/containerd 版本在 404 时仍会解析正文，body 一空就报
+		// "failed to decode referrers index: unexpected EOF"，整次 pull 失败。
+		w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`))
+		return
 
 	case registryadapter.KindWrite:
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "405 镜像站只读，不支持 push/delete", http.StatusMethodNotAllowed)
+		return
 
 	case registryadapter.KindManifest:
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -87,7 +95,7 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "405", http.StatusMethodNotAllowed)
 			return
 		}
-		g.serveManifest(w, r)
+		g.serveManifest(w, r, parsed)
 
 	case registryadapter.KindBlob:
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -95,29 +103,15 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "405", http.StatusMethodNotAllowed)
 			return
 		}
-		g.serveBlob(w, r)
+		g.serveBlob(w, r, parsed)
 
 	default:
 		http.Error(w, "404", http.StatusNotFound)
 	}
 }
 
-// isReferrersPath 判断 /v2/<repo>/referrers/<digest>。
-// repo 名里本身可能带 referrers 段，所以要求它后面只剩一层。
-func isReferrersPath(p string) bool {
-	rest, ok := strings.CutPrefix(p, "/v2/")
-	if !ok {
-		return false
-	}
-	i := strings.LastIndex(rest, "/referrers/")
-	if i <= 0 {
-		return false
-	}
-	return !strings.Contains(rest[i+len("/referrers/"):], "/")
-}
-
-func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request) {
-	plan, err := g.regAd.Plan(r)
+func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed registryadapter.ParsedPath) {
+	plan, err := g.regAd.PlanParsed(r, parsed)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
@@ -200,8 +194,8 @@ func (g *Gateway) writeManifest(w http.ResponseWriter, r *http.Request, e *store
 	}
 }
 
-func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request) {
-	plan, err := g.regAd.Plan(r)
+func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request, parsed registryadapter.ParsedPath) {
+	plan, err := g.regAd.PlanParsed(r, parsed)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return

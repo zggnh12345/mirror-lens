@@ -91,6 +91,42 @@ func (e *InvalidError) Error() string {
 	return "Registry Host 不合法（" + e.Host + "）：" + e.Reason
 }
 
+// IsArtifactRegistry 判断 Host 是否是 Google Artifact Registry 的
+// <location>-docker.pkg.dev 形式。
+//
+// 这里不接受任意 *.pkg.dev：Artifact Registry 的 Host 固定为三段，
+// 第一段是 <location>-docker，后两段是 pkg.dev。location 本身还要满足
+// DNS Label 约束（1–63、字母数字和连字符、首尾非连字符、无连续 --）。
+func IsArtifactRegistry(host string) bool {
+	if host == "" || strings.ToLower(host) != host {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) != 3 || parts[1] != "pkg" || parts[2] != "dev" {
+		return false
+	}
+	first := parts[0]
+	if len(first) > 63 || !strings.HasSuffix(first, "-docker") {
+		return false
+	}
+	location := strings.TrimSuffix(first, "-docker")
+	if len(location) < 1 || len(location) > 63 {
+		return false
+	}
+	if strings.Contains(location, ".") || strings.Contains(location, "--") {
+		return false
+	}
+	if location[0] == '-' || location[len(location)-1] == '-' {
+		return false
+	}
+	for _, r := range location {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 // Allowed 判断规范化后的 Host 是否在可回源白名单内。
 // 空串（Docker Hub）始终允许。
 func Allowed(host string) bool {
@@ -102,7 +138,7 @@ func Allowed(host string) bool {
 			return true
 		}
 	}
-	return false
+	return IsArtifactRegistry(host)
 }
 
 // Check 一步完成规范化 + 白名单校验，写入路径都应该走它。

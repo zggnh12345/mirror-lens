@@ -39,6 +39,12 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
+// 多源范围只来自配置；没有单独的配置总开关，也没有环境变量覆盖。
+// 空列表表示没有任何 Host 使用多源。
+func copyMultiOriginHosts(hosts []string) []string {
+	return append([]string(nil), hosts...)
+}
+
 // checkRestoreJournal 在启动最早期拦住未完成的恢复切换。
 // journal 只在 DB/key 成对校验通过后才由 restore.sh 删除，所以「存在」就
 // 意味着配对状态未知；此时允许启动会把混合状态当成正常数据继续写。
@@ -261,7 +267,10 @@ func main() {
 	var regAd *registryadapter.Adapter
 	if cfg.Registry.Enabled {
 		regAd = registryadapter.New(cfg.Registry.Upstream, cfg.Registry.MaxFileMB<<20, cfg.Registry.TagTTL.Duration)
-		log.Printf("Registry 加速已开: /v2/ → %s（docker=%v ghcr=%v）", cfg.Registry.Upstream, cfg.Registry.Docker, cfg.Registry.GHCR)
+		regAd.MultiOriginHosts = copyMultiOriginHosts(cfg.Registry.MultiOriginHosts)
+		log.Printf("Registry 加速已开: /v2/ → %s（docker=%v ghcr=%v 多源范围=%d 禁用Host=%d）",
+			cfg.Registry.Upstream, cfg.Registry.Docker, cfg.Registry.GHCR,
+			len(regAd.MultiOriginHosts), len(cfg.Registry.DisabledHosts))
 	}
 	if !cfg.GitHub.Enabled {
 		log.Printf("GitHub 加速已关: /gh/ /raw/ /git/ 返回 404")
@@ -282,9 +291,10 @@ func main() {
 		// 真正下载时又被拦下，等于配置无效。
 		Guard: safehttp.New(safehttp.Options{MaxRedirects: 6, AllowPrivate: cfg.Probe.AllowPrivate, IPFamily: cfg.Network.IPFamily}),
 		// 三个独立加速开关：总开关关闭时 regAd 为 nil，/v2/ 整体不挂。
-		DockerOff: !cfg.Registry.Docker,
-		GHCROff:   !cfg.Registry.GHCR,
-		GitHubOff: !cfg.GitHub.Enabled,
+		DockerOff:     !cfg.Registry.Docker,
+		GHCROff:       !cfg.Registry.GHCR,
+		DisabledHosts: cfg.Registry.DisabledHosts,
+		GitHubOff:     !cfg.GitHub.Enabled,
 		GHMetadata: func() *ghapi.Client {
 			tok := cfg.GitHub.Token()
 			if tok == "" {

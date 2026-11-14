@@ -52,6 +52,8 @@ var fieldDocs = map[string]string{
 	"registry.upstream":             "Registry 上游地址，默认 Docker Hub",
 	"registry.max_file_mb":          "单个镜像层允许的最大体积（MiB）",
 	"registry.tag_ttl":              "tag 到 digest 的解析结果缓存时长",
+	"registry.multi_origin_hosts":   "第一批公开 Registry 多源范围；默认 8 个匹配项（含 Artifact Registry 模式），空表示没有 Host 使用多源；lscr.io 暂不启用",
+	"registry.disabled_hosts":       "访问准入拒绝列表；只写精确 Host，空表示不关闭任何 Host",
 	"sources.enabled":               "是否启用多源调度（关闭后只用主源）",
 	"sources.max_candidates":        "每次请求最多尝试的候选源数量",
 	"sources.sticky_ttl":            "命中后同一客户端粘滞同一源的时长",

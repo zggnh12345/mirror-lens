@@ -49,8 +49,41 @@ func TestCheckWhitelist(t *testing.T) {
 	if h, err := Check("GHCR.IO"); err != nil || h != "ghcr.io" {
 		t.Fatalf("ghcr 应规范化通过: %q %v", h, err)
 	}
+	if h, err := Check("us-docker.pkg.dev"); err != nil || h != "us-docker.pkg.dev" {
+		t.Fatalf("Artifact Registry 应通过: %q %v", h, err)
+	}
+	for _, h := range []string{
+		"gcr.io", "registry.k8s.io", "quay.io", "mcr.microsoft.com",
+		"registry.gitlab.com", "public.ecr.aws", "cgr.dev", "lscr.io",
+	} {
+		if got, err := Check(h); err != nil || got != h {
+			t.Errorf("第一批 Host %s 应通过: %q %v", h, got, err)
+		}
+	}
 	if _, err := Check("nvcr.io"); err == nil {
 		t.Fatal("未入白名单的 Host 应被拒绝")
+	}
+}
+
+func TestArtifactRegistryStrict(t *testing.T) {
+	cases := []struct {
+		host string
+		ok   bool
+	}{
+		{"us-docker.pkg.dev", true},
+		{"europe-west1-docker.pkg.dev", true},
+		{"asia-northeast1-docker.pkg.dev", true},
+		{"foo.pkg.dev", false},
+		{"a.b-docker.pkg.dev", false},
+		{"-foo-docker.pkg.dev", false},
+		{"foo--docker.pkg.dev", false},
+		{"foo-.pkg.dev", false},
+		{"foo--bar-docker.pkg.dev", false},
+	}
+	for _, c := range cases {
+		if got := IsArtifactRegistry(c.host); got != c.ok {
+			t.Errorf("IsArtifactRegistry(%q)=%v，期望 %v", c.host, got, c.ok)
+		}
 	}
 }
 

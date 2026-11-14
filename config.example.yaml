@@ -81,6 +81,21 @@ registry:
   max_file_mb: 4096
   # tag 可能被覆盖，过一会儿要重新验证；digest 永久
   tag_ttl: 5m
+  # 第一批公开 Registry 多源范围；空 = 没有 Host 使用多源。
+  # 没有单独总开关；这个列表就是唯一开关。
+  # *.pkg.dev 只匹配合法的 <location>-docker.pkg.dev，不是任意 *.pkg.dev。
+  # lscr.io 暂不启用，Realm 已修正后再独立验收。
+  multi_origin_hosts:
+    - gcr.io
+    - registry.k8s.io
+    - "*.pkg.dev"
+    - quay.io
+    - mcr.microsoft.com
+    - registry.gitlab.com
+    - public.ecr.aws
+    - cgr.dev
+  # 访问拒绝列表；只写精确 Host，空 = 不关闭。禁用后缓存命中也会返回 404。
+  disabled_hosts: []
 
 # ── GitHub 加速 ─────────────────────────────────────────
 # /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）共用这一个开关

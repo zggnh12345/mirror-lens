@@ -475,10 +475,11 @@ func TestRegistryReferrersEmptyIndex(t *testing.T) {
 		}
 	}
 	// repo 名里本身带 referrers 段的正常路径不能误伤
-	if !isReferrersPath("/v2/foo/referrers/bar/referrers/" + dig) {
-		t.Error("嵌套路段的 referrers 未识别")
+	a := registryadapter.New("registry-1.docker.io", 0, 0)
+	if p, err := a.ParsePath("/v2/foo/referrers/bar/referrers/" + dig); err != nil || p.Kind != registryadapter.KindReferrers {
+		t.Errorf("嵌套路段的 referrers 未识别: %+v %v", p, err)
 	}
-	if isReferrersPath("/v2/foo/referrers/bar/manifests/latest") {
-		t.Error("清单路径被误判成 referrers")
+	if p, err := a.ParsePath("/v2/foo/referrers/bar/manifests/latest"); err != nil || p.Kind != registryadapter.KindManifest {
+		t.Errorf("清单路径被误判成 referrers: %+v %v", p, err)
 	}
 }
