@@ -215,7 +215,11 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 
 		default:
 			resp.Body.Close()
-			g.fail(w, r, plan, prev, &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)})
+			g.fail(w, r, plan, prev, &upstreamError{
+				Code:       resp.StatusCode,
+				RetryAfter: retryAfterHeader(resp.Header),
+				Challenge:  resp.Header.Get("WWW-Authenticate"),
+			})
 			return
 		}
 
@@ -273,9 +277,11 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 		if t.c != nil && retryableFromMirror(resp.StatusCode) {
 			io.CopyN(io.Discard, resp.Body, 4096)
 			resp.Body.Close()
-			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
-			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它。
-			g.reportSource(plan.Sched(), t, !isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
+			ue := &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header), Challenge: resp.Header.Get("WWW-Authenticate")}
+			// 401/403 是「没资格问」，换源不代表这台源坏了，别冷却它；
+			// 429/5xx 才是源自身故障，要记失败。ok=true 且带 code 时
+			// reportSource 会把 401/403 归为 neutral。
+			g.reportSource(plan.Sched(), t, isAuthDenied(ue.Code), time.Since(start), scheduler.Hint{RetryAfter: ue.RetryAfter, Code: ue.Code})
 			if ue.RetryAfter > 0 {
 				loggw(slog.LevelInfo, "源限流，换下一个", ctx, plan, logging.UpstreamRateLimited, nil, "source", t.c.Name, "status", resp.StatusCode, "retry_after_s", int(ue.RetryAfter.Seconds()))
 			} else {
@@ -1122,7 +1128,17 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	}
 	noStore(w.Header())
 	setRetryAfter(w, err)
+	setAuthChallenge(w, err)
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
+}
+
+// setAuthChallenge 只把官方最终失败的 WWW-Authenticate 交给客户端；
+// 候选源的挑战已在选取阶段丢弃，不会出现在 upstreamError 里。
+func setAuthChallenge(w http.ResponseWriter, err error) {
+	var ue *upstreamError
+	if errors.As(err, &ue) && ue.Challenge != "" && isAuthDenied(ue.Code) {
+		w.Header().Set("WWW-Authenticate", ue.Challenge)
+	}
 }
 
 // blobDigestFromPath 从 /v2/<name>/blobs/<digest> 取摘要；

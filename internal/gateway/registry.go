@@ -130,6 +130,8 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 		ne, notMod, ferr := g.fetchOnce(r.Context(), plan, e)
 		if ferr != nil {
 			code := statusFor(ferr)
+			noStore(w.Header())
+			setAuthChallenge(w, ferr)
 			http.Error(w, fmt.Sprintf("%d 回源失败: %v", code, ferr), code)
 			return
 		}
@@ -306,12 +308,17 @@ func (g *Gateway) headBlob(w http.ResponseWriter, r *http.Request, plan *adapter
 			g.writeHeadOK(w, plan, t, hdr)
 			return
 		case isAuthDenied(code):
-			// 与 GET 同口径：401/403 是「没资格问」，换源也拿不到，
-			// 直接把挑战头交给客户端去认证；不冷却（P2-2 待统一分类）。
+			// 候选源要求认证，不把它的挑战交给客户端：继续试下一个目标，
+			// 官方 401 才由下面 t.c == nil 分支透传。候选 401/403 记中性，
+			// 不进冷却。这样 HEAD 与 GET 的候选失败语义一致。
 			g.reportSource(plan.Sched(), t, true, time.Since(start),
 				scheduler.Hint{Code: code, Mode: "head"})
-			g.writeHeadStatus(w, hdr, code)
-			return
+			if t.c == nil {
+				g.writeHeadStatus(w, hdr, code)
+				return
+			}
+			lastCode, lastHdr = 0, nil
+			continue
 		case isMiss(code):
 			// 未命中不是源故障：只记事件，不冷却（与透传路径同口径）。
 			metrics.SourceMiss(plan.Kind, code)

@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=14">
+<link rel="stylesheet" href="/app.css?v=16">
 </head>
 <body>
 <header>
@@ -442,8 +442,59 @@ $('#btnSettings').addEventListener('click', async function(){
 
 /* ---- 配置参数 ---- */
 var CFG = { data: null, orig: {}, cur: {} };
+
+/* 多源 Host 是固定范围，不再给自由文本：8 个开关一行 4 个，窄屏一行 2 个。
+   开关只改变 multi_origin_hosts 的顺序化列表，不引入第二套配置事实。 */
+var MOH_HOSTS = [
+  {v:'gcr.io', t:'GCR', h:'gcr.io'},
+  {v:'registry.k8s.io', t:'K8S', h:'registry.k8s.io'},
+  {v:'*.pkg.dev', t:'PKG', h:'Artifact Registry（*仅匹配 <location>-docker.pkg.dev）'},
+  {v:'quay.io', t:'QUAY', h:'quay.io'},
+  {v:'mcr.microsoft.com', t:'MCR', h:'mcr.microsoft.com'},
+  {v:'registry.gitlab.com', t:'GITLAB', h:'registry.gitlab.com'},
+  {v:'public.ecr.aws', t:'ECR', h:'public.ecr.aws（ECR Public）'},
+  {v:'cgr.dev', t:'CGR', h:'cgr.dev'}
+];
+var MOH_EXTRA = [];
+
+function isArtifactRegistry(h){
+  h = String(h || '').toLowerCase();
+  var p = h.split('.');
+  if (p.length !== 3 || p[1] !== 'pkg' || p[2] !== 'dev') return false;
+  var first = p[0];
+  if (first.length > 63 || first.slice(-7) !== '-docker') return false;
+  var loc = first.slice(0, -7);
+  if (!loc || loc.length > 63 || /[.]|--/.test(loc) || /^-|-$/.test(loc)) return false;
+  return /^[a-z0-9-]+$/.test(loc);
+}
+
+function mohHtml(value){
+  var on = {}, extra = [];
+  String(value || '').split(/\r?\n/).forEach(function(x){
+    x = x.trim();
+    if (!x) return;
+    on[x] = true;
+    if (!MOH_HOSTS.some(function(o){ return o.v === x; })) extra.push(x);
+  });
+  MOH_EXTRA = extra;
+  var h = '<div class="moh-grid" data-key="registry.multi_origin_hosts">';
+  MOH_HOSTS.forEach(function(o){
+    h += '<label class="moh-item" title="' + esc(o.h) + '">' +
+      '<span class="moh-l"><b>' + esc(o.t) + '</b><small>' + esc(o.h.split('（')[0]) + '</small></span>' +
+      '<span class="sw" title="' + esc(o.h) + '"><input type="checkbox" data-moh="' + esc(o.v) + '"' +
+      (on[o.v] ? ' checked' : '') + '><span></span></span></label>';
+  });
+  h += '</div>';
+  if (extra.length){
+    h += '<div class="moh-extra">当前配置里还有开关未覆盖的 Host：<b>' + esc(extra.join('、')) +
+      '</b>。保存时会原样保留；要用开关管理，请先从配置文件移除。</div>';
+  }
+  return h;
+}
+
 function cfgControl(f){
   var k = f.key;
+  if (k === 'registry.multi_origin_hosts') return mohHtml(f.value);
   if (f.kind === 'bool' || f.kind === 'enum'){
     var opts = f.kind === 'bool' ? ['true','false'] : f.options;
     // 枚举值要给人看：配置里存 auto/v4/v6，按钮上写中文。
@@ -560,6 +611,19 @@ function bindCfg(){
       el.closest('.cfgrow').classList.remove('bad');
     });
   });
+  var moh = $('#cfgBox .moh-grid');
+  if (moh){
+    moh.querySelectorAll('input[data-moh]').forEach(function(el){
+      el.addEventListener('change', function(){
+        var vals = [];
+        moh.querySelectorAll('input[data-moh]:checked').forEach(function(x){ vals.push(x.dataset.moh); });
+        MOH_EXTRA.forEach(function(x){ vals.push(x); });
+        CFG.cur['registry.multi_origin_hosts'] = vals.join('\n');
+        var row = moh.closest('.cfgrow');
+        if (row) row.classList.remove('bad');
+      });
+    });
+  }
   $('#cfgBox').querySelectorAll('[data-clear]').forEach(function(b){
     b.addEventListener('click', async function(){
       var k = b.dataset.clear;

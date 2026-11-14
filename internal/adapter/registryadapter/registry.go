@@ -81,6 +81,22 @@ func (a *Adapter) parseRepo(repo string) (host, name string, err error) {
 	}
 	i := strings.IndexByte(repo, '/')
 	if i <= 0 || !strings.Contains(repo[:i], ".") {
+		// 裸 Host（没有仓库名）不当作 Docker Hub 仓库名：例如
+		// /v2/gcr.io/manifests/latest 的用户意图显然是显式 Host，只是漏了
+		// owner/repo。静默回落到默认上游会变成“Docker Hub 上有个叫 gcr.io
+		// 的仓库”，错误信息也完全对不上。Docker Hub 上真有一个叫 gcr.io
+		// 的仓库这种歧义无法自动判定，按显式 Host 缺仓库名拒绝，宁可让
+		// 客户端拿到明确的 400。
+		if i < 0 {
+			h := strings.ToLower(repo)
+			switch h {
+			case "docker.io", "registry-1.docker.io", "index.docker.io":
+				h = "registry-1.docker.io"
+			}
+			if h != "" && a.hostAllowed(h) {
+				return "", "", fmt.Errorf("%w: 显式 Registry Host %q 后缺少仓库名", adapter.ErrBadPath, h)
+			}
+		}
 		return def, repo, nil
 	}
 	h := strings.ToLower(repo[:i])

@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,6 +110,207 @@ func TestBlobHeadUsesCandidates(t *testing.T) {
 	}
 	if fams := mustHealth(t, f.st, regID); fams["docker"] != 0 || fams["ghcr"] != 0 {
 		t.Errorf("HEAD 成功写进了别的健康族: %v", fams)
+	}
+}
+
+// 候选 403 的 GET 也必须回官方，且不能透传候选挑战。
+func TestBlobGetMirror403FallsBackOfficial(t *testing.T) {
+	f := newMOFixture(t)
+	body := []byte("official-blob-after-mirror-403")
+	sum := sha256.Sum256(body)
+	f.officialBody = body
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+
+	hdr := http.Header{}
+	hdr.Set("WWW-Authenticate", `Bearer realm="https://auth.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/" + digest,
+		hits: &f.nativeHits, status: 403, hdr: hdr,
+	})
+	defer srv.Close()
+	regID := f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/blobs/"+digest)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d，镜像 403 后应回官方并成功", w.Code)
+	}
+	if got := w.Body.String(); got != string(body) {
+		t.Fatalf("body=%q，应拿到官方完整内容", got)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("候选源挑战不应透传，得到 %q", got)
+	}
+	if f.officialHits.Load() != 1 {
+		t.Fatalf("official=%d，应回官方一次", f.officialHits.Load())
+	}
+	ev := eventsOf(t, f.dbPath, regID)
+	if len(ev) != 1 || ev[0].Code != 403 || ev[0].OK != 1 || ev[0].Neutral != 1 {
+		t.Fatalf("候选 403 应记中性事件，实际 %+v", ev)
+	}
+}
+
+// GET 的 429/5xx 是源自身失败：回官方，但候选必须记失败并冷却。
+func TestBlobGetMirrorRetryableFailureCoolsSource(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			f := newMOFixture(t)
+			body := []byte("official-blob-after-mirror-retryable")
+			sum := sha256.Sum256(body)
+			f.officialBody = body
+			digest := "sha256:" + hex.EncodeToString(sum[:])
+
+			srv := httptest.NewServer(&moMirror{
+				path: "/v2/library/alpine/blobs/" + digest,
+				hits: &f.nativeHits, status: status,
+			})
+			defer srv.Close()
+			regID := f.addRegistrySource(t, srv, "native")
+
+			w := f.get(t, "/v2/quay.io/library/alpine/blobs/"+digest)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d，候选 %d 后应回官方成功", w.Code, status)
+			}
+			if got := w.Body.String(); got != string(body) {
+				t.Fatalf("body=%q，应拿到官方完整内容", got)
+			}
+			if got := w.Header().Get("X-ML-Source"); got != "" {
+				t.Fatalf("回官方时 X-ML-Source 应为空，得到 %q", got)
+			}
+			if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+				t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
+			}
+			ev := eventsOf(t, f.dbPath, regID)
+			if len(ev) != 1 || ev[0].Code != status || ev[0].OK != 0 || ev[0].Neutral != 0 {
+				t.Fatalf("候选 %d 应记失败事件，实际 %+v", status, ev)
+			}
+			if n := len(f.gw.sched.Candidates("registry:quay.io")); n != 0 {
+				t.Fatalf("候选 %d 应进入冷却，候选池=%d", status, n)
+			}
+		})
+	}
+}
+
+// 候选 401 后官方 5xx：最终只能返回官方错误，不能泄漏候选挑战。
+func TestBlobGetMirror401Official5xxDoesNotLeakChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	f.officialStatus = http.StatusServiceUnavailable
+	digest := "sha256:" + headHex
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/" + digest,
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/blobs/"+digest)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d，应返回官方 503", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("官方失败时不得回传候选挑战，得到 %q", got)
+	}
+	if got := w.Header().Get("X-ML-Source"); got != "" {
+		t.Fatalf("回官方时 X-ML-Source 应为空，得到 %q", got)
+	}
+	if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+		t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
+	}
+}
+
+// Manifest GET 走 fetchOnce 的路径，官方 401 的挑战也不能丢。
+func TestManifestGetOfficial401PassesChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	challenge := `Bearer realm="https://official.example/token",service="quay.io"`
+	f.officialStatus = http.StatusUnauthorized
+	f.officialHdr = http.Header{"Www-Authenticate": {challenge}}
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/manifests/latest",
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/latest")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d，应透传官方 401", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != challenge {
+		t.Fatalf("WWW-Authenticate=%q，应透传官方挑战 %q", got, challenge)
+	}
+}
+
+// 候选 401 的 GET 必须继续回官方，且不能把候选的挑战头冒充成最终结果。
+func TestBlobGetMirror401FallsBackOfficial(t *testing.T) {
+	f := newMOFixture(t)
+	body := []byte("official-blob-after-mirror-401")
+	sum := sha256.Sum256(body)
+	f.officialBody = body
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+
+	hdr := http.Header{}
+	hdr.Set("WWW-Authenticate", `Bearer realm="https://auth.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/" + digest,
+		hits: &f.nativeHits, status: 401, hdr: hdr,
+	})
+	defer srv.Close()
+	regID := f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/blobs/"+digest)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d，镜像 401 后应回官方并成功", w.Code)
+	}
+	if got := w.Body.String(); got != string(body) {
+		t.Fatalf("body=%q，应拿到官方完整内容", got)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("候选源挑战不应透传，得到 %q", got)
+	}
+	if n := f.officialHits.Load(); n != 1 {
+		t.Fatalf("official=%d，应回官方一次", n)
+	}
+	ev := eventsOf(t, f.dbPath, regID)
+	if len(ev) != 1 || ev[0].Code != 401 || ev[0].OK != 1 || ev[0].Neutral != 1 {
+		t.Fatalf("候选 401 应记中性事件，实际 %+v", ev)
+	}
+}
+
+// 候选与官方都要求认证：官方挑战必须透传，候选挑战不能覆盖它。
+func TestBlobGetOfficial401PassesChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	challenge := `Bearer realm="https://official.example/token",service="quay.io"`
+	f.officialStatus = http.StatusUnauthorized
+	f.officialHdr = http.Header{"Www-Authenticate": {challenge}}
+	digest := "sha256:" + headHex
+
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/" + digest,
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/blobs/"+digest)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d，应透传官方 401", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != challenge {
+		t.Fatalf("WWW-Authenticate=%q，应透传官方挑战 %q", got, challenge)
+	}
+	if n := f.officialHits.Load(); n != 1 {
+		t.Fatalf("official=%d，应尝试官方一次", n)
+	}
+	if got := w.Header().Get("X-ML-Source"); got != "" {
+		t.Fatalf("回官方时 X-ML-Source 应为空，得到 %q", got)
+	}
+	if n := f.nativeHits.Load(); n != 1 {
+		t.Fatalf("native=%d，候选应先尝试一次", n)
 	}
 }
 
@@ -256,8 +459,8 @@ func TestBlobHeadPassesAuthChallenge(t *testing.T) {
 	}
 }
 
-// 镜像 401 与 GET 同口径：不换源，把挑战头交给客户端去认证。
-func TestBlobHeadMirror401StopsWithChallenge(t *testing.T) {
+// 镜像 401：候选源不能把挑战冒充官方结论，必须继续回退官方；官方 200 则成功。
+func TestBlobHeadMirror401FallsBackOfficial(t *testing.T) {
 	f := newMOFixture(t)
 	challenge := `Bearer realm="https://auth.example/token",service="quay.io"`
 	hdr := http.Header{}
@@ -267,25 +470,109 @@ func TestBlobHeadMirror401StopsWithChallenge(t *testing.T) {
 		hits: &f.nativeHits, status: 401, hdr: hdr,
 	})
 	defer srv.Close()
+	regID := f.addRegistrySource(t, srv, "native")
+
+	w := f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
+	if w.Code != 200 {
+		t.Fatalf("status=%d，镜像 401 后应回官方并成功", w.Code)
+	}
+	if n := f.officialHits.Load(); n != 1 {
+		t.Fatalf("official=%d，应回官方一次", n)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("候选源的挑战不能透传，得到 %q", got)
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("HEAD 不得带 Body")
+	}
+	ev := eventsOf(t, f.dbPath, regID)
+	if len(ev) != 1 || ev[0].Code != 401 || ev[0].OK != 1 || ev[0].Neutral != 1 {
+		t.Fatalf("镜像 401 应记中性事件，实际 %+v", ev)
+	}
+	// 401 不进冷却：下一次仍然会先问镜像。
+	_ = f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
+	if n := f.nativeHits.Load(); n != 2 {
+		t.Fatalf("mirror hits=%d，401 不应让镜像进冷却", n)
+	}
+}
+
+// 候选 403 与 401 同口径：不冷却、不冒充官方挑战，继续回官方。
+func TestBlobHeadMirror403FallsBackOfficial(t *testing.T) {
+	f := newMOFixture(t)
+	hdr := http.Header{}
+	hdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/sha256:" + headHex,
+		hits: &f.nativeHits, status: 403, hdr: hdr,
+	})
+	defer srv.Close()
+	regID := f.addRegistrySource(t, srv, "native")
+
+	w := f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
+	if w.Code != 200 {
+		t.Fatalf("status=%d，镜像 403 后应回官方并成功", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("候选 403 挑战不应透传，得到 %q", got)
+	}
+	if f.officialHits.Load() != 1 {
+		t.Fatalf("official=%d，应回官方一次", f.officialHits.Load())
+	}
+	ev := eventsOf(t, f.dbPath, regID)
+	if len(ev) != 1 || ev[0].Code != 403 || ev[0].OK != 1 || ev[0].Neutral != 1 {
+		t.Fatalf("镜像 403 应记中性事件，实际 %+v", ev)
+	}
+}
+
+// 候选和官方都要鉴权：最终只能透传官方挑战，候选挑战必须丢弃。
+func TestBlobHeadMirror401Official401PassesOfficialChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	officialChallenge := `Bearer realm="https://official.example/token",service="quay.io"`
+	f.officialStatus = 401
+	f.officialHdr = http.Header{"Www-Authenticate": {officialChallenge}}
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/sha256:" + headHex,
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
 	f.addRegistrySource(t, srv, "native")
 
 	w := f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
 	if w.Code != 401 {
-		t.Fatalf("status=%d，镜像 401 应原样交给客户端", w.Code)
+		t.Fatalf("status=%d，应透传官方 401", w.Code)
 	}
-	if got := w.Header().Get("WWW-Authenticate"); got != challenge {
-		t.Fatalf("WWW-Authenticate=%q，应原样透传", got)
+	if got := w.Header().Get("WWW-Authenticate"); got != officialChallenge {
+		t.Fatalf("WWW-Authenticate=%q，应透传官方挑战 %q", got, officialChallenge)
 	}
-	if n := f.officialHits.Load(); n != 0 {
-		t.Fatalf("official=%d，鉴权失败不应换源", n)
+	if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+		t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
 	}
-	if w.Body.Len() != 0 {
-		t.Fatalf("401 的 HEAD 不得带 Body")
+}
+
+// 候选 401 后官方 5xx：不能把候选 Challenge 当成最终响应。
+func TestBlobHeadMirror401Official5xxDoesNotLeakChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	f.officialStatus = 503
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/blobs/sha256:" + headHex,
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
+	if w.Code != 503 {
+		t.Fatalf("status=%d，应返回官方 503", w.Code)
 	}
-	// 401 不进冷却：再发一次仍然先问镜像。
-	_ = f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
-	if n := f.nativeHits.Load(); n != 2 {
-		t.Fatalf("mirror hits=%d，401 不应让镜像进冷却", n)
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("官方失败时不得回传候选挑战，得到 %q", got)
+	}
+	if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+		t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
 	}
 }
 

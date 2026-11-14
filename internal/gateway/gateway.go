@@ -995,6 +995,13 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 					}
 				}
 				lastErr = &upstreamError{Code: code, RetryAfter: hint.RetryAfter}
+				if t := targets[r.idx]; t.c == nil {
+					lastErr = &upstreamError{
+						Code:       code,
+						RetryAfter: hint.RetryAfter,
+						Challenge:  r.up.resp.Header.Get("WWW-Authenticate"),
+					}
+				}
 				if started < n {
 					launch(started)
 					pending++
@@ -1087,7 +1094,11 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	}
 	if resp.StatusCode != http.StatusOK {
 		io.CopyN(io.Discard, resp.Body, 4096)
-		return nil, false, resp.StatusCode, &upstreamError{Code: resp.StatusCode, RetryAfter: retryAfterHeader(resp.Header)}
+		return nil, false, resp.StatusCode, &upstreamError{
+			Code:       resp.StatusCode,
+			RetryAfter: retryAfterHeader(resp.Header),
+			Challenge:  resp.Header.Get("WWW-Authenticate"),
+		}
 	}
 	if plan.Validate != nil {
 		if err := plan.Validate(resp); err != nil {
@@ -1428,6 +1439,9 @@ type upstreamError struct {
 	Code int
 	// RetryAfter 是 429 响应里源自己说的等待时间，解析不出来就是 0。
 	RetryAfter time.Duration
+	// Challenge 只保留 401/403 的 WWW-Authenticate，供最终响应透传；
+	// 候选源的挑战不能直接交给客户端，只有官方源的挑战才是客户端要答的。
+	Challenge string
 }
 
 func (e *upstreamError) Error() string { return fmt.Sprintf("上游返回 %d", e.Code) }
@@ -1531,6 +1545,8 @@ func statusFor(err error) int {
 		switch ue.Code {
 		case http.StatusNotFound, http.StatusGone:
 			return http.StatusNotFound
+		case http.StatusUnauthorized:
+			return http.StatusUnauthorized
 		case http.StatusForbidden:
 			return http.StatusForbidden
 		case http.StatusTooManyRequests:

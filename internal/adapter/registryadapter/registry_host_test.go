@@ -50,6 +50,40 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsBareKnownHost(t *testing.T) {
+	a := New("registry-1.docker.io", 0, time.Minute)
+	for _, path := range []string{
+		"/v2/gcr.io/manifests/latest",
+		"/v2/registry.k8s.io/manifests/latest",
+		"/v2/quay.io/blobs/sha256:" + strings.Repeat("a", 64),
+		"/v2/docker.io/manifests/latest",
+	} {
+		if _, err := a.ParsePath(path); err == nil {
+			t.Errorf("%s: 裸 Host 缺仓库名应拒绝，不能回落成 Docker Hub 仓库", path)
+		}
+		r, _ := http.NewRequest(http.MethodGet, "http://gw"+path, nil)
+		if _, err := a.Plan(r); err == nil {
+			t.Errorf("%s: Plan 也应拒绝裸 Host", path)
+		}
+	}
+	// 带命名空间的 Docker Hub 仓库仍然合法，不能被上面的规则误伤。
+	p, err := a.ParsePath("/v2/library/gcr.io/manifests/latest")
+	if err != nil {
+		t.Fatalf("library/gcr.io 是普通 Docker Hub 仓库名，应允许: %v", err)
+	}
+	if p.Host != "registry-1.docker.io" || p.Name != "library/gcr.io" {
+		t.Fatalf("library/gcr.io 解析成 %s/%s", p.Host, p.Name)
+	}
+	// 显式 Docker Hub 前缀是裸名仓库的逃生路径。
+	p, err = a.ParsePath("/v2/docker.io/gcr.io/manifests/latest")
+	if err != nil {
+		t.Fatalf("docker.io/gcr.io 应允许: %v", err)
+	}
+	if p.Host != "registry-1.docker.io" || p.Name != "gcr.io" {
+		t.Fatalf("docker.io/gcr.io 解析成 %s/%s", p.Host, p.Name)
+	}
+}
+
 func TestHostAllowedDynamicWithNonNilHosts(t *testing.T) {
 	a := New("registry-1.docker.io", 0, time.Minute)
 	// 生产装配可能把自定义 Hosts 设成非 nil；动态 Artifact Registry
@@ -131,6 +165,14 @@ func TestPlanRejectsUnknownHostPrefix(t *testing.T) {
 	}
 	if _, err := a.ParsePath("/v2/evil.example.com/a/b/manifests/latest"); err == nil {
 		t.Fatal("ParsePath 也应拒绝未知 Host 前缀")
+	}
+	// 显式 Docker Hub 前缀仍可表达“Docker Hub 上带点号的命名空间”。
+	p, err := a.ParsePath("/v2/docker.io/evil.example.com/a/b/manifests/latest")
+	if err != nil {
+		t.Fatalf("docker.io/evil.example.com 应允许: %v", err)
+	}
+	if p.Host != "registry-1.docker.io" || p.Name != "evil.example.com/a/b" {
+		t.Fatalf("escape 解析成 %s/%s", p.Host, p.Name)
 	}
 }
 

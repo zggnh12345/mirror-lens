@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=15">
+<link rel="stylesheet" href="/app.css?v=16">
 </head>
 <body>
 <header>
@@ -463,13 +463,44 @@ function regDiagHtml(x){
   return h + rows.join('') + '</div>';
 }
 
-/* 能力标签只出 HUB 与 RAW：没探过的类型不挂标签，
-   否则一个泛称会让人以为两种代理都能用。 */
+/* Registry 标签是只读派生视图：先按 RepoHost 认出归属，再读该归属对应的能力列。
+   HUB/GHCR 仍以旧列权威；Foreign Host 必须 RegistryCap=1 且有探测出的路径模式。
+   没探过、探测失败或能力未知都不挂标签，避免把“可能支持”画成“已支持”。 */
+function isArtifactRegistry(h){
+  h = String(h || '').toLowerCase();
+  var p = h.split('.');
+  if (p.length !== 3 || p[1] !== 'pkg' || p[2] !== 'dev') return false;
+  var first = p[0];
+  if (first.length > 63 || first.slice(-7) !== '-docker') return false;
+  var loc = first.slice(0, -7);
+  if (!loc || loc.length > 63 || /[.]|--/.test(loc) || /^-|-$/.test(loc)) return false;
+  return /^[a-z0-9-]+$/.test(loc);
+}
+
+function registryTag(x){
+  var h = String(x.repo_host || '').toLowerCase();
+  if (!h) return x.docker_cap === 1 ? 'HUB' : (x.ghcr_cap === 1 ? 'GHCR' : '');
+  if (h === 'docker.io') return x.docker_cap === 1 ? 'HUB' : '';
+  if (h === 'ghcr.io') return x.ghcr_cap === 1 ? 'GHCR' : '';
+  if (x.registry_cap !== 1 || !x.registry_path_mode) return '';
+  if (h === 'gcr.io') return 'GCR';
+  if (h === 'registry.k8s.io') return 'K8S';
+  if (h === 'quay.io') return 'QUAY';
+  if (h === 'mcr.microsoft.com') return 'MCR';
+  if (h === 'registry.gitlab.com') return 'GITLAB';
+  if (h === 'public.ecr.aws') return 'ECR';
+  if (h === 'cgr.dev') return 'CGR';
+  if (isArtifactRegistry(h)) return 'PKG';
+  return '';
+}
+
 function capTags(x){
-  var out = '';
-  if (x.docker_cap === 1) out += '<span class="cap on dk">HUB</span>';
+  var out = '', reg = registryTag(x);
+  var regTip = reg === 'ECR' ? 'ECR Public' : (reg === 'PKG' ? 'Artifact Registry' : reg);
+  if (reg === 'HUB') out += '<span class="cap on dk">HUB</span>';
+  else if (reg === 'GHCR') out += '<span class="cap on gc">GHCR</span>';
+  else if (reg) out += '<span class="cap on rg" title="' + esc(regTip) + '">' + esc(reg) + '</span>';
   if (x.github_cap === 1) out += '<span class="cap on gh">RAW</span>';
-  if (x.ghcr_cap === 1) out += '<span class="cap on gc">GHCR</span>';
   return out;
 }
 

@@ -45,7 +45,7 @@ func TestHeadMissLeavesSourceUncooled(t *testing.T) {
 	}
 }
 
-// 401/403 同样是中性结果：透传挑战、不换源、不冷却、事件照留。
+// 401/403 同样是中性结果：候选源不冷却，继续回官方；官方 200 就成功。
 func TestHeadAuthLeavesSourceUncooled(t *testing.T) {
 	f := newMOFixture(t)
 	deny := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,14 +56,14 @@ func TestHeadAuthLeavesSourceUncooled(t *testing.T) {
 	regID := f.addRegistrySource(t, deny, "native")
 
 	w := f.head(t, "/v2/quay.io/library/alpine/blobs/sha256:"+headHex)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("401 应原样透传，实际 %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("候选 401 后应回官方成功，实际 %d", w.Code)
 	}
-	if got := w.Header().Get("WWW-Authenticate"); got == "" {
-		t.Fatal("挑战头必须透传，否则客户端无法认证")
+	if f.officialHits.Load() != 1 {
+		t.Fatalf("官方应被访问 1 次，实际 %d", f.officialHits.Load())
 	}
-	if f.officialHits.Load() != 0 {
-		t.Fatalf("认证失败不应去官方重试，实际官方命中 %d 次", f.officialHits.Load())
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("候选源挑战不应透传，得到 %q", got)
 	}
 
 	ev := eventsOf(t, f.dbPath, regID)

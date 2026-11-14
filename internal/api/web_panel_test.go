@@ -10,7 +10,7 @@ import (
 )
 
 // 面板每行必须是「站点名 + 域名 / 备注 + 延迟 + 状态条」两段，
-// 能力标签只允许 HUB 与 RAW，异常行要给人话原因而不是 Go 原始错误。
+// 能力标签按 RepoHost 派生（HUB/GHCR/第一批 Foreign Registry），异常行要给人话原因。
 // 这里直接跑 index.html 里的真脚本（套一层 DOM 壳），避免测试复制一份渲染逻辑。
 func TestPanelRowContract(t *testing.T) {
 	raw, err := webFS.ReadFile("web/index.html")
@@ -73,15 +73,19 @@ func TestPanelRowContract(t *testing.T) {
 		t.Fatalf("执行面板脚本失败: %v\n%s", err, string(out))
 	}
 	var got struct {
-		L1, L2    int
-		Tags      []string
-		Tags3     []string
-		Cells     int
-		NameShown bool
-		DeadHuman bool
-		DeadZero  bool
-		DeadDetl  bool
-		Err404    bool
+		L1, L2            int
+		Tags              []string
+		Tags3             []string
+		TagsGCR           []string
+		TagsPKG           []string
+		TagsNoProbe       []string
+		TagsForeignNotHUB []string
+		Cells             int
+		NameShown         bool
+		DeadHuman         bool
+		DeadZero          bool
+		DeadDetl          bool
+		Err404            bool
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("输出不是 JSON: %v\n%s", err, string(out))
@@ -95,6 +99,18 @@ func TestPanelRowContract(t *testing.T) {
 	}
 	if strings.Join(got.Tags3, ",") != "HUB" {
 		t.Errorf("只有 Docker 能力的源不应显示 RAW，实际 %v", got.Tags3)
+	}
+	if strings.Join(got.TagsGCR, ",") != "GCR" {
+		t.Errorf("gcr.io 已探测源应只显示 GCR，实际 %v", got.TagsGCR)
+	}
+	if strings.Join(got.TagsPKG, ",") != "PKG" {
+		t.Errorf("Artifact Registry 应显示 PKG，实际 %v", got.TagsPKG)
+	}
+	if len(got.TagsNoProbe) != 0 {
+		t.Errorf("未探测的 Foreign Host 不应显示标签，实际 %v", got.TagsNoProbe)
+	}
+	if strings.Join(got.TagsForeignNotHUB, ",") != "GCR" {
+		t.Errorf("Foreign Host 即使 docker_cap=1 也只能显示归属标签，实际 %v", got.TagsForeignNotHUB)
 	}
 	if got.Cells != 24 {
 		t.Errorf("状态条应有 24 格，实际 %d", got.Cells)
@@ -113,6 +129,42 @@ func TestPanelRowContract(t *testing.T) {
 	}
 	if !got.Err404 {
 		t.Error("404 应翻译成「仓库地址无效，无法获取镜像清单」")
+	}
+}
+
+// 多源 Host 是固定 8 个独立开关，不再给自由文本；宽屏 4 列、窄屏 2 列。
+func TestSettingsMultiOriginSwitchContract(t *testing.T) {
+	raw, err := webFS.ReadFile("web/settings.html")
+	if err != nil {
+		t.Fatalf("read settings.html: %v", err)
+	}
+	src := string(raw)
+	for _, want := range []string{
+		"var MOH_HOSTS", "data-moh", "moh-grid", "function mohHtml(",
+		"k === 'registry.multi_origin_hosts'", "MOH_EXTRA",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("多源开关缺少 %q", want)
+		}
+	}
+	for _, want := range []string{"gcr.io", "registry.k8s.io", "*.pkg.dev", "quay.io",
+		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("多源开关缺少 Host %q", want)
+		}
+	}
+	css, err := webFS.ReadFile("web/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	for _, want := range []string{
+		".moh-grid{display:grid;grid-template-columns:repeat(4",
+		"@media(max-width:520px){.moh-grid{grid-template-columns:repeat(2",
+		".moh-item .sw input:checked + span::after{transform:translateX(16px)}",
+	} {
+		if !strings.Contains(string(css), want) {
+			t.Errorf("多源开关样式缺少 %q", want)
+		}
 	}
 }
 
@@ -168,7 +220,7 @@ function base(o){
   return x;
 }
 function tagsOf(h){
-  return (h.match(/class="cap on [a-z]+">[A-Z]+</g)||[]).map(function(t){return t.replace(/.*>/,'').replace('<','');});
+  return (h.match(/class="cap on [a-z]+"[^>]*>[A-Z]+</g)||[]).map(function(t){return t.replace(/.*>/,'').replace('<','');});
 }
 var items=[]; for(var i=0;i<24;i++) items.push({kind:i%2?'github':'docker',ts:1700000000+i*60,ok:i!==5,latency_ms:200});
 var h1=rowHtml(base({recent:items}));
@@ -182,6 +234,10 @@ out.DeadHuman=h2.indexOf('域名解析失败')>=0;
 out.DeadZero=h2.indexOf('0ms')>=0;
 out.DeadDetl=h2.indexOf('edetail')>=0;
 out.Tags3=tagsOf(rowHtml(base({status:'degraded',github_cap:0})));
+out.TagsGCR=tagsOf(rowHtml(base({repo_host:'gcr.io',registry_cap:1,registry_path_mode:'native',docker_cap:0,github_cap:0})));
+out.TagsPKG=tagsOf(rowHtml(base({repo_host:'asia-northeast1-docker.pkg.dev',registry_cap:1,registry_path_mode:'host_prefix',docker_cap:0,github_cap:0})));
+out.TagsNoProbe=tagsOf(rowHtml(base({repo_host:'gcr.io',registry_cap:-1,registry_path_mode:'',docker_cap:0,github_cap:0})));
+out.TagsForeignNotHUB=tagsOf(rowHtml(base({repo_host:'gcr.io',registry_cap:1,registry_path_mode:'native',docker_cap:1,github_cap:0})));
 out.Err404=rowHtml(base({status:'dead',last:{docker:{ok:false,error:'unexpected status 404 Not Found'}}})).indexOf('仓库地址无效')>=0;
 console.log(JSON.stringify(out));
 `
@@ -207,7 +263,7 @@ func TestPanelLiveContract(t *testing.T) {
 	if !strings.Contains(src, "loadLive(); }, 2000)") {
 		t.Error("实时区必须 2 秒一刷，否则进度条和速度看着是死的")
 	}
-	if !strings.Contains(src, "app.css?v=15") {
+	if !strings.Contains(src, "app.css?v=16") {
 		t.Error("改了样式却没升 app.css 版本号，浏览器会继续用旧缓存")
 	}
 	css, err := webFS.ReadFile("web/app.css")

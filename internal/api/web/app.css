@@ -208,6 +208,7 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .cap.on.dk{color:var(--dk);background:var(--dk-soft);border-color:color-mix(in srgb,var(--dk) 32%,transparent)}
 .cap.on.gh{color:var(--gh);background:var(--gh-soft);border-color:color-mix(in srgb,var(--gh) 32%,transparent)}
 .cap.on.gc{color:var(--gc);background:var(--gc-soft);border-color:color-mix(in srgb,var(--gc) 32%,transparent)}
+.cap.on.rg{color:var(--brand);background:var(--brand-soft);border-color:color-mix(in srgb,var(--brand) 32%,transparent)}
 .cap.no{opacity:.7}
 .cap.no .m{opacity:.6}
 .cap.no .t{text-decoration:line-through}
@@ -285,6 +286,19 @@ pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:1
 .sec p.desc{margin:0 0 12px;font-size:11.5px;color:var(--muted)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media(max-width:520px){.grid2{grid-template-columns:1fr}}
+/* 多源 Host 开关：宽屏一行 4 个、窄屏一行 2 个；8 个固定项始终同在一块。 */
+.moh-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.moh-item{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 10px;border:1px solid var(--line);
+  border-radius:10px;background:var(--card2)}
+.moh-l{display:flex;flex-direction:column;min-width:0;flex:1 1 auto;line-height:1.25}
+.moh-l b{font-size:12.5px;font-weight:700;letter-spacing:.2px}
+.moh-l small{color:var(--faint);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.moh-item .sw{width:38px;height:22px;margin-left:auto}
+.moh-item .sw span::after{width:16px;height:16px;top:3px;left:3px}
+.moh-item .sw input:checked + span::after{transform:translateX(16px)}
+.moh-extra{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--warn-soft);color:var(--muted);font-size:11.5px;line-height:1.5}
+.moh-extra b{color:var(--warn);font-weight:600}
+@media(max-width:520px){.moh-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .seg{display:flex;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:4px}
 .seg button{flex:1;height:34px;border:0;border-radius:8px;background:transparent;color:var(--muted);
   font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
