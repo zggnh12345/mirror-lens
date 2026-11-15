@@ -73,12 +73,15 @@ Blob HEAD 和 GET 都已按这个顺序处理；Manifest GET 走 `fetchOnce` 时
 ## 回滚
 
 - 回滚到 3.5.8 不需要改数据库；配置仍是同一个 `multi_origin_hosts` 列表。
-- 若只想关闭多源，保持 8 个开关全关并重启，等价于 `multi_origin_hosts: []`。
+- 若只想关闭固定 8 个 Host 的多源，保持 8 个开关全关并重启；配置中未纳入开关的自定义 Host 仍可能继续参与多源，不等价于 `multi_origin_hosts: []`。
 
 ## 验证
 
 - `go test ./...`
 - `go test -race ./...`
+- 面板标签测试覆盖显式 `docker.io`/`ghcr.io` 正向、空 `repo_host` 不推断标签，以及额外 Host 保留提示。
+- 多源开关测试覆盖八个固定开关全关、无额外 Host，以及全关但存在额外 Host 的保留行为。
+- 鉴权测试覆盖候选源 401/403 回退、官方 401 Challenge 透传、官方 5xx 不泄漏候选 Challenge；hedge 四种完成顺序均断言最终错误来自官方。
 - 面板契约测试覆盖 HUB/GHCR/RAW 与 GCR/PKG 标签、未探测不显示标签、Foreign Host 不重复显示 HUB。
 - 设置页契约测试覆盖 8 个固定 Host、4 列/2 列布局和独立开关绑定。
 - 路径测试覆盖裸 Host 缺仓库名返回 400、`Plan`/`ParsePath` 两条入口，以及 `docker.io/gcr.io`、`docker.io/example.com/...` 逃生路径。
@@ -92,4 +95,5 @@ Blob HEAD 和 GET 都已按这个顺序处理；Manifest GET 走 `fetchOnce` 时
 - F8 的 `lscr.io` 仍不在第一批默认范围；本版本不增加“永久禁止手工配置”的强制校验。
 - 不改变 F2 的流式架构：客户端完整预校验保证仍不在 3.5.9 内。
 - 不把候选源 401 的挑战头透传给客户端；只有官方源挑战透传。
+- `docs/3.5.10-source-realm-design.md` 只是下一阶段 Draft，不属于 3.5.9 已实现能力、功能范围或验收结果；本版本未实现该设计。
 - 不新增第三方 Source 的公共镜像站清单；F4、F5 的结论只对实际跑过的源成立。
