@@ -127,7 +127,7 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 		o.Probe = probe.ProbeRegistryHost
 	}
 	if o.Policies == nil {
-		o.Policies = v2auth.NewLegacyHostPolicy(nil, false)
+		o.Policies = v2auth.NewLegacyHostPolicy(nil, true)
 	}
 	if o.Now == nil {
 		o.Now = time.Now
