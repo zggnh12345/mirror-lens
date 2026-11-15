@@ -487,7 +487,7 @@ function mohHtml(value){
   h += '</div>';
   if (extra.length){
     h += '<div class="moh-extra">当前配置里还有开关未覆盖的 Host：<b>' + esc(extra.join('、')) +
-      '</b>。保存时会原样保留；要用开关管理，请先从配置文件移除。</div>';
+      '</b>。保存时会原样保留，并仍可能参与多源；要用开关管理，请先从配置文件移除。</div>';
   }
   return h;
 }

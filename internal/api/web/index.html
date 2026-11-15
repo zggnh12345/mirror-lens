@@ -479,7 +479,7 @@ function isArtifactRegistry(h){
 
 function registryTag(x){
   var h = String(x.repo_host || '').toLowerCase();
-  if (!h) return x.docker_cap === 1 ? 'HUB' : (x.ghcr_cap === 1 ? 'GHCR' : '');
+  if (!h) return '';
   if (h === 'docker.io') return x.docker_cap === 1 ? 'HUB' : '';
   if (h === 'ghcr.io') return x.ghcr_cap === 1 ? 'GHCR' : '';
   if (x.registry_cap !== 1 || !x.registry_path_mode) return '';

@@ -10,6 +10,7 @@ func TestNormalize(t *testing.T) {
 		{"", "", false},
 		{"  docker.io ", "docker.io", false},
 		{"registry-1.docker.io", "docker.io", false},
+		{"index.docker.io", "docker.io", false},
 		{"DOCKER.IO.", "docker.io", false},
 		{"ghcr.io", "ghcr.io", false},
 		{"GHCR.IO.", "ghcr.io", false},

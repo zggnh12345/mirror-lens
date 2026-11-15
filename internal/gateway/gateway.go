@@ -896,6 +896,9 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	var graceC <-chan time.Time
 	var held *hedgeRes
 	var lastErr error
+	// officialErr 只保存主官方目标的错误。hedge 的完成顺序不稳定，
+	// 不能让最后完成的候选错误覆盖官方 401 的 Challenge 或状态码。
+	var officialErr error
 	win := -1
 	defer func() {
 		// 只有真发过第二路才算对冲胜出；单路成功不该进这个指标。
@@ -936,8 +939,12 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 		case r := <-ch:
 			pending--
 			if r.err != nil {
-				if !errors.Is(r.err, errHedgeCanceled) {
-					lastErr = r.err
+				if !errors.Is(r.err, errHedgeCanceled) && ctx.Err() == nil {
+					if t := targets[r.idx]; t.c == nil && !t.fb {
+						officialErr = r.err
+					} else {
+						lastErr = r.err
+					}
 				}
 				// 快速失败（404/429/连不上）：不必等计时器，立刻补下一个。
 				if started < n {
@@ -994,13 +1001,12 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 						g.sched.Observe(t.c.ID, 0, 0, false, code)
 					}
 				}
-				lastErr = &upstreamError{Code: code, RetryAfter: hint.RetryAfter}
-				if t := targets[r.idx]; t.c == nil {
-					lastErr = &upstreamError{
-						Code:       code,
-						RetryAfter: hint.RetryAfter,
-						Challenge:  r.up.resp.Header.Get("WWW-Authenticate"),
-					}
+				ue := &upstreamError{Code: code, RetryAfter: hint.RetryAfter}
+				if t := targets[r.idx]; t.c == nil && !t.fb {
+					ue.Challenge = r.up.resp.Header.Get("WWW-Authenticate")
+					officialErr = ue
+				} else {
+					lastErr = ue
 				}
 				if started < n {
 					launch(started)
@@ -1029,6 +1035,9 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	if held != nil {
 		win = held.idx
 		return take(*held), held.idx, started, nil
+	}
+	if officialErr != nil {
+		return nil, 0, started, officialErr
 	}
 	if lastErr == nil {
 		lastErr = &upstreamError{Code: 0}

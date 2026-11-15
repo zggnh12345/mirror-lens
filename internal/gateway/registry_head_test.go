@@ -243,6 +243,31 @@ func TestManifestGetOfficial401PassesChallenge(t *testing.T) {
 	}
 }
 
+// 候选 Manifest 401 后官方 5xx：只能返回官方错误，不能泄漏候选挑战。
+func TestManifestGetMirror401Official5xxDoesNotLeakChallenge(t *testing.T) {
+	f := newMOFixture(t)
+	f.officialStatus = http.StatusServiceUnavailable
+	mirrorHdr := http.Header{}
+	mirrorHdr.Set("WWW-Authenticate", `Bearer realm="https://mirror.example/token",service="quay.io"`)
+	srv := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/manifests/latest",
+		hits: &f.nativeHits, status: 401, hdr: mirrorHdr,
+	})
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/latest")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d，应返回官方 503", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("官方失败时不得回传候选挑战，得到 %q", got)
+	}
+	if f.nativeHits.Load() != 1 || f.officialHits.Load() != 1 {
+		t.Fatalf("native=%d official=%d，期望各一次", f.nativeHits.Load(), f.officialHits.Load())
+	}
+}
+
 // 候选 401 的 GET 必须继续回官方，且不能把候选的挑战头冒充成最终结果。
 func TestBlobGetMirror401FallsBackOfficial(t *testing.T) {
 	f := newMOFixture(t)

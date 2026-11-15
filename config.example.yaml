@@ -81,7 +81,8 @@ registry:
   max_file_mb: 4096
   # tag 可能被覆盖，过一会儿要重新验证；digest 永久
   tag_ttl: 5m
-  # 第一批公开 Registry 多源 Host 开关；全部关闭 = 没有 Host 使用多源。
+  # 第一批公开 Registry 多源 Host 开关；8 个全关后这 8 个 Host 均不走多源。
+  # 配置里可保留未纳入开关的自定义 Host，这些 Host 仍可能参与多源。
   # 没有单独总开关；这个列表就是唯一开关。
   # *.pkg.dev 只匹配合法的 <location>-docker.pkg.dev，不是任意 *.pkg.dev。
   # lscr.io 暂不启用，Realm 已修正后再独立验收。

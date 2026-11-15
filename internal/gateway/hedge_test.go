@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
@@ -26,6 +27,108 @@ func hedgeTargets(srvs ...*httptest.Server) []fetchTarget {
 }
 
 func hedgePlan() *adapter.Plan { return &adapter.Plan{} }
+
+// hedgeOfficialTargets 让第一个目标是候选源，第二个是主官方源。
+// 主官方源没有 Candidate；候选源的错误不能覆盖官方错误。
+func hedgeOfficialTargets(t *testing.T, candidate, official *httptest.Server) []fetchTarget {
+	t.Helper()
+	cu, err := url.Parse(candidate.URL + "/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ou, err := url.Parse(official.URL + "/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []fetchTarget{
+		{u: cu, c: &scheduler.Candidate{ID: 1, Name: "candidate"}},
+		{u: ou},
+	}
+}
+
+func hedgeAuthServer(t *testing.T, status int, challenge string, delay time.Duration) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
+		if status == http.StatusUnauthorized && challenge != "" {
+			w.Header().Set("WWW-Authenticate", challenge)
+		}
+		w.WriteHeader(status)
+	}))
+}
+
+// hedge 的最终错误必须稳定来自官方源，不随候选/官方的完成顺序改变。
+func TestHedgeOfficialErrorWinsRaceOrder(t *testing.T) {
+	const candidateChallenge = `Bearer realm="https://candidate.example/token",service="quay.io"`
+	const officialChallenge = `Bearer realm="https://official.example/token",service="quay.io"`
+
+	cases := []struct {
+		name           string
+		officialCode   int
+		candidateCode  int
+		officialDelay  time.Duration
+		candidateDelay time.Duration
+		wantCode       int
+		wantChallenge  string
+	}{
+		{
+			name: "官方401先完成", officialCode: 401, candidateCode: 401,
+			officialDelay: 0, candidateDelay: 40 * time.Millisecond,
+			wantCode: 401, wantChallenge: officialChallenge,
+		},
+		{
+			name: "官方401后完成", officialCode: 401, candidateCode: 401,
+			officialDelay: 40 * time.Millisecond, candidateDelay: 0,
+			wantCode: 401, wantChallenge: officialChallenge,
+		},
+		{
+			name: "官方5xx先完成", officialCode: 503, candidateCode: 401,
+			officialDelay: 0, candidateDelay: 40 * time.Millisecond,
+			wantCode: 503, wantChallenge: "",
+		},
+		{
+			name: "官方5xx后完成", officialCode: 503, candidateCode: 401,
+			officialDelay: 40 * time.Millisecond, candidateDelay: 0,
+			wantCode: 503, wantChallenge: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _, _, _, _ := newGW(t, true)
+			g.hedge = HedgeOptions{Enabled: true, After: time.Millisecond, Grace: 10 * time.Millisecond}
+			candidate := hedgeAuthServer(t, tc.candidateCode, candidateChallenge, tc.candidateDelay)
+			defer candidate.Close()
+			official := hedgeAuthServer(t, tc.officialCode, officialChallenge, tc.officialDelay)
+			defer official.Close()
+
+			up, _, tried, err := g.pickUpstream(context.Background(), hedgePlan(), nil,
+				hedgeOfficialTargets(t, candidate, official))
+			if up != nil {
+				up.resp.Body.Close()
+				t.Fatal("不应有胜者")
+			}
+			if tried != 2 {
+				t.Fatalf("两个目标都应试过，实际 %d", tried)
+			}
+			ue, ok := err.(*upstreamError)
+			if !ok {
+				t.Fatalf("错误类型=%T，期望 *upstreamError", err)
+			}
+			if ue.Code != tc.wantCode {
+				t.Fatalf("最终状态码=%d，期望 %d", ue.Code, tc.wantCode)
+			}
+			if ue.Challenge != tc.wantChallenge {
+				t.Fatalf("最终 Challenge=%q，期望 %q", ue.Challenge, tc.wantChallenge)
+			}
+		})
+	}
+}
 
 // 首选源很快就给出响应头：第二个源不该被碰。
 func TestHedgeFastFirstDoesNotStartSecond(t *testing.T) {

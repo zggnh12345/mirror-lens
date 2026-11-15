@@ -1132,8 +1132,9 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 }
 
-// setAuthChallenge 只把官方最终失败的 WWW-Authenticate 交给客户端；
-// 候选源的挑战已在选取阶段丢弃，不会出现在 upstreamError 里。
+// setAuthChallenge 只透传最终选定的上游错误里的 WWW-Authenticate。
+// 最终错误必须来自官方目标；候选源和 fallback 的挑战不能出现在这里，
+// 但仍由调用链保证“候选错误不会成为最终错误”，本函数不重复判断来源。
 func setAuthChallenge(w http.ResponseWriter, err error) {
 	var ue *upstreamError
 	if errors.As(err, &ue) && ue.Challenge != "" && isAuthDenied(ue.Code) {

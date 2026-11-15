@@ -76,6 +76,8 @@ func TestPanelRowContract(t *testing.T) {
 		L1, L2            int
 		Tags              []string
 		Tags3             []string
+		TagsEmpty         []string
+		TagsGHCR          []string
 		TagsGCR           []string
 		TagsPKG           []string
 		TagsNoProbe       []string
@@ -99,6 +101,12 @@ func TestPanelRowContract(t *testing.T) {
 	}
 	if strings.Join(got.Tags3, ",") != "HUB" {
 		t.Errorf("只有 Docker 能力的源不应显示 RAW，实际 %v", got.Tags3)
+	}
+	if len(got.TagsEmpty) != 0 {
+		t.Errorf("repo_host 为空时不得推断 HUB/GHCR，实际 %v", got.TagsEmpty)
+	}
+	if strings.Join(got.TagsGHCR, ",") != "GHCR" {
+		t.Errorf("ghcr.io 源应显示 GHCR，实际 %v", got.TagsGHCR)
 	}
 	if strings.Join(got.TagsGCR, ",") != "GCR" {
 		t.Errorf("gcr.io 已探测源应只显示 GCR，实际 %v", got.TagsGCR)
@@ -168,6 +176,68 @@ func TestSettingsMultiOriginSwitchContract(t *testing.T) {
 	}
 }
 
+// 多源开关只覆盖固定 8 个 Host；额外 Host 必须保留，并明确它们仍可能参与多源。
+func TestSettingsMultiOriginExtraContract(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node 不可用，跳过前端渲染校验")
+	}
+	raw, err := webFS.ReadFile("web/settings.html")
+	if err != nil {
+		t.Fatalf("read settings.html: %v", err)
+	}
+	src := string(raw)
+	start := strings.Index(src, "var MOH_HOSTS")
+	if start < 0 {
+		t.Fatal("settings.html 未找到 MOH_HOSTS")
+	}
+	end := strings.Index(src[start:], "function cfgControl")
+	if end < 0 {
+		t.Fatal("settings.html 未找到 cfgControl")
+	}
+	snippet := src[start : start+end]
+
+	script := `var esc=function(s){return String(s==null?'':s);};
+` + snippet + `
+var out={};
+out.empty=mohHtml('');
+out.fixed=mohHtml('gcr.io\nextra.example');
+out.extra=mohHtml('extra.example');
+out.extraAfter=MOH_EXTRA.slice();
+console.log(JSON.stringify(out));
+`
+	f := filepath.Join(t.TempDir(), "moh.js")
+	if err := os.WriteFile(f, []byte(script), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	out, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("执行 mohHtml 失败: %v\n%s", err, string(out))
+	}
+	var got struct {
+		Empty, Fixed, Extra string
+		ExtraAfter          []string
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("输出不是 JSON: %v\n%s", err, string(out))
+	}
+	if strings.Count(got.Empty, "data-moh=") != 8 {
+		t.Errorf("无额外 Host 时应渲染 8 个开关，实际 %q", got.Empty)
+	}
+	if strings.Contains(got.Empty, "当前配置里还有") {
+		t.Error("无额外 Host 时不应显示额外 Host 提示")
+	}
+	if !strings.Contains(got.Fixed, "extra.example") || !strings.Contains(got.Fixed, "仍可能参与多源") {
+		t.Errorf("有额外 Host 时必须提示仍可能参与多源，实际 %q", got.Fixed)
+	}
+	if !strings.Contains(got.Extra, "extra.example") || !strings.Contains(got.Extra, "仍可能参与多源") {
+		t.Errorf("全关固定开关时额外 Host 仍须提示，实际 %q", got.Extra)
+	}
+	if len(got.ExtraAfter) != 1 || got.ExtraAfter[0] != "extra.example" {
+		t.Errorf("额外 Host 必须保留，实际 %v", got.ExtraAfter)
+	}
+}
+
 // extractScript 取 index.html 里最后一个 <script> 块（面板逻辑）。
 func extractScript(t *testing.T, src string) string {
 	t.Helper()
@@ -223,7 +293,7 @@ function tagsOf(h){
   return (h.match(/class="cap on [a-z]+"[^>]*>[A-Z]+</g)||[]).map(function(t){return t.replace(/.*>/,'').replace('<','');});
 }
 var items=[]; for(var i=0;i<24;i++) items.push({kind:i%2?'github':'docker',ts:1700000000+i*60,ok:i!==5,latency_ms:200});
-var h1=rowHtml(base({recent:items}));
+var h1=rowHtml(base({repo_host:'docker.io',recent:items}));
 out.L1=(h1.match(/class="l1"/g)||[]).length;
 out.L2=(h1.match(/class="l2"/g)||[]).length;
 out.Tags=tagsOf(h1);
@@ -233,7 +303,9 @@ var h2=rowHtml(base({status:'dead',last:{docker:{ok:false,error:'Get "https://do
 out.DeadHuman=h2.indexOf('域名解析失败')>=0;
 out.DeadZero=h2.indexOf('0ms')>=0;
 out.DeadDetl=h2.indexOf('edetail')>=0;
-out.Tags3=tagsOf(rowHtml(base({status:'degraded',github_cap:0})));
+out.Tags3=tagsOf(rowHtml(base({repo_host:'docker.io',status:'degraded',github_cap:0})));
+out.TagsEmpty=tagsOf(rowHtml(base({repo_host:'',docker_cap:1,ghcr_cap:1,github_cap:0})));
+out.TagsGHCR=tagsOf(rowHtml(base({repo_host:'ghcr.io',docker_cap:0,ghcr_cap:1,github_cap:0})));
 out.TagsGCR=tagsOf(rowHtml(base({repo_host:'gcr.io',registry_cap:1,registry_path_mode:'native',docker_cap:0,github_cap:0})));
 out.TagsPKG=tagsOf(rowHtml(base({repo_host:'asia-northeast1-docker.pkg.dev',registry_cap:1,registry_path_mode:'host_prefix',docker_cap:0,github_cap:0})));
 out.TagsNoProbe=tagsOf(rowHtml(base({repo_host:'gcr.io',registry_cap:-1,registry_path_mode:'',docker_cap:0,github_cap:0})));
