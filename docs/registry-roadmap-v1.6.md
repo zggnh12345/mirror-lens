@@ -34,7 +34,10 @@ v1.6 相对 v1.5 的核心修正：
 12. `3.5.16` 的公开 Manifest 竞速依赖 3.5.11 + 3.5.14b；私有竞速才依赖 3.5.15。
 13. 撤回“流式 P0 未关闭”的错误判断；保留为 G0 回归门禁。
 14. 增加 Host 验收矩阵、探测四态、迁移验收和双用途源回归。
-15. 增加 3.5.11 完成定义：单一 Realm 权威、数据库单事务、Token Cache 版本化、无 fallback、Schema 回滚靠备份。
+15. 3.5.11 拆成 **11a（身份与 resolver 基础）/ 11b（策略表与切换）/ 11c（编辑与清理）**；3.5.11 只在 11b 验收后算完成。
+16. 3.5.11 的“单事务”只覆盖运行时数据库写入；Token Cache 采用 generation 版本化失效，Schema 迁移是离线迁移 + 原子发布，二者都不纳入单事务承诺。
+17. 运行时多表写入统一 `BEGIN IMMEDIATE` 单事务；`SetCapsLive` / `CommitHostProbe` 属于 3.5.14a，不混进 3.5.11；迁移工具仍保持“离线迁移 + 原子发布”，不改造成大事务。
+18. 补充 3.5.11a 实施基线：当前代码基线是 `b4b0b22`，分支从当前 `HEAD` 开；11a 请求路径补 `headOnce` / `rangeReq` / `openUpstream` / resume / `watch.go`；Probe 的 `Realms` 换 resolver 但 `CredentialSnapshot` 不动；Token Cache 容量、fail closed 语义和 D1–D8 一并写入。
 
 ## 2. 当前基线
 
@@ -170,84 +173,38 @@ registry_probe_at     = 0
 > 3.5.15a 不阻塞 3.5.16 的公开 Manifest 竞速；私有 Manifest 竞速依赖 3.5.15（以及 3.5.15a，如果使用 GitLab 专用凭据）。
 >
 > 本链中明确改 Schema 的是 **3.5.11**（`source_realm_policy`）和 **3.5.14a**（`source_host_caps`）。3.5.14b 只改读路径，不改 Schema。
+>
+> 3.5.11a / 3.5.11b / 3.5.11c 是 3.5.11 的内部里程碑：11a 只做身份与 resolver 基础，11b 才完成策略切换，11c 做编辑与清理。3.5.11 以 11b 验收通过为完成标志。
 
 ## 5. 各版本安排
 
 ### 3.5.11 Source Realm + Source/Host 认证身份
 
-**目标：** 把 Realm 判定从“Host 全局白名单”改为“按 Source + Host 计算的策略”，解决公共镜像站使用自己认证端点时被误杀的问题。
+**目标：** 把 Realm 判定从“Host 全局白名单”改为“按 Source + Host 计算的策略”，解决公共镜像站使用自己的认证端点时被误杀的问题，并让探活与 Gateway 共用同一套认证身份。
+
+#### 3.5.11 分阶段：不压成一个最小 patch
+
+3.5.11 同时包含身份传递、策略权威、Token Cache 失效和 Schema 迁移，不能压成一个“最小改动”。拆成三个内部里程碑：
+
+| 阶段 | 内容 | Schema | 完成标志 |
+|---|---|---|---|
+| 3.5.11a | 认证身份、策略快照、统一 resolver、Token Cache key | 否 | 行为不变，所有 registry 请求都带身份 |
+| 3.5.11b | `source_realm_policy` + 迁移 + Probe/Gateway 切换 | 是 | 3.5.11 功能完成 |
+| 3.5.11c | 策略编辑 UI/API、审计、旧代码清理 | 否 | 运维完成 |
+
+**3.5.11 只有在 3.5.11b 验收通过后才算完成。** 3.5.11a 是内部基础，不单独对外宣称“3.5.11 已完成”。
 
 范围：
 
-- 新增 `source_realm_policy`，按 `(source_id, host)` 存储允许的 Realm
-- 旧 Source 初始只有 `host = repo_host` 一行
-- Realm 精确匹配 scheme + host，不接受通配符、userinfo、`http://`
+- 新增 `source_realm_policy`，按 `(source_id, host)` 存储一个主 Realm 和最多 3 个额外 Realm
+- 旧 Source 初始只有 `host = repo_host` 一条策略
+- Realm 精确匹配 scheme + host，不接受通配符、userinfo、`http://`、IP 字面量
+- 允许策略显式写跨 Host 的 Realm，例如 `lscr.io -> ghcr.io`
 - 第三方 Source 不自动继承官方 Host 的 Realm
 - 探活与 Gateway 使用同一套策略
 - Token 缓存按完整身份隔离
-- Source 禁用、删除、凭据轮换、Realm 策略变更时使旧 Token 失效
+- Source 禁用、归档、删除、改 Host、凭据轮换、Realm 策略变更时使旧 Token 失效
 - 失败关闭，不因策略解析失败而放行
-
-建议表结构：
-
-```text
-source_realm_policy
-  source_id
-  host
-  realm_url
-  service
-  is_primary
-  enabled
-  policy_gen
-  updated_at
-  PRIMARY KEY(source_id, host, realm_url)
-```
-
-策略规则：
-
-- 每个 `(source_id, host)` 最多一个 `is_primary=1`
-- 额外 Realm 只能显式增加，不做通配符或自动发现
-- 一个 Source 的不同 Host 可以有不同主 Realm
-- 初始迁移时，`host = repo_host`，`is_primary=1`
-
-主 Realm 唯一性：
-
-```sql
-CREATE UNIQUE INDEX idx_source_realm_primary
-ON source_realm_policy(source_id, host)
-WHERE is_primary = 1;
-```
-
-额外 Realm 上限 3 个，由 Store 在写入事务内检查；超过直接拒绝。
-
-Schema 纪律：
-
-- `source_realm_policy` 是新增表，属于 Schema 变更
-- 必须走离线 `db-migrate`，不能运行时建表
-- 必须提升 `schema.Version` 和 `CanonicalSchemaHash`
-- 3.5.11 的输入是 3.5.10 的 3.5.7 Schema
-- 3.5.14a 的输入将是 3.5.13 的 Schema，不是直接 3.5.7
-
-Token 缓存 key 至少包含：
-
-```text
-source_id
-host
-realm_origin
-service
-scope
-credential_generation
-realm_policy_generation
-```
-
-认证上下文要求：
-
-- `adapter.Plan` 只增加 `LogicalHost`；不在 Plan 创建阶段强塞 `SourceID`
-- 候选选中后，把 `SourceID + LogicalHost + CredentialGeneration + PolicyGeneration` 写入该次 attempt 的 request context
-- `bearerTransport` 从 `req.Context()` 取完整身份，不能只根据 `req.URL.Host` 猜 Source
-- 不能把 Source 名称当身份；名称可改、可重复
-- 并发 Token 刷新使用同一完整 key
-- 不能把用户凭据发给第三方 Source 的 Realm
 
 明确不做：
 
@@ -257,124 +214,425 @@ realm_policy_generation
 - 不实现私有仓库 CredStore
 - 不实现 OAuth / OIDC / 云厂商 IAM
 
-验收：
+#### 3.5.11-A 数据模型
 
-- `m.daocloud.io` 作为 `public.ecr.aws` 的 Source 时可通过探活
-- 旧 Source 空配置行为与 3.5.9 一致
-- 探活通过和 Gateway 实际回源不出现两套 Realm 语义
-- 同一 Source 的不同 Host 不共享错误 Token
-- Source 删除、禁用、轮换凭据后旧 Token 不能复用
-- Realm 请求继续经过 SSRF / DNS / IP Guard
+建议一行一个 `(source_id, host)`，不要每行 Realm 各存一个 `policy_gen`：
 
-#### 3.5.11-A 完成定义与零残留门禁
-
-3.5.11 可以做到单事务写入、单轨运行、代码和权威数据零残留，但不是自动成立，必须满足以下条件。
-
-**1. 单一 Realm 权威**
-
-完成后只能保留：
-
-- `source_realm_policy`
-
-必须删除或降为只读审计、不能再参与判定：
-
-- 旧全局 Realm 白名单
-- 旧 `realm_extra`
-- 代码里的 Host → Realm 静态表
-- 任何“新表查不到就回退旧白名单”的 fallback
-
-只要保留一个 fallback，3.5.11 本身就是过渡态。
-
-**2. 数据库单事务**
-
-所有写路径必须在一个 `BEGIN IMMEDIATE` 事务内完成：
-
-- 创建 Source：`sources` + 默认 `source_realm_policy` + `policy_gen` + `source_events`
-- 修改 Realm：`source_realm_policy` + `policy_gen++` + `source_events`
-- 禁用 / 删除 Source：状态或删除 + `policy_gen++`
-- 任一步失败整体回滚
-
-不允许：
-
-- 先建 Source，再单独建 Realm 策略
-- 先写策略，再补 `policy_gen`
-- 策略写入成功、审计失败但只回滚一半
-- 存在第二条单独写 Realm 的路径
-
-**3. Token Cache 不能纳入数据库事务**
-
-必须明确：
-
-- `source_realm_policy` 和 `policy_gen` 可以事务提交
-- 进程内 Token Cache 的删除不是数据库事务的一部分
-- 不能宣称“数据库 + 缓存原子提交”
-
-正确做法是版本化 key：
-
-```text
-source_id | host | realm_origin | service | scope
-| credential_generation | realm_policy_generation
+```sql
+CREATE TABLE source_realm_policy (
+  source_id     INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  host          TEXT NOT NULL,
+  primary_realm TEXT NOT NULL,
+  extra_realms  TEXT NOT NULL DEFAULT '[]',
+  policy_gen    INTEGER NOT NULL DEFAULT 1,
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY(source_id, host)
+);
 ```
 
-规则：
+`extra_realms` 存最多 3 个对象：
 
-- 修改 Realm → `policy_gen++`
-- 轮换凭据 → `credential_generation++`
-- 禁用 / 删除 Source → 旧 key 不再可达
-- 部署或启动时清空旧 namespace
-- 旧 key 不允许作为 fallback
-- 旧条目依靠 TTL 或显式 flush 清理
+```json
+[{"realm":"https://example.com","service":"example","enabled":1}]
+```
 
-“零残留”在这里的含义是：
+理由：
 
-- 旧 Token **不可达**
-- 旧 namespace **已清理**
-- 不是“数据库和缓存同一事务”
-- 也不是“缓存旧条目当场物理消失”
+- 一个 Host 只有一个 `policy_gen`，Token Cache 不会拿错代次
+- 主 Realm 由 `primary_realm` 列保证唯一，不需要 partial unique index
+- 额外 Realm 上限在同一个事务内检查
+- 修改策略只更新一行，失败不会留下半套代次
 
-**4. Schema 迁移窗口**
+如果以后坚持规范化多行，必须另加 `source_realm_policy_meta` 存 `policy_gen`；不能把 generation 分散到每个 Realm 行。
 
-3.5.11 新增 `source_realm_policy`，属于 Schema 变更：
+策略规则：
 
-- 必须离线 `db-migrate`
-- 运行时不允许建表或补列
+- `primary_realm` 只存 origin（scheme + host），3.5.11 不承诺路径锁定
+- 只允许 `https://`
+- 不允许通配符、userinfo、IP 字面量、query、fragment
+- `extra_realms` 最多 3 个；`enabled=0` 也占位，避免先禁用再新增绕过上限
+- `service` 在 3.5.11 只作为展示/审计字段，不参与 Realm 匹配；Token 请求仍使用 Challenge 的 `service`。3.5.15 私有凭据再决定是否锁定
+- `lscr.io` 的 `ghcr.io` 是显式策略条目，不是通配符
+- Docker Hub 的 `registry-1.docker.io` / `index.docker.io` 统一规范成 `docker.io`
+- 没有策略的 `source_id > 0` 必须失败关闭
+- `source_id = 0` 表示官方直连，走独立的 `OfficialPolicy`，不是“查不到就回退”
+
+`policy_gen` 规则：
+
+- 每个 `(source_id, host)` 一个 generation
+- 修改主 Realm、额外 Realm、启用状态、service、删除策略：`policy_gen++`
+- 同一个事务内完成策略行和 generation 更新
+- Token Cache 用 generation 版本化 key，不依赖物理删除
+
+#### 3.5.11-B 认证链路
+
+每次 attempt 在候选选中后写入不可变策略快照：
+
+```go
+type PolicySnapshot struct {
+    SourceID   int64
+    LogicalHost string
+    PolicyGen  int64
+    CredGen    int64
+    Official   bool
+    Realms     []RealmRule
+}
+```
+
+要求：
+
+- `adapter.Plan` 只增加 `LogicalHost`；不在 Plan 创建阶段强塞 `SourceID`
+- 候选选中后，把 `PolicySnapshot` 写入该次 attempt 的 `request.Context()`
+- `bearerTransport` 从 `req.Context()` 取完整身份，不能只根据 `req.URL.Host` 猜 Source
+- 不能把 Source 名称当身份；名称可改、可重复
+- 并发 Token 刷新使用同一完整 key
+- 不能把用户凭据发给第三方 Source 的 Realm
+- `SourceID = 0` 必须显式表示官方直连；身份缺失不能解释成 0
+
+所有 registry 上游请求必须走统一构造函数，不能只改 `doUpstream`：
+
+- `internal/gateway/stream.go`：`doUpstream`
+- `internal/gateway/registry.go`：`headOnce`
+- `internal/gateway/parallel.go`：`rangeReq`
+- `internal/gateway/gateway.go`：`openUpstream`
+- `internal/gateway/stream.go`：resume 请求
+- `internal/gateway/watch.go`：manifest 换源
+- 其他直接调用 `g.cli.Do` 的 registry 路径
+
+只补 `doUpstream` 不够；`rangeReq` 目前仍写着“认证按主机处理”，`watch.go` 漏掉会形成 fail-closed 盲区。
+
+请求分类必须明确：
+
+- Registry 请求：必须带身份，身份缺失 fail closed
+- Git / Private / Raw 请求：不走 Registry 身份，不要误加
+- 官方直连：`SourceID=0` + `Official=true`，不是身份缺失
+
+对 `plan.Kind == "registry"` 的请求，如果 context 没有身份，直接失败关闭，不能退回按 Host 认证。
+
+Probe 侧：
+
+- `CredentialSnapshot` 字段保持不变
+- `probe.RegistryHostProbe.Realms` 的 map 入口替换为 resolver / 身份入口
+- Probe 和 Gateway 对同一 Source/Host 必须得到同一策略结果
+- 不能因为“探活是独立进程”就保留第二套 Realm 逻辑
+
+Probe 和 Gateway 必须共用一个接口：
+
+```go
+type RealmPolicyResolver interface {
+    Resolve(ctx context.Context, sourceID int64, host string) (PolicySnapshot, error)
+}
+```
+
+- 3.5.11a 提供 `LegacyHostPolicy`，行为与当前完全一致
+- 3.5.11b 提供 `StorePolicy`
+- `v2auth.Authenticator` 和 Gateway 都只依赖这个接口
+- `ParseChallenge` 和 Realm 匹配只保留一份
+- `v2auth.DefaultRealms` 只保留为 `OfficialPolicy` 的种子，不再作为 Source 的 fallback
+- `runner.Options.Realms` / `probe.RegistryHostProbe.Realms` 从生产路径删除，只允许测试显式注入
+
+Token Cache 使用结构体 key，不要拼字符串：
+
+```go
+type tokenKey struct {
+    SourceID  int64
+    Host      string
+    Realm     string
+    Service   string
+    Scope     string
+    CredGen   int64
+    PolicyGen int64
+}
+```
+
+同一个 key 的并发刷新使用 `singleflight`，避免多个请求同时打 Token 端点。
+
+singleflight 细节：
+
+- leader 使用 `context.WithoutCancel(req.Context())` 保留 Source 身份，但不受首个请求取消影响
+- 另加独立超时，不能无限挂起
+- waiter 各自 `select` 自己的 context
+- leader 失败时把错误交给等待者，并清理 flight
+- 不新增 `x/sync` 依赖，复用现有 flight 模式即可
+
+Token Cache 容量：
+
+- 当前 `tokenCacheMax=256` 是按 `realm|service|scope` 估的
+- 加入 Source + Host + 两个 generation 后，256 可能偏小
+- 改成配置项，默认至少 1024
+- 淘汰仍按过期时间 + LRU；generation 是隔离维度，不是淘汰顺序
+- 3.5.11b 策略变更时按 `source_id` 定向清理旧 generation
+- 不允许把旧 generation 保留成 fallback
+
+fail closed 错误语义：
+
+- 身份缺失 / 策略缺失：返回 `503 Service Unavailable`，带明确错误码（如 `X-ML-Error: auth_policy_missing`）
+- 不能伪装成 401；否则无法区分“策略缺失”和“镜像不存在/无权限”
+- 上游真实 401：保持 401
+- 候选源 401：跳过候选并记录，不把候选 401 直接透传给客户端
+- 官方 401：按现有语义透传
+- 增加 `identity_missing` / `policy_missing` / `token_refresh_error` 指标，仅用于门禁和排障，不做运行时 dual-read 开关
+
+#### 3.5.11-C Schema 迁移
+
+`source_realm_policy` 是新增表，属于 Schema 变更：
+
+- 必须走离线 `db-migrate`，不能运行时建表
+- 输入是 3.5.10 的 3.5.7 Schema，输出是 3.5.11
+- 必须提升 `schema.Version` 和 `CanonicalSchemaHash`
+- 采用临时库 + 原子发布：`EnsureFresh -> 临时库 -> copyAll -> publishNoClobber`
+- 失败清理临时库和 sidecar，不保留半迁移目标库
 - 旧二进制不能直接打开新库
 - 回滚方式是恢复备份库 + 旧 `secret.key`
 - 不能把“旧二进制直接跑”当作回滚方案
 - 迁移完成后只保留一个 Schema 版本
 
-**5. 单轨运行**
+**迁移不能宣称单事务。** 准确表述是“离线迁移 + 原子发布，失败不留半迁移状态”。
 
-完成后必须满足：
+当前代码事实：
 
-- Gateway 和 Probe 只读 `source_realm_policy`
-- 没有旧 Realm 读取路径
+- 代码里没有 `realm_extra`；旧 Realm 实际是 `v2auth.DefaultRealms` 加上测试/runner 注入的 `Realms` map
+- 迁移不能按不存在的 `realm_extra` 写逻辑
+- 旧 Source 按 `repo_host` 种子化
+- `lscr.io` 必须保留 `ghcr.io` 这条显式跨 Host
+- Artifact Registry 按自身 Host 种子化
+- 自定义 Host、默认表里没有的 Source：没有策略，进入迁移报告
+- 没有策略的 Source 失败关闭，不回退旧白名单
+
+迁移报告至少输出：
+
+```text
+source_id | host | 原因 | 建议动作
+```
+
+#### 3.5.11-D 零残留、单轨、单事务审核
+
+**1. 零残留**
+
+完成后运行时只能保留：
+
+- `source_realm_policy`
+- `OfficialPolicy`
+
+必须删除或停止使用：
+
+- `v2auth.Authenticator.realms`
+- `v2auth.DefaultRealmsFor` 作为 Source 的 fallback
+- `gateway.realmAllowedForHost`
+- `gateway.parseBearer`
+- `runner.Options.Realms`
+- `probe.RegistryHostProbe.Realms`
+- 任何 Host → Realm 的静态表
+- 任何“新表查不到就回退旧白名单”的默认值
+
+“零残留”的定义：
+
+- 旧 Token **不可达**
+- 旧 namespace **已清理**
+- 旧代码路径**已删除**
+- 不是“数据库和缓存同一事务”
+- 也不是“缓存旧条目当场物理消失”
+
+迁移工具可以保留只读的旧种子；运行时不能引用。
+
+**2. 单轨**
+
+- Probe 和 Gateway 只读 `source_realm_policy` 或 `OfficialPolicy`
 - 没有 dual-read 开关
 - 没有 feature flag
 - 没有按 Host 写死的 Realm 特判
-- 3.5.11 仍然只支持单 Host；不要把它和一源多 Host 混为一谈
+- 没有策略时 fail closed
+- `OfficialPolicy` 是显式分支，不是 fallback
+- 3.5.11a 的 `LegacyHostPolicy` 是当时唯一权威；3.5.11b 切换后删除
+- 迁移的影子对比只能在离线工具里跑
 
-**6. 验收清单**
+只要保留一个 fallback，3.5.11 就是双轨。
 
-- 每个 `(source_id, host)` 有且仅有一个 `is_primary=1`
-- 所有 Source 的 Realm 策略已回填
-- 旧 Realm 配置不再参与判定
-- 创建、修改、禁用、删除都走单事务
-- Token Cache key 包含完整身份和两个 generation
-- 删除、禁用、轮换凭据后旧 Token 不能复用
-- `m.daocloud.io` 作为 `public.ecr.aws` Source 可通过探活
+**3. 单事务**
+
+数据库业务写入可以做到单事务：
+
+- 创建 Source：`sources` + `source_realm_policy` + `policy_gen` + `source_events`
+- 修改策略：`source_realm_policy` + `policy_gen++` + `source_events`
+- `SetRepoHost`：删除旧 Host 策略 + 建立新 Host 策略 + `policy_gen++` + `source_events`
+- 禁用 / 归档：状态变化 + `policy_gen++` + `source_events`
+- 删除 Source：删除策略 + 原有清理 + `source_events`
+- 额外 Realm 上限 3 在事务内检查
+
+当前 `AddSource`、`SetRepoHost`、`DeleteSource` 已有事务，见：
+
+- `internal/store/store.go:488`
+- `internal/store/host.go:77`
+- `internal/store/store.go:737`
+
+需要把策略写入接进同一个事务，不能先建 Source 再单独建策略。
+
+Store 当前是单连接：
+
+```go
+db.SetMaxOpenConns(1)
+```
+
+见 `internal/store/store.go:197`。运行时策略写入必须显式 `BEGIN IMMEDIATE`；当前单连接不是省略事务边界的理由。多表写入统一走事务 helper（如现有 `withSourceLive`，需要时新增 `withTx`），禁止“先裸 UPDATE，再补另一张表”。
+
+这里的单事务只覆盖 3.5.11 的运行时策略写入。`SetCapsLive` / `CommitHostProbe` 属于 3.5.14a 的写入路径，见 3.5.14a-C；不要把 14a 的事务要求混进 3.5.11 的实现范围。
+
+不能纳入数据库事务的部分：
+
+- **Token Cache**：进程内存，不是数据库事务的一部分；用 generation 版本化 key 做逻辑失效
+- **Schema 迁移**：一次性离线操作，采用临时库 + 原子发布，不是运行时事务
+- **数据库 + 缓存 + 迁移整体**：不承诺单事务
+
+**4. 生命周期覆盖**
+
+- 创建 Source：建策略
+- `SetRepoHost`：删旧 Host 策略、建新 Host 策略、`policy_gen++`
+- 禁用 Source：`policy_gen++`
+- 归档 Source：`policy_gen++`
+- 删除 Source：显式删除策略，不能只依赖外键
+- 轮换凭据：`credential_gen++`
+
+旧 Host 策略不清理、禁用/归档不 bump generation，都会让旧 Token 继续可达。
+
+#### 3.5.11-E 验收
+
+3.5.11a：
+
+- 所有 registry 请求都带 `PolicySnapshot`
+- HEAD、分片、续传、换源、并行路径不丢身份
+- 缺少身份时 fail closed
+- 旧 Realm 判定结果与 3.5.10 一致
+- Token Cache 结构体 key 能区分同一 Realm 的不同 Source
+- `go test -race` 覆盖并发 Token 刷新
+
+3.5.11b：
+
+- 每个 `(source_id, host)` 有且仅有一个 `primary_realm`
+- 额外 Realm 最多 3 个，事务内校验
+- 迁移报告为空，或每条缺失都有处理记录
+- `m.daocloud.io` 作为 `public.ecr.aws` 的 Source 可通过探活
+- `lscr.io -> ghcr.io` 跨 Host 策略仍可用
+- 自定义 Source 不会被官方 Host 白名单误杀
+- 官方 Realm 不会被第三方 Source 冒用
+- 探活通过和 Gateway 实际回源不出现两套 Realm 语义
+- 同一 Source 的不同 Host 不共享错误 Token
+- Source 删除、禁用、归档、改 Host、轮换凭据后旧 Token 不能复用
+- 没有策略的 Source 被明确阻断，不是静默 401
 - 迁移后旧二进制被拒绝启动
 - 回滚演练使用备份库 + 旧 `secret.key`
-- 代码中不存在旧 Realm 白名单和 fallback
 
-**7. 不能承诺的部分**
+3.5.11c：
 
-- 不能承诺数据库和 Token Cache 原子提交
-- 不能承诺缓存旧条目立即物理消失
-- 不能承诺旧二进制直接接管新 Schema
-- 不能承诺 3.5.11 完成一源多 Host
+- UI/API 可编辑主 Realm 和额外 Realm
+- 主 Realm 唯一
+- 超过 3 个额外 Realm 被拒绝
+- 修改策略写 `source_events`
+- 修改后旧 Token 不可达
+- 旧 Realm 代码和配置读取路径已删除
 
-满足以上 1–6，3.5.11 完成后就是单轨、零残留；否则会留下旧 Realm 或旧 Token Cache 的尾巴。
+通用门禁：
+
+- 运行时只引用 `source_realm_policy` 和 `OfficialPolicy`
+- `rg` 不到旧 Realm 运行时符号
+- `sqlite_master` 只有新策略表，没有旧 Realm 表
+- 无 dual-read、无 feature flag
+- 迁移临时文件清理
+- 失败注入覆盖 `AddSource` / `SetRepoHost` / `DeleteSource` / 禁用启用 / 策略编辑 / 归档
+
+#### 3.5.11-F 兼容与扩展
+
+- 3.5.12 / 3.5.13：直接复用 3.5.11b 的 resolver，不再改 Realm 模型
+- 3.5.14：每个新增 Host 能力必须同时有 `source_realm_policy`，否则该 Host 不进候选
+- 3.5.15：继续用 `credential_gen` 扩展，不改策略表主键
+- 3.5.16：竞速按 attempt 带策略快照，不能共享 Source 级 Token
+- 未来一源多 Host：策略表已经是 `(source_id, host)`，不需要重做
+- 未来换缓存后端：Token key 已完整，可直接迁移
+
+回滚：
+
+- 3.5.11a 是 code-only，可在 3.5.11b 前单独回滚
+- 3.5.11b 改 Schema，回滚靠备份库 + 旧 `secret.key`
+- 3.5.11c 是 code-only，可单独回滚
+- 3.5.11b 不保留旧读路径、不保留 dual-read、不保留 feature flag
+
+不能承诺：
+
+- 数据库和 Token Cache 原子提交
+- 缓存旧条目立即物理消失
+- Schema 迁移单事务
+- 旧二进制直接接管新 Schema
+- 3.5.11 完成一源多 Host
+
+#### 3.5.11-G 3.5.11a 实施基线
+
+当前工作副本（以实际环境为准）：
+
+- 代码基线是 `b4b0b22`
+- 当前 `HEAD` 是 `d8961e3`，等于 `b4b0b22` + 本路线图文档提交（hash 以实际 `git log` 为准，提交 v1.6 后会变）
+- 代码与 `b4b0b22` 相同，差异只是 docs
+- 分支从当前 `HEAD` 开，不要从 `b4b0b22` 开，否则会丢本地文档
+- `0f4a9bb → b4b0b22` 实际约 167 个文件，不是 111 个；不要用旧统计做基线
+- `go` 不在 PATH，但工具链在 `/opt/data/cache/tools/go/bin/go`（go1.27.3）
+- 基线测试已通过：`internal/v2auth`、`internal/gateway`、`internal/store`、`internal/runner`
+
+建议：
+
+```bash
+# 先处理未提交的 v1.6 文档，再开分支
+git switch -c feat/3.5.11a HEAD
+```
+
+D1–D8 审核结论：
+
+| 编号 | 事实 | 11a 动作 |
+|---|---|---|
+| D1 | Token Cache key 只有 `realm / service / scope`，没有 Source 身份 | 改成结构体 tokenKey，加入 Source/Host/CredGen/PolicyGen |
+| D2 | Token 刷新没有并发合并，冷启动/过期会并发打 Token 端点 | 加 singleflight |
+| D3 | 当前用 `req.Context()`，合并后 leader 取消会拖垮等待者 | leader 用 `WithoutCancel` + 独立超时，waiter 用自己的 ctx |
+| D4 | `scopeFromPath` 在 `host_prefix` 下把 Host 段算进 repository | 用 `PolicySnapshot.LogicalHost` 精确剥前缀，补测试 |
+| D5 | `v2auth` 和 Gateway 各有一套 Challenge 解析 | 删 Gateway 侧 `parseBearer` / `splitParams`，统一用 `v2auth.ParseChallenge` |
+| D6 | `realmAllowedForHost` 查不到会回退内置白名单 | `LegacyHostPolicy` 完整复刻四段语义；11b 再删 fallback |
+| D7 | Private 走独立 client，不走 `g.cli` | 11a 明确排除，不要给 Private 加 Registry 身份 |
+| D8 | `watch.go:347` 的 manifest 换源走 `g.cli`，清单漏了 | 补进统一闸口 |
+
+D6 的四段顺序必须完整复刻：
+
+1. userinfo 一律拒绝
+2. 同 Host 且同 scheme 放行
+3. 否则查 `DefaultRealmsFor(host)`（Artifact Registry 动态 `https://<host>`）
+4. 保留通配分支；现网静态表没有通配命中，但 11a 不能改变行为
+
+11a 落地清单：
+
+- `PolicySnapshot`，在候选选中点写入 attempt ctx，作为唯一身份入口
+- `RealmPolicyResolver` 接口 + `LegacyHostPolicy`
+- `v2auth.Authenticator.Do` 改为 `(sourceID, host)`；RealmAllowed 收敛到 resolver
+- 统一构造函数覆盖 `doUpstream` / `headOnce` / `rangeReq` / `openUpstream` / resume / `watch.go`
+- `tokenKey` 结构体 + 自研 singleflight + `WithoutCancel`
+- 删除 Gateway 侧 `parseBearer` / `splitParams`
+- 增加 `identity_missing` 指标，作为 11b 门禁，不做运行时开关
+- Probe 的 `CredentialSnapshot` 不动；`Realms` map 改为 resolver
+- fail closed 使用 503 + 明确错误码，不伪装 401
+- Token Cache 容量改为配置项，默认至少 1024；淘汰按过期 + LRU，不按 generation 排序
+
+11a 明确不做：
+
+- 不建 `source_realm_policy`
+- 不做 `db-migrate`
+- 不做策略 UI/API
+- 不改 `private.go`
+- 不改 Probe 的 `CredentialSnapshot` 字段
+- 不做 `SetCapsLive` / `CommitHostProbe`（属于 3.5.14a）
+- 不保留第二套 Realm 运行时入口
+
+11a 验收补充：
+
+- `host_prefix` 的 scope 不再带 Host 段
+- `watch.go` 换源路径带身份
+- Probe/Gateway 对同一 Source/Host 结果一致
+- 身份缺失返回 503，不返回伪造 401
+- singleflight leader 取消不影响等待者
+- Token Cache 扩容后不因多 Host 源挤空其他源
 
 ### 3.5.12 GCR / Artifact Registry / K8S 既有缺口闭环
 
@@ -560,7 +818,9 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 - 旧字段不能成为第二个权威入口。
 - 增加一致性测试：随机生成多 Host Source，写入后断言新表与旧投影一致。
 
-3.5.14a 必须包含新写路径，不能只建表：
+3.5.14a 必须包含新写路径，不能只建表。这一节是 3.5.14a 的运行时单事务门禁，不属于 3.5.11 的实现范围：
+
+总则：任何一次运行时写入，只要影响多张表，就必须在同一个 `BEGIN IMMEDIATE` 事务内完成；不允许一张表成功、另一张表延后。只有 Token Cache 和离线迁移是例外。
 
 1. `SetCapsLive`（`internal/store/store.go:614`）
    - 当前是无事务单条 UPDATE，直接写 `docker_cap` / `ghcr_cap` / `ghcr_prefix`
@@ -640,8 +900,10 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 
 因此 3.5.11 和 3.5.14a 都必须各自提供离线升级路径：
 
-- 3.5.11：`3.5.7 → 3.5.11`，新增 `source_realm_policy`
+- 3.5.11：`3.5.7 → 3.5.11`，新增 `source_realm_policy`，按 `repo_host` 种子化并生成缺失策略报告
 - 3.5.14a：`3.5.13 → 3.5.14`，新增 `source_host_caps` 并回填
+- 这一步同时校验：没有策略的 Source 必须进入报告并在运行时 fail closed，不能回退旧白名单
+- `copyAll` 不会自动生成 `source_realm_policy`；如果只复制旧表，升级后所有自定义 Host 都会认证失败
 - 每一步都更新输入 Schema 指纹
 - 更新 `cmd/db-migrate/main_test.go` 中“只允许三个输入指纹”的断言
 - 迁移输入只读，输出临时库
@@ -1038,19 +1300,18 @@ JOIN sources src ON src.repo_host = g.host
 5. `probe_status` 冻结为四态：`Supported / Unsupported / Inconclusive / Mismatch`，并与 `registry_cap` 的 `1/0/-1/2` 一一对应。
 6. `Mismatch` 是硬排除，不按普通 Unsupported 的 6 小时周期重试。
 7. `registry_prefix` 冻结为布尔，映射旧 `ghcr_prefix`，不做枚举。
-8. `source_realm_policy` 每个 `(source_id, host)` 最多 1 个主 Realm + 3 个额外 Realm；主 Realm 用 partial unique index 保证唯一。
+8. `source_realm_policy` 一行一个 `(source_id, host)`：`primary_realm` + `extra_realms` JSON（最多 3 个）+ 每个 Host 一个 `policy_gen`；不按 Realm 行分散 generation。
 9. GitLab PAT / Deploy Token 独立为 3.5.15a。
 10. 无公共 Source 的 Host 允许用受控 Source 故障边验收代码路径，但对外必须标记“Source 可用性阻塞”，不能宣称已有公共加速能力。
 11. 认证身份通过每次 attempt 的 request context 传递，不依赖静态 `adapter.Plan.SourceID`。
 12. 3.5.14a 的离线迁移必须新增 `3.5.7 → 3.5.11 → 3.5.13 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
 13. 迁移采用临时库 + 原子发布；失败删除临时库和 sidecar，不保留半迁移状态；不宣称“单事务迁移”。
-14. 3.5.11 完成后只保留 `source_realm_policy` 一个 Realm 权威；数据库写单事务；Token Cache 版本化 key；无旧 Realm fallback；Schema 回滚靠备份。
+14. 3.5.11 分 11a/11b/11c；完成后 Source Realm 只保留 `source_realm_policy`，官方直连走独立 `OfficialPolicy`（不是 fallback）；运行时数据库写入单事务；Token Cache 版本化失效；Schema 迁移离线 + 原子发布；无旧 Realm fallback；Schema 回滚靠备份。
 
 ### 仍待冻结
 
 1. `db-migrate` 的升级命令拆分：3.5.7→3.5.11 和 3.5.13→3.5.14 是新增独立命令，还是扩展 `migrate` 的 baseline 列表。
 2. `Mismatch` 是否允许手动重探，还是只能通过显式重置能力后重探。
 3. `source_host_caps` 的 `probe_status` 用 TEXT 还是整数编码；无论哪种，必须与 `registry_cap` 保持一一映射。
-4. `source_realm_policy` 额外 Realm 的审计字段是否需要单独记录 `policy_gen` 变化。
 
 在这些问题冻结前，3.5.14a 不进入实现。
