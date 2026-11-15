@@ -496,6 +496,8 @@ db.SetMaxOpenConns(1)
 
 #### 3.5.11-E 验收
 
+> 11b 的可执行验收清单、故障注入和旧二进制核对见 [`3.5.11b-acceptance.md`](3.5.11b-acceptance.md)。
+
 3.5.11a：
 
 - 所有 registry 请求都带 `PolicySnapshot`
