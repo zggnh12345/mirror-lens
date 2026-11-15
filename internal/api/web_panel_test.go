@@ -238,6 +238,69 @@ console.log(JSON.stringify(out));
 	}
 }
 
+// 能力标签必须按能力列通用派生，而不是只覆盖某个样本：
+// 双用途 Docker Hub 源可以同时有 HUB/GHCR/RAW；空 Host 仍不得推断 HUB/GHCR；
+// Foreign Host 只显示自己的 Registry 标签。这里用能力矩阵覆盖所有分支。
+func TestPanelCapabilityTagsGeneral(t *testing.T) {
+	raw, err := webFS.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	node := os.Getenv("NODE_BIN")
+	if node == "" {
+		node, err = exec.LookPath("node")
+		if err != nil {
+			t.Skip("node 不可用，跳过前端渲染校验")
+		}
+	}
+	driver := `
+function tagsOf(h){
+  return (h.match(/class="cap on [a-z]+"[^>]*>[A-Z]+</g)||[]).map(function(t){return t.replace(/.*>/,'').replace('<','');});
+}
+var cases=[
+  ['dual-use', {repo_host:'docker.io',docker_cap:1,ghcr_cap:1,github_cap:1}],
+  ['docker-only', {repo_host:'docker.io',docker_cap:1,ghcr_cap:0,github_cap:0}],
+  ['ghcr-only', {repo_host:'ghcr.io',docker_cap:0,ghcr_cap:1,github_cap:0}],
+  ['ghcr-dual', {repo_host:'ghcr.io',docker_cap:1,ghcr_cap:1,github_cap:0}],
+  ['empty-host', {repo_host:'',docker_cap:1,ghcr_cap:1,github_cap:1}],
+  ['foreign', {repo_host:'gcr.io',registry_cap:1,registry_path_mode:'native',docker_cap:1,ghcr_cap:1,github_cap:0}],
+  ['foreign-no-probe', {repo_host:'gcr.io',registry_cap:-1,registry_path_mode:'',docker_cap:1,ghcr_cap:1,github_cap:0}],
+  ['artifact-registry', {repo_host:'asia-northeast1-docker.pkg.dev',registry_cap:1,registry_path_mode:'host_prefix',docker_cap:0,ghcr_cap:0,github_cap:0}]
+];
+var out={};
+cases.forEach(function(c){ out[c[0]]=tagsOf(capTags(c[1])); });
+console.log(JSON.stringify(out));
+`
+	script := panelShim + extractScript(t, string(raw)) + driver
+	f := filepath.Join(t.TempDir(), "caps.js")
+	if err := os.WriteFile(f, []byte(script), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	out, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("执行能力标签脚本失败: %v\n%s", err, string(out))
+	}
+	var got map[string][]string
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("输出不是 JSON: %v\n%s", err, string(out))
+	}
+	want := map[string]string{
+		"dual-use":          "HUB,GHCR,RAW",
+		"docker-only":       "HUB",
+		"ghcr-only":         "GHCR",
+		"ghcr-dual":         "HUB,GHCR",
+		"empty-host":        "RAW",
+		"foreign":           "GCR",
+		"foreign-no-probe":  "",
+		"artifact-registry": "PKG",
+	}
+	for name, exp := range want {
+		if strings.Join(got[name], ",") != exp {
+			t.Errorf("%s 标签=%v，期望 %q", name, got[name], exp)
+		}
+	}
+}
+
 // extractScript 取 index.html 里最后一个 <script> 块（面板逻辑）。
 func extractScript(t *testing.T, src string) string {
 	t.Helper()

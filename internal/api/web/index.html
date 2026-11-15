@@ -477,29 +477,36 @@ function isArtifactRegistry(h){
   return /^[a-z0-9-]+$/.test(loc);
 }
 
-function registryTag(x){
+function registryTags(x){
   var h = String(x.repo_host || '').toLowerCase();
-  if (!h) return '';
-  if (h === 'docker.io') return x.docker_cap === 1 ? 'HUB' : '';
-  if (h === 'ghcr.io') return x.ghcr_cap === 1 ? 'GHCR' : '';
-  if (x.registry_cap !== 1 || !x.registry_path_mode) return '';
-  if (h === 'gcr.io') return 'GCR';
-  if (h === 'registry.k8s.io') return 'K8S';
-  if (h === 'quay.io') return 'QUAY';
-  if (h === 'mcr.microsoft.com') return 'MCR';
-  if (h === 'registry.gitlab.com') return 'GITLAB';
-  if (h === 'public.ecr.aws') return 'ECR';
-  if (h === 'cgr.dev') return 'CGR';
-  if (isArtifactRegistry(h)) return 'PKG';
-  return '';
+  if (!h) return [];
+  // repo_host 是主 Host，不是唯一能力：双用途源可以同时有 Hub 和 GHCR。
+  if (h === 'docker.io' || h === 'ghcr.io') {
+    var out = [];
+    if (x.docker_cap === 1) out.push('HUB');
+    if (x.ghcr_cap === 1) out.push('GHCR');
+    return out;
+  }
+  if (x.registry_cap !== 1 || !x.registry_path_mode) return [];
+  if (h === 'gcr.io') return ['GCR'];
+  if (h === 'registry.k8s.io') return ['K8S'];
+  if (h === 'quay.io') return ['QUAY'];
+  if (h === 'mcr.microsoft.com') return ['MCR'];
+  if (h === 'registry.gitlab.com') return ['GITLAB'];
+  if (h === 'public.ecr.aws') return ['ECR'];
+  if (h === 'cgr.dev') return ['CGR'];
+  if (isArtifactRegistry(h)) return ['PKG'];
+  return [];
 }
 
 function capTags(x){
-  var out = '', reg = registryTag(x);
-  var regTip = reg === 'ECR' ? 'ECR Public' : (reg === 'PKG' ? 'Artifact Registry' : reg);
-  if (reg === 'HUB') out += '<span class="cap on dk">HUB</span>';
-  else if (reg === 'GHCR') out += '<span class="cap on gc">GHCR</span>';
-  else if (reg) out += '<span class="cap on rg" title="' + esc(regTip) + '">' + esc(reg) + '</span>';
+  var out = '';
+  registryTags(x).forEach(function(reg){
+    var regTip = reg === 'ECR' ? 'ECR Public' : (reg === 'PKG' ? 'Artifact Registry' : reg);
+    if (reg === 'HUB') out += '<span class="cap on dk">HUB</span>';
+    else if (reg === 'GHCR') out += '<span class="cap on gc">GHCR</span>';
+    else out += '<span class="cap on rg" title="' + esc(regTip) + '">' + esc(reg) + '</span>';
+  });
   if (x.github_cap === 1) out += '<span class="cap on gh">RAW</span>';
   return out;
 }

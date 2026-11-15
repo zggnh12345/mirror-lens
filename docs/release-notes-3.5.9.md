@@ -17,7 +17,7 @@
 - 空列表仍然是“没有任何 Host 使用多源”；单个开关关闭只让该 Host 回官方源。
 - 源列表增加只读 Registry 标签：
   `HUB`、`GHCR`、`GCR`、`K8S`、`PKG`、`QUAY`、`MCR`、`GITLAB`、`ECR`、`CGR`。
-- 标签按 `RepoHost` 派生，读取对应的能力列；`PKG` 用 `IsArtifactRegistry`，
+- 标签以 `RepoHost` 定归属，能力列可同时输出多个标签（例如双用途源同时显示 HUB/GHCR）；`PKG` 用 `IsArtifactRegistry`，
   未探测、探测失败或能力未知不显示。
 - 标签只在列表展示，不参与 Source 选择、调度、探测目标或缓存键计算。
 
@@ -79,7 +79,7 @@ Blob HEAD 和 GET 都已按这个顺序处理；Manifest GET 走 `fetchOnce` 时
 
 - `go test ./...`
 - `go test -race ./...`
-- 面板标签测试覆盖显式 `docker.io`/`ghcr.io` 正向、空 `repo_host` 不推断标签，以及额外 Host 保留提示。
+- 面板标签测试覆盖通用能力矩阵：双用途 Docker/GHCR 源同时显示 HUB/GHCR/RAW，单能力、空 Host、Foreign Host 和未探测场景分别断言。
 - 多源开关测试覆盖八个固定开关全关、无额外 Host，以及全关但存在额外 Host 的保留行为。
 - 鉴权测试覆盖候选源 401/403 回退、官方 401 Challenge 透传、官方 5xx 不泄漏候选 Challenge；hedge 四种完成顺序均断言最终错误来自官方。
 - 面板契约测试覆盖 HUB/GHCR/RAW 与 GCR/PKG 标签、未探测不显示标签、Foreign Host 不重复显示 HUB。
