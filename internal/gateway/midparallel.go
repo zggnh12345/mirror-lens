@@ -138,7 +138,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		}
 	}
 
-	resp0, err := g.rangeReq(requestCtx, plan, srcs[0].t.u, sent, sent+firstLen-1)
+	resp0, err := g.rangeReq(requestCtx, plan, srcs[0].t.u, sent, sent+firstLen-1, sourceIDFor(srcs[0].t), logicalHostFor(srcs[0].t, plan))
 	if err != nil {
 		releaseLease(l0)
 		return false, false

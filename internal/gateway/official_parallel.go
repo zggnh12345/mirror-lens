@@ -39,7 +39,7 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	ctx := r.Context()
 
 	// 1 字节预检：确认支持 Range、拿到总长。还没写任何字节，失败可直接退回单流。
-	resp, err := g.rangeReq(ctx, plan, plan.Upstream, 0, 0)
+	resp, err := g.rangeReq(ctx, plan, plan.Upstream, 0, 0, 0, plan.LogicalHost)
 	if err != nil {
 		return false
 	}
@@ -207,7 +207,7 @@ func (g *Gateway) copyFrom(ctx context.Context, w io.Writer, plan *adapter.Plan,
 			}
 			backoff *= 2
 		}
-		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, total-1)
+		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, total-1, 0, plan.LogicalHost)
 		if err != nil {
 			continue
 		}
@@ -253,7 +253,7 @@ func (g *Gateway) fetchSeg(ctx context.Context, plan *adapter.Plan, off, ln int6
 				return nil, ctx.Err()
 			}
 		}
-		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, off+ln-1)
+		resp, err := g.rangeReq(ctx, plan, plan.Upstream, off, off+ln-1, 0, plan.LogicalHost)
 		if err != nil {
 			last = err
 			continue

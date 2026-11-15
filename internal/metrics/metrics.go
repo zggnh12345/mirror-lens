@@ -1080,6 +1080,7 @@ func (r *Registry) render() []byte {
 	}
 	r.writeLease(&b)
 	r.writeAttempt(&b)
+	r.writeAuth(&b)
 	r.writeMidfill(&b)
 	r.writeGHMeta(&b)
 	r.writeQuota(&b)

@@ -36,9 +36,12 @@ type Plan struct {
 	// 直接把 Host 写进 Kind 会让熔断、粘性、样本缓存各建一套，而健康族
 	// 又会因为未知 kind 落进 github 或按 Host 碎片化。
 	SchedKey string
-	Upstream *url.URL    // 真正要请求的上游
-	Method   string      // 一般 GET；git 的 POST 走透明转发
-	Header   http.Header // 追加到上游请求的头（认证、Accept 等）
+	// LogicalHost 是 Registry 的逻辑仓库 Host（如 registry.k8s.io），
+	// 不是镜像站 Host。认证策略和 scope 都按它算，host_prefix 不能混用。
+	LogicalHost string
+	Upstream    *url.URL    // 真正要请求的上游
+	Method      string      // 一般 GET；git 的 POST 走透明转发
+	Header      http.Header // 追加到上游请求的头（认证、Accept 等）
 
 	Redirects int // 允许的重定向跳数，0 用默认值
 

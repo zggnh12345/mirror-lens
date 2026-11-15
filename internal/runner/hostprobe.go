@@ -48,7 +48,7 @@ type HostProbeOptions struct {
 	// 事务写入的 next_probe_at 最迟这么久被 Runner 看见。默认 30s。
 	ScanInterval time.Duration
 
-	Realms map[string][]string
+	Policies v2auth.PolicyResolver
 
 	// Probe 可注入，测试用；默认 probe.ProbeRegistryHost。
 	Probe func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome
@@ -125,6 +125,9 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 	}
 	if o.Probe == nil {
 		o.Probe = probe.ProbeRegistryHost
+	}
+	if o.Policies == nil {
+		o.Policies = v2auth.NewLegacyHostPolicy(nil, false)
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -414,8 +417,9 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 				TokenAuth:   snap.Credential.TokenAuth,
 			},
 		},
-		Realms:  r.o.Realms,
-		Timeout: r.o.Timeout,
+		SourceID: j.SourceID,
+		Policy:   r.o.Policies,
+		Timeout:  r.o.Timeout,
 	})
 
 	// O1 优先于 O4：取消后的结果不参与任何分类，连「矛盾结果」的屏蔽

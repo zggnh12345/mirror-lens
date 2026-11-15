@@ -17,6 +17,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // A3：真实链路端到端。这里不注入假 Probe：默认的 probe.ProbeRegistryHost
@@ -268,9 +269,9 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		}
 		r := NewHostProbeRunner(HostProbeOptions{
 			Store: f.st, Creds: f.creds, Concurrency: 1,
-			Now:    func() time.Time { return f.now },
-			Guard:  store.NewRecoveryGuard(),
-			Realms: map[string][]string{"quay.io": {srv.URL}},
+			Now:      func() time.Time { return f.now },
+			Guard:    store.NewRecoveryGuard(),
+			Policies: v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false),
 			Jobs: func(context.Context) ([]HostProbeJob, error) {
 				return []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", Gen: gen, BaseURL: srv.URL, Repo: "library/alpine"}}, nil
 			},
@@ -345,9 +346,9 @@ func TestA3RealChainEndToEnd(t *testing.T) {
 		guard.Block(key, gen)
 		r := NewHostProbeRunner(HostProbeOptions{
 			Store: f.st, Creds: f.creds, Concurrency: 1,
-			Now:    func() time.Time { return f.now },
-			Guard:  guard,
-			Realms: map[string][]string{"quay.io": {srv.URL}},
+			Now:      func() time.Time { return f.now },
+			Guard:    guard,
+			Policies: v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false),
 			Jobs: func(context.Context) ([]HostProbeJob, error) {
 				return []HostProbeJob{{SourceID: f.srcID, Host: "quay.io", Gen: gen, BaseURL: srv.URL, Repo: "library/alpine"}}, nil
 			},

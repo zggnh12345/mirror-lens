@@ -38,6 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 	"github.com/zggnh12345/mirror-lens/internal/version"
 )
 
@@ -45,17 +46,18 @@ import (
 const Version = version.Version
 
 type Gateway struct {
-	st      *store.Store
-	cache   *cache.Store
-	cli     *http.Client
-	guard   *safehttp.Guard
-	raw     *raw.Adapter
-	ghAd    *ghadapter.Adapter
-	httpAd  *httpadapter.Adapter
-	gitAd   *gitadapter.Adapter
-	regAd   *registryadapter.Adapter
-	ghMeta  *ghapi.Client
-	maxSize int64
+	st       *store.Store
+	cache    *cache.Store
+	cli      *http.Client
+	guard    *safehttp.Guard
+	raw      *raw.Adapter
+	ghAd     *ghadapter.Adapter
+	httpAd   *httpadapter.Adapter
+	gitAd    *gitadapter.Adapter
+	regAd    *registryadapter.Adapter
+	policies v2auth.PolicyResolver
+	ghMeta   *ghapi.Client
+	maxSize  int64
 
 	cacheMaxBytes int64
 	cacheMinFree  int64 // 磁盘剩余低于此值暂停落盘，0 = 不设底线
@@ -150,12 +152,17 @@ type HedgeOptions struct {
 }
 
 type Options struct {
-	Cache         *cache.Store
-	RawBase       string
-	MaxBytes      int64
-	GitTTL        time.Duration
-	RawTTL        time.Duration
-	Registry      *registryadapter.Adapter
+	Cache    *cache.Store
+	RawBase  string
+	MaxBytes int64
+	GitTTL   time.Duration
+	RawTTL   time.Duration
+	Registry *registryadapter.Adapter
+	// Policies 是 3.5.11 的 Realm 策略入口；nil 时使用 11a 过渡的
+	// LegacyHostPolicy（Gateway 保留同 Host 快捷放行）。
+	Policies v2auth.PolicyResolver
+	// TokenCacheMax 是 token 缓存条目上限；0 用默认 1024。
+	TokenCacheMax int
 	CacheMaxBytes int64 // 缓存总量上限（字节），0 = 不限
 	// CacheMinFreeBytes 是磁盘剩余底线：低于它就不落盘、改直通。
 	// 配额管"缓存能用多少"，这条管"别把同一块盘上的别人挤死"。
@@ -193,13 +200,17 @@ func New(st *store.Store, o Options) *Gateway {
 	if guard == nil {
 		guard = safehttp.Default()
 	}
+	policies := o.Policies
+	if policies == nil {
+		policies = v2auth.NewLegacyHostPolicy(nil, true)
+	}
 	cli := guard.Client()
 	if o.Registry != nil {
 		// 401 + Bearer 挑战时自动换 token 重发，只对配置的那个上游生效
 		cli = &http.Client{
 			Transport: &bearerTransport{
 				base:   cli.Transport,
-				tokens: newTokenCache(),
+				tokens: newTokenCache(o.TokenCacheMax),
 			},
 			CheckRedirect: cli.CheckRedirect,
 		}
@@ -229,6 +240,7 @@ func New(st *store.Store, o Options) *Gateway {
 		httpAd:        httpadapter.New(o.MaxBytes),
 		gitAd:         gitadapter.New(o.GitTTL),
 		regAd:         o.Registry,
+		policies:      policies,
 		maxSize:       o.MaxBytes,
 		cacheMaxBytes: o.CacheMaxBytes,
 		cacheMinFree:  o.CacheMinFreeBytes,
@@ -521,6 +533,59 @@ type fetchTarget struct {
 	c      *scheduler.Candidate
 	fb     bool   // 属于备用站点（plan.Fallbacks）
 	fbHost string // 备用站点的逻辑站点（ghcr.io），不是加速源 host
+}
+
+// sourceIDFor 返回这次请求的候选源身份；官方直连是 0。
+func sourceIDFor(t fetchTarget) int64 {
+	if t.c != nil {
+		return t.c.ID
+	}
+	return 0
+}
+
+// logicalHostFor 返回这次上游请求的逻辑仓库 Host。
+// Fallback（裸名转 ghcr）必须用 fbHost，不能用原 plan 的 Docker Hub Host。
+func logicalHostFor(t fetchTarget, plan *adapter.Plan) string {
+	if t.fbHost != "" {
+		return t.fbHost
+	}
+	if plan != nil {
+		return plan.LogicalHost
+	}
+	return ""
+}
+
+var defaultGatewayPolicy = v2auth.NewLegacyHostPolicy(nil, true)
+
+func (g *Gateway) policyResolver() v2auth.PolicyResolver {
+	if g != nil && g.policies != nil {
+		return g.policies
+	}
+	return defaultGatewayPolicy
+}
+
+// withRegistryPolicy 在请求 context 写入唯一一份认证身份。
+//
+// 只有 Registry plan（LogicalHost 非空）需要；Git/Private/Raw 不写。
+// 解析失败必须 fail closed，不能退回按 Host 查表。
+func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost string) (context.Context, error) {
+	if plan == nil || plan.LogicalHost == "" {
+		return ctx, nil
+	}
+	host := logicalHost
+	if host == "" {
+		host = plan.LogicalHost
+	}
+	p, err := g.policyResolver().Resolve(ctx, sourceID, host)
+	if err != nil {
+		metrics.AuthPolicyMissing()
+		return nil, fmt.Errorf("%w: %v", v2auth.ErrPolicyMissing, err)
+	}
+	p.LogicalHost = host
+	if plan.Upstream != nil {
+		p.Scheme = plan.Upstream.Scheme
+	}
+	return v2auth.WithPolicy(ctx, p), nil
 }
 
 // targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
@@ -871,7 +936,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 		cancels[i] = icancel
 		go func() {
 			st := time.Now()
-			up, err := g.openUpstream(ictx, plan, prev, targets[i].u)
+			up, err := g.openUpstream(ictx, plan, prev, targets[i].u, sourceIDFor(targets[i]), logicalHostFor(targets[i], plan))
 			if ictx.Err() != nil {
 				if up != nil {
 					up.resp.Body.Close()
@@ -1058,7 +1123,11 @@ type upstream struct {
 
 // openUpstream 只负责到响应头为止，不读 Body。
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
-func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL) (*upstream, error) {
+func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	if err != nil {
+		return nil, err
+	}
 	uctx, cancel := context.WithCancel(ctx)
 	req, err := http.NewRequestWithContext(uctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -1233,7 +1302,7 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 
 // fetchURL 是「单源完整取」的薄包装：非对冲路径与旧行为完全一致。
 func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, t fetchTarget) (*store.CacheEntry, bool, int, error) {
-	up, err := g.openUpstream(ctx, plan, prev, u)
+	up, err := g.openUpstream(ctx, plan, prev, u, sourceIDFor(t), logicalHostFor(t, plan))
 	if err != nil {
 		return nil, false, 0, err
 	}
@@ -1549,6 +1618,9 @@ func setRetryAfter(w http.ResponseWriter, err error) {
 }
 
 func statusFor(err error) int {
+	if errors.Is(err, v2auth.ErrPolicyMissing) {
+		return http.StatusServiceUnavailable
+	}
 	var ue *upstreamError
 	if errors.As(err, &ue) {
 		switch ue.Code {

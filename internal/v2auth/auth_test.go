@@ -126,7 +126,7 @@ func TestMCRNoBearerChallenge(t *testing.T) {
 
 	a := New(srv.Client(), nil)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
-	resp, err := a.Do(context.Background(), "mcr.microsoft.com", req, CredentialSnapshot{}, "")
+	resp, err := a.Do(context.Background(), 0, "mcr.microsoft.com", req, CredentialSnapshot{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestDoFetchesTokenPerRequest(t *testing.T) {
 	snap := CredentialSnapshot{Host: "quay.io", Generation: 3, Digest: "d", Credentials: Credentials{Username: "robot", Password: "pw"}}
 	for i := 0; i < 2; i++ {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/library/alpine/manifests/latest", nil)
-		resp, err := a.Do(context.Background(), "quay.io", req, snap, "repository:library/alpine:pull")
+		resp, err := a.Do(context.Background(), 0, "quay.io", req, snap, "repository:library/alpine:pull")
 		if err != nil {
 			t.Fatalf("第 %d 次请求: %v", i+1, err)
 		}
@@ -212,7 +212,7 @@ func TestDoRejectsForeignRealm(t *testing.T) {
 
 	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/library/alpine/manifests/latest", nil)
-	_, err := a.Do(context.Background(), "quay.io", req, CredentialSnapshot{}, "")
+	_, err := a.Do(context.Background(), 0, "quay.io", req, CredentialSnapshot{}, "")
 	if !errors.Is(err, ErrRealmDenied) {
 		t.Fatalf("外部 Realm 应被拒，得到 %v", err)
 	}
@@ -236,7 +236,7 @@ func TestTokenMethodPostRejected(t *testing.T) {
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
 		Username: "u", Password: "p", TokenMethod: "POST", TokenAuth: "basic",
 	}}
-	_, err := a.Do(context.Background(), "quay.io", req, snap, "")
+	_, err := a.Do(context.Background(), 0, "quay.io", req, snap, "")
 	if !errors.Is(err, ErrTokenMethodUnsupported) {
 		t.Fatalf("POST 应显式拒绝，得到 %v", err)
 	}
@@ -266,7 +266,7 @@ func TestTokenAuthNoneSendsNoBasic(t *testing.T) {
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
 		Username: "u", Password: "p", TokenAuth: "none",
 	}}
-	resp, err := a.Do(context.Background(), "quay.io", req, snap, "")
+	resp, err := a.Do(context.Background(), 0, "quay.io", req, snap, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestTokenAuthBasicRequiresCredentials(t *testing.T) {
 	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{TokenAuth: "basic"}}
-	if _, err := a.Do(context.Background(), "quay.io", req, snap, ""); !errors.Is(err, ErrCredentialsMissing) {
+	if _, err := a.Do(context.Background(), 0, "quay.io", req, snap, ""); !errors.Is(err, ErrCredentialsMissing) {
 		t.Fatalf("缺凭据应报错，得到 %v", err)
 	}
 }
@@ -302,7 +302,7 @@ func TestTokenAuthUnknownValue(t *testing.T) {
 	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Credentials: Credentials{Username: "u", TokenAuth: "digest"}}
-	if _, err := a.Do(context.Background(), "quay.io", req, snap, ""); !errors.Is(err, ErrTokenAuthUnsupported) {
+	if _, err := a.Do(context.Background(), 0, "quay.io", req, snap, ""); !errors.Is(err, ErrTokenAuthUnsupported) {
 		t.Fatalf("未知认证方式应报错，得到 %v", err)
 	}
 }
@@ -320,7 +320,7 @@ func TestDoTokenFailure(t *testing.T) {
 
 	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
-	if _, err := a.Do(context.Background(), "quay.io", req, CredentialSnapshot{}, ""); err == nil {
+	if _, err := a.Do(context.Background(), 0, "quay.io", req, CredentialSnapshot{}, ""); err == nil {
 		t.Fatal("Token 端点 403 时应报错")
 	}
 }

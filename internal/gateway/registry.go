@@ -292,7 +292,7 @@ func (g *Gateway) headBlob(w http.ResponseWriter, r *http.Request, plan *adapter
 			continue
 		}
 		start := time.Now()
-		code, hdr, err := g.headOnce(r.Context(), plan, t.u)
+		code, hdr, err := g.headOnce(r.Context(), plan, t.u, sourceIDFor(t), logicalHostFor(t, plan))
 		if err != nil {
 			lastErr = err
 			g.reportSource(plan.Sched(), t, false, time.Since(start), scheduler.Hint{Mode: "head"})
@@ -350,7 +350,11 @@ func (g *Gateway) writeHeadStatus(w http.ResponseWriter, hdr http.Header, code i
 }
 
 // headOnce 发一次原生 HEAD：只到响应头，读完（最多 4K）并关闭 Body。
-func (g *Gateway) headOnce(ctx context.Context, plan *adapter.Plan, u *url.URL) (int, http.Header, error) {
+func (g *Gateway) headOnce(ctx context.Context, plan *adapter.Plan, u *url.URL, sourceID int64, logicalHost string) (int, http.Header, error) {
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	if err != nil {
+		return 0, nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
 	if err != nil {
 		return 0, nil, err

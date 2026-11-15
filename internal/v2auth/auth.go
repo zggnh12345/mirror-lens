@@ -126,18 +126,28 @@ func splitParams(s string) []string {
 // Authenticator 持有 HTTP 客户端（必须带 safehttp.Guard 的拨号器）和
 // Host → Realm 白名单。
 type Authenticator struct {
-	client *http.Client
-	realms map[string][]string
-	ua     string
+	client   *http.Client
+	resolver PolicyResolver
+	ua       string
 }
 
 // New 构造认证器。realms 的 key 是 repo_host（如 quay.io），value 是允许的
 // Realm 前缀，形如 "https://quay.io" 或 "https://*.example.com"。
+//
+// 这个签名保留给 11a 之前的调用方；新代码应使用 NewWithResolver。
 func New(client *http.Client, realms map[string][]string) *Authenticator {
+	return NewWithResolver(client, NewLegacyHostPolicy(realms, false))
+}
+
+// NewWithResolver 用策略解析器构造认证器。
+func NewWithResolver(client *http.Client, resolver PolicyResolver) *Authenticator {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Authenticator{client: client, realms: realms, ua: "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)"}
+	if resolver == nil {
+		resolver = NewLegacyHostPolicy(nil, false)
+	}
+	return &Authenticator{client: client, resolver: resolver, ua: "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)"}
 }
 
 // DefaultRealms 是内置白名单，只覆盖已知 Registry 的官方认证端点。
@@ -171,39 +181,22 @@ func DefaultRealmsFor(host string) []string {
 // 只比对 scheme + host（含端口），路径由调用方按 Challenge 原样使用；
 // 带 userinfo 的 Realm 一律拒绝。
 func (a *Authenticator) RealmAllowed(host string, realm *url.URL) error {
-	if realm == nil || realm.Scheme == "" || realm.Host == "" {
-		return ErrNoRealm
+	p, err := a.resolver.Resolve(context.Background(), 0, host)
+	if err != nil {
+		return err
 	}
-	if realm.User != nil {
-		return fmt.Errorf("%w: Realm 带 userinfo", ErrRealmDenied)
-	}
-	got := strings.ToLower(realm.Scheme + "://" + realm.Host)
-	allows := a.realms[host]
-	if len(allows) == 0 {
-		allows = DefaultRealmsFor(host)
-	}
-	for _, allow := range allows {
-		want := strings.ToLower(strings.TrimSuffix(allow, "/"))
-		if got == want {
-			return nil
-		}
-		// 支持 https://*.example.com 形式，只允许一级或多级子域。
-		if i := strings.Index(want, "://*."); i > 0 {
-			prefix := want[:i+3]
-			suffix := want[i+5:]
-			if strings.HasPrefix(got, prefix) && strings.HasSuffix(got, "."+suffix) {
-				return nil
-			}
-		}
-	}
-	return fmt.Errorf("%w: %s 的 Realm %s", ErrRealmDenied, host, got)
+	return p.Allows(realm)
 }
 
 // Do 发出请求；遇到 401 时按 Challenge 换 Token 后重试一次。
 //
 // scope 用于 Challenge 没带 scope 的情况（例如 /v2/ 探测）。
 // 返回的 Response 由调用方负责关闭。
-func (a *Authenticator) Do(ctx context.Context, host string, req *http.Request, snap CredentialSnapshot, scope string) (*http.Response, error) {
+func (a *Authenticator) Do(ctx context.Context, sourceID int64, host string, req *http.Request, snap CredentialSnapshot, scope string) (*http.Response, error) {
+	policy, err := a.resolver.Resolve(ctx, sourceID, host)
+	if err != nil {
+		return nil, err
+	}
 	first, err := a.send(ctx, req, "")
 	if err != nil {
 		return nil, err
@@ -220,7 +213,7 @@ func (a *Authenticator) Do(ctx context.Context, host string, req *http.Request, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoRealm, err)
 	}
-	if err := a.RealmAllowed(host, ru); err != nil {
+	if err := policy.Allows(ru); err != nil {
 		return nil, err
 	}
 	if ch.Scope == "" {

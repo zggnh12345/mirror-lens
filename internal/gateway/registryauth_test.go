@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,26 +9,29 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // 全都没过期时也必须封顶：key 带 scope，仓库一多就会无限长。
 func TestTokenCacheHardLimit(t *testing.T) {
 	c := newTokenCache()
 	now := time.Now()
-	for i := 0; i < tokenCacheMax+80; i++ {
+	for i := 0; i < c.max+80; i++ {
 		c.mu.Lock()
 		c.pruneLocked()
-		c.m[fmt.Sprintf("k%d", i)] = tokenEntry{tok: "t", exp: now.Add(time.Duration(i+1) * time.Hour)}
+		c.m[tokenKey{Host: fmt.Sprintf("k%d", i)}] = tokenEntry{tok: "t", exp: now.Add(time.Duration(i+1) * time.Hour)}
 		c.mu.Unlock()
 	}
-	if n := len(c.m); n > tokenCacheMax {
-		t.Fatalf("token 缓存应封顶 %d，实际 %d", tokenCacheMax, n)
+	if n := len(c.m); n > c.max {
+		t.Fatalf("token 缓存应封顶 %d，实际 %d", c.max, n)
 	}
 	// 淘汰的是最早到期的那批，最新写入的必须还在。
-	if _, ok := c.m["k0"]; ok {
+	if _, ok := c.m[tokenKey{Host: "k0"}]; ok {
 		t.Fatal("最早到期的条目应被淘汰")
 	}
-	if _, ok := c.m[fmt.Sprintf("k%d", tokenCacheMax+79)]; !ok {
+	if _, ok := c.m[tokenKey{Host: fmt.Sprintf("k%d", c.max+79)}]; !ok {
 		t.Fatal("最新写入的条目不该被淘汰")
 	}
 }
@@ -71,6 +75,7 @@ func TestBearerTransportAllowsGitLabRealm(t *testing.T) {
 	})
 	bt := &bearerTransport{base: base, tokens: newTokenCache()}
 	req := httptest.NewRequest(http.MethodGet, "https://registry.gitlab.com/v2/group/project/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{LogicalHost: "registry.gitlab.com", AllowSameHost: true, Scheme: "https", Realms: []string{"https://gitlab.com"}}))
 	resp, err := bt.RoundTrip(req)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +100,7 @@ func TestBearerTransportRejectsUntrustedRealm(t *testing.T) {
 	})
 	bt := &bearerTransport{base: base, tokens: newTokenCache()}
 	req := httptest.NewRequest(http.MethodGet, "https://registry.gitlab.com/v2/group/project/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{LogicalHost: "registry.gitlab.com", AllowSameHost: true, Scheme: "https", Realms: []string{"https://gitlab.com"}}))
 	resp, err := bt.RoundTrip(req)
 	if err != nil {
 		t.Fatal(err)
@@ -102,5 +108,129 @@ func TestBearerTransportRejectsUntrustedRealm(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized || tokenHits != 0 {
 		t.Fatalf("status=%d tokenHits=%d，应原样返回 401 且不请求 token", resp.StatusCode, tokenHits)
+	}
+}
+
+// 没有策略快照时必须 fail closed 成 503，不能伪装成 401 或退回按 Host 查表。
+func TestBearerTransportFailClosedWithoutPolicy(t *testing.T) {
+	bt := &bearerTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("没有策略时不应发上游请求")
+		return nil, nil
+	}), tokens: newTokenCache()}
+	req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithRegistry(req.Context()))
+	resp, err := bt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d，应为 503", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-ML-Error"); got != "auth_policy_missing" {
+		t.Fatalf("X-ML-Error=%q", got)
+	}
+}
+
+// 同一个 realm/service/scope 但不同 Source 必须各自换 token，不能跨源复用。
+func TestBearerTransportTokenCacheSeparatesSources(t *testing.T) {
+	var tokenHits int
+	var auths []string
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "auth.example":
+			tokenHits++
+			return authResponse(http.StatusOK, fmt.Sprintf(`{"token":"t%d"}`, tokenHits), nil), nil
+		case "registry.example":
+			if req.Header.Get("Authorization") == "" {
+				return authResponse(http.StatusUnauthorized, "", map[string]string{
+					"WWW-Authenticate": `Bearer realm="https://auth.example/token",service="registry",scope="repository:g/p:pull"`,
+				}), nil
+			}
+			auths = append(auths, req.Header.Get("Authorization"))
+			return authResponse(http.StatusOK, `{"ok":true}`, nil), nil
+		default:
+			return authResponse(http.StatusBadGateway, "unexpected host "+req.URL.Host, nil), nil
+		}
+	})
+	bt := &bearerTransport{base: base, tokens: newTokenCache()}
+
+	do := func(sourceID int64) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+		req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{
+			SourceID: sourceID, LogicalHost: "registry.example", Scheme: "https",
+			Realms: []string{"https://auth.example"},
+		}))
+		resp, err := bt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("source=%d status=%d", sourceID, resp.StatusCode)
+		}
+	}
+	do(1)
+	do(2)
+
+	if tokenHits != 2 {
+		t.Fatalf("不同 Source 应各换一次 token，tokenHits=%d", tokenHits)
+	}
+	if len(auths) != 2 || auths[0] == auths[1] {
+		t.Fatalf("不同 Source 不应复用同一个 token: %v", auths)
+	}
+}
+
+func TestScopeFromPathStripsHostPrefix(t *testing.T) {
+	cases := []struct {
+		path, host, want string
+	}{
+		{"/v2/library/alpine/manifests/latest", "registry.k8s.io", "repository:library/alpine:pull"},
+		{"/v2/registry.k8s.io/pause/manifests/3.9", "registry.k8s.io", "repository:pause:pull"},
+		{"/v2/registry.k8s.io/pause/blobs/sha256:abc", "registry.k8s.io", "repository:pause:pull"},
+		{"/v2/", "registry.k8s.io", ""},
+	}
+	for _, c := range cases {
+		if got := scopeFromPath(c.path, c.host); got != c.want {
+			t.Errorf("scopeFromPath(%q, %q)=%q，应为 %q", c.path, c.host, got, c.want)
+		}
+	}
+}
+
+func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
+	g := &Gateway{}
+	plan := &adapter.Plan{LogicalHost: "docker.io"}
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := v2auth.PolicyFromContext(ctx)
+	if !ok || p.SourceID != 9 || p.LogicalHost != "docker.io" || p.Official {
+		t.Fatalf("策略身份不对: %+v ok=%v", p, ok)
+	}
+	ctx, err = g.withRegistryPolicy(context.Background(), plan, 9, "ghcr.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ = v2auth.PolicyFromContext(ctx)
+	if p.LogicalHost != "ghcr.io" {
+		t.Fatalf("fallback 逻辑 Host 应为 ghcr.io，实际 %q", p.LogicalHost)
+	}
+}
+
+// Git/Private/Raw 共用 cli，但没有 Registry 标记时必须原样透传，不能被 503 掉。
+func TestBearerTransportNonRegistryPassthrough(t *testing.T) {
+	bt := &bearerTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return authResponse(http.StatusOK, "git", nil), nil
+	}), tokens: newTokenCache()}
+	req := httptest.NewRequest(http.MethodGet, "https://git.example/repo/info/refs", nil)
+	resp, err := bt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("非 Registry 请求被改写: %d", resp.StatusCode)
 	}
 }

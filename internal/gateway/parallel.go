@@ -210,7 +210,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.parFalls.Add(1)
 		return false
 	}
-	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, 0, firstLen-1)
+	resp0, err := g.rangeReq(ctx, plan, srcs[0].t.u, 0, firstLen-1, sourceIDFor(srcs[0].t), logicalHostFor(srcs[0].t, plan))
 	if err != nil {
 		releaseLease(l0)
 		drop()
@@ -668,7 +668,7 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 		return parProbe{}
 	}
 	st := time.Now()
-	resp, err := g.rangeReq(ctx, plan, t.u, 0, 0)
+	resp, err := g.rangeReq(ctx, plan, t.u, 0, 0, sourceIDFor(t), logicalHostFor(t, plan))
 	if err != nil {
 		// 连不上、超时才算源故障；本次任务被取消则中性。
 		if ctx.Err() == nil {
@@ -837,21 +837,23 @@ func (g *Gateway) reportSource(kind string, t fetchTarget, ok bool, d time.Durat
 func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSource, srcs []parSource, idx int,
 	off, length, total int64, part *os.File, stats []parStat, task *liveTask) error {
 	type attempt struct {
-		u     *url.URL
-		idx   int  // -1 = 官方源
-		blame bool // 失败是否归因到这台源
+		u           *url.URL
+		idx         int  // -1 = 官方源
+		blame       bool // 失败是否归因到这台源
+		sourceID    int64
+		logicalHost string
 	}
-	atts := []attempt{{u: src.t.u, idx: idx, blame: true}}
+	atts := []attempt{{u: src.t.u, idx: idx, blame: true, sourceID: sourceIDFor(src.t), logicalHost: logicalHostFor(src.t, plan)}}
 	for j := range srcs {
 		// 官方源在 srcs 里也有一席（预检会把它算进去），但换源时它必须垫底：
 		// 否则「官方排在第一位」就等于每段失败都直接回慢路。
 		if j == idx || srcs[j].t.u.String() == src.t.u.String() || srcs[j].t.u.String() == plan.Upstream.String() {
 			continue
 		}
-		atts = append(atts, attempt{u: srcs[j].t.u, idx: j})
+		atts = append(atts, attempt{u: srcs[j].t.u, idx: j, sourceID: sourceIDFor(srcs[j].t), logicalHost: logicalHostFor(srcs[j].t, plan)})
 	}
 	if src.t.u.String() != plan.Upstream.String() {
-		atts = append(atts, attempt{u: plan.Upstream, idx: -1})
+		atts = append(atts, attempt{u: plan.Upstream, idx: -1, logicalHost: plan.LogicalHost})
 	}
 
 	var last error
@@ -889,7 +891,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 				return fmt.Errorf("名额已被回收，放弃分片: %w", context.Canceled)
 			}
 		}
-		resp, err := g.rangeReq(actx, plan, a.u, off, off+length-1)
+		resp, err := g.rangeReq(actx, plan, a.u, off, off+length-1, a.sourceID, a.logicalHost)
 		if err != nil {
 			acancel()
 			cl.finish(nil)
@@ -978,8 +980,12 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 }
 
 // rangeReq 发一个带 Range 的上游请求。
-// 认证仍由 cli 里的 bearerTransport 按主机处理。
-func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, from, to int64) (*http.Response, error) {
+// 认证由 bearerTransport 使用 context 里的策略快照处理，不按 Host 重新查表。
+func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, from, to int64, sourceID int64, logicalHost string) (*http.Response, error) {
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err

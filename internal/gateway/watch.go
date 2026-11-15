@@ -322,6 +322,13 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 				continue
 			}
 		}
+		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan))
+		if err != nil {
+			unbind()
+			cancel()
+			releaseLease(l)
+			continue
+		}
 		req, err := http.NewRequestWithContext(rctx, http.MethodGet, t.u.String(), nil)
 		if err != nil {
 			unbind()

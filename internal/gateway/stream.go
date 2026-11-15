@@ -249,7 +249,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 			continue
 		}
 		start := time.Now()
-		resp, err := g.doUpstream(ctx, plan, pm, prev, t.u)
+		resp, err := g.doUpstream(ctx, plan, pm, prev, t.u, sourceIDFor(t), logicalHostFor(t, plan))
 		if err != nil {
 			releaseLease(l)
 			if t.c == nil {
@@ -325,7 +325,11 @@ func retryableFromMirror(code int) bool {
 	return code >= 500
 }
 
-func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.PartialMeta, prev *store.CacheEntry, u *url.URL) (*http.Response, error) {
+func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.PartialMeta, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*http.Response, error) {
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -991,7 +995,12 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	for i, t := range targets {
 		tt := t
 		start := time.Now()
-		req, rerr := http.NewRequestWithContext(r.Context(), r.Method, t.u.String(), nil)
+		rctx, perr := g.withRegistryPolicy(r.Context(), plan, sourceIDFor(t), logicalHostFor(t, plan))
+		if perr != nil {
+			err = perr
+			continue
+		}
+		req, rerr := http.NewRequestWithContext(rctx, r.Method, t.u.String(), nil)
 		if rerr != nil {
 			err = rerr
 			continue

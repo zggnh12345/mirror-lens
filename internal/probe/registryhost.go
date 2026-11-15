@@ -37,8 +37,10 @@ type RegistryHostProbe struct {
 	// 它的 Generation/Digest 与 store 的一致性由调用方（Runner）负责，
 	// 本层只保证「一次探测只用这一份快照」。
 	Snapshot v2auth.CredentialSnapshot
-	// Realms 是 Host → Realm 白名单；为空时用 v2auth.DefaultRealms()。
-	Realms  map[string][]string
+	// SourceID 是探测对应的候选源；0 表示官方直连。
+	SourceID int64
+	// Policy 是 Realm 解析器；为空时使用 LegacyHostPolicy（不启用同 Host 快捷放行）。
+	Policy  v2auth.PolicyResolver
 	Timeout time.Duration
 }
 
@@ -179,11 +181,11 @@ func ProbeRegistryHost(ctx context.Context, p RegistryHostProbe) RegistryHostOut
 	if p.Timeout <= 0 {
 		p.Timeout = 25 * time.Second
 	}
-	realms := p.Realms
-	if realms == nil {
-		realms = v2auth.DefaultRealms()
+	policy := p.Policy
+	if policy == nil {
+		policy = v2auth.NewLegacyHostPolicy(nil, false)
 	}
-	auth := v2auth.New(newClient(p.Timeout), realms)
+	auth := v2auth.NewWithResolver(newClient(p.Timeout), policy)
 
 	out.Native = probePath(ctx, auth, p, false)
 	out.HostPrefix = probePath(ctx, auth, p, true)
@@ -214,7 +216,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 		o.Reason = ReasonIncomplete
 		return o
 	}
-	rr, err := auth.Do(ctx, p.Host, root, p.Snapshot, "")
+	rr, err := auth.Do(ctx, p.SourceID, p.Host, root, p.Snapshot, "")
 	if err != nil {
 		o.Error = errStr(err)
 		o.Reason, o.Transport = classifyErr(err)
@@ -245,7 +247,7 @@ func probePath(ctx context.Context, auth *v2auth.Authenticator, p RegistryHostPr
 	}
 	req.Header.Set("Accept", manifestAccept)
 	t0 := time.Now()
-	resp, err := auth.Do(ctx, p.Host, req, p.Snapshot, "repository:"+p.Repo+":pull")
+	resp, err := auth.Do(ctx, p.SourceID, p.Host, req, p.Snapshot, "repository:"+p.Repo+":pull")
 	if err != nil {
 		o.Error = errStr(err)
 		o.LatencyMS = time.Since(t0).Milliseconds()

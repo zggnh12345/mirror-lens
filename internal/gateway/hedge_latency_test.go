@@ -59,7 +59,7 @@ func TestHedgeLatencyMatrix(t *testing.T) {
 
 			// 基线：只有首选源，等价于 hedge 关闭。
 			t0 := time.Now()
-			up, err := g.openUpstream(context.Background(), hedgePlan(), nil, hedgeTargets(s1)[0].u)
+			up, err := g.openUpstream(context.Background(), hedgePlan(), nil, hedgeTargets(s1)[0].u, 0, "")
 			if err == nil && up != nil {
 				up.resp.Body.Close()
 				up.cancel()
@@ -107,7 +107,7 @@ func TestHedgeLatencyMatrix(t *testing.T) {
 			tg := hedgeTargets(srv, fast)
 
 			t0 := time.Now()
-			up, err := g.openUpstream(context.Background(), hedgePlan(), nil, tg[0].u)
+			up, err := g.openUpstream(context.Background(), hedgePlan(), nil, tg[0].u, 0, "")
 			if err == nil && up != nil {
 				up.resp.Body.Close()
 				up.cancel()
@@ -226,7 +226,7 @@ func TestHedgeThresholdSweep(t *testing.T) {
 				s2 := httptest.NewServer(&fakeUpstream{body: "hello", etag: `"v1"`})
 
 				t0 := time.Now()
-				up, err := g.openUpstream(context.Background(), hedgePlan(), nil, hedgeTargets(s1)[0].u)
+				up, err := g.openUpstream(context.Background(), hedgePlan(), nil, hedgeTargets(s1)[0].u, 0, "")
 				if err == nil && up != nil {
 					up.resp.Body.Close()
 					up.cancel()

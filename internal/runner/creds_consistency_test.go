@@ -46,6 +46,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/probe"
 	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 const credTestHost = "quay.io"
@@ -378,7 +379,7 @@ func (f *credFixture) runner() *HostProbeRunner {
 		Repos:       map[string]string{credTestHost: "prometheus/node-exporter"},
 		Concurrency: 1,
 		Timeout:     5 * time.Second,
-		Realms:      map[string][]string{credTestHost: {f.reg.srv.URL}},
+		Policies:    v2auth.NewLegacyHostPolicy(map[string][]string{credTestHost: {f.reg.srv.URL}}, false),
 		Now:         func() time.Time { return time.Unix(f.now, 0) },
 	})
 }
