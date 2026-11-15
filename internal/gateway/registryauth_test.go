@@ -206,6 +206,31 @@ func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
 	}
 }
 
+func TestWithRegistryPolicyNilPlan(t *testing.T) {
+	ctx := context.Background()
+	got, err := (&Gateway{}).withRegistryPolicy(ctx, nil, 0, "")
+	if err != nil || got != ctx {
+		t.Fatalf("nil plan 应原样返回 context: got=%v err=%v", got, err)
+	}
+	if _, ok := v2auth.PolicyFromContext(got); ok {
+		t.Fatal("nil plan 不应写入策略")
+	}
+}
+
+type failingPolicy struct{}
+
+func (failingPolicy) Resolve(context.Context, int64, string) (v2auth.PolicySnapshot, error) {
+	return v2auth.PolicySnapshot{}, errors.New("policy backend down")
+}
+
+func TestWithRegistryPolicyResolverError(t *testing.T) {
+	g := &Gateway{policies: failingPolicy{}}
+	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true, LogicalHost: "registry.example"}, 3, "")
+	if !errors.Is(err, v2auth.ErrPolicyMissing) {
+		t.Fatalf("resolver 失败必须包装成 ErrPolicyMissing，实际 %v", err)
+	}
+}
+
 func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
 	g := &Gateway{}
 	plan := &adapter.Plan{LogicalHost: "docker.io"}
@@ -240,5 +265,80 @@ func TestBearerTransportNonRegistryPassthrough(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("非 Registry 请求被改写: %d", resp.StatusCode)
+	}
+}
+
+func TestBearerTransportRejectsMissingRealm(t *testing.T) {
+	var tokenHits int
+	bt := &bearerTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "auth.example" {
+			tokenHits++
+		}
+		return authResponse(http.StatusUnauthorized, "", nil), nil
+	}), tokens: newTokenCache()}
+	req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{
+		LogicalHost: "registry.example", AllowSameHost: true, Scheme: "https", Realms: []string{"https://auth.example"},
+	}))
+	resp, err := bt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || tokenHits != 0 {
+		t.Fatalf("status=%d tokenHits=%d，无 Realm 不应请求 token", resp.StatusCode, tokenHits)
+	}
+}
+
+func TestBearerTransportRejectsMalformedRealm(t *testing.T) {
+	var tokenHits int
+	bt := &bearerTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "auth.example" {
+			tokenHits++
+		}
+		return authResponse(http.StatusUnauthorized, "", map[string]string{
+			"WWW-Authenticate": `Bearer realm="http://[::1",service="registry"`,
+		}), nil
+	}), tokens: newTokenCache()}
+	req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{
+		LogicalHost: "registry.example", AllowSameHost: true, Scheme: "https", Realms: []string{"https://auth.example"},
+	}))
+	resp, err := bt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || tokenHits != 0 {
+		t.Fatalf("status=%d tokenHits=%d，坏 Realm 不应请求 token", resp.StatusCode, tokenHits)
+	}
+}
+
+func TestBearerTransportTokenRefreshErrorKeeps401(t *testing.T) {
+	var tokenHits int
+	bt := &bearerTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "registry.example":
+			return authResponse(http.StatusUnauthorized, "", map[string]string{
+				"WWW-Authenticate": `Bearer realm="https://auth.example/token",service="registry",scope="repository:g/p:pull"`,
+			}), nil
+		case "auth.example":
+			tokenHits++
+			return authResponse(http.StatusInternalServerError, "down", nil), nil
+		default:
+			return authResponse(http.StatusBadGateway, "unexpected", nil), nil
+		}
+	}), tokens: newTokenCache()}
+	req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+	req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{
+		LogicalHost: "registry.example", AllowSameHost: true, Scheme: "https", Realms: []string{"https://auth.example"},
+	}))
+	resp, err := bt.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || tokenHits != 1 {
+		t.Fatalf("status=%d tokenHits=%d，刷新失败应原样返回 401", resp.StatusCode, tokenHits)
 	}
 }
