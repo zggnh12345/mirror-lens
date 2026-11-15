@@ -95,6 +95,9 @@ type Registry struct {
 	Upstream  string   `yaml:"upstream"`
 	MaxFileMB int64    `yaml:"max_file_mb"`
 	TagTTL    Duration `yaml:"tag_ttl"`
+	// TokenCacheMax 是 Registry token 缓存条目上限；0 用默认 1024。
+	// 3.5.11a 起 key 带 SourceID/Host/Gen，容量需按活跃 Source×Host 重估。
+	TokenCacheMax int `yaml:"token_cache_max"`
 
 	// MultiOriginHosts 是 Foreign Registry 多源调度的唯一范围来源。
 	// 支持精确 Host 和 Artifact Registry 的 "*.pkg.dev" 受限模式；
@@ -342,12 +345,13 @@ func Default() *Config {
 		Raw: Raw{TTL: Duration{300 * time.Second}},
 		Git: Git{TTL: Duration{30 * time.Second}},
 		Registry: Registry{
-			Enabled:   true,
-			Docker:    true,
-			GHCR:      true,
-			Upstream:  "registry-1.docker.io",
-			MaxFileMB: 4096,
-			TagTTL:    Duration{300 * time.Second},
+			Enabled:       true,
+			Docker:        true,
+			GHCR:          true,
+			Upstream:      "registry-1.docker.io",
+			MaxFileMB:     4096,
+			TagTTL:        Duration{300 * time.Second},
+			TokenCacheMax: 1024,
 			MultiOriginHosts: []string{
 				"gcr.io",
 				"registry.k8s.io",
@@ -489,7 +493,7 @@ func (c *Config) Validate() error {
 	if c.Backup.Keep < 1 || c.Backup.Keep > 365 {
 		return fmt.Errorf("backup.keep 应在 1~365 之间，收到 %d", c.Backup.Keep)
 	}
-	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 || c.Cache.MinFreeGB < 0 {
+	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 || c.Cache.MinFreeGB < 0 || c.Registry.TokenCacheMax < 0 {
 		return fmt.Errorf("容量上限不能是负数")
 	}
 	if c.Raw.TTL.Duration < 0 || c.Git.TTL.Duration < 0 || c.Registry.TagTTL.Duration < 0 {

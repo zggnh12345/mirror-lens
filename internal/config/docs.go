@@ -52,6 +52,7 @@ var fieldDocs = map[string]string{
 	"registry.upstream":             "Registry 上游地址，默认 Docker Hub",
 	"registry.max_file_mb":          "单个镜像层允许的最大体积（MiB）",
 	"registry.tag_ttl":              "tag 到 digest 的解析结果缓存时长",
+	"registry.token_cache_max":      "Registry token 缓存条目上限（0 用默认 1024）",
 	"registry.multi_origin_hosts":   "多源 Host 开关：固定 8 个第一批 Host 的独立开关，关掉某个 Host 即只回官方源；8 个全关后这 8 个 Host 均不走多源，配置里未纳入开关的自定义 Host 仍可能参与多源；lscr.io 暂不启用",
 	"registry.disabled_hosts":       "访问准入拒绝列表；只写精确 Host，空表示不关闭任何 Host",
 	"sources.enabled":               "是否启用多源调度（关闭后只用主源）",

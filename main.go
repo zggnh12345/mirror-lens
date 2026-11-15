@@ -284,6 +284,8 @@ func main() {
 		GitTTL:            cfg.Git.TTL.Duration,
 		RawTTL:            cfg.Raw.TTL.Duration,
 		Registry:          regAd,
+		Policies:          nil, // 11a 用 Gateway 内部的 LegacyHostPolicy；11b 换 StorePolicy
+		TokenCacheMax:     cfg.Registry.TokenCacheMax,
 		CacheMaxBytes:     cfg.Cache.MaxGB << 30,
 		CacheMinFreeBytes: cfg.Cache.MinFreeGB << 30,
 		RequireToken:      cfg.Auth.RequireToken,
