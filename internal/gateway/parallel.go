@@ -982,7 +982,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 // rangeReq 发一个带 Range 的上游请求。
 // 认证由 bearerTransport 使用 context 里的策略快照处理，不按 Host 重新查表。
 func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, from, to int64, sourceID int64, logicalHost string) (*http.Response, error) {
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err
 	}

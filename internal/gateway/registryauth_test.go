@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -200,7 +201,7 @@ func TestScopeFromPathStripsHostPrefix(t *testing.T) {
 }
 
 func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
-	_, err := (&Gateway{}).withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true}, 7, "")
+	_, err := (&Gateway{}).withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true}, 7, "", "")
 	if err == nil || !errors.Is(err, v2auth.ErrPolicyMissing) {
 		t.Fatalf("Registry plan 缺少 LogicalHost 应返回 ErrPolicyMissing，实际 %v", err)
 	}
@@ -208,7 +209,7 @@ func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
 
 func TestWithRegistryPolicyNilPlan(t *testing.T) {
 	ctx := context.Background()
-	got, err := (&Gateway{}).withRegistryPolicy(ctx, nil, 0, "")
+	got, err := (&Gateway{}).withRegistryPolicy(ctx, nil, 0, "", "")
 	if err != nil || got != ctx {
 		t.Fatalf("nil plan 应原样返回 context: got=%v err=%v", got, err)
 	}
@@ -225,16 +226,29 @@ func (failingPolicy) Resolve(context.Context, int64, string) (v2auth.PolicySnaps
 
 func TestWithRegistryPolicyResolverError(t *testing.T) {
 	g := &Gateway{policies: failingPolicy{}}
-	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true, LogicalHost: "registry.example"}, 3, "")
+	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true, LogicalHost: "registry.example"}, 3, "", "")
 	if !errors.Is(err, v2auth.ErrPolicyMissing) {
 		t.Fatalf("resolver 失败必须包装成 ErrPolicyMissing，实际 %v", err)
+	}
+}
+
+func TestWithRegistryPolicyUsesTargetScheme(t *testing.T) {
+	g := &Gateway{}
+	plan := &adapter.Plan{LogicalHost: "docker.io", Upstream: &url.URL{Scheme: "http"}}
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "https")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := v2auth.PolicyFromContext(ctx)
+	if !ok || p.Scheme != "https" {
+		t.Fatalf("策略 scheme 应取实际 target 的 https，得到 %+v ok=%v", p, ok)
 	}
 }
 
 func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
 	g := &Gateway{}
 	plan := &adapter.Plan{LogicalHost: "docker.io"}
-	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "")
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +256,7 @@ func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
 	if !ok || p.SourceID != 9 || p.LogicalHost != "docker.io" || p.Official {
 		t.Fatalf("策略身份不对: %+v ok=%v", p, ok)
 	}
-	ctx, err = g.withRegistryPolicy(context.Background(), plan, 9, "ghcr.io")
+	ctx, err = g.withRegistryPolicy(context.Background(), plan, 9, "ghcr.io", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,9 @@ func newTokenCache(max ...int) *tokenCache {
 	if len(max) > 0 && max[0] > 0 {
 		n = max[0]
 	}
-	return &tokenCache{m: map[tokenKey]tokenEntry{}, flights: map[tokenKey]*tokenFlight{}, max: n}
+	c := &tokenCache{m: map[tokenKey]tokenEntry{}, flights: map[tokenKey]*tokenFlight{}, max: n}
+	metrics.TokenCacheCapacity(n)
+	return c
 }
 
 // pruneLocked 清掉已过期 token；仍然超限就按到期时间淘汰最旧的一批。
@@ -71,10 +73,16 @@ func (c *tokenCache) pruneLocked() {
 		return
 	}
 	now := time.Now()
+	removed := 0
 	for k, e := range c.m {
 		if !now.Before(e.exp) {
 			delete(c.m, k)
+			removed++
 		}
+	}
+	if removed > 0 {
+		metrics.TokenCacheEvicted(removed)
+		metrics.TokenCacheEntries(len(c.m))
 	}
 	if len(c.m) < c.max {
 		return
@@ -92,6 +100,11 @@ func (c *tokenCache) pruneLocked() {
 	sort.Slice(all, func(i, j int) bool { return all[i].exp.Before(all[j].exp) })
 	for _, x := range all[:len(all)-keep] {
 		delete(c.m, x.k)
+		removed++
+	}
+	if removed > 0 {
+		metrics.TokenCacheEvicted(removed)
+		metrics.TokenCacheEntries(len(c.m))
 	}
 }
 
@@ -100,8 +113,10 @@ func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey
 	c.mu.Lock()
 	if e, ok := c.m[key]; ok && time.Now().Before(e.exp) {
 		c.mu.Unlock()
+		metrics.TokenCacheHit()
 		return e.tok, nil
 	}
+	metrics.TokenCacheMiss()
 	if f, ok := c.flights[key]; ok {
 		c.mu.Unlock()
 		select {
@@ -124,6 +139,7 @@ func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey
 	if err == nil {
 		c.pruneLocked()
 		c.m[key] = tokenEntry{tok: tok, exp: time.Now().Add(ttl)}
+		metrics.TokenCacheEntries(len(c.m))
 	}
 	f.tok, f.err = tok, err
 	delete(c.flights, key)

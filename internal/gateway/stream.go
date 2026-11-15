@@ -326,7 +326,7 @@ func retryableFromMirror(code int) bool {
 }
 
 func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.PartialMeta, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*http.Response, error) {
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err
 	}
@@ -995,7 +995,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	for i, t := range targets {
 		tt := t
 		start := time.Now()
-		rctx, perr := g.withRegistryPolicy(r.Context(), plan, sourceIDFor(t), logicalHostFor(t, plan))
+		rctx, perr := g.withRegistryPolicy(r.Context(), plan, sourceIDFor(t), logicalHostFor(t, plan), t.u.Scheme)
 		if perr != nil {
 			err = perr
 			continue

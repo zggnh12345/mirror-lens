@@ -569,7 +569,7 @@ func (g *Gateway) policyResolver() v2auth.PolicyResolver {
 // Registry plan 必须显式带 LogicalHost；缺失时在发请求前失败关闭，
 // 不能靠路由标记兜底成 503。Git/Private/Raw 不写。
 // 解析失败必须 fail closed，不能退回按 Host 查表。
-func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost string) (context.Context, error) {
+func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost, scheme string) (context.Context, error) {
 	if plan == nil {
 		return ctx, nil
 	}
@@ -590,9 +590,10 @@ func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, so
 		return nil, fmt.Errorf("%w: %v", v2auth.ErrPolicyMissing, err)
 	}
 	p.LogicalHost = host
-	if plan.Upstream != nil {
-		p.Scheme = plan.Upstream.Scheme
+	if scheme == "" && plan.Upstream != nil {
+		scheme = plan.Upstream.Scheme
 	}
+	p.Scheme = scheme
 	return v2auth.WithPolicy(ctx, p), nil
 }
 
@@ -1132,7 +1133,7 @@ type upstream struct {
 // openUpstream 只负责到响应头为止，不读 Body。
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
 func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err
 	}

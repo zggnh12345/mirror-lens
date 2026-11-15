@@ -322,7 +322,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 				continue
 			}
 		}
-		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan))
+		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan), t.u.Scheme)
 		if err != nil {
 			unbind()
 			cancel()
