@@ -17,6 +17,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // RegistryOn 告诉 api 层要不要挂 /v2/ 路由。
@@ -24,6 +25,10 @@ func (g *Gateway) RegistryOn() bool { return g.regAd != nil }
 
 // ServeRegistry 处理 /v2/...，只读。
 func (g *Gateway) ServeRegistry(w http.ResponseWriter, r *http.Request) {
+	// 整条 /v2/ 链先打上 Registry 标记：即使某个新路径忘了设置
+	// Plan.LogicalHost，bearerTransport 也会 fail closed，而不是静默退回
+	// 按 Host 猜身份。
+	r = r.WithContext(v2auth.WithRegistry(r.Context()))
 	g.withAuth(func(w http.ResponseWriter, r *http.Request) { g.serveRegistry(w, r) })(w, r)
 }
 
