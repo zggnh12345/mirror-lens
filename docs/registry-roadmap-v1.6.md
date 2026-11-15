@@ -568,8 +568,8 @@ db.SetMaxOpenConns(1)
 当前工作副本（以实际环境为准）：
 
 - 代码基线是 `b4b0b22`
-- 当前 `HEAD` 是 `d8961e3`，等于 `b4b0b22` + 本路线图文档提交（hash 以实际 `git log` 为准，提交 v1.6 后会变）
-- 代码与 `b4b0b22` 相同，差异只是 docs
+- 11a 实施分支是 `feat/3.5.11a`；本次复核的代码提交是 `271b19e`（hash 以实际 `git log` 为准，后续文档提交会再前进）
+- 代码与本路线图文档分开提交；不要用文档 HEAD 判断代码基线
 - 分支从当前 `HEAD` 开，不要从 `b4b0b22` 开，否则会丢本地文档
 - `0f4a9bb → b4b0b22` 实际约 167 个文件，不是 111 个；不要用旧统计做基线
 - `go` 不在 PATH，但工具链在 `/opt/data/cache/tools/go/bin/go`（go1.27.3）
@@ -633,6 +633,57 @@ D6 的四段顺序必须完整复刻：
 - 身份缺失返回 503，不返回伪造 401
 - singleflight leader 取消不影响等待者
 - Token Cache 扩容后不因多 Host 源挤空其他源
+
+#### 3.5.11-H 11a 复核：可疑点与验收状态
+
+复核时代码提交：`271b19e`（`feat/3.5.11a`）。以下记录不能再被“测试通过”掩盖，尤其是未达验收项。
+
+已补齐并可复核：
+
+- `withRegistryPolicy` 的 nil plan、resolver 失败、Registry 缺 `LogicalHost` 均有单测；缺身份返回 `ErrPolicyMissing` / 503。
+- `bearerTransport` 的无 Realm、坏 Realm、token 刷新失败分支有单测。
+- `TestCandidateRegistryTokenUsesSourceIdentity`：真实 Gateway 路由 + scheduler 候选源，断言 SourceID、token 刷新和候选 Authorization。
+- `TestFallbackToGhcrCarriesCandidateIdentity`：主上游 404 后 fallback 到 ghcr 候选，断言候选 SourceID/LogicalHost/Token。
+- `TestProbePolicyReceivesSourceID`：Probe 的真实策略调用收到候选 SourceID。
+- `withRegistryPolicy` 现在按实际 target URL 的 scheme 写入快照。
+- Token Cache 增加 `auth_cache_hits_total`、`auth_cache_misses_total`、`auth_cache_evictions_total`、`auth_cache_entries`、`auth_cache_capacity`。
+
+仍未闭环/仍需决策：
+
+1. **Probe/Gateway 的 `AllowSameHost` 不一致，11a 验收补充未达**
+   - Gateway：`LegacyHostPolicy{AllowSameHost: true}`，复刻 3.5.10 Gateway 的 `realmAllowedForHost`。
+   - Probe：`LegacyHostPolicy{AllowSameHost: false}`，复刻 3.5.10 Probe 的严格白名单。
+   - 两者各自保持旧行为，但与“Probe/Gateway 对同一 Source/Host 结果一致”冲突。
+   - 处理建议：11b 用 `StorePolicy` 统一；如果 11a 必须按“结果一致”验收，必须先决定以哪一侧为准，不能把当前状态标成 11a 全量通过。
+
+2. **`CredGen` / `PolicyGen` 在 11a 恒为 0**
+   - Token Cache 已按 Source/Host/Realm/Service/Scope 隔离，但尚未按用户凭据代次隔离。
+   - 3.5.15 前必须填真实 generation，否则轮换凭据只能靠进程重启或全量清缓存。
+
+3. **`Plan.Registry` 由适配器自行置位**
+   - 当前 Registry 适配器已置 `true`；未来新增 Registry 路径若忘记置位，路由级标记只会让它 fail closed 成 503，不会在 plan 阶段报错。
+
+4. **Token Cache 容量不支持热更新**
+   - `registry.token_cache_max` 只在启动时读取；改配置需重启。容量上限目前仍是 1024，实际多 Host 源的压力需用新增指标观察。
+
+5. **`scopeFromPath` 的同名 Host/Repo 歧义**
+   - 路径 `/v2/<host>/...` 会按 `LogicalHost` 剥前缀；如果仓库第一段刚好等于 Host，语义无法自动区分。当前 host_prefix 约定下可接受，但不能当成通用解析器。
+
+6. **候选源覆盖仍是本地假源**
+   - 候选/fallback 的认证用例使用 httptest 假源，验证的是代码路径，不等于真实公共 Source 的可用性验收。
+
+11a 目标核对：
+
+- 所有 Registry 请求有身份或明确 fail closed：**基本达到**；合法 plan 都写快照，缺 plan 走路由标记 + 503。
+- HEAD / 分片 / 续传 / 换源 / 并行不丢身份：**代码路径已覆盖**，现有路径测试加新增 fallback 用例验证；head/换源尚无专门的认证断言，仍需真实候选网络样本。
+- 缺身份 fail closed：**达到**（503 + `auth_policy_missing`）。
+- 旧 Realm 判定与 3.5.10 一致：**按组件各自保持**，但 Probe/Gateway 一致性未达。
+- Token key 区分 Source：**达到**，有单测。
+- Token Cache 容量配置：**达到**（默认 1024，YAML 可配）。
+- `go test -race` 并发刷新：**达到**。
+- 不建 `source_realm_policy`、不碰 Private、不改 `CredentialSnapshot`、不做 11b/14a：**达到**。
+
+结论：11a 的主体实现和可验证项已完成；但按本文件自己的验收补充，**Probe/Gateway 一致性这一项未达，不能宣称 11a 全量验收通过**。11b 切换 `StorePolicy` 时应优先消除该分歧。
 
 ### 3.5.12 GCR / Artifact Registry / K8S 既有缺口闭环
 
