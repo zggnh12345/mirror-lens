@@ -46,10 +46,11 @@ func newCacheRegFixture(t *testing.T) *cacheRegFixture {
 	srv := httptest.NewServer(up)
 	t.Cleanup(srv.Close)
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		RawTTL:  time.Hour,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		RawTTL:   time.Hour,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.requireToken = true
 	return &cacheRegFixture{g: g, st: st, cs: cs, up: up, srv: srv, dir: dir, tok: token(t, st)}
@@ -113,10 +114,11 @@ func TestCacheSurvivesRestart(t *testing.T) {
 		t.Fatalf("重开缓存: %v", err)
 	}
 	g2 := New(st2, Options{
-		Cache:   cs2,
-		RawBase: f.srv.URL,
-		RawTTL:  time.Hour,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs2,
+		RawBase:  f.srv.URL,
+		RawTTL:   time.Hour,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g2.requireToken = true
 
@@ -193,10 +195,11 @@ func TestTruncatedUpstreamNotCached(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		RawTTL:  time.Hour,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		RawTTL:   time.Hour,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.requireToken = true
 	tok := token(t, st)

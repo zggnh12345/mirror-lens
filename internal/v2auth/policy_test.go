@@ -54,11 +54,11 @@ func TestLegacyHostPolicyWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Allows(mustURL(t, "https://auth.example/token")); err != nil {
-		t.Fatalf("通配子域应放行: %v", err)
+	if err := p.Allows(mustURL(t, "https://auth.example/token")); err == nil {
+		t.Fatal("策略禁止通配 Realm：auth.example 必须拒绝")
 	}
 	if err := p.Allows(mustURL(t, "https://example/token")); err == nil {
-		t.Fatal("通配不应放行根域")
+		t.Fatal("策略禁止通配 Realm：根域也必须拒绝")
 	}
 }
 

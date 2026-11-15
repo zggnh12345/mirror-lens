@@ -78,8 +78,8 @@ func TestMigrate357To3511(t *testing.T) {
 	assertPolicyRow(t, db, 1, "quay.io")
 	assertPolicyRow(t, db, 2, "public.ecr.aws")
 	assertPolicyRow(t, db, 3, "lscr.io")
-	if hasPolicyRow(t, db, 4, "custom.example") {
-		t.Fatal("自定义 Host 不应被静默补成策略")
+	if hasPolicyRow(t, db, 4, "mcr.microsoft.com") {
+		t.Fatal("无默认 Realm 的 Host 不应被静默补成策略")
 	}
 	assertPolicyRealmContains(t, db, 3, "https://ghcr.io")
 }
@@ -103,8 +103,9 @@ func build357Fixture(t *testing.T, path string) {
 	if _, err := db.Exec(`INSERT INTO sources(base_url,name,status,enabled,repo_host,registry_cap,created_at) VALUES
 		('https://quay.example/','quay','usable',1,'quay.io',1,100),
 		('https://daocloud.example/','daocloud','usable',1,'public.ecr.aws',1,101),
-		('https://lscr.example/','lscr','usable',1,'lscr.io',1,102),
-		('https://custom.example/','custom','usable',1,'custom.example',1,103)`); err != nil {
+		('https://lscr.io/','lscr','usable',1,'lscr.io',1,102),
+		('https://mcr.example/','mcr','usable',1,'mcr.microsoft.com',1,103),
+		('https://m.daocloud.io/','daocloud','usable',1,'public.ecr.aws',1,104)`); err != nil {
 		t.Fatalf("写 3.5.7 源数据: %v", err)
 	}
 }
@@ -134,6 +135,18 @@ func assertPolicyRow(t *testing.T, db *sql.DB, sourceID int64, host string) {
 	}
 	if !json.Valid([]byte(extra)) {
 		t.Fatalf("source_id=%d host=%s 的 extra_realms 不是合法 JSON: %q", sourceID, host, extra)
+	}
+}
+
+func assertPolicyPrimary(t *testing.T, db *sql.DB, sourceID int64, host, want string) {
+	t.Helper()
+	var primary string
+	if err := db.QueryRow(`SELECT primary_realm FROM source_realm_policy
+		WHERE source_id=? AND host=?`, sourceID, host).Scan(&primary); err != nil {
+		t.Fatal(err)
+	}
+	if primary != want {
+		t.Fatalf("source_id=%d host=%s primary=%q，期望 %q", sourceID, host, primary, want)
 	}
 }
 

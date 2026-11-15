@@ -40,6 +40,7 @@ func TestConcurrentColdStreamCoalesced(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		RawBase:  "https://raw.githubusercontent.com",
 		MaxBytes: 16 << 20,

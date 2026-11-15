@@ -65,10 +65,11 @@ func TestSchedulerFailover(t *testing.T) {
 	addSchedSource(t, st, "good", good.URL, 400, 400)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
@@ -123,10 +124,11 @@ func TestFailoverRecords429(t *testing.T) {
 	addSchedSource(t, st, "good", good.URL, 400, 400)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
@@ -165,10 +167,11 @@ func TestRevalidateGoesToOrigin(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 100, 900)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true}))
 

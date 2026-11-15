@@ -38,7 +38,8 @@ func relayGateway(t *testing.T, relayURL string) (*Gateway, *adapter.Plan) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	g.SetTrusted([]TrustedRelay{{ID: 1, Name: "自建站", URL: relayURL}})
 	u, _ := url.Parse("https://github.com/o/r/releases/download/v1/big.bin")
 	return g, &adapter.Plan{

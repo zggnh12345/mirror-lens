@@ -72,9 +72,10 @@ func TestPrivateResponseNotPersisted(t *testing.T) {
 	srv := httptest.NewServer(up)
 	defer srv.Close()
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.requireToken = false
 

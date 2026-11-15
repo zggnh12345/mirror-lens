@@ -42,6 +42,7 @@ func TestLargeGHAssetStreamsInsteadOfFailing(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		RawBase:  "https://raw.githubusercontent.com",
 		MaxBytes: 1 << 20, // 1 MiB：body 是它的两倍
@@ -103,6 +104,7 @@ func TestLargeGHAssetStreamsIncrementally(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		RawBase:  "https://raw.githubusercontent.com",
 		MaxBytes: 1 << 20,
@@ -165,9 +167,10 @@ func TestRangeRequestPassesThrough(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: "https://raw.githubusercontent.com",
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  "https://raw.githubusercontent.com",
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 

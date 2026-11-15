@@ -66,6 +66,18 @@ CREATE TABLE sources (
   UNIQUE(base_url)
 );
 
+-- 3.5.11b：一个 Source 在一个逻辑 Registry Host 下的 Realm 策略。
+-- 运行时只认这张表和 OfficialPolicy；没有旧 Host 白名单 fallback。
+CREATE TABLE source_realm_policy (
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  host TEXT NOT NULL,
+  primary_realm TEXT NOT NULL,
+  extra_realms TEXT NOT NULL DEFAULT '[]',
+  policy_gen INTEGER NOT NULL DEFAULT 1 CHECK(policy_gen > 0),
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(source_id, host)
+);
+
 CREATE TABLE checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

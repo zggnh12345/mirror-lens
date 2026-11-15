@@ -33,10 +33,11 @@ func newMissFixture(t *testing.T, originCode int) (*Gateway, *store.Store, *sche
 	id := addSchedSource(t, st, "miss", miss.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	sch := scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute})
 	g.SetScheduler(sch)
@@ -124,10 +125,11 @@ func TestAuthDeniedFailsOverWithoutCooling(t *testing.T) {
 	id := addSchedSource(t, st, "deny", deny.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	sch := scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute})
 	g.SetScheduler(sch)
@@ -181,6 +183,7 @@ func TestPassThroughMissFailsOver(t *testing.T) {
 	ad := registryadapter.New(strings.TrimPrefix(osrv.URL, "http://"), 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,

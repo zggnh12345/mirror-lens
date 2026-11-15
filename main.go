@@ -278,13 +278,14 @@ func main() {
 	if cfg.Network.IPFamily != "auto" {
 		log.Printf("回源 IP 族: 仅 %s", cfg.Network.IPFamily)
 	}
+	policyResolver := store.NewStorePolicy(st)
 	gw := gateway.New(st, gateway.Options{
 		Cache:             cstore,
 		MaxBytes:          cfg.Cache.MaxFileMB << 20,
 		GitTTL:            cfg.Git.TTL.Duration,
 		RawTTL:            cfg.Raw.TTL.Duration,
 		Registry:          regAd,
-		Policies:          nil, // 11a 用 Gateway 内部的 LegacyHostPolicy；11b 换 StorePolicy
+		Policies:          policyResolver,
 		TokenCacheMax:     cfg.Registry.TokenCacheMax,
 		CacheMaxBytes:     cfg.Cache.MaxGB << 30,
 		CacheMinFreeBytes: cfg.Cache.MinFreeGB << 30,
@@ -419,6 +420,7 @@ func main() {
 			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,
 			Concurrency:  cfg.Probe.Concurrency,
 			RecoveryTTL:  st.RecoveryTTL(),
+			Policies:     policyResolver,
 			Guard:        guard,
 			// 事务提交不会刷新调度器内存缓存，失败与成功都必须显式失效。
 			Invalidate: func() {

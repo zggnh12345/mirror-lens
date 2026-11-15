@@ -130,6 +130,7 @@ func newMOFixture(t *testing.T) *moFixture {
 	ad.MultiOriginHosts = []string{f.host}
 
 	f.gw = New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,

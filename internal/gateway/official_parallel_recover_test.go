@@ -72,7 +72,8 @@ func opHarness(t *testing.T, truncate func(off int64, attempt int, exactSeg bool
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	g.par = ParOptions{Enabled: true, MinSize: 1 << 20, ChunkSize: opChunk, Workers: 4}
 
 	plan := &adapter.Plan{

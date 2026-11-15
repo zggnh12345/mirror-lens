@@ -83,10 +83,18 @@ func (s *Store) SetRepoHost(id int64, rawHost string) error {
 	// 显式选择 Hub 必须传 "docker.io"；这里不做空串到 Hub 的兼容映射，
 	// 否则同一个入口同时承担设置 Hub 与清除归属两种职责。
 	return s.withSourceLive(id, func(tx *sql.Tx) error {
-		var oldHost string
-		if err := tx.QueryRow(`SELECT COALESCE(repo_host,'') FROM sources WHERE id=?`, id).
-			Scan(&oldHost); err != nil {
+		var oldHost, baseURL string
+		if err := tx.QueryRow(`SELECT COALESCE(repo_host,''), base_url FROM sources WHERE id=?`, id).
+			Scan(&oldHost, &baseURL); err != nil {
 			return err
+		}
+
+		// 旧策略按 (source_id, host) 精确删除，不按 host 全局删。
+		// 同 Host 重设时保留行并由下面的 upsert 递增 policy_gen，避免 generation 回退。
+		if oldHost != "" && oldHost != host {
+			if _, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=? AND host=?`, id, oldHost); err != nil {
+				return err
+			}
 		}
 
 		// 旧 scope 的行按 (source_id, 'registry', oldHost) 精确删除，不按
@@ -103,6 +111,18 @@ WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
 		if _, err := tx.Exec(`UPDATE sources
 SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
 WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
+			return err
+		}
+
+		// 新 Host 的策略与源归属在同一事务完成；同 Host 重设也递增 generation。
+		if host != "" {
+			if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
+				if err := setRealmPolicyTx(tx, id, host, primary, extra, true); err != nil {
+					return err
+				}
+			}
+		}
+		if err := recordPolicyChangeTx(tx, id); err != nil {
 			return err
 		}
 

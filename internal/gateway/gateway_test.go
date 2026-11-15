@@ -81,9 +81,10 @@ func newGW(t *testing.T, allowLoopback bool) (*Gateway, *store.Store, *cache.Sto
 	srv := httptest.NewServer(up)
 	t.Cleanup(srv.Close)
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: allowLoopback}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: allowLoopback}),
 	})
 	// 生产默认要求 Access Token；测试用例都带 token，走认证分支才能
 	// 覆盖「网关令牌被摘掉、不当作上游凭据」这条路径。

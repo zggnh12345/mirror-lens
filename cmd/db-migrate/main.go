@@ -23,6 +23,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
+	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/store/schema"
 )
 
@@ -57,13 +58,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `用法:
   db-migrate init       --out 新库 [--baseline fresh]
   db-migrate checkpoint --db 副本数据库
-  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5
+  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5|3.5.7
   db-migrate upgrade356 --in 3.5.6库 --out 新库
   db-migrate verify     --db 数据库
   db-migrate inspect    --db 数据库
 
 迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。
-migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5 Schema 指纹；--force-baseline 不再绕过结构校验。
+migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5/3.5.7 Schema 指纹；--force-baseline 不再绕过结构校验。
 upgrade356 要求源库为 3.5.6 Canonical（结构 hash 已等于 3.5.7 Canonical），只改版本标签。`)
 	os.Exit(2)
 }
@@ -135,6 +136,7 @@ func runMigrate(args []string) error {
 	out := fs.String("out", "", "新数据库路径")
 	baseline := fs.String("baseline", "", "旧库版本标识，例如 3.4.6 / 3.5.4 / 3.5.5")
 	force := fs.Bool("force-baseline", false, "已废弃；不再绕过输入 Schema 指纹校验")
+	policyReport := fs.String("policy-report", "", "可选：把 source_realm_policy 缺失报告写入该 JSON 文件")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -148,7 +150,7 @@ func runMigrate(args []string) error {
 		return errors.New("3.5.3 是不支持的输入版本：缺少独立身份快照，docker_cap=1 且 repo_host='' 的 34 条记录会被静默归为无归属；--force-baseline 不能绕过")
 	}
 	if expected, ok := inputSchemaFingerprints[*baseline]; !ok {
-		return fmt.Errorf("未识别的 baseline %q；只接受已冻结 Schema 指纹的 3.4.6 / 3.5.4 / 3.5.5", *baseline)
+		return fmt.Errorf("未识别的 baseline %q；只接受已冻结 Schema 指纹的 3.4.6 / 3.5.4 / 3.5.5 / 3.5.7", *baseline)
 	} else if expected == "" {
 		return fmt.Errorf("baseline %q 的 Schema 指纹尚未冻结", *baseline)
 	}
@@ -194,13 +196,13 @@ func runMigrate(args []string) error {
 	// 3.5.5 源库需要读取并保留其真实 baseline_version，不能让 EnsureFresh 的默认值覆盖。
 	// 用指针区分“非 3.5.5 路径没有源值”（nil）和“3.5.5 源值就是空字符串”（非 nil 指向 ""）。
 	var srcBaselineVersion *string
-	if *baseline == "3.5.5" {
+	if *baseline == "3.5.5" || *baseline == "3.5.7" {
 		srcMeta, err := readMetaRaw(src)
 		if err != nil {
-			return fmt.Errorf("读取 3.5.5 源元数据: %w", err)
+			return fmt.Errorf("读取 %s 源元数据: %w", *baseline, err)
 		}
-		if srcMeta.SchemaVersion != "3.5.5" {
-			return fmt.Errorf("3.5.5 升级要求源 schema_version=3.5.5，实际 %q", srcMeta.SchemaVersion)
+		if srcMeta.SchemaVersion != *baseline {
+			return fmt.Errorf("%s 升级要求源 schema_version=%s，实际 %q", *baseline, *baseline, srcMeta.SchemaVersion)
 		}
 		v := srcMeta.BaselineVersion
 		srcBaselineVersion = &v
@@ -246,6 +248,10 @@ func runMigrate(args []string) error {
 	if err := copyAll(target, plan); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "step: policy")
+	if err := plan.backfillPolicies(target); err != nil {
+		return err
+	}
 	fmt.Fprintln(os.Stderr, "step: sequences")
 	if err := rebuildSequences(target, plan); err != nil {
 		return err
@@ -262,12 +268,9 @@ func runMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	// 3.5.5 路径：实际输出结构必须等于冻结的 Canonical 哈希，
-	// 而不只是与 schema_meta 自洽（后者只能证明结构与元数据一致，不能证明符合 Canonical）。
-	if *baseline == "3.5.5" {
-		if err := requireCanonicalOutputHash(h); err != nil {
-			return err
-		}
+	// 实际输出结构必须等于冻结的 Canonical 哈希，而不只是与 schema_meta 自洽。
+	if err := requireCanonicalOutputHash(h); err != nil {
+		return err
 	}
 	if err := finalizeTargetMeta(target, h, srcBaselineVersion); err != nil {
 		return err
@@ -293,8 +296,14 @@ func runMigrate(args []string) error {
 	report := map[string]any{
 		"ok": true, "baseline": *baseline, "schema_hash": h,
 		"tables": plan.Counts, "skipped": plan.Skipped,
+		"policy_rows": plan.PolicyRows, "policy_gaps": plan.PolicyGaps,
 	}
 	b, _ := json.MarshalIndent(report, "", "  ")
+	if *policyReport != "" {
+		if err := os.WriteFile(*policyReport, b, 0o644); err != nil {
+			return fmt.Errorf("写策略报告: %w", err)
+		}
+	}
 	fmt.Println(string(b))
 	return nil
 }
@@ -341,11 +350,15 @@ func requireCanonicalOutputHash(h string) error {
 	return nil
 }
 
-// requireCanonicalMetadataHash 校验 3.5.6 源元数据中声明的结构哈希必须等于 Canonical 哈希。
-// 它验证「声明」，VerifyStructure 验证「实际结构」，两者不能互相替代。
-func requireCanonicalMetadataHash(h string) error {
-	if h != schema.CanonicalSchemaHash {
-		return fmt.Errorf("源元数据 schema_hash=%s 与 Canonical hash=%s 不一致；拒绝迁移", h, schema.CanonicalSchemaHash)
+// legacy357SchemaHash 是 3.5.7 Canonical DDL 的冻结结构指纹。
+// upgrade356 只把 3.5.6 标签改成 3.5.7；它不能写成当前 3.5.11 的 hash，
+// 否则会把没有 source_realm_policy 的库伪装成新结构。
+const legacy357SchemaHash = "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e"
+
+// requireLegacy357MetadataHash 校验 3.5.6 源元数据中声明的 3.5.7 结构哈希。
+func requireLegacy357MetadataHash(h string) error {
+	if h != legacy357SchemaHash {
+		return fmt.Errorf("源元数据 schema_hash=%s 与 3.5.7 hash=%s 不一致；拒绝升级", h, legacy357SchemaHash)
 	}
 	return nil
 }
@@ -532,11 +545,11 @@ func runUpgrade356(args []string) error {
 		return fmt.Errorf("upgrade356 要求源 schema_version=3.5.6，实际 %q", m.SchemaVersion)
 	}
 	// 元数据声明的结构哈希必须等于 Canonical；与 VerifyStructure（实际结构）分别验证，不能互相替代。
-	if err := requireCanonicalMetadataHash(m.SchemaHash); err != nil {
+	if err := requireLegacy357MetadataHash(m.SchemaHash); err != nil {
 		return err
 	}
-	if err := schema.VerifyStructure(src, schema.CanonicalSchemaHash); err != nil {
-		return fmt.Errorf("源结构不是 Canonical（hash=%s）: %w", schema.CanonicalSchemaHash, err)
+	if err := schema.VerifyStructure(src, legacy357SchemaHash); err != nil {
+		return fmt.Errorf("源结构不是 Canonical（3.5.7, hash=%s）: %w", legacy357SchemaHash, err)
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
 	_ = os.Remove(tmp)
@@ -563,7 +576,7 @@ func runUpgrade356(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE schema_meta SET schema_version=? WHERE id=1`, schema.Version); err != nil {
+	if _, err := tx.Exec(`UPDATE schema_meta SET schema_version='3.5.7' WHERE id=1`); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -582,8 +595,8 @@ func runUpgrade356(args []string) error {
 	if err := checkIntegrity(target); err != nil {
 		return err
 	}
-	if _, err := schema.Verify(target); err != nil {
-		return fmt.Errorf("升级后校验失败: %w", err)
+	if err := schema.VerifyStructure(target, legacy357SchemaHash); err != nil {
+		return fmt.Errorf("升级后校验失败（3.5.7 结构）: %w", err)
 	}
 	if targetVerifyHook != nil {
 		if err := targetVerifyHook(target); err != nil {
@@ -603,7 +616,7 @@ func runUpgrade356(args []string) error {
 	report := map[string]any{
 		"ok":                   true,
 		"from":                 "3.5.6",
-		"to":                   schema.Version,
+		"to":                   "3.5.7",
 		"schema_hash":          m.SchemaHash,
 		"baseline_version":     m.BaselineVersion,
 		"applied_at_unchanged": m.AppliedAt,
@@ -692,9 +705,20 @@ type tablePlan struct {
 }
 
 type migrationPlan struct {
-	Tables  []*tablePlan
-	Counts  map[string]int64
-	Skipped []string
+	Tables     []*tablePlan
+	Counts     map[string]int64
+	Skipped    []string
+	PolicyRows int
+	PolicyGaps []PolicyGap
+}
+
+// PolicyGap 是迁移时无法自动种子化的 Source×Host。它不阻断迁移，
+// 但必须出现在报告中，由操作者决定是否补策略。
+type PolicyGap struct {
+	SourceID int64  `json:"source_id"`
+	Host     string `json:"host"`
+	BaseURL  string `json:"base_url"`
+	Reason   string `json:"reason"`
 }
 
 // inputSchemaFingerprints 是真实历史副本的 Schema 指纹。
@@ -706,6 +730,7 @@ var inputSchemaFingerprints = map[string]string{
 	"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
 	"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
 	"3.5.5": "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
+	"3.5.7": "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
 }
 
 func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) (*migrationPlan, error) {
@@ -828,6 +853,10 @@ func (p *migrationPlan) validate() error {
 // allowedMissingSourceTable 列出各 baseline 明确没有、Canonical 允许以空表补齐的表。
 // 3.5.4 不应缺少任何 Canonical 业务表；缺少就拒绝。
 func allowedMissingSourceTable(baseline, table string) bool {
+	// 所有旧 baseline 都没有策略表；3.5.11 的统一迁移负责 seed/报告。
+	if table == "source_realm_policy" {
+		return true
+	}
 	if baseline == "3.4.6" {
 		switch table {
 		case "breaker_state", "registry_host_gen", "registry_host_recovery",
@@ -963,6 +992,63 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 		t.ContentHash = dstHash
 		t.Count = dstCount
 		p.Counts[t.Name] = dstCount
+	}
+	return tx.Commit()
+}
+
+func (p *migrationPlan) backfillPolicies(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, base_url, COALESCE(repo_host,'') FROM sources ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type sourceRow struct {
+		id      int64
+		baseURL string
+		host    string
+	}
+	var srcs []sourceRow
+	for rows.Next() {
+		var s sourceRow
+		if err := rows.Scan(&s.id, &s.baseURL, &s.host); err != nil {
+			rows.Close()
+			return err
+		}
+		srcs = append(srcs, s)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().Unix()
+	for _, s := range srcs {
+		if s.host == "" {
+			continue
+		}
+		primary, extra, ok := store.SeedPolicyForSource(s.baseURL, s.host, false)
+		if !ok {
+			p.PolicyGaps = append(p.PolicyGaps, PolicyGap{
+				SourceID: s.id, Host: s.host, BaseURL: s.baseURL,
+				Reason: "Host 无内置 Realm，且不能安全猜测 BaseURL origin",
+			})
+			continue
+		}
+		extraJSON, err := json.Marshal(extra)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO source_realm_policy
+(source_id, host, primary_realm, extra_realms, policy_gen, updated_at)
+VALUES(?,?,?,?,1,?)`, s.id, s.host, primary, string(extraJSON), now); err != nil {
+			return fmt.Errorf("seed source_id=%d host=%s: %w", s.id, s.host, err)
+		}
+		p.PolicyRows++
 	}
 	return tx.Commit()
 }

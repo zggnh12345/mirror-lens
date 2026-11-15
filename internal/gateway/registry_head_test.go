@@ -42,7 +42,8 @@ func eventsOf(t *testing.T, dbPath string, id int64) []seRow {
 		t.Fatalf("打开只读库: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT kind,code,ok,neutral FROM source_events WHERE source_id=? ORDER BY id`, id)
+	rows, err := db.Query(`SELECT kind,code,ok,neutral FROM source_events
+		WHERE source_id=? AND kind<>'policy_change' ORDER BY id`, id)
 	if err != nil {
 		t.Fatalf("查事件: %v", err)
 	}

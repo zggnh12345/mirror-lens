@@ -88,8 +88,8 @@ func testLegacyMigration(t *testing.T, baseline, ddl, wantFingerprint string) {
 	if err != nil {
 		t.Fatalf("目标库未通过运行时 Canonical 校验: %v", err)
 	}
-	if meta.SchemaVersion != "3.5.7" || meta.BaselineVersion != baseline {
-		t.Fatalf("目标 schema_meta 不符: %+v，期望 version=3.5.7 baseline=%s", meta, baseline)
+	if meta.SchemaVersion != schema.Version || meta.BaselineVersion != baseline {
+		t.Fatalf("目标 schema_meta 不符: %+v，期望 version=%s baseline=%s", meta, schema.Version, baseline)
 	}
 	checkTargetIntegrity(t, dst)
 	compareLegacyTarget(t, baseline, srcPath, dst)
@@ -245,6 +245,23 @@ func compareLegacyTarget(t *testing.T, baseline, srcPath string, dst *sql.DB) {
 				continue
 			}
 			checkLegacyAudit(t, src, dst)
+			continue
+		}
+		if name == "source_realm_policy" {
+			// 3.5.11 新增的策略表不是从旧库复制，而是由迁移 seed；
+			// 这里只验证它确实被填充且没有孤儿，不要求与旧库逐行相同。
+			n, _ := tableFingerprint(t, dst, name)
+			if n == 0 {
+				t.Fatal("source_realm_policy 迁移后不应为空")
+			}
+			var orphans int
+			if err := dst.QueryRow(`SELECT count(*) FROM source_realm_policy p
+				LEFT JOIN sources s ON s.id=p.source_id WHERE s.id IS NULL`).Scan(&orphans); err != nil {
+				t.Fatal(err)
+			}
+			if orphans != 0 {
+				t.Fatalf("source_realm_policy 有 %d 条孤儿", orphans)
+			}
 			continue
 		}
 		n, _ := tableFingerprint(t, dst, name)

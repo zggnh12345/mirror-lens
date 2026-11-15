@@ -54,7 +54,7 @@ func TestLegacyInsertWithoutNeutralColumn(t *testing.T) {
 		t.Fatalf("旧版写入失败（多出的列必须可默认）: %v", err)
 	}
 	var neutral int
-	if err := st.db.QueryRow(`SELECT neutral FROM source_events WHERE source_id=?`, id).Scan(&neutral); err != nil {
+	if err := st.db.QueryRow(`SELECT neutral FROM source_events WHERE source_id=? AND kind='docker'`, id).Scan(&neutral); err != nil {
 		t.Fatalf("读回: %v", err)
 	}
 	if neutral != 0 {
@@ -89,7 +89,7 @@ func TestEventRollsBackWhenBreakerWriteFails(t *testing.T) {
 		t.Fatal("状态表缺失时应返回错误")
 	}
 	var n int
-	if err := st.db.QueryRow(`SELECT count(*) FROM source_events WHERE source_id=?`, id).Scan(&n); err != nil {
+	if err := st.db.QueryRow(`SELECT count(*) FROM source_events WHERE source_id=? AND kind='docker'`, id).Scan(&n); err != nil {
 		t.Fatalf("查事件: %v", err)
 	}
 	if n != 0 {

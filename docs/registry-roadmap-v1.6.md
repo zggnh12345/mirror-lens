@@ -394,6 +394,7 @@ fail closed 错误语义：
 - 代码里没有 `realm_extra`；旧 Realm 实际是 `v2auth.DefaultRealms` 加上测试/runner 注入的 `Realms` map
 - 迁移不能按不存在的 `realm_extra` 写逻辑
 - 旧 Source 按 `repo_host` 种子化
+- 已知 Host + 自定义 BaseURL（例如 `ghcr.dockerproxy.com` -> `ghcr.io`）：BaseURL origin 为主，内置官方 Realm 放 extra；`ghcr.io` 本身必须有内置条目
 - `lscr.io` 必须保留 `ghcr.io` 这条显式跨 Host
 - Artifact Registry 按自身 Host 种子化
 - 自定义 Host、默认表里没有的 Source：没有策略，进入迁移报告

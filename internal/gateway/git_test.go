@@ -91,9 +91,10 @@ func newGitFixture(t *testing.T, ttlSeconds int64) *gitFixture {
 	srv := httptest.NewServer(up)
 	t.Cleanup(srv.Close)
 	gw := New(st, Options{
-		Cache:  cs,
-		GitTTL: time.Duration(ttlSeconds) * time.Second,
-		Guard:  safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		GitTTL:   time.Duration(ttlSeconds) * time.Second,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	plain, _, err := st.CreateToken("git")
 	if err != nil {
@@ -270,7 +271,8 @@ func TestGitSSRFBlocked(t *testing.T) {
 	}
 	defer st.Close()
 	cs, _ := cache.New(filepath.Join(dir, "cache"))
-	gw := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: false})})
+	gw := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: false})})
 	plain, _, _ := st.CreateToken("t")
 	r := httptest.NewRequest(http.MethodGet, "http://gw/git/127.0.0.1:9/repo.git/info/refs?service=git-upload-pack", nil)
 	r.SetBasicAuth(plain, "")

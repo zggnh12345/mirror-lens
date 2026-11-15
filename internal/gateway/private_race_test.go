@@ -32,7 +32,8 @@ func relayGatewayMulti(t *testing.T, urls []string) (*Gateway, *adapter.Plan) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	list := make([]TrustedRelay, 0, len(urls))
 	for i, u := range urls {
 		list = append(list, TrustedRelay{ID: int64(i + 1), Name: fmt.Sprintf("站%d", i+1), URL: u})

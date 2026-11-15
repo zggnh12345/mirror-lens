@@ -183,7 +183,7 @@ func ProbeRegistryHost(ctx context.Context, p RegistryHostProbe) RegistryHostOut
 	}
 	policy := p.Policy
 	if policy == nil {
-		policy = v2auth.NewLegacyHostPolicy(nil, true)
+		policy = v2auth.OfficialPolicy{}
 	}
 	auth := v2auth.NewWithResolver(newClient(p.Timeout), policy)
 

@@ -202,7 +202,9 @@ func New(st *store.Store, o Options) *Gateway {
 	}
 	policies := o.Policies
 	if policies == nil {
-		policies = v2auth.NewLegacyHostPolicy(nil, true)
+		// 生产装配必须注入 StorePolicy；未注入时只允许官方直连，
+		// 绝不能退回 11a 的按 Host 查表 fallback。
+		policies = v2auth.OfficialPolicy{}
 	}
 	cli := guard.Client()
 	if o.Registry != nil {
@@ -555,7 +557,7 @@ func logicalHostFor(t fetchTarget, plan *adapter.Plan) string {
 	return ""
 }
 
-var defaultGatewayPolicy = v2auth.NewLegacyHostPolicy(nil, true)
+var defaultGatewayPolicy v2auth.PolicyResolver = v2auth.OfficialPolicy{}
 
 func (g *Gateway) policyResolver() v2auth.PolicyResolver {
 	if g != nil && g.policies != nil {

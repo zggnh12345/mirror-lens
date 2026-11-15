@@ -62,7 +62,8 @@ func TestOfficialParallelSegments(t *testing.T) {
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL + "/o/r/releases/download/v1/big.bin")
 
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	g.par = ParOptions{Enabled: true, MinSize: 1 << 20, ChunkSize: 512 << 10, Workers: 4}
 
 	plan := &adapter.Plan{

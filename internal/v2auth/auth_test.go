@@ -27,7 +27,7 @@ func TestParseChallenge(t *testing.T) {
 func TestRealmAllowed(t *testing.T) {
 	a := New(nil, map[string][]string{
 		"quay.io": {"https://quay.io"},
-		"gcr.io":  {"https://*.googleapis.com"},
+		"gcr.io":  {"https://storage.googleapis.com"},
 		"lscr.io": {"https://ghcr.io/"},
 	})
 	u := func(s string) *url.URL { p, _ := url.Parse(s); return p }

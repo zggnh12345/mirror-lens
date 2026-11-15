@@ -36,17 +36,42 @@ type PolicyResolver interface {
 	Resolve(ctx context.Context, sourceID int64, host string) (PolicySnapshot, error)
 }
 
+// OfficialPolicy 是 sourceID=0 的官方直连策略。
+//
+// 官方直连保留 3.5.10 的同 Host、同 scheme 快捷放行；这不是第三方
+// Source 的 fallback。第三方 Source 只认 StorePolicy 的显式条目。
+type OfficialPolicy struct{}
+
+func (OfficialPolicy) Resolve(_ context.Context, sourceID int64, host string) (PolicySnapshot, error) {
+	if sourceID != 0 {
+		return PolicySnapshot{}, fmt.Errorf("%w: OfficialPolicy 只接受 source_id=0，实际 %d", ErrPolicyMissing, sourceID)
+	}
+	// 官方直连的 Host 来自已解析的 plan，可能是测试/内网地址（含端口或 IP）。
+	// 这里只做基本收敛，不做 registryhost.Normalize——后者的白名单式校验
+	// 会把测试和合法内网官方上游一并拒掉。
+	logical := strings.ToLower(strings.TrimSpace(host))
+	if logical == "" {
+		return PolicySnapshot{}, fmt.Errorf("%w: 官方 Host 为空", ErrPolicyMissing)
+	}
+	return PolicySnapshot{
+		SourceID:      sourceID,
+		LogicalHost:   logical,
+		Official:      true,
+		AllowSameHost: true,
+		Scheme:        "https",
+		Realms:        append([]string(nil), DefaultRealmsFor(logical)...),
+	}, nil
+}
+
 // LegacyHostPolicy 复刻 3.5.10 的 Host→Realm 行为。
 //
 // 四段语义：
 //  1. 带 userinfo 的 Realm 一律拒绝；
 //  2. AllowSameHost 时，同 Host、同 scheme 的 Realm 放行；
-//  3. 否则查显式表；显式表为空时查 DefaultRealmsFor；
-//  4. 支持 https://*.example.com 通配。
+//  3. 否则查显式表；显式表为空时查 DefaultRealmsFor。
 //
-// 11a 里 Gateway 用 AllowSameHost=true 复刻 realmAllowedForHost；
-// Probe 用 false 复刻 v2auth.Authenticator.RealmAllowed 的旧行为。
-// 11b 删除这个类型后，两端都只剩显式策略。
+// 不支持通配 Realm；通配符不是 11b 的运行时语义。
+// 仅用于测试显式注入，生产装配不再构造这个类型。
 type LegacyHostPolicy struct {
 	Realms        map[string][]string
 	AllowSameHost bool
@@ -96,13 +121,6 @@ func (p PolicySnapshot) Allows(realm *url.URL) error {
 		want := strings.ToLower(strings.TrimSuffix(allow, "/"))
 		if got == want {
 			return nil
-		}
-		if i := strings.Index(want, "://*."); i > 0 {
-			prefix := want[:i+3]
-			suffix := want[i+5:]
-			if strings.HasPrefix(got, prefix) && strings.HasSuffix(got, "."+suffix) {
-				return nil
-			}
 		}
 	}
 	return fmt.Errorf("%w: %s 的 Realm %s", ErrRealmDenied, p.LogicalHost, got)

@@ -55,7 +55,8 @@ func TestQuotaEvictsOldestFirst(t *testing.T) {
 	newKey := putEntry(t, st, cs, "k-new", bytes.Repeat([]byte("c"), 100), now-100)
 
 	// 上限 250：只够留两个，最老的必须走
-	gw := New(st, Options{Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 250,
+	gw := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 250,
 		Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	if freed, err := gw.EvictTo(250); err != nil || freed != 100 {
 		t.Fatalf("应释放 100 字节，实际 %d (%v)", freed, err)
@@ -85,7 +86,8 @@ func TestQuotaRespectsLastHit(t *testing.T) {
 	putEntry(t, st, cs, "k-new", bytes.Repeat([]byte("b"), 100), now-100)
 	st.CacheHit(old) // 刚刚被用过
 
-	gw := New(st, Options{Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 150,
+	gw := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 150,
 		Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	gw.EvictTo(150)
 
@@ -110,7 +112,8 @@ func TestQuotaKeepsSharedBlob(t *testing.T) {
 	other := putEntry(t, st, cs, "k-other", bytes.Repeat([]byte("y"), 100), now-250)
 	b := putEntry(t, st, cs, "k-b", shared, now-200)
 
-	gw := New(st, Options{Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 150,
+	gw := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, MaxBytes: 1 << 20, CacheMaxBytes: 150,
 		Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	if _, err := gw.EvictTo(150); err != nil {
 		t.Fatalf("淘汰: %v", err)

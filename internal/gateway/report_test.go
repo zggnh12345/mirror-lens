@@ -45,10 +45,11 @@ func TestTruncatedUpstreamCountedAsFailure(t *testing.T) {
 	id := addSchedSource(t, st, "fast-hands", truncated.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
@@ -97,7 +98,8 @@ func TestStreamBodyReportsFailureOnTruncation(t *testing.T) {
 	cand := scheduler.Candidate{ID: id, Name: "half-pipe"}
 	up, _ := url.Parse("http://127.0.0.1:1/v2/library/alpine/blobs/sha256:abc")
 
-	g := New(st, Options{Cache: cs})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true}))
 
 	plan := &adapter.Plan{
@@ -144,10 +146,11 @@ func TestCompletedUpstreamCountedAsSuccess(t *testing.T) {
 	id := addSchedSource(t, st, "mirror", mirror.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 
@@ -193,10 +196,11 @@ func TestClientGoneNotCounted(t *testing.T) {
 	id := addSchedSource(t, st, "slow", slow.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 

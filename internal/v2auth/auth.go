@@ -145,7 +145,7 @@ func NewWithResolver(client *http.Client, resolver PolicyResolver) *Authenticato
 		client = http.DefaultClient
 	}
 	if resolver == nil {
-		resolver = NewLegacyHostPolicy(nil, false)
+		resolver = OfficialPolicy{}
 	}
 	return &Authenticator{client: client, resolver: resolver, ua: "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)"}
 }
@@ -156,6 +156,7 @@ func DefaultRealms() map[string][]string {
 		"quay.io":         {"https://quay.io"},
 		"gcr.io":          {"https://gcr.io", "https://storage.googleapis.com"},
 		"registry.k8s.io": {"https://registry.k8s.io"},
+		"ghcr.io":         {"https://ghcr.io"},
 		// lscr.io 的实际 Challenge 指向 ghcr.io，不是 lscr.io。
 		"lscr.io":              {"https://ghcr.io"},
 		"registry.gitlab.com":  {"https://gitlab.com"},

@@ -50,6 +50,7 @@ func TestPassThroughRecords429AndFailsOver(t *testing.T) {
 	ad.Scheme = "http"
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,
@@ -133,6 +134,7 @@ func TestPassThroughAllSources429KeepsRetryAfter(t *testing.T) {
 	ad.Scheme = "http"
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,

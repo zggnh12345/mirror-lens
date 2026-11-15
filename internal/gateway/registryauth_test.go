@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
@@ -184,6 +185,88 @@ func TestBearerTransportTokenCacheSeparatesSources(t *testing.T) {
 	}
 }
 
+func TestBearerTransportTokenCacheSeparatesPolicyGenerations(t *testing.T) {
+	var tokenHits int
+	var auths []string
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "auth.example":
+			tokenHits++
+			return authResponse(http.StatusOK, fmt.Sprintf(`{"token":"g%d"}`, tokenHits), nil), nil
+		case "registry.example":
+			if req.Header.Get("Authorization") == "" {
+				return authResponse(http.StatusUnauthorized, "", map[string]string{
+					"WWW-Authenticate": `Bearer realm="https://auth.example/token",service="registry",scope="repository:g/p:pull"`,
+				}), nil
+			}
+			auths = append(auths, req.Header.Get("Authorization"))
+			return authResponse(http.StatusOK, `{"ok":true}`, nil), nil
+		default:
+			return authResponse(http.StatusBadGateway, "unexpected host "+req.URL.Host, nil), nil
+		}
+	})
+	bt := &bearerTransport{base: base, tokens: newTokenCache()}
+	do := func(gen int64) {
+		req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/g/p/manifests/latest", nil)
+		req = req.WithContext(v2auth.WithPolicy(req.Context(), v2auth.PolicySnapshot{
+			SourceID: 1, LogicalHost: "registry.example", Scheme: "https", PolicyGen: gen,
+			Realms: []string{"https://auth.example"},
+		}))
+		resp, err := bt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("gen=%d status=%d", gen, resp.StatusCode)
+		}
+	}
+	do(1)
+	do(2)
+	if tokenHits != 2 {
+		t.Fatalf("不同 policy_gen 应各换一次 token，tokenHits=%d", tokenHits)
+	}
+	if len(auths) != 2 || auths[0] == auths[1] {
+		t.Fatalf("不同 policy_gen 不应复用同一个 token: %v", auths)
+	}
+}
+
+func TestGatewayStorePolicyMissingFailsClosed(t *testing.T) {
+	st := openTestStore(t)
+	g := New(st, Options{Policies: store.NewStorePolicy(st)})
+	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{
+		Registry: true, LogicalHost: "quay.io", Upstream: &url.URL{Scheme: "https"},
+	}, 42, "", "https")
+	if !errors.Is(err, v2auth.ErrPolicyMissing) {
+		t.Fatalf("无策略 Source 必须返回 ErrPolicyMissing，实际 %v", err)
+	}
+}
+
+func TestGatewayStorePolicyResolvesSource(t *testing.T) {
+	st := openTestStore(t)
+	id, err := st.AddSource(store.Source{
+		BaseURL: "https://quay.example/", Name: "q", RepoHost: "quay.io",
+		DockerCap: 1, Status: "usable", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(st, Options{Policies: store.NewStorePolicy(st)})
+	ctx, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{
+		Registry: true, LogicalHost: "quay.io", Upstream: &url.URL{Scheme: "https"},
+	}, id, "", "https")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := v2auth.PolicyFromContext(ctx)
+	if !ok || p.SourceID != id || p.PolicyGen != 1 || p.Official {
+		t.Fatalf("StorePolicy 快照不正确: %+v", p)
+	}
+	if err := p.Allows(mustURL(t, "https://quay.example/token")); err != nil {
+		t.Fatalf("源自身 origin 应放行: %v", err)
+	}
+}
+
 func TestScopeFromPathStripsHostPrefix(t *testing.T) {
 	cases := []struct {
 		path, host, want string
@@ -233,7 +316,7 @@ func TestWithRegistryPolicyResolverError(t *testing.T) {
 }
 
 func TestWithRegistryPolicyUsesTargetScheme(t *testing.T) {
-	g := &Gateway{}
+	g := &Gateway{policies: testGatewayPolicy}
 	plan := &adapter.Plan{LogicalHost: "docker.io", Upstream: &url.URL{Scheme: "http"}}
 	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "https")
 	if err != nil {
@@ -246,7 +329,7 @@ func TestWithRegistryPolicyUsesTargetScheme(t *testing.T) {
 }
 
 func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
-	g := &Gateway{}
+	g := &Gateway{policies: testGatewayPolicy}
 	plan := &adapter.Plan{LogicalHost: "docker.io"}
 	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "")
 	if err != nil {

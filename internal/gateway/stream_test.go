@@ -109,6 +109,7 @@ func newHTTPFixture(t *testing.T, maxBytes int64) *httpFixture {
 	t.Cleanup(srv.Close)
 
 	gw := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		RawBase:  srv.URL,
 		MaxBytes: maxBytes,
@@ -397,8 +398,9 @@ func TestHTTPSSRFBlocked(t *testing.T) {
 	defer st.Close()
 	cs, _ := cache.New(filepath.Join(dir, "cache"))
 	gw := New(st, Options{
-		Cache: cs,
-		Guard: safehttp.New(safehttp.Options{AllowLoopback: false}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: false}),
 	})
 	plain, _, _ := st.CreateToken("t")
 	r := httptest.NewRequest(http.MethodGet, "http://gw/http/"+url.PathEscape("http://127.0.0.1:9/x"), nil)

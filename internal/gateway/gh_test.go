@@ -49,9 +49,10 @@ func TestGHReleaseThroughMirror(t *testing.T) {
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: "https://raw.githubusercontent.com",
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  "https://raw.githubusercontent.com",
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 	tok := token(t, st)
@@ -114,7 +115,8 @@ func TestGHArchiveTTL(t *testing.T) {
 	defer mirror.Close()
 	addSchedSource(t, st, "mirror", mirror.URL, 50, 5000)
 
-	g := New(st, Options{Cache: cs, RawBase: "https://raw.githubusercontent.com",
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, RawBase: "https://raw.githubusercontent.com",
 		Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3}))
 	tok := token(t, st)
@@ -142,7 +144,8 @@ func TestGHBadPath(t *testing.T) {
 	}
 	defer st.Close()
 	cs, _ := cache.New(filepath.Join(dir, "cache"))
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 
 	if rec := doGH(g, token(t, st), "http://gw/gh/o/r/releases/tag/v1"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("网页路径应 400，得到 %d", rec.Code)

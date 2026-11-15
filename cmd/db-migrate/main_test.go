@@ -29,13 +29,14 @@ func TestInputSchemaFingerprintsFrozen(t *testing.T) {
 			t.Errorf("baseline=%s 的输入指纹不是 64 位 sha256: %q", baseline, h)
 		}
 	}
-	if len(inputSchemaFingerprints) != 3 {
-		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5 三个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
+	if len(inputSchemaFingerprints) != 4 {
+		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5/3.5.7 四个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
 	}
 	want := map[string]string{
 		"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
 		"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
 		"3.5.5": "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
+		"3.5.7": "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
 	}
 	for baseline, expected := range want {
 		if got := inputSchemaFingerprints[baseline]; got != expected {
@@ -361,8 +362,8 @@ func TestMigrate355Fidelity(t *testing.T) {
 	if err := dst.QueryRow(`SELECT schema_version, schema_hash, baseline_version, applied_at FROM schema_meta`).Scan(&version, &hash, &baseline, &applied); err != nil {
 		t.Fatal(err)
 	}
-	if version != "3.5.7" {
-		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
+	if version != schema.Version {
+		t.Fatalf("schema_version 应为 %s，实际 %q", schema.Version, version)
 	}
 	if hash != schema.CanonicalSchemaHash {
 		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
@@ -448,8 +449,8 @@ func TestMigrate355PreservesEmptyBaseline(t *testing.T) {
 	if err := dst.QueryRow(`SELECT schema_version, schema_hash, baseline_version, applied_at FROM schema_meta`).Scan(&version, &hash, &baseline, &applied); err != nil {
 		t.Fatal(err)
 	}
-	if version != "3.5.7" {
-		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
+	if version != schema.Version {
+		t.Fatalf("schema_version 应为 %s，实际 %q", schema.Version, version)
 	}
 	if hash != schema.CanonicalSchemaHash {
 		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
@@ -535,8 +536,8 @@ func TestMigrate355RejectsWrongMetaRowCount(t *testing.T) {
 
 // ---- 3.5.6 → 3.5.7 metadata-only 升级测试 ----
 
-// build356Fixture 复用 Canonical DDL（3.5.6 与 3.5.7 结构一致）构建库，再把版本标签
-// 改回 3.5.6，并保留一个可被验证的 baseline_version，证明 metadata-only 路径不覆盖它。
+// build356Fixture 用冻结的 3.5.7 Canonical DDL 构建库（3.5.6 与 3.5.7 结构一致），
+// 再把版本标签改回 3.5.6，并保留一个可被验证的 baseline_version。
 func build356Fixture(t *testing.T, path string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
@@ -544,10 +545,11 @@ func build356Fixture(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := schema.EnsureFresh(db, "fresh"); err != nil {
+	if _, err := db.Exec(canonical357DDL); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE schema_meta SET schema_version='3.5.6', baseline_version='keep-me-356'`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_meta(schema_version,schema_hash,baseline_version,applied_at)
+		VALUES('3.5.6',?,'keep-me-356',1794742101)`, canonical357Hash); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO sources(base_url,name,created_at,repo_host) VALUES ('https://x.example/','X',1,'docker.io')`); err != nil {
@@ -611,8 +613,8 @@ func TestUpgrade356MetadataOnly(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != schema.CanonicalSchemaHash {
-		t.Fatalf("schema_hash 必须保持不变（%s），实际 %s", schema.CanonicalSchemaHash, hash)
+	if hash != canonical357Hash {
+		t.Fatalf("schema_hash 应为 3.5.7 冻结值 %s，实际 %s", canonical357Hash, hash)
 	}
 	if baseline != "keep-me-356" {
 		t.Fatalf("baseline_version 必须原值保留，实际 %q", baseline)
@@ -796,8 +798,8 @@ func TestUpgrade356HandlesWalModeSource(t *testing.T) {
 	if version != "3.5.7" {
 		t.Fatalf("schema_version 应为 3.5.7，实际 %q", version)
 	}
-	if hash != schema.CanonicalSchemaHash {
-		t.Fatalf("schema_hash 应为 Canonical %s，实际 %s", schema.CanonicalSchemaHash, hash)
+	if hash != canonical357Hash {
+		t.Fatalf("schema_hash 应为 3.5.7 冻结值 %s，实际 %s", canonical357Hash, hash)
 	}
 	if baseline != "keep-me-356" {
 		t.Fatalf("baseline_version 必须原值保留，实际 %q", baseline)

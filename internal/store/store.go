@@ -522,6 +522,19 @@ ON CONFLICT(source_id, family, scope) DO UPDATE SET
 			return 0, err
 		}
 	}
+	// 新源立即建立初始 Realm 策略；策略、源、事件必须同一事务。
+	// 未知自定义 Host 也允许新源使用自己的 BaseURL origin，避免新源一创建
+	// 就永远 503；旧库迁移走更严格的 policySeedForSource(..., false)。
+	if x.RepoHost != "" {
+		if primary, extra, ok := policySeedForSource(x.BaseURL, x.RepoHost, true); ok {
+			if err := setRealmPolicyTx(tx, id, x.RepoHost, primary, extra, false); err != nil {
+				return 0, err
+			}
+			if err := recordPolicyChangeTx(tx, id); err != nil {
+				return 0, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -568,6 +581,15 @@ WHERE source_id=? AND family='registry'`, id); err != nil {
 			now := time.Now().Unix()
 			if _, err := tx.Exec(`UPDATE registry_host_recovery SET next_probe_at=?
 WHERE source_id=? AND family='registry' AND next_probe_at>?`, now, id, now); err != nil {
+				return err
+			}
+		}
+		if boolToInt(*enabled) != wasEnabled {
+			if _, err := tx.Exec(`UPDATE source_realm_policy
+SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, time.Now().Unix(), id); err != nil {
+				return err
+			}
+			if err := recordPolicyChangeTx(tx, id); err != nil {
 				return err
 			}
 		}
@@ -646,13 +668,35 @@ func (s *Store) SetStatusLive(id int64, status, reason string) (bool, error) {
 // SetStatusWhy 改状态并记时间和原因。状态没变不动 status_at，
 // 否则常年 dead 的源每次探测都把「坏了多久」清零，永远归档不了。
 func (s *Store) SetStatusWhy(id int64, status, reason string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var old string
+	if err := tx.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&old); err != nil {
+		return err
+	}
 	now := time.Now().Unix()
-	_, err := s.db.Exec(`UPDATE sources SET
+	if _, err := tx.Exec(`UPDATE sources SET
 		status_at = CASE WHEN status<>? THEN ? ELSE status_at END,
 		status_reason = CASE WHEN status<>? THEN ? ELSE status_reason END,
 		status = ?
-		WHERE id=?`, status, now, status, reason, status, id)
-	return err
+		WHERE id=?`, status, now, status, reason, status, id); err != nil {
+		return err
+	}
+	// 归档/恢复是管理边界，必须让旧 Token 失效；后台的 dead/usable
+	// 状态变化不在这里递增 generation。
+	if old != status && (status == "archived" || old == "archived") {
+		if _, err := tx.Exec(`UPDATE source_realm_policy
+SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, now, id); err != nil {
+			return err
+		}
+		if err := recordPolicyChangeTx(tx, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // TouchProbe0 清掉探测时间，让恢复的源不受低频门限阻挡，立刻可探。
@@ -695,13 +739,57 @@ func (s *Store) ConsecutiveClean(sourceID int64, kind string) int {
 // ArchiveStale 归档「坏了/被封超过 before 秒」的源：不再探测、不参与调度，
 // 记录保留可恢复。返回归档条数。
 func (s *Store) ArchiveStale(before int64) (int64, error) {
-	res, err := s.db.Exec(`UPDATE sources SET status='archived', status_at=?, status_reason=?
-		WHERE enabled=1 AND status IN ('dead','blocked') AND status_at>0 AND status_at<=?`,
-		time.Now().Unix(), "长时间不可用，自动归档", before)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id FROM sources
+		WHERE enabled=1 AND status IN ('dead','blocked') AND status_at>0 AND status_at<=?`, before)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return 0, tx.Commit()
+	}
+	now := time.Now().Unix()
+	res, err := tx.Exec(`UPDATE sources SET status='archived', status_at=?, status_reason=?
+		WHERE enabled=1 AND status IN ('dead','blocked') AND status_at>0 AND status_at<=?`,
+		now, "长时间不可用，自动归档", before)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(`UPDATE source_realm_policy
+			SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, now, id); err != nil {
+			return 0, err
+		}
+		if err := recordPolicyChangeTx(tx, id); err != nil {
+			return 0, err
+		}
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // CleanupArchived 删除归档超过 before 秒的源及检测记录、调度事件。
@@ -746,6 +834,7 @@ func (s *Store) DeleteSource(id int64) error {
 	// foreign_keys，也一并清掉，不留孤儿。
 	for _, q := range []string{
 		`DELETE FROM source_events WHERE source_id=?`,
+		`DELETE FROM source_realm_policy WHERE source_id=?`,
 		`DELETE FROM breaker_state WHERE source_id=?`,
 		`DELETE FROM checks WHERE source_id=?`,
 		`DELETE FROM source_health WHERE source_id=?`,

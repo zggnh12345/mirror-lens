@@ -37,10 +37,11 @@ func TestLiveTaskCoversFetchServeAndHit(t *testing.T) {
 	defer origin.Close()
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	tok := token(t, st)
 	target := "http://gw/raw/o/r/main/big.bin"

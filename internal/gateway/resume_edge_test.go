@@ -119,9 +119,10 @@ func newEdgeFixture(t *testing.T) *edgeFixture {
 	srv := httptest.NewServer(up)
 	t.Cleanup(srv.Close)
 	gw := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	plain, _, err := st.CreateToken("test")
 	if err != nil {

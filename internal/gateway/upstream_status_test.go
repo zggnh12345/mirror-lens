@@ -38,10 +38,11 @@ func TestUpstream429Passthrough(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		RawTTL:  time.Hour,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		RawTTL:   time.Hour,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.requireToken = true
 	tok := token(t, st)
@@ -74,10 +75,11 @@ func TestUpstream503Passthrough(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: srv.URL,
-		RawTTL:  time.Hour,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  srv.URL,
+		RawTTL:   time.Hour,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.requireToken = true
 	r := do(g, token(t, st), "http://gw/raw/o/r/main/a.txt", nil)

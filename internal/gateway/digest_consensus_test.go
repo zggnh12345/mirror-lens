@@ -78,6 +78,7 @@ func newConsensusFixture(t *testing.T) (*Gateway, *store.Store, *regUpstream, *b
 	ad.Scheme = "http"
 
 	g := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,
@@ -173,10 +174,11 @@ func TestLyingSelfDigestRejected(t *testing.T) {
 	addSchedSource(t, st, "mirror", msrv.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 
@@ -212,10 +214,11 @@ func TestNoDigestAnywhereStaysUnverified(t *testing.T) {
 	addSchedSource(t, st, "mirror", msrv.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 
@@ -251,10 +254,11 @@ func TestMalformedDigestTreatedAsAbsent(t *testing.T) {
 	addSchedSource(t, st, "mirror", msrv.URL, 10, 9000)
 
 	g := New(st, Options{
-		Cache:   cs,
-		RawBase: origin.URL,
-		RawTTL:  time.Minute,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		RawBase:  origin.URL,
+		RawTTL:   time.Minute,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 	})
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, FailCooldown: time.Minute}))
 

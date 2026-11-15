@@ -780,7 +780,8 @@ func (s *Store) SourceEventCodes(sourceID int64, limit int) ([]int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.Query(`SELECT code FROM source_events WHERE source_id=? ORDER BY id DESC LIMIT ?`, sourceID, limit)
+	rows, err := s.db.Query(`SELECT code FROM source_events
+		WHERE source_id=? AND kind<>? ORDER BY id DESC LIMIT ?`, sourceID, SourceEventPolicyChange, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +814,7 @@ func (s *Store) SourceEvents(sourceID int64, limit int) (ok, neutral, fail int, 
 		limit = 20
 	}
 	rows, err := s.db.Query(`SELECT ts, ok, neutral, code FROM source_events
-		WHERE source_id = ? ORDER BY ts DESC LIMIT ?`, sourceID, limit)
+		WHERE source_id = ? AND kind<>? ORDER BY ts DESC LIMIT ?`, sourceID, SourceEventPolicyChange, limit)
 	if err != nil {
 		return
 	}

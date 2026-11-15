@@ -140,6 +140,7 @@ func newRegFixture(t *testing.T, challenge bool) *regFixture {
 	ad.Scheme = "http"
 
 	gw := New(st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
 		Registry: ad,

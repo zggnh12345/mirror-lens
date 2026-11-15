@@ -16,13 +16,13 @@ import (
 )
 
 // Version 是当前 Canonical Schema 对应的应用版本。
-const Version = "3.5.7"
+const Version = "3.5.11"
 
-// CanonicalSchemaHash 是 3.5.7 Canonical DDL 经 Hash 计算得到的冻结结构指纹。
+// CanonicalSchemaHash 是 3.5.11 Canonical DDL 经 Hash 计算得到的冻结结构指纹。
 //
 // 注意：canonical.sql 文件自身的 SHA-256 是另一个值，不能用于数据库结构校验。
 // 运行时、离线迁移工具和测试都必须引用这一个常量，避免各自维护终态指纹。
-const CanonicalSchemaHash = "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e"
+const CanonicalSchemaHash = "e39e119719633ea8565bfba60f03f34e525259aa177235f97145bca9569f2611"
 
 //go:embed canonical.sql
 var ddl string

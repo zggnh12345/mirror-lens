@@ -28,9 +28,10 @@ func privGateway(t *testing.T, priv PrivateOptions, trusted ...TrustedRelay) *Ga
 		t.Fatal(err)
 	}
 	g := New(st, Options{
-		Cache:   cs,
-		Guard:   safehttp.New(safehttp.Options{AllowLoopback: true}),
-		Private: priv,
+		Policies: testGatewayPolicy,
+		Cache:    cs,
+		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Private:  priv,
 	})
 	if len(trusted) > 0 {
 		g.SetTrusted(trusted)

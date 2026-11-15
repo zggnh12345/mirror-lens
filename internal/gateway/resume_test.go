@@ -118,7 +118,8 @@ func TestKeepPartialWithoutFileWritesNoMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 
 	u, _ := url.Parse("https://up.example/f.bin")
 	plan := &adapter.Plan{Kind: "release", Upstream: u, CacheKey: "release:o/r/f.bin"}
@@ -148,7 +149,8 @@ func TestKeepPartialNilKeepsExistingMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 
 	u, _ := url.Parse("https://up.example/f.bin")
 	plan := &adapter.Plan{Kind: "release", Upstream: u, CacheKey: "release:o/r/f.bin"}
@@ -194,6 +196,7 @@ func TestResumeReplaysPrefixWhenCacheNoLongerAllowed(t *testing.T) {
 
 	// 第二次：上限调到比文件小，这次不允许缓存。
 	gw := New(f.st, Options{
+		Policies: testGatewayPolicy,
 		Cache:    f.cs,
 		RawBase:  f.srv.URL,
 		MaxBytes: int64(len(f.up.body)) / 2,

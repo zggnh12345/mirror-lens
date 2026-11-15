@@ -137,7 +137,8 @@ func parFixture(t *testing.T, size int) (*Gateway, *store.Store, *cache.Store, [
 	if err != nil {
 		t.Fatalf("缓存: %v", err)
 	}
-	g := New(st, Options{Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+	g := New(st, Options{
+		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
 	g.par = ParOptions{Enabled: true, MinSize: 1 << 20, ChunkSize: 2 << 20, Workers: 4}
 
 	body := make([]byte, size)
