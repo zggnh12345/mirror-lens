@@ -566,15 +566,23 @@ func (g *Gateway) policyResolver() v2auth.PolicyResolver {
 
 // withRegistryPolicy 在请求 context 写入唯一一份认证身份。
 //
-// 只有 Registry plan（LogicalHost 非空）需要；Git/Private/Raw 不写。
+// Registry plan 必须显式带 LogicalHost；缺失时在发请求前失败关闭，
+// 不能靠路由标记兜底成 503。Git/Private/Raw 不写。
 // 解析失败必须 fail closed，不能退回按 Host 查表。
 func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost string) (context.Context, error) {
-	if plan == nil || plan.LogicalHost == "" {
+	if plan == nil {
 		return ctx, nil
 	}
 	host := logicalHost
 	if host == "" {
 		host = plan.LogicalHost
+	}
+	if host == "" {
+		if plan.Registry {
+			metrics.AuthPolicyMissing()
+			return nil, fmt.Errorf("%w: registry plan 缺少 LogicalHost", v2auth.ErrPolicyMissing)
+		}
+		return ctx, nil
 	}
 	p, err := g.policyResolver().Resolve(ctx, sourceID, host)
 	if err != nil {

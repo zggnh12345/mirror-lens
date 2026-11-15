@@ -39,9 +39,12 @@ type Plan struct {
 	// LogicalHost 是 Registry 的逻辑仓库 Host（如 registry.k8s.io），
 	// 不是镜像站 Host。认证策略和 scope 都按它算，host_prefix 不能混用。
 	LogicalHost string
-	Upstream    *url.URL    // 真正要请求的上游
-	Method      string      // 一般 GET；git 的 POST 走透明转发
-	Header      http.Header // 追加到上游请求的头（认证、Accept 等）
+	// Registry 为真表示这是 /v2/ 的 Registry plan。认证策略必须显式声明，
+	// 不能靠 LogicalHost 是否为空来猜；11a 之前这里只有 LogicalHost。
+	Registry bool
+	Upstream *url.URL    // 真正要请求的上游
+	Method   string      // 一般 GET；git 的 POST 走透明转发
+	Header   http.Header // 追加到上游请求的头（认证、Accept 等）
 
 	Redirects int // 允许的重定向跳数，0 用默认值
 

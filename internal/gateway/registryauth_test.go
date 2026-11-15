@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -195,6 +196,13 @@ func TestScopeFromPathStripsHostPrefix(t *testing.T) {
 		if got := scopeFromPath(c.path, c.host); got != c.want {
 			t.Errorf("scopeFromPath(%q, %q)=%q，应为 %q", c.path, c.host, got, c.want)
 		}
+	}
+}
+
+func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
+	_, err := (&Gateway{}).withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true}, 7, "")
+	if err == nil || !errors.Is(err, v2auth.ErrPolicyMissing) {
+		t.Fatalf("Registry plan 缺少 LogicalHost 应返回 ErrPolicyMissing，实际 %v", err)
 	}
 }
 
