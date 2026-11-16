@@ -702,7 +702,7 @@ D6 的四段顺序必须完整复刻：
 
 ### 3.5.12 合并验收 + 定点修复（原 3.5.12 + 3.5.13）
 
-> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收，记录见 `docs/3.5.12-acceptance.md`。12-S/12a/12b 因生产无 foreign Host Source 且无公共 Source 证据，标记 `BLOCKED_EXTERNAL_SOURCE`，未执行真实回源验收；不得以模拟结果替代。
+> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收，记录见 `docs/3.5.12-acceptance.md`。12-S/12a/12b 未执行（`NOT_EXECUTED`）：没有创建 Host Source、没有配置 `ML_HOSTPROBE_REPOS`、没有收窄生产白名单、没有实际探测与镜像尝试，不能标记为 `BLOCKED_EXTERNAL_SOURCE`。生产切换未授权、未执行。
 
 **定位：** 本版不是纯验收版本，也**不改 Schema**。它合并原 3.5.12（GCR / Artifact Registry / K8S）与原 3.5.13（Quay / MCR / GitLab / ECR / cgr + 同 Host 多 Source），并包含 3.5.11c 欠账、两项已确认代码修复、Source 就绪门禁和候选→回退链路测试。原 3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
 

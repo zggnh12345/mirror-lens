@@ -51,10 +51,15 @@ type moMirror struct {
 	hits   *atomic.Int32
 	// abort 为 true 时先发一半 body 再断开，模拟已提交响应后上游失败。
 	abort bool
+	// delay 用于模拟候选源迟迟不响应。
+	delay time.Duration
 }
 
 func (m *moMirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.hits.Add(1)
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
 	for k, vs := range m.hdr {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -681,5 +686,60 @@ func TestMultiOriginSecondSourceFailoverKeepsDigest(t *testing.T) {
 	}
 	if f.officialHits.Load() != 0 {
 		t.Fatalf("第二源成功时不应回官方，official=%d", f.officialHits.Load())
+	}
+}
+
+// 12-T：优先级变化后，registry 候选顺序必须立即生效。
+func TestMultiOriginPreferredSourceGoesFirst(t *testing.T) {
+	f := newMOFixture(t)
+	body1 := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","which":"one"}`
+	body2 := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","which":"two"}`
+	s1 := httptest.NewServer(&moMirror{path: "/v2/library/alpine/manifests/pref", body: body1, hits: &f.nativeHits})
+	defer s1.Close()
+	s2 := httptest.NewServer(&moMirror{path: "/v2/library/alpine/manifests/pref", body: body2, hits: &f.prefixHits})
+	defer s2.Close()
+	f.addRegistrySource(t, s1, "native")
+	id2 := f.addRegistrySource(t, s2, "native")
+
+	pref := true
+	if err := f.st.UpdateSource(id2, nil, nil, nil, &pref); err != nil {
+		t.Fatal(err)
+	}
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/pref")
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != body2 {
+		t.Fatalf("优先源应排第一: status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-ML-Source"); got != s2.URL {
+		t.Fatalf("应命中优先源 %s，实际 %q", s2.URL, got)
+	}
+	if f.nativeHits.Load() != 0 {
+		t.Fatalf("优先源可用时不应先打另一源，hits=%d", f.nativeHits.Load())
+	}
+}
+
+// 12-T：候选超时后继续下一个源。
+func TestMultiOriginCandidateTimeoutFallsThrough(t *testing.T) {
+	f := newMOFixture(t)
+	slow := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/manifests/slow", body: mirrorManifest,
+		hits: &f.nativeHits, delay: 500 * time.Millisecond,
+	})
+	defer slow.Close()
+	f.addRegistrySource(t, slow, "native")
+
+	body := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","fast":true}`
+	fast := httptest.NewServer(&moMirror{
+		path: "/v2/library/alpine/manifests/slow", body: body, hits: &f.prefixHits,
+	})
+	defer fast.Close()
+	f.addRegistrySource(t, fast, "native")
+
+	f.gw.cli.Timeout = 120 * time.Millisecond
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/slow")
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != body {
+		t.Fatalf("超时后应回退到下一源: status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-ML-Source"); got != fast.URL {
+		t.Fatalf("应命中快速源 %s，实际 %q", fast.URL, got)
 	}
 }
