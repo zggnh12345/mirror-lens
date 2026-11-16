@@ -702,7 +702,7 @@ D6 的四段顺序必须完整复刻：
 
 ### 3.5.12 合并验收 + 定点修复（原 3.5.12 + 3.5.13）
 
-> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收，记录见 `docs/3.5.12-acceptance.md`。12-S/12a/12b 未执行（`NOT_EXECUTED`）：没有创建 Host Source、没有配置 `ML_HOSTPROBE_REPOS`、没有收窄生产白名单、没有实际探测与镜像尝试，不能标记为 `BLOCKED_EXTERNAL_SOURCE`。生产已完成第一阶段程序切换（3.5.11 → 3.5.12，未改 Schema、未迁移数据库）；第二阶段已完成 gcr.io、registry.k8s.io、quay.io、mcr.microsoft.com 四个 Host 的真实回源验收；其余四个 Host 因缺少 Source/Probe/逐镜像失败证据，记 `NOT_EXECUTED`，不记 `BLOCKED_EXTERNAL_SOURCE`。记录见 `docs/3.5.12-acceptance.md` 第 6、7 节。
+> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收，记录见 `docs/3.5.12-acceptance.md`。12-S/12a/12b 未执行（`NOT_EXECUTED`）：没有创建 Host Source、没有配置 `ML_HOSTPROBE_REPOS`、没有收窄生产白名单、没有实际探测与镜像尝试，不能标记为 `BLOCKED_EXTERNAL_SOURCE`。生产已完成第一阶段程序切换（3.5.11 → 3.5.12，未改 Schema、未迁移数据库）；第二阶段已完成 gcr.io、registry.k8s.io、quay.io、mcr.microsoft.com 四个 Host 的真实回源验收；其余四个 Host 已有候选 Source、Probe Repo、HTTP 状态与时间戳证据，记 `BLOCKED_EXTERNAL_SOURCE`（证据见 `docs/evidence/3.5.12-blocked-hosts-20261116.md`）。记录见 `docs/3.5.12-acceptance.md` 第 6、7 节。
 
 **定位：** 本版不是纯验收版本，也**不改 Schema**。它合并原 3.5.12（GCR / Artifact Registry / K8S）与原 3.5.13（Quay / MCR / GitLab / ECR / cgr + 同 Host 多 Source），并包含 3.5.11c 欠账、两项已确认代码修复、Source 就绪门禁和候选→回退链路测试。原 3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
 
