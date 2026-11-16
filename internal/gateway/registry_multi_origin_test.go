@@ -205,6 +205,28 @@ func (f *moFixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	return w
 }
 
+// 策略解析失败必须走完整 Gateway 路径 fail closed：503 + 可识别的 X-ML-Error。
+func TestGatewayPolicyMissingHeader(t *testing.T) {
+	f := newMOFixture(t)
+	f.officialStatus = http.StatusNotFound // 迫使官方失败，进入候选源路径
+	m := &moMirror{
+		path: "/v2/library/alpine/manifests/latest",
+		body: mirrorManifest, hits: &f.nativeHits,
+	}
+	srv := httptest.NewServer(m)
+	defer srv.Close()
+	f.addRegistrySource(t, srv, "native")
+	f.gw.policies = failingPolicy{}
+
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/latest")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-ML-Error"); got != "auth_policy_missing" {
+		t.Fatalf("X-ML-Error=%q headers=%v", got, w.Header())
+	}
+}
+
 // native 源命中：请求路径原样带到源，官方零回源。
 func TestMultiOriginNativeHit(t *testing.T) {
 	f := newMOFixture(t)

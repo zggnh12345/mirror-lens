@@ -123,6 +123,7 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 	}
 	if err := g.checkTarget(plan.Upstream, r.Host); err != nil {
 		code := statusFor(err)
+		markPolicyMissing(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -136,6 +137,7 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 		if ferr != nil {
 			code := statusFor(ferr)
 			noStore(w.Header())
+			markPolicyMissing(w, ferr)
 			setAuthChallenge(w, ferr)
 			http.Error(w, fmt.Sprintf("%d 回源失败: %v", code, ferr), code)
 			return
@@ -209,6 +211,7 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request, parsed regis
 	}
 	if err := g.checkTarget(plan.Upstream, r.Host); err != nil {
 		code := statusFor(err)
+		markPolicyMissing(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -339,6 +342,7 @@ func (g *Gateway) headBlob(w http.ResponseWriter, r *http.Request, plan *adapter
 	if lastCode == 0 {
 		code := statusFor(lastErr)
 		log.Printf("HEAD 回源失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(lastErr))
+		markPolicyMissing(w, lastErr)
 		g.writeHeadStatus(w, nil, code)
 		return
 	}

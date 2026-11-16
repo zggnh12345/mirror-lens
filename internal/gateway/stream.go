@@ -22,6 +22,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // ServeHTTPProxy 处理 /http/<编码后的完整地址>。
@@ -43,6 +44,7 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := g.checkTarget(plan.Upstream, r.Host); err != nil {
 		code := statusFor(err)
+		markPolicyMissing(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -240,6 +242,15 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 		}
 	}
 	var lastErr error
+	// policyErr 单独保存策略/身份缺失：换源链里后续的上游状态码
+	// 不能把配置错误盖成 401/404（v1.6 §B/§E）。
+	var policyErr error
+	finish := func(def error) error {
+		if policyErr != nil {
+			return policyErr
+		}
+		return def
+	}
 	for i := range targets {
 		t := targets[i]
 		// 名额必须在拨号之前拿到：否则限流保护不到建连和 TLS 握手阶段。
@@ -252,8 +263,11 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 		resp, err := g.doUpstream(ctx, plan, pm, prev, t.u, sourceIDFor(t), logicalHostFor(t, plan))
 		if err != nil {
 			releaseLease(l)
+			if errors.Is(err, v2auth.ErrPolicyMissing) && policyErr == nil {
+				policyErr = err
+			}
 			if t.c == nil {
-				return nil, nil, 0, err
+				return nil, nil, 0, finish(err)
 			}
 			// 客户端自己取消（关页面/断网）不是这台源的问题。
 			if ctx.Err() == nil {
@@ -311,7 +325,7 @@ func (g *Gateway) upstreamRequestFrom(ctx context.Context, plan *adapter.Plan, p
 	if lastErr == nil {
 		lastErr = adapter.ErrNoTarget
 	}
-	return nil, nil, 0, lastErr
+	return nil, nil, 0, finish(lastErr)
 }
 
 // 这些状态码代表镜像「现在不好用」，值得换一台。
@@ -1053,6 +1067,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 		code := statusFor(err)
 		log.Printf("透传失败 %s: %v", safeUpstream(plan.Upstream), logging.SafeErr(err))
 		noStore(w.Header())
+		markPolicyMissing(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
@@ -1136,6 +1151,7 @@ func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Pla
 		log.Printf("回源失败 %s: %v", logging.SanitizeKey(plan.CacheKey), logging.SafeErr(err))
 	}
 	noStore(w.Header())
+	markPolicyMissing(w, err)
 	setRetryAfter(w, err)
 	setAuthChallenge(w, err)
 	http.Error(w, fmt.Sprintf("%d %v", code, err), code)

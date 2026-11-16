@@ -122,6 +122,42 @@ func TestSetRepoHostReplacesPolicyAtomically(t *testing.T) {
 	}
 }
 
+// 同 Host 重设 SetRepoHost 不能把管理员自定义的 primary/extra 用种子覆盖掉，
+// 但仍要递增 generation 让旧 Token 失效。
+func TestSetRepoHostSameHostKeepsCustomPolicy(t *testing.T) {
+	st := openTest(t)
+	id, err := st.AddSource(Source{
+		BaseURL: "https://quay.example/", Name: "q", RepoHost: "quay.io",
+		DockerCap: 1, Status: "usable", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRealmPolicy(id, "quay.io", "https://custom.example", []string{"https://extra.example"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.GetRealmPolicy(id, "quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRepoHost(id, "quay.io"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.GetRealmPolicy(id, "quay.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PrimaryRealm != "https://custom.example" {
+		t.Fatalf("同 Host 重设覆盖了自定义 primary: %+v", after)
+	}
+	if len(after.ExtraRealms) != 1 || after.ExtraRealms[0] != "https://extra.example" {
+		t.Fatalf("同 Host 重设覆盖了自定义 extra: %+v", after)
+	}
+	if after.PolicyGen <= before.PolicyGen {
+		t.Fatalf("同 Host 重设应递增 generation: before=%d after=%d", before.PolicyGen, after.PolicyGen)
+	}
+}
+
 func TestAddSourceRollsBackWhenPolicyInsertFails(t *testing.T) {
 	st := openTest(t)
 	if _, err := st.db.Exec(`CREATE TRIGGER fail_policy BEFORE INSERT ON source_realm_policy

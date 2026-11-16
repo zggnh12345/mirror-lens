@@ -232,7 +232,7 @@ func TestReenableSourceMakesRecoveryDue(t *testing.T) {
 		t.Fatal(err)
 	}
 	on := true
-	if err := s.UpdateSource(id, &on, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateSource(id, &on, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !dueSet(t, s, time.Now().Unix())[id] {

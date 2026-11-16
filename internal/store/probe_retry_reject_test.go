@@ -29,7 +29,7 @@ func TestScheduleRetryRejectClassification(t *testing.T) {
 
 	// 源被禁用 → source_unavailable（分类不再看调度时间）
 	off := false
-	if err := st.UpdateSource(id, &off, nil, nil, nil, nil); err != nil {
+	if err := st.UpdateSource(id, &off, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if rej, _, err := st.ScheduleHostProbeRetryClassified(HostProbeRetry{SourceID: id, Host: "quay.io", Gen: gen, At: now + 3600}); err != nil || rej != RetryRejectSourceUnavailable {
@@ -41,7 +41,7 @@ func TestScheduleRetryRejectClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 	on := true
-	if err := st.UpdateSource(id, &on, nil, nil, nil, nil); err != nil {
+	if err := st.UpdateSource(id, &on, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if rej, _, err := st.ScheduleHostProbeRetryClassified(HostProbeRetry{SourceID: id, Host: "quay.io", Gen: gen, At: now + 7200}); err != nil || rej != RetryRejectSourceUnavailable {

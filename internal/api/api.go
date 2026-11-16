@@ -850,7 +850,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if in.Enabled != nil || in.Name != nil || in.Note != nil || in.Preferred != nil {
-			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred, nil); err != nil {
+			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred); err != nil {
 				if errors.Is(err, store.ErrArchived) {
 					writeJSON(w, 400, map[string]string{"error": err.Error()})
 					return

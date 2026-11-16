@@ -158,8 +158,8 @@ type Options struct {
 	GitTTL   time.Duration
 	RawTTL   time.Duration
 	Registry *registryadapter.Adapter
-	// Policies 是 3.5.11 的 Realm 策略入口；nil 时使用 11a 过渡的
-	// LegacyHostPolicy（Gateway 保留同 Host 快捷放行）。
+	// Policies 是 3.5.11 的 Realm 策略入口；生产必须注入 StorePolicy。
+	// nil 时只允许官方直连（OfficialPolicy），绝不回退 11a 的按 Host 查表。
 	Policies v2auth.PolicyResolver
 	// TokenCacheMax 是 token 缓存条目上限；0 用默认 1024。
 	TokenCacheMax int
@@ -480,6 +480,7 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 		code := statusFor(err)
 		loggw(slog.LevelWarn, "回源失败", r.Context(), plan, codeFor(err), err)
 		noStore(w.Header())
+		markPolicyMissing(w, err)
 		setRetryAfter(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
@@ -865,6 +866,16 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 // 还没吐响应头，就并行发第二个，谁先给出可用响应头用谁。
 func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*store.CacheEntry, bool, error) {
 	var lastErr error
+	// policyErr 单独保存策略/身份缺失：换源链里后续的上游状态码
+	// 不能把配置错误盖成 401/404（v1.6 §B/§E）。
+	var policyErr error
+	// 没有任何源成功时，策略缺失优先于上游状态码。
+	finish := func() error {
+		if policyErr != nil {
+			return policyErr
+		}
+		return lastErr
+	}
 	// 回退链（裸格式猜站点）由 fetchRace 做整链并行，里面不再套对冲：
 	// 否则每条链各开两路，一个请求会变成四个上游请求。
 	hedged := g.hedge.Enabled && len(targets) > 1 && !targets[0].fb && len(plan.Fallbacks) == 0
@@ -889,9 +900,12 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 				if ctx.Err() != nil {
 					return nil, false, ctx.Err()
 				}
+				if errors.Is(herr, v2auth.ErrPolicyMissing) && policyErr == nil {
+					policyErr = herr
+				}
 				lastErr = herr
 				if tried >= len(targets) {
-					return nil, false, lastErr
+					return nil, false, finish()
 				}
 				i = tried - 1 // 试过的候选不再重来
 				continue
@@ -914,10 +928,13 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 		case settleAbort:
 			return nil, false, lerr
 		default:
+			if errors.Is(lerr, v2auth.ErrPolicyMissing) && policyErr == nil {
+				policyErr = lerr
+			}
 			lastErr = lerr
 		}
 	}
-	return nil, false, lastErr
+	return nil, false, finish()
 }
 
 // pickUpstream 做响应头对冲：先发首选源，hedge.After 内没等到可用响应头，
@@ -972,6 +989,10 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	var graceC <-chan time.Time
 	var held *hedgeRes
 	var lastErr error
+	// policyErr 保存策略/身份缺失（ErrPolicyMissing）。这是配置错误，
+	// 优先级高于上游状态码：官方兜底失败时必须把 503 + X-ML-Error
+	// 暴露给客户端，不能被 officialErr 盖成 401/404（v1.6 §B/§E）。
+	var policyErr error
 	// officialErr 只保存主官方目标的错误。hedge 的完成顺序不稳定，
 	// 不能让最后完成的候选错误覆盖官方 401 的 Challenge 或状态码。
 	var officialErr error
@@ -1016,6 +1037,9 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 			pending--
 			if r.err != nil {
 				if !errors.Is(r.err, errHedgeCanceled) && ctx.Err() == nil {
+					if errors.Is(r.err, v2auth.ErrPolicyMissing) && policyErr == nil {
+						policyErr = r.err
+					}
 					if t := targets[r.idx]; t.c == nil && !t.fb {
 						officialErr = r.err
 					} else {
@@ -1111,6 +1135,11 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	if held != nil {
 		win = held.idx
 		return take(*held), held.idx, started, nil
+	}
+	// 没有任何成功响应时，策略缺失优先于官方上游状态：配置错误必须
+	// 以 503 + X-ML-Error 暴露，不能被官方 401/404 伪装（v1.6 §B/§E）。
+	if policyErr != nil {
+		return nil, 0, started, policyErr
 	}
 	if officialErr != nil {
 		return nil, 0, started, officialErr
@@ -1625,6 +1654,15 @@ func setRetryAfter(w http.ResponseWriter, err error) {
 			secs = 1
 		}
 		w.Header().Set("Retry-After", strconv.Itoa(secs))
+	}
+}
+
+// markPolicyMissing 把策略缺失导致的 fail-closed 标到响应头，
+// 让客户端和验收门禁能把 503 与普通上游错误区分开。
+// 只有 ErrPolicyMissing 才标；其它错误不标。
+func markPolicyMissing(w http.ResponseWriter, err error) {
+	if errors.Is(err, v2auth.ErrPolicyMissing) {
+		w.Header().Set("X-ML-Error", "auth_policy_missing")
 	}
 }
 

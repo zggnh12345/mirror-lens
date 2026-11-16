@@ -62,6 +62,31 @@ func TestLegacyHostPolicyWildcard(t *testing.T) {
 	}
 }
 
+// 上游 challenge 的 Realm 天生带 /token 等 path（Docker Hub / GHCR 都是）。
+// Allows 必须按 scheme+host 归一化比较：策略条目侧由 store.normalizeRealm 拒绝带
+// path/query/fragment 的输入；运行时若把 path 当拒绝条件，会让所有官方拉取 fail-closed。
+func TestAllowsNormalizesChallengeRealm(t *testing.T) {
+	p := PolicySnapshot{Realms: []string{"https://auth.docker.io"}}
+	for _, raw := range []string{
+		"https://auth.docker.io/token",
+		"https://auth.docker.io/token?service=registry.docker.io",
+		"https://auth.docker.io/token#frag",
+	} {
+		if err := p.Allows(mustURL(t, raw)); err != nil {
+			t.Fatalf("带 path/query/fragment 的 challenge realm 应归一化放行 %q: %v", raw, err)
+		}
+	}
+	// 归一化不能放宽边界：换 Host 或换 scheme 仍必须拒绝。
+	for _, raw := range []string{
+		"https://evil.example/token",
+		"http://auth.docker.io/token",
+	} {
+		if err := p.Allows(mustURL(t, raw)); err == nil {
+			t.Fatalf("越权 realm 不应放行: %q", raw)
+		}
+	}
+}
+
 func TestPolicyContextRoundTrip(t *testing.T) {
 	p := PolicySnapshot{SourceID: 42, LogicalHost: "quay.io", PolicyGen: 3, CredGen: 4}
 	ctx := WithPolicy(context.Background(), p)

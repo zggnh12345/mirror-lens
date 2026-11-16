@@ -39,7 +39,8 @@ type RegistryHostProbe struct {
 	Snapshot v2auth.CredentialSnapshot
 	// SourceID 是探测对应的候选源；0 表示官方直连。
 	SourceID int64
-	// Policy 是 Realm 解析器；为空时使用 LegacyHostPolicy（不启用同 Host 快捷放行）。
+	// Policy 是 Realm 解析器；为空时使用 OfficialPolicy（只允许官方直连身份，
+	// 不按 Host 猜 Source 的 Realm）。生产路径由 Runner 注入 StorePolicy。
 	Policy  v2auth.PolicyResolver
 	Timeout time.Duration
 }

@@ -78,6 +78,10 @@ func TestMigrate357To3511(t *testing.T) {
 	assertPolicyRow(t, db, 1, "quay.io")
 	assertPolicyRow(t, db, 2, "public.ecr.aws")
 	assertPolicyRow(t, db, 3, "lscr.io")
+	assertPolicyRow(t, db, 5, "public.ecr.aws")
+	// 非空 host 的源必须用 BaseURL origin 作为 primary，不能被官方默认 Realm 覆盖。
+	assertPolicyPrimary(t, db, 2, "public.ecr.aws", "https://daocloud.example")
+	assertPolicyPrimary(t, db, 5, "public.ecr.aws", "https://m.daocloud.io")
 	if hasPolicyRow(t, db, 4, "mcr.microsoft.com") {
 		t.Fatal("无默认 Realm 的 Host 不应被静默补成策略")
 	}

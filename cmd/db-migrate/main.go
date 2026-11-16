@@ -31,6 +31,24 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
+	// ML_MIGRATE_FAULT 仅供 11b 验收：在真实备份库上确定性注入四个
+	// 迁移阶段的失败，验证失败后不留半成品。不设置时所有 hook 保持 nil，
+	// 生产路径完全不受影响（v1.6 §2.4）。
+	if f := os.Getenv("ML_MIGRATE_FAULT"); f != "" {
+		switch f {
+		case "copy":
+			copyAllHook = func() error { return errors.New("fault injection: copy 完成后失败") }
+		case "policy":
+			backfillPolicyHook = func() error { return errors.New("fault injection: backfill 写入后失败") }
+		case "verify":
+			targetVerifyHook = func(*sql.DB) error { return errors.New("fault injection: finalize 前失败") }
+		case "publish":
+			targetPublishHook = func() error { return errors.New("fault injection: publish 失败") }
+		default:
+			fmt.Fprintf(os.Stderr, "db-migrate: 未知 ML_MIGRATE_FAULT=%q\n", f)
+			os.Exit(2)
+		}
+	}
 	var err error
 	switch os.Args[1] {
 	case "migrate":
@@ -214,12 +232,12 @@ func runMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	done := false
 	defer func() {
 		target.Close()
-		if !done {
-			os.Remove(tmp)
-		}
+		// 无论成功或失败都清掉 staging 及其 sidecar：失败不留半成品，
+		// 成功时兜底 publishNoClobber 收尾删除 staging 的漏网情形。
+		_ = removeSQLiteSidecars(tmp)
+		_ = os.Remove(tmp)
 	}()
 	target.SetMaxOpenConns(1)
 	if _, err := target.Exec("PRAGMA foreign_keys=OFF"); err != nil {
@@ -290,9 +308,13 @@ func runMigrate(args []string) error {
 		return fmt.Errorf("清理 staging sidecar: %w", err)
 	}
 	if err := publishNoClobber(tmp, *out); err != nil {
-		return err
+		if errors.Is(err, errPublishedButCleanupFailed) {
+			// 硬链接已建立，目标已发布；收尾失败不能反转迁移结果。
+			fmt.Fprintf(os.Stderr, "警告: %v\n", err)
+		} else {
+			return err
+		}
 	}
-	done = true
 	report := map[string]any{
 		"ok": true, "baseline": *baseline, "schema_hash": h,
 		"tables": plan.Counts, "skipped": plan.Skipped,
@@ -300,8 +322,9 @@ func runMigrate(args []string) error {
 	}
 	b, _ := json.MarshalIndent(report, "", "  ")
 	if *policyReport != "" {
-		if err := os.WriteFile(*policyReport, b, 0o644); err != nil {
-			return fmt.Errorf("写策略报告: %w", err)
+		if err := writePolicyReport(*policyReport, b); err != nil {
+			// 目标库已发布，报告写失败不能反转迁移结果，降级为警告。
+			fmt.Fprintf(os.Stderr, "警告: 策略报告写入失败（目标库已发布）: %v\n", err)
 		}
 	}
 	fmt.Println(string(b))
@@ -372,9 +395,11 @@ var copyFileWriteHook func(written int64) error
 // 故障注入点；生产均为 nil。它们分别覆盖校验、发布和事务提交阶段，
 // 让清理路径可以在不破坏生产逻辑的前提下被确定性验证。
 var (
-	targetVerifyHook  func(*sql.DB) error
-	targetPublishHook func() error
-	upgradeCommitHook func(*sql.Tx) error
+	targetVerifyHook   func(*sql.DB) error
+	targetPublishHook  func() error
+	upgradeCommitHook  func(*sql.Tx) error
+	copyAllHook        func() error // copy 完成后、backfill 前
+	backfillPolicyHook func() error // backfill 写入第一行后
 )
 
 type copyHookWriter struct {
@@ -474,6 +499,24 @@ func syncDir(path string) error {
 	return f.Sync()
 }
 
+// errPublishedButCleanupFailed 表示硬链接已建立（目标已发布），只是收尾失败。
+// 它不是迁移失败：调用方必须降级为警告，避免出现「已发布却报失败」的过渡态，
+// 否则重试会撞 no-clobber 拒绝。
+var errPublishedButCleanupFailed = errors.New("目标已发布但收尾失败")
+
+// writePolicyReport 原子写策略报告，避免失败留下半个 JSON 文件。
+func writePolicyReport(path string, data []byte) error {
+	tmp := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // publishNoClobber 用硬链接完成原子、no-clobber 发布：
 // - 目标已存在时 Link 返回 EEXIST，不会覆盖；
 // - 同目录临时文件的硬链接与 rename 一样是原子可见的；
@@ -495,10 +538,10 @@ func publishNoClobber(tmp, out string) error {
 		return fmt.Errorf("发布迁移结果: %w", err)
 	}
 	if err := os.Remove(tmp); err != nil {
-		return fmt.Errorf("已发布但清理 staging 失败: %w", err)
+		return fmt.Errorf("%w: 清理 staging: %v", errPublishedButCleanupFailed, err)
 	}
 	if err := syncDir(filepath.Dir(out)); err != nil {
-		return fmt.Errorf("同步目标父目录: %w", err)
+		return fmt.Errorf("%w: 同步目标父目录: %v", errPublishedButCleanupFailed, err)
 	}
 	return nil
 }
@@ -553,12 +596,11 @@ func runUpgrade356(args []string) error {
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d", *out, os.Getpid())
 	_ = os.Remove(tmp)
-	// 必须在第一次写 staging 之前注册清理；copyFile 中途失败时也要删除本次的精确临时路径。
-	published := false
+	// 必须在第一次写 staging 之前注册清理；copyFile 中途失败时也要删掉本次的精确临时路径，
+	// 并且无论成功或失败都清掉 staging 的 -wal/-shm。
 	defer func() {
-		if !published {
-			_ = os.Remove(tmp)
-		}
+		_ = removeSQLiteSidecars(tmp)
+		_ = os.Remove(tmp)
 	}()
 	if err := copyFile(*in, tmp); err != nil {
 		return fmt.Errorf("复制源库到 staging: %w", err)
@@ -610,9 +652,12 @@ func runUpgrade356(args []string) error {
 		return fmt.Errorf("清理 staging sidecar: %w", err)
 	}
 	if err := publishNoClobber(tmp, *out); err != nil {
-		return err
+		if errors.Is(err, errPublishedButCleanupFailed) {
+			fmt.Fprintf(os.Stderr, "警告: %v\n", err)
+		} else {
+			return err
+		}
 	}
-	published = true
 	report := map[string]any{
 		"ok":                   true,
 		"from":                 "3.5.6",
@@ -993,6 +1038,11 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 		t.Count = dstCount
 		p.Counts[t.Name] = dstCount
 	}
+	if copyAllHook != nil {
+		if err := copyAllHook(); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1049,6 +1099,11 @@ VALUES(?,?,?,?,1,?)`, s.id, s.host, primary, string(extraJSON), now); err != nil
 			return fmt.Errorf("seed source_id=%d host=%s: %w", s.id, s.host, err)
 		}
 		p.PolicyRows++
+		if p.PolicyRows == 1 && backfillPolicyHook != nil {
+			if err := backfillPolicyHook(); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }

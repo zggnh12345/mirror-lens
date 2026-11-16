@@ -114,9 +114,28 @@ WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
 			return err
 		}
 
-		// 新 Host 的策略与源归属在同一事务完成；同 Host 重设也递增 generation。
+		// 新 Host 的策略与源归属在同一事务完成。
+		// 同 Host 重设时保留管理员配置的策略，只递增 generation 使旧 Token 失效；
+		// 用种子重新 upsert 会把自定义 primary/extra 悄悄覆盖掉。
 		if host != "" {
-			if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
+			if oldHost == host {
+				res, err := tx.Exec(`UPDATE source_realm_policy
+SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=? AND host=?`,
+					time.Now().Unix(), id, host)
+				if err != nil {
+					return err
+				}
+				if n, err := res.RowsAffected(); err != nil {
+					return err
+				} else if n == 0 {
+					// 策略行缺失（例如迁移后尚未补策略）：按新 Host 种子化补上。
+					if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
+						if err := setRealmPolicyTx(tx, id, host, primary, extra, true); err != nil {
+							return err
+						}
+					}
+				}
+			} else if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
 				if err := setRealmPolicyTx(tx, id, host, primary, extra, true); err != nil {
 					return err
 				}

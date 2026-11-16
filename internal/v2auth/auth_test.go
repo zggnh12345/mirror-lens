@@ -25,11 +25,11 @@ func TestParseChallenge(t *testing.T) {
 }
 
 func TestRealmAllowed(t *testing.T) {
-	a := New(nil, map[string][]string{
+	a := NewWithResolver(nil, NewLegacyHostPolicy(map[string][]string{
 		"quay.io": {"https://quay.io"},
 		"gcr.io":  {"https://storage.googleapis.com"},
 		"lscr.io": {"https://ghcr.io/"},
-	})
+	}, false))
 	u := func(s string) *url.URL { p, _ := url.Parse(s); return p }
 
 	if err := a.RealmAllowed("quay.io", u("https://quay.io/v2/auth")); err != nil {
@@ -60,7 +60,7 @@ func TestRealmAllowed(t *testing.T) {
 }
 
 func TestRealmAllowedArtifactRegistryDynamic(t *testing.T) {
-	a := New(nil, nil)
+	a := NewWithResolver(nil, NewLegacyHostPolicy(nil, false))
 	u := func(s string) *url.URL { p, _ := url.Parse(s); return p }
 
 	for _, host := range []string{"us-docker.pkg.dev", "europe-west1-docker.pkg.dev"} {
@@ -84,7 +84,7 @@ func TestRealmAllowedArtifactRegistryDynamic(t *testing.T) {
 // 用实际 /v2/ 响应里的 WWW-Authenticate 值校验 Realm，而不是只验证
 // 静态 map 自己和自己一致。这些字符串来自 2026-11-14 的匿名探测。
 func TestRealChallengeRealms(t *testing.T) {
-	a := New(nil, nil)
+	a := NewWithResolver(nil, NewLegacyHostPolicy(nil, false))
 	cases := []struct {
 		host      string
 		challenge string
@@ -124,7 +124,7 @@ func TestMCRNoBearerChallenge(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), nil)
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(nil, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	resp, err := a.Do(context.Background(), 0, "mcr.microsoft.com", req, CredentialSnapshot{}, "")
 	if err != nil {
@@ -173,7 +173,7 @@ func TestDoFetchesTokenPerRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	snap := CredentialSnapshot{Host: "quay.io", Generation: 3, Digest: "d", Credentials: Credentials{Username: "robot", Password: "pw"}}
 	for i := 0; i < 2; i++ {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/library/alpine/manifests/latest", nil)
@@ -210,7 +210,7 @@ func TestDoRejectsForeignRealm(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/library/alpine/manifests/latest", nil)
 	_, err := a.Do(context.Background(), 0, "quay.io", req, CredentialSnapshot{}, "")
 	if !errors.Is(err, ErrRealmDenied) {
@@ -231,7 +231,7 @@ func TestTokenMethodPostRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
 		Username: "u", Password: "p", TokenMethod: "POST", TokenAuth: "basic",
@@ -261,7 +261,7 @@ func TestTokenAuthNoneSendsNoBasic(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{
 		Username: "u", Password: "p", TokenAuth: "none",
@@ -284,7 +284,7 @@ func TestTokenAuthBasicRequiresCredentials(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Host: "quay.io", Credentials: Credentials{TokenAuth: "basic"}}
 	if _, err := a.Do(context.Background(), 0, "quay.io", req, snap, ""); !errors.Is(err, ErrCredentialsMissing) {
@@ -299,7 +299,7 @@ func TestTokenAuthUnknownValue(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	snap := CredentialSnapshot{Credentials: Credentials{Username: "u", TokenAuth: "digest"}}
 	if _, err := a.Do(context.Background(), 0, "quay.io", req, snap, ""); !errors.Is(err, ErrTokenAuthUnsupported) {
@@ -318,7 +318,7 @@ func TestDoTokenFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(srv.Client(), map[string][]string{"quay.io": {srv.URL}})
+	a := NewWithResolver(srv.Client(), NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false))
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v2/", nil)
 	if _, err := a.Do(context.Background(), 0, "quay.io", req, CredentialSnapshot{}, ""); err == nil {
 		t.Fatal("Token 端点 403 时应报错")

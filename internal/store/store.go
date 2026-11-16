@@ -546,16 +546,21 @@ var ErrExists = errors.New("source already exists")
 // ErrArchived 已归档的源不能直接启用，只能走恢复流程。
 var ErrArchived = errors.New("已归档的源不能直接启用，请用恢复流程重新验证")
 
-func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool, groupID *int64) error {
+func (s *Store) UpdateSource(id int64, enabled *bool, name, note *string, preferred *bool) error {
+	if enabled == nil && name == nil && note == nil && preferred == nil {
+		return nil
+	}
+	// 一次 UpdateSource 就是一个事务：enabled 的策略代次与 name/note/
+	// preferred/group_id 要么一起生效，要么一起回滚。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	if enabled != nil {
 		// 启用状态与 recovery 的重置必须同生共死：只改一半会留下
 		// 「已启用但仍背着旧退避」的状态。
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
 		var wasEnabled int
 		var status string
 		if err := tx.QueryRow(`SELECT enabled, status FROM sources WHERE id=?`, id).Scan(&wasEnabled, &status); err != nil {
@@ -593,31 +598,23 @@ SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, time.Now().Unix(),
 				return err
 			}
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
 	}
 	if name != nil && *name != "" {
-		if _, err := s.db.Exec(`UPDATE sources SET name=? WHERE id=?`, *name, id); err != nil {
+		if _, err := tx.Exec(`UPDATE sources SET name=? WHERE id=?`, *name, id); err != nil {
 			return err
 		}
 	}
 	if note != nil {
-		if _, err := s.db.Exec(`UPDATE sources SET note=? WHERE id=?`, *note, id); err != nil {
+		if _, err := tx.Exec(`UPDATE sources SET note=? WHERE id=?`, *note, id); err != nil {
 			return err
 		}
 	}
 	if preferred != nil {
-		if _, err := s.db.Exec(`UPDATE sources SET preferred=? WHERE id=?`, *preferred, id); err != nil {
+		if _, err := tx.Exec(`UPDATE sources SET preferred=? WHERE id=?`, *preferred, id); err != nil {
 			return err
 		}
 	}
-	if groupID != nil {
-		if _, err := s.db.Exec(`UPDATE sources SET group_id=? WHERE id=?`, *groupID, id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) SetCaps(id int64, docker, github, ghcr int) error {
@@ -823,8 +820,9 @@ func (s *Store) CleanupArchived(before int64) (int64, error) {
 }
 
 func (s *Store) DeleteSource(id int64) error {
-	// 三条语句必须一起成功或一起失败：删一半会留下指向不存在源的检查记录，
+	// 这些语句必须一起成功或一起失败：删一半会留下指向不存在源的检查记录，
 	// 面板上出现「幽灵源」，再删一次也清不掉。
+	// source_health_archive 与 blob_integrity_failures 的 source_id 没有外键级联，必须显式删。
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -838,6 +836,8 @@ func (s *Store) DeleteSource(id int64) error {
 		`DELETE FROM breaker_state WHERE source_id=?`,
 		`DELETE FROM checks WHERE source_id=?`,
 		`DELETE FROM source_health WHERE source_id=?`,
+		`DELETE FROM source_health_archive WHERE source_id=?`,
+		`DELETE FROM blob_integrity_failures WHERE source_id=?`,
 		`DELETE FROM sources WHERE id=?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {

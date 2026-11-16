@@ -131,14 +131,6 @@ type Authenticator struct {
 	ua       string
 }
 
-// New 构造认证器。realms 的 key 是 repo_host（如 quay.io），value 是允许的
-// Realm 前缀，形如 "https://quay.io" 或 "https://*.example.com"。
-//
-// 这个签名保留给 11a 之前的调用方；新代码应使用 NewWithResolver。
-func New(client *http.Client, realms map[string][]string) *Authenticator {
-	return NewWithResolver(client, NewLegacyHostPolicy(realms, false))
-}
-
 // NewWithResolver 用策略解析器构造认证器。
 func NewWithResolver(client *http.Client, resolver PolicyResolver) *Authenticator {
 	if client == nil {

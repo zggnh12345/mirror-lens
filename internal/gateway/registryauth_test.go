@@ -231,6 +231,20 @@ func TestBearerTransportTokenCacheSeparatesPolicyGenerations(t *testing.T) {
 	}
 }
 
+// 只有策略缺失才打 X-ML-Error，普通上游错误不能误标。
+func TestMarkPolicyMissing(t *testing.T) {
+	w := httptest.NewRecorder()
+	markPolicyMissing(w, fmt.Errorf("wrap: %w", v2auth.ErrPolicyMissing))
+	if got := w.Header().Get("X-ML-Error"); got != "auth_policy_missing" {
+		t.Fatalf("策略缺失未标记: %q", got)
+	}
+	w2 := httptest.NewRecorder()
+	markPolicyMissing(w2, errors.New("upstream 500"))
+	if got := w2.Header().Get("X-ML-Error"); got != "" {
+		t.Fatalf("普通上游错误不应标记: %q", got)
+	}
+}
+
 func TestGatewayStorePolicyMissingFailsClosed(t *testing.T) {
 	st := openTestStore(t)
 	g := New(st, Options{Policies: store.NewStorePolicy(st)})

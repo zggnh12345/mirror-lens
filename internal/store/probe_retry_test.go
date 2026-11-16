@@ -79,7 +79,7 @@ func TestHostProbeRetryCASRejects(t *testing.T) {
 		}},
 		{name: "源被禁用", mutate: func(t *testing.T, st *Store, id, gen int64) {
 			off := false
-			if err := st.UpdateSource(id, &off, nil, nil, nil, nil); err != nil {
+			if err := st.UpdateSource(id, &off, nil, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -230,7 +230,7 @@ func TestReenableClearsRetryFailures(t *testing.T) {
 	}
 	toggle := func(t *testing.T, st *Store, id int64, on bool) error {
 		t.Helper()
-		return st.UpdateSource(id, &on, nil, nil, nil, nil)
+		return st.UpdateSource(id, &on, nil, nil, nil)
 	}
 	retry := func(t *testing.T, st *Store, id int64) (int, int64) {
 		t.Helper()
