@@ -68,7 +68,16 @@
         }
       ],
       "conclusion": "Official registry requires a token (anonymous token exchange succeeds); DaoCloud candidate 302s to its docs page and is not a registry endpoint. No public accelerator Source found.",
-      "result": "BLOCKED_EXTERNAL_SOURCE"
+      "result": "BLOCKED_EXTERNAL_SOURCE",
+      "hostprobe": {
+        "base_url": "https://gitlab.m.daocloud.io",
+        "verdict": "",
+        "cap": -1,
+        "reason": "incomplete_evidence",
+        "native_http": 200,
+        "native_error": "返回 HTML 页面，无法判定 registry 能力",
+        "host_prefix_http": 200
+      }
     },
     {
       "host": "public.ecr.aws",
@@ -137,7 +146,16 @@
         }
       ],
       "conclusion": "Official registry requires a token (anonymous token exchange succeeds); DaoCloud candidate 302s to its docs page and is not a registry endpoint. No public accelerator Source found.",
-      "result": "BLOCKED_EXTERNAL_SOURCE"
+      "result": "BLOCKED_EXTERNAL_SOURCE",
+      "hostprobe": {
+        "base_url": "https://ecr.m.daocloud.io",
+        "verdict": "",
+        "cap": -1,
+        "reason": "incomplete_evidence",
+        "native_http": 200,
+        "native_error": "返回 HTML 页面，无法判定 registry 能力",
+        "host_prefix_http": 200
+      }
     },
     {
       "host": "cgr.dev",
@@ -206,7 +224,16 @@
         }
       ],
       "conclusion": "Official registry requires a token (anonymous token exchange succeeds); DaoCloud candidate 302s to its docs page and is not a registry endpoint. No public accelerator Source found.",
-      "result": "BLOCKED_EXTERNAL_SOURCE"
+      "result": "BLOCKED_EXTERNAL_SOURCE",
+      "hostprobe": {
+        "base_url": "https://cgr.m.daocloud.io",
+        "verdict": "",
+        "cap": -1,
+        "reason": "incomplete_evidence",
+        "native_http": 200,
+        "native_error": "返回 HTML 页面，无法判定 registry 能力",
+        "host_prefix_http": 200
+      }
     },
     {
       "host": "asia-east1-docker.pkg.dev",
@@ -269,13 +296,23 @@
         }
       ],
       "conclusion": "asia-east1 requires authentication (token endpoint 403); us-docker.pkg.dev serves a public image anonymously, so Artifact Registry itself is not uniformly private. No public accelerator Source found for the selected host.",
-      "result": "BLOCKED_EXTERNAL_SOURCE"
+      "result": "BLOCKED_EXTERNAL_SOURCE",
+      "hostprobe": {
+        "base_url": "https://asia-east1-docker.pkg.dev",
+        "verdict": "",
+        "cap": -1,
+        "reason": "incomplete_evidence",
+        "native_http": 200,
+        "native_error": "返回 HTML 页面，无法判定 registry 能力",
+        "host_prefix_http": 200
+      }
     }
   ],
   "method": {
     "probe": "HTTP GET {base_url}/v2/{repo}/manifests/{tag} with Docker/OCI manifest Accept headers; redirects not followed",
     "auth": "On 401, parse WWW-Authenticate, request anonymous token, retry once with Bearer token",
     "scope": "Candidate Source precheck only; no Source was registered in production because every candidate base URL failed the /v2 precheck or required unavailable credentials",
-    "limitation": "These are HTTP-level candidate Source probes, not HostProbe task records. No HostProbe was scheduled because no candidate qualified as a Source."
+    "limitation": "These are HTTP-level candidate Source probes, not HostProbe task records. No HostProbe was scheduled because no candidate qualified as a Source.",
+    "product_probe": "probe.ProbeRegistryHost (product code) executed against each candidate Source; cap=-1 / incomplete_evidence"
   }
 }
