@@ -95,3 +95,43 @@ func TestListSourcesP95(t *testing.T) {
 
 // 老库升级：checks 表没有 blob_ok / ttfb_ms，Open 后要补上，
 // 默认值是「未校验 / 没测」而非 0（0 会被读成「字节不符」）。
+
+func TestSampleStatsBatchMatchesPerSource(t *testing.T) {
+	st := openTest(t)
+	mk := func(name string) int64 {
+		id, err := st.AddSource(Source{BaseURL: "https://" + name + ".example", Name: name, Status: "usable", Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a, b, c := mk("batch-a"), mk("batch-b"), mk("batch-c")
+	now := time.Now().Unix()
+	for i, ms := range []int64{10, 20, 30} {
+		if err := st.AddCheck(Check{SourceID: a, Kind: "docker", Tier: 2, OK: true, LatencyMS: ms, SpeedKBps: 100, TS: now - int64(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// b 只有 legacy 行，必须回退；c 没有 docker 样本。
+	if err := st.AddCheck(Check{SourceID: b, Tier: 2, OK: true, LatencyMS: 44, SpeedKBps: 50, TS: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddProxySpeed(a, "docker", 4<<20, 1000); err != nil {
+		t.Fatal(err)
+	}
+	out := []SourceStat{{ID: a}, {ID: b}, {ID: c}}
+	stats, err := st.sampleStatsBatch(out, "docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{a, b, c} {
+		n, ok, lat, spd, last, err := st.sourceSamples(id, "docker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := stats[id]
+		if got.n != n || got.ok != ok || got.lat != lat || got.spd != spd || got.last != last {
+			t.Fatalf("source %d 批量=%+v 单条=(%d,%d,%d,%d,%d)", id, got, n, ok, lat, spd, last)
+		}
+	}
+}

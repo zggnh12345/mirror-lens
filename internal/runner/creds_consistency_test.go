@@ -413,13 +413,23 @@ type sourceRow struct {
 
 func (f *credFixture) source() sourceRow {
 	var s sourceRow
+	var status string
 	var mode sql.NullString
-	err := f.db.QueryRow(`SELECT registry_cap, registry_path_mode, registry_probe_at, registry_probe_error FROM sources WHERE id=?`, f.srcID).
-		Scan(&s.cap, &mode, &s.probeAt, &s.errText)
+	err := f.db.QueryRow(`SELECT effective_status, registry_path_mode FROM source_host_caps
+		WHERE source_id=? AND host=?`, f.srcID, credTestHost).Scan(&status, &mode)
 	if err != nil {
 		panic(err)
 	}
+	s.cap = store.CapForStatusForTest(status)
 	s.path = mode.String
+	err = f.db.QueryRow(`SELECT COALESCE(r.last_probe_at,0), COALESCE(c.diagnostics,'')
+		FROM source_host_caps c LEFT JOIN registry_host_recovery r
+		  ON r.source_id=c.source_id AND r.family='registry' AND r.scope=c.host
+		WHERE c.source_id=? AND c.host=?`, f.srcID, credTestHost).
+		Scan(&s.probeAt, &s.errText)
+	if err != nil {
+		panic(err)
+	}
 	return s
 }
 
@@ -441,6 +451,14 @@ func (f *credFixture) seedDiagnostics(t *testing.T, at int64, note string) {
 	res, err := f.st.SetHostCaps(f.srcID, credTestHost, store.RegistryCapUnknown, "", at, note, gen, digest)
 	if err != nil || res != store.HostCapsCommitted {
 		t.Fatalf("预置诊断失败: %v %v", res, err)
+	}
+	if _, err := f.db.Exec(`UPDATE source_host_caps SET diagnostics=? WHERE source_id=? AND host=?`,
+		note, f.srcID, credTestHost); err != nil {
+		t.Fatalf("预置诊断失败: %v", err)
+	}
+	if _, err := f.db.Exec(`UPDATE registry_host_recovery SET last_probe_at=?
+		WHERE source_id=? AND family='registry' AND scope=?`, at, f.srcID, credTestHost); err != nil {
+		t.Fatalf("预置 recovery 诊断失败: %v", err)
 	}
 }
 

@@ -4,7 +4,8 @@
 -- ALTER TABLE / 回填 / 历史迁移；schema_meta 是唯一的结构版本入口。
 --
 -- 不变量：
---   * repo_host 是 Registry 归属的唯一持久化事实；
+-- 3.5.14c：Registry Host 能力只存 source_host_caps；sources 不再保留
+-- repo_host/docker_cap/ghcr_cap/ghcr_prefix/registry_* 旧列。
 --   * '' 表示没有 Registry 归属，不等于 Docker Hub；
 --   * Docker Hub 显式存 docker.io，GHCR 显式存 ghcr.io；
 --   * 不存在 registry_identity_state，也不存在 _writable 表。
@@ -37,7 +38,6 @@ CREATE TABLE sources (
   enabled INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending',
   note TEXT NOT NULL DEFAULT '',
-  docker_cap INTEGER NOT NULL DEFAULT -1,
   github_cap INTEGER NOT NULL DEFAULT -1,
   git_cap INTEGER NOT NULL DEFAULT 0,
   status_at INTEGER NOT NULL DEFAULT 0,
@@ -46,8 +46,6 @@ CREATE TABLE sources (
   created_at INTEGER NOT NULL,
   group_id INTEGER NOT NULL DEFAULT 0,
   preferred INTEGER NOT NULL DEFAULT 0,
-  ghcr_cap INTEGER NOT NULL DEFAULT -1,
-  ghcr_prefix INTEGER NOT NULL DEFAULT 0,
   trusted INTEGER NOT NULL DEFAULT 0,
   range_at INTEGER NOT NULL DEFAULT 0,
   range_cap INTEGER NOT NULL DEFAULT -1,
@@ -58,11 +56,6 @@ CREATE TABLE sources (
   pin_grace_until INTEGER NOT NULL DEFAULT 0,
   pin_ipv6 TEXT NOT NULL DEFAULT '',
   pin_at INTEGER NOT NULL DEFAULT 0,
-  repo_host TEXT NOT NULL DEFAULT '',
-  registry_cap INTEGER NOT NULL DEFAULT -1,
-  registry_path_mode TEXT NOT NULL DEFAULT '',
-  registry_probe_error TEXT NOT NULL DEFAULT '',
-  registry_probe_at INTEGER NOT NULL DEFAULT 0,
   UNIQUE(base_url)
 );
 
@@ -77,6 +70,25 @@ CREATE TABLE source_realm_policy (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(source_id, host)
 );
+
+-- 3.5.14c：一个 Source 对一个逻辑 Registry Host 的唯一能力权威。
+-- 不存 registry_cap / last_supported_at / probe_*；Foreign Host 的探测
+-- 成功时间以 registry_host_recovery 为准，诊断快照存在 diagnostics。
+CREATE TABLE source_host_caps (
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  host TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  last_verdict TEXT NOT NULL CHECK(last_verdict IN ('Supported','Unsupported','Inconclusive','Mismatch')),
+  effective_status TEXT NOT NULL CHECK(effective_status IN ('Unknown','Supported','Unsupported','Mismatch')),
+  registry_path_mode TEXT NOT NULL DEFAULT '' CHECK(registry_path_mode IN ('','native','host_prefix')),
+  registry_prefix INTEGER NOT NULL DEFAULT 0 CHECK(registry_prefix IN (0,1)),
+  diagnostics TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(source_id, host),
+  CHECK(effective_status <> 'Supported' OR registry_path_mode IN ('native','host_prefix'))
+);
+
+CREATE INDEX idx_source_host_caps_host
+ON source_host_caps(host, effective_status, enabled);
 
 CREATE TABLE checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,4 +320,3 @@ CREATE INDEX idx_proxy_speed_src ON proxy_speed(source_id, ts DESC);
 CREATE INDEX idx_recovery_due ON registry_host_recovery(next_probe_at);
 CREATE INDEX idx_sev_src_ts ON source_events(source_id, ts DESC);
 CREATE INDEX idx_sha_batch ON source_health_archive(batch);
-CREATE INDEX idx_sources_repo_host ON sources(repo_host, status);

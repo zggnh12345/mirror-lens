@@ -24,9 +24,20 @@ func addRegSource(t *testing.T, st *Store, host, path string, cap int, enabled b
 	if err != nil {
 		t.Fatalf("AddSource: %v", err)
 	}
-	if _, err := st.db.Exec(`UPDATE sources SET repo_host=?, registry_cap=?, registry_path_mode=? WHERE id=?`,
-		host, cap, path, id); err != nil {
-		t.Fatalf("update registry cols: %v", err)
+	last, effective := verdictForCap(cap)
+	mode := path
+	if cap == RegistryCapYes && path != PathNative && path != PathHostPrefix {
+		// 测试要覆盖“cap=1 但路径为空/未知”的坏数据；新表 CHECK 不允许
+		// Supported 配空路径，所以把它记成 Unknown，仍应被候选查询排除。
+		effective = HostStatusUnknown
+		mode = ""
+	}
+	if effective != HostStatusSupported {
+		mode = ""
+	}
+	if _, err := st.db.Exec(`UPDATE source_host_caps SET last_verdict=?, effective_status=?, registry_path_mode=?
+		WHERE source_id=? AND host=?`, last, effective, mode, id, host); err != nil {
+		t.Fatalf("update host caps: %v", err)
 	}
 	// cap=1 且路径合法的源代表「已经探测通过」：候选准入还要求 recovery
 	// 行是 ok 且成功结论未过期（C5 五重约束），所以这里补一条。
@@ -105,11 +116,17 @@ func TestRegistryCandidatesRequireHost(t *testing.T) {
 	st, _ := newTestStore(t)
 	ok := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
 	bad := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
-	if _, err := st.db.Exec(`UPDATE sources SET repo_host='' WHERE id=?`, bad); err != nil {
+	if _, err := st.db.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io')`, bad); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM source_host_caps WHERE source_id=?`, bad); err != nil {
 		t.Fatal(err)
 	}
 	na := addRegSource(t, st, "quay.io", "native", 1, true, "usable", 0)
-	if _, err := st.db.Exec(`UPDATE sources SET repo_host='' WHERE id=?`, na); err != nil {
+	if _, err := st.db.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io')`, na); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM source_host_caps WHERE source_id=?`, na); err != nil {
 		t.Fatal(err)
 	}
 

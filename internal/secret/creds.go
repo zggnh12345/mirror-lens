@@ -375,8 +375,8 @@ func credentialHost(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if host == "" {
-		return "", errors.New("Docker Hub 不支持配置仓库凭据")
+	if host == "" || host == "docker.io" || host == "ghcr.io" {
+		return "", errors.New("Docker Hub/GHCR 不支持配置 Host 代次凭据")
 	}
 	return host, nil
 }

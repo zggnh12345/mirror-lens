@@ -76,13 +76,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `用法:
   db-migrate init       --out 新库 [--baseline fresh]
   db-migrate checkpoint --db 副本数据库
-  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5|3.5.7
+  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5|3.5.7|3.5.11
   db-migrate upgrade356 --in 3.5.6库 --out 新库
   db-migrate verify     --db 数据库
   db-migrate inspect    --db 数据库
 
 迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。
-migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5/3.5.7 Schema 指纹；--force-baseline 不再绕过结构校验。
+migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11 Schema 指纹；--force-baseline 不再绕过结构校验。
 upgrade356 要求源库为 3.5.6 Canonical（结构 hash 已等于 3.5.7 Canonical），只改版本标签。`)
 	os.Exit(2)
 }
@@ -266,9 +266,22 @@ func runMigrate(args []string) error {
 	if err := copyAll(target, plan); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "step: host-caps")
+	if err := backfillHostCaps(target, *baseline); err != nil {
+		return err
+	}
 	fmt.Fprintln(os.Stderr, "step: policy")
 	if err := plan.backfillPolicies(target); err != nil {
 		return err
+	}
+	// copyAll 的 Counts 是回填前的快照；这两张表在回填后行数会变，报告必须
+	// 反映最终库，否则会把 194 行误报成 40 行。
+	for _, t := range []string{"source_host_caps", "source_realm_policy"} {
+		var n int64
+		if err := target.QueryRow(`SELECT count(*) FROM "` + t + `"`).Scan(&n); err != nil {
+			return fmt.Errorf("统计回填后 %s: %w", t, err)
+		}
+		plan.Counts[t] = n
 	}
 	fmt.Fprintln(os.Stderr, "step: sequences")
 	if err := rebuildSequences(target, plan); err != nil {
@@ -772,10 +785,11 @@ type PolicyGap struct {
 //
 // 这些值必须与 docs/3.5.6-migration-hardening.md / 3.5.7 升级说明中的冻结值一致。
 var inputSchemaFingerprints = map[string]string{
-	"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
-	"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
-	"3.5.5": "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
-	"3.5.7": "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
+	"3.4.6":  "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
+	"3.5.4":  "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
+	"3.5.5":  "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
+	"3.5.7":  "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
+	"3.5.11": "e39e119719633ea8565bfba60f03f34e525259aa177235f97145bca9569f2611",
 }
 
 func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) (*migrationPlan, error) {
@@ -902,6 +916,10 @@ func allowedMissingSourceTable(baseline, table string) bool {
 	if table == "source_realm_policy" {
 		return true
 	}
+	// 3.5.14a 新表：旧库没有，迁移后由 backfillHostCaps 填充。
+	if table == "source_host_caps" {
+		return true
+	}
 	if baseline == "3.4.6" {
 		switch table {
 		case "breaker_state", "registry_host_gen", "registry_host_recovery",
@@ -919,6 +937,13 @@ func allowedMissingSourceTable(baseline, table string) bool {
 // allowedSourceExtra 是源端多余列的显式忽略清单。只允许已经确认没有 Canonical
 // 语义的列；任何新出现的多余列都必须先经过人工判断。
 func allowedSourceExtra(baseline, table, col string) bool {
+	if table == "sources" {
+		switch col {
+		case "repo_host", "docker_cap", "ghcr_cap", "ghcr_prefix",
+			"registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error":
+			return true
+		}
+	}
 	return baseline == "3.5.4" && table == "sources" && col == "registry_identity_state"
 }
 
@@ -964,9 +989,11 @@ func containsString(list []string, s string) bool {
 // 这里不猜测历史 Hub 语义，也不把未知 Host 静默写成空串。
 func validateRegistryHosts(db *sql.DB, baseline string) (map[string]string, error) {
 	out := map[string]string{}
+	// 这里传入的是旧库连接（迁移主流程里是 src 自身，不是 target）；
+	// 因此 main 就是旧库，repo_host 仍存在。
 	cols, err := columns(db, "main", "sources")
 	if err != nil {
-		return nil, fmt.Errorf("读取 sources 列: %w", err)
+		return nil, fmt.Errorf("读取源库 sources 列: %w", err)
 	}
 	if !containsString(cols, "repo_host") {
 		// 3.4.6 没有 repo_host；目标库在 missingTargetExpr 中按能力做显式映射，
@@ -1046,8 +1073,148 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 	return tx.Commit()
 }
 
+// backfillHostCaps 从旧 sources 能力列生成 source_host_caps。
+// 规则与 docs/3.5.14-freeze.md §3.2 一致：
+//   - 每个 Source 都生成 docker.io 和 ghcr.io 行；
+//   - 原 repo_host 是非 Hub Host 时生成一行 Foreign；
+//   - repo_host 为空不生成 Foreign 行，也不从 base_url 猜 Host；
+//   - docker/ghcr 只接受 1/0/-1，出现 2 直接 fail closed；
+//   - Supported 必须有合法 path_mode，否则降为 Unknown（旧候选查询本来也会排除它）。
+func backfillHostCaps(db *sql.DB, baseline string) error {
+	// 旧列只存在于源库；目标库 14c 已删除，所以必须从 ATTACH 的 src 读。
+	cols := map[string]bool{}
+	crows, err := db.Query(`PRAGMA src.table_info(sources)`)
+	if err != nil {
+		return err
+	}
+	for crows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := crows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			crows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	crows.Close()
+	if err := crows.Err(); err != nil {
+		return err
+	}
+	repoExpr := `CASE WHEN docker_cap=1 THEN 'docker.io' WHEN ghcr_cap=1 THEN 'ghcr.io' ELSE '' END`
+	if cols["repo_host"] {
+		repoExpr = `COALESCE(repo_host,'')`
+	}
+	prefixExpr := "0"
+	if cols["ghcr_prefix"] {
+		prefixExpr = "COALESCE(ghcr_prefix,0)"
+	}
+	regCapExpr := "-1"
+	if cols["registry_cap"] {
+		regCapExpr = "COALESCE(registry_cap,-1)"
+	}
+	regPathExpr := "''"
+	if cols["registry_path_mode"] {
+		regPathExpr = "COALESCE(registry_path_mode,'')"
+	}
+	regErrExpr := "''"
+	if cols["registry_probe_error"] {
+		regErrExpr = "COALESCE(registry_probe_error,'')"
+	}
+	q := fmt.Sprintf(`SELECT id, %s, COALESCE(docker_cap,-1), COALESCE(ghcr_cap,-1),
+		%s, %s, %s, %s FROM src.sources ORDER BY id`, repoExpr, prefixExpr, regCapExpr, regPathExpr, regErrExpr)
+	type row struct {
+		id       int64
+		repoHost string
+		docker   int
+		ghcr     int
+		prefix   int
+		regCap   int
+		regPath  string
+		regErr   string
+	}
+	rows, err := db.Query(q)
+	if err != nil {
+		return err
+	}
+	var src []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.repoHost, &r.docker, &r.ghcr, &r.prefix, &r.regCap, &r.regPath, &r.regErr); err != nil {
+			rows.Close()
+			return err
+		}
+		if r.docker < -1 || r.docker > 1 {
+			rows.Close()
+			return fmt.Errorf("source_id=%d docker_cap=%d 超出 1/0/-1，3.5.14 拒绝迁移", r.id, r.docker)
+		}
+		if r.ghcr < -1 || r.ghcr > 1 {
+			rows.Close()
+			return fmt.Errorf("source_id=%d ghcr_cap=%d 超出 1/0/-1，3.5.14 拒绝迁移", r.id, r.ghcr)
+		}
+		src = append(src, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ins := `INSERT INTO source_host_caps
+		(source_id,host,enabled,last_verdict,effective_status,registry_path_mode,registry_prefix,diagnostics)
+		VALUES(?,?,?,?,?,?,?,?)`
+	for _, r := range src {
+		repoHost := r.repoHost
+		if repoHost != "" {
+			norm, err := registryhost.Check(repoHost)
+			if err != nil {
+				return fmt.Errorf("source_id=%d repo_host=%q 未通过 Registry Host 校验: %w", r.id, repoHost, err)
+			}
+			repoHost = norm
+		}
+		for _, h := range []struct {
+			host string
+			cap  int
+			path string
+			pre  int
+		}{
+			{"docker.io", r.docker, "native", 0},
+			{"ghcr.io", r.ghcr, "native", r.prefix},
+		} {
+			last, effective := store.VerdictForCap(h.cap)
+			mode := h.path
+			if effective != store.HostStatusSupported {
+				mode = ""
+			}
+			if _, err := tx.Exec(ins, r.id, h.host, 1, last, effective, mode, h.pre, ""); err != nil {
+				return err
+			}
+		}
+		if repoHost != "" && repoHost != "docker.io" && repoHost != "ghcr.io" {
+			last, effective := store.VerdictForCap(r.regCap)
+			mode := r.regPath
+			if effective != store.HostStatusSupported || (mode != store.PathNative && mode != store.PathHostPrefix) {
+				effective = store.HostStatusUnknown
+				mode = ""
+			}
+			if _, err := tx.Exec(ins, r.id, repoHost, 1, last, effective, mode, 0, r.regErr); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
 func (p *migrationPlan) backfillPolicies(db *sql.DB) error {
-	rows, err := db.Query(`SELECT id, base_url, COALESCE(repo_host,'') FROM sources ORDER BY id`)
+	rows, err := db.Query(`SELECT s.id, s.base_url, c.host
+		FROM source_host_caps c
+		JOIN sources s ON s.id=c.source_id
+		WHERE c.host<>''
+		  AND NOT EXISTS (SELECT 1 FROM source_realm_policy p
+		                  WHERE p.source_id=c.source_id AND p.host=c.host)
+		ORDER BY s.id, c.host`)
 	if err != nil {
 		return err
 	}
@@ -1087,6 +1254,11 @@ func (p *migrationPlan) backfillPolicies(db *sql.DB) error {
 				SourceID: s.id, Host: s.host, BaseURL: s.baseURL,
 				Reason: "Host 无内置 Realm，且不能安全猜测 BaseURL origin",
 			})
+			// 没有策略的 Host 必须同时停用，避免 UI/调度看到 enabled=1 的
+			// 半可用状态；candidate 本来会 fail-closed，这里把状态也对齐。
+			if _, err := tx.Exec(`UPDATE source_host_caps SET enabled=0 WHERE source_id=? AND host=?`, s.id, s.host); err != nil {
+				return fmt.Errorf("停用无策略 source_id=%d host=%s: %w", s.id, s.host, err)
+			}
 			continue
 		}
 		extraJSON, err := json.Marshal(extra)

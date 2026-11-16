@@ -108,11 +108,11 @@ func TestDeleteSourceRollsBackWhenPolicyDeleteFails(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("删除失败后源应保留，实际 %d 条", n)
 	}
-	if err := st.db.QueryRow(`SELECT count(*) FROM source_realm_policy WHERE source_id=?`, id).Scan(&n); err != nil {
+	if err := st.db.QueryRow(`SELECT count(*) FROM source_realm_policy WHERE source_id=? AND host='quay.io'`, id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Fatalf("删除失败后策略应保留，实际 %d 条", n)
+		t.Fatalf("删除失败后 quay.io 策略应保留，实际 %d 条", n)
 	}
 }
 

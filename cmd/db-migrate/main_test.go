@@ -29,14 +29,15 @@ func TestInputSchemaFingerprintsFrozen(t *testing.T) {
 			t.Errorf("baseline=%s 的输入指纹不是 64 位 sha256: %q", baseline, h)
 		}
 	}
-	if len(inputSchemaFingerprints) != 4 {
-		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5/3.5.7 四个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
+	if len(inputSchemaFingerprints) != 5 {
+		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11 五个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
 	}
 	want := map[string]string{
-		"3.4.6": "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
-		"3.5.4": "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
-		"3.5.5": "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
-		"3.5.7": "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
+		"3.4.6":  "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
+		"3.5.4":  "4af3f62e273685b10493cafdeb7c6745b8d98d87e017dc1445b42ca66308cffb",
+		"3.5.5":  "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
+		"3.5.7":  "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
+		"3.5.11": "e39e119719633ea8565bfba60f03f34e525259aa177235f97145bca9569f2611",
 	}
 	for baseline, expected := range want {
 		if got := inputSchemaFingerprints[baseline]; got != expected {
@@ -391,6 +392,38 @@ func TestMigrate355Fidelity(t *testing.T) {
 	}
 	for tbl := range names {
 		if tbl == "schema_meta" {
+			continue
+		}
+		if tbl == "sources" {
+			// 14c 删除了旧 Registry 列；只比对双方共有的非旧列。
+			sc, err := columns(src, "main", "sources")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dc, err := columns(dst, "main", "sources")
+			if err != nil {
+				t.Fatal(err)
+			}
+			have := map[string]bool{}
+			for _, c := range dc {
+				have[c] = true
+			}
+			var common []string
+			for _, c := range sc {
+				switch c {
+				case "repo_host", "docker_cap", "ghcr_cap", "ghcr_prefix",
+					"registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error":
+					continue
+				}
+				if have[c] {
+					common = append(common, c)
+				}
+			}
+			nSrc, hSrc := selectedFingerprint(t, src, tbl, common)
+			nDst, hDst := selectedFingerprint(t, dst, tbl, common)
+			if nSrc != nDst || hSrc != hDst {
+				t.Fatalf("表 %s 共有列内容不一致：源 %d/%s 目标 %d/%s", tbl, nSrc, hSrc, nDst, hDst)
+			}
 			continue
 		}
 		nSrc, hSrc := tableFingerprint(t, src, tbl)

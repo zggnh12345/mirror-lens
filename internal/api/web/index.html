@@ -427,6 +427,22 @@ function regPathRow(label, p, sel){
 
 /* 无归属源（repo_host=''）和 Hub 源（docker.io）不渲染 Registry 探测区域；
    3.5.4 旧数据的空串也不再被当成 Hub 展示。 */
+function hostsHtml(x){
+  var hs = (x && x.hosts) || [];
+  if (!hs.length) return '';
+  var rows = hs.map(function(h){
+    var st = h.effective_status || 'Unknown';
+    var cls = st === 'Supported' ? 'ok' : (st === 'Mismatch' ? 'bad' : '');
+    return '<div class="kv"><span>'+esc(h.host)+'</span><span style="display:flex;gap:8px;align-items:center">'
+      + '<span class="rcap '+cls+'">'+esc(st)+'</span>'
+      + '<label class="sw" title="启用/停用该 Host"><input type="checkbox" data-host-tog="'+x.id+'" data-host="'+esc(h.host)+'"'+(h.enabled?' checked':'')+'><span></span></label>'
+      + '<button class="btn sm" data-host-reset="'+x.id+'" data-host="'+esc(h.host)+'">重置</button>'
+      + '<button class="btn sm danger" data-host-del="'+x.id+'" data-host="'+esc(h.host)+'">移除</button>'
+      + '</span></div>';
+  }).join('');
+  return '<div class="rdiag"><div class="rdh"><b>Host 能力</b></div>'+rows+'</div>';
+}
+
 function regDiagHtml(x){
   if (!x || !x.repo_host || x.repo_host === 'docker.io') return '';
   var cap = regCap(x.registry_cap);
@@ -648,6 +664,7 @@ function rowHtml(x){
           + '</div>'
           + '<div class="detstats">' + detailStats(x) + '</div>'
           + regDiagHtml(x)
+          + hostsHtml(x)
           + (kindScoreHtml(x) ? '<div class="ksc">' + kindScoreHtml(x) + '</div>' : '')
           + '<svg viewBox="0 0 300 52" preserveAspectRatio="none"></svg>'
           + '<div class="life">'
@@ -837,6 +854,38 @@ $('#list').addEventListener('click', async function(ev){
       await api('/api/sources/'+lid, {method:'PATCH', body: JSON.stringify({status: act})});
       toast(act === 'archived' ? '已归档' : '已恢复，正在复检');
       load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  var ht = ev.target.closest('input[data-host-tog]');
+  if (ht){
+    ev.stopPropagation();
+    var hid = ht.getAttribute('data-host-tog'), hh = ht.getAttribute('data-host');
+    try{
+      await api('/api/sources/'+hid+'/hosts/'+encodeURIComponent(hh)+'/enabled', {method:'PUT', body: JSON.stringify({enabled: ht.checked})});
+      toast(ht.checked ? 'Host 已启用' : 'Host 已停用');
+      load(true);
+    }catch(e){ toast(e.message); ht.checked = !ht.checked; }
+    return;
+  }
+  var hr = ev.target.closest('[data-host-reset]');
+  if (hr){
+    ev.stopPropagation();
+    var rid = hr.getAttribute('data-host-reset'), rh = hr.getAttribute('data-host');
+    try{
+      await api('/api/sources/'+rid+'/hosts/'+encodeURIComponent(rh)+'/reset', {method:'POST'});
+      toast('Host 结论已重置'); load(true);
+    }catch(e){ toast(e.message); }
+    return;
+  }
+  var hd = ev.target.closest('[data-host-del]');
+  if (hd){
+    ev.stopPropagation();
+    var did = hd.getAttribute('data-host-del'), dh = hd.getAttribute('data-host');
+    if (!confirm('移除 Host '+dh+' 的策略、健康与探测记录？')) return;
+    try{
+      await api('/api/sources/'+did+'/hosts/'+encodeURIComponent(dh), {method:'DELETE'});
+      toast('Host 已移除'); load(true);
     }catch(e){ toast(e.message); }
     return;
   }

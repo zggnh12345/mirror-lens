@@ -23,10 +23,11 @@ type HostProbeJob struct {
 	Host     string
 	// Gen 是入队时 registry_host_gen 的代次。只在凭据读取失败、拿不到
 	// 快照时充当执行起点代次；正常路径用快照里的 Generation。
-	Gen     int64
-	BaseURL string
-	Repo    string
-	Tag     string
+	Gen       int64
+	PolicyGen int64
+	BaseURL   string
+	Repo      string
+	Tag       string
 }
 
 // HostProbeOptions 是 Host 探测 Runner 的装配参数。
@@ -307,11 +308,12 @@ func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJ
 				continue
 			}
 			out = append(out, HostProbeJob{
-				SourceID: x.SourceID,
-				Host:     x.RepoHost,
-				Gen:      x.Gen,
-				BaseURL:  x.BaseURL,
-				Repo:     repo,
+				SourceID:  x.SourceID,
+				Host:      x.RepoHost,
+				Gen:       x.Gen,
+				PolicyGen: x.PolicyGen,
+				BaseURL:   x.BaseURL,
+				Repo:      repo,
 			})
 		}
 		if len(missing) > 0 {
@@ -497,6 +499,8 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 		Gen:           snap.Generation,
 		CredDigest:    snap.Digest,
 		HasCredential: snap.HasCredential,
+		PolicyGen:     j.PolicyGen,
+		HasPolicyGen:  j.PolicyGen > 0,
 		TTL:           r.o.RecoveryTTL,
 	})
 	if err != nil {

@@ -182,7 +182,7 @@ func TestApplyCredChangesResetsAllSourcesOnHost(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v.State != RecoveryInitial || v.Gen != 6 || v.LastProbeAt != 0 || v.NextProbeAt == 0 {
+		if v.State != RecoveryInitial || v.Gen != 6 || v.LastProbeAt != 1000 || v.NextProbeAt == 0 {
 			t.Fatalf("源 %d 未被重置: %+v", id, v)
 		}
 	}

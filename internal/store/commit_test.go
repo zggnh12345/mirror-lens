@@ -21,15 +21,16 @@ ON CONFLICT(host) DO UPDATE SET gen=excluded.gen, cred_digest=excluded.cred_dige
 func registrySnapshot(t *testing.T, s *Store, id int64, host string) string {
 	t.Helper()
 	var b strings.Builder
-	var repoHost, status, mode string
-	var capv, probeAt int64
-	var probeErr string
-	if err := s.db.QueryRow(`SELECT COALESCE(repo_host,''),status,registry_cap,registry_path_mode,
-		registry_probe_at,COALESCE(registry_probe_error,'') FROM sources WHERE id=?`, id).
-		Scan(&repoHost, &status, &capv, &mode, &probeAt, &probeErr); err != nil {
+	var status string
+	if err := s.db.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
 		t.Fatalf("snapshot source: %v", err)
 	}
-	fmt.Fprintf(&b, "src|%s|%s|%d|%s|%d|%s\n", repoHost, status, capv, mode, probeAt, probeErr)
+	fmt.Fprintf(&b, "src|%s\n", status)
+	var cHost, last, effective, mode string
+	if err := s.db.QueryRow(`SELECT host,last_verdict,effective_status,registry_path_mode
+		FROM source_host_caps WHERE source_id=? AND host=?`, id, host).Scan(&cHost, &last, &effective, &mode); err == nil {
+		fmt.Fprintf(&b, "caps|%s|%s|%s|%s\n", cHost, last, effective, mode)
+	}
 
 	rows, err := s.db.Query(`SELECT family,scope,gen,fails,ok_at,last_at FROM source_health_scope
 		WHERE source_id=? ORDER BY family,scope,gen`, id)
@@ -100,16 +101,19 @@ func TestCommitHostProbeSuccess(t *testing.T) {
 		t.Fatalf("res=%v", res)
 	}
 
-	var capv int64
-	var mode, probeErr string
+	var effective, mode string
 	var probeAt int64
-	if err := s.db.QueryRow(`SELECT registry_cap,registry_path_mode,registry_probe_at,
-		COALESCE(registry_probe_error,'') FROM sources WHERE id=?`, id).
-		Scan(&capv, &mode, &probeAt, &probeErr); err != nil {
+	if err := s.db.QueryRow(`SELECT effective_status,registry_path_mode
+		FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id).
+		Scan(&effective, &mode); err != nil {
 		t.Fatal(err)
 	}
-	if capv != 1 || mode != PathNative || probeAt != 1000 || probeErr != "" {
-		t.Fatalf("cap=%d mode=%s at=%d err=%s", capv, mode, probeAt, probeErr)
+	if err := s.db.QueryRow(`SELECT last_probe_at FROM registry_host_recovery
+		WHERE source_id=? AND family='registry' AND scope='quay.io'`, id).Scan(&probeAt); err != nil {
+		t.Fatal(err)
+	}
+	if effective != HostStatusSupported || mode != PathNative || probeAt != 1000 {
+		t.Fatalf("effective=%s mode=%s at=%d", effective, mode, probeAt)
 	}
 
 	var fails, okAt, lastAt, gen int64
@@ -150,13 +154,6 @@ func TestCommitHostProbeRejectsStaleGenWithoutSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := registrySnapshot(t, s, id, "quay.io")
-	var capPre, probeAtPre int64
-	var modePre, perrPre string
-	if err := s.db.QueryRow(`SELECT registry_cap,registry_path_mode,registry_probe_at,
-		COALESCE(registry_probe_error,'') FROM sources WHERE id=?`, id).
-		Scan(&capPre, &modePre, &probeAtPre, &perrPre); err != nil {
-		t.Fatal(err)
-	}
 
 	res := mustCommit(t, s, HostProbeCommit{
 		SourceID: id, Host: "quay.io", Cap: RegistryCapYes, PathMode: PathHostPrefix,
@@ -171,21 +168,6 @@ func TestCommitHostProbeRejectsStaleGenWithoutSideEffects(t *testing.T) {
 	}
 
 	// 逐项确认旁路写入也没有发生（snapshot 已整体相等，这里是可读证据）。
-	var capv int64
-	var mode, perr string
-	var probeAt int64
-	if err := s.db.QueryRow(`SELECT registry_cap,registry_path_mode,registry_probe_at,
-		COALESCE(registry_probe_error,'') FROM sources WHERE id=?`, id).
-		Scan(&capv, &mode, &probeAt, &perr); err != nil {
-		t.Fatal(err)
-	}
-	if capv != capPre || mode != modePre || probeAt != probeAtPre || perr != perrPre {
-		t.Fatalf("sources 旁路被旧探测污染: cap=%d/%d mode=%q/%q probe_at=%d/%d err=%q/%q",
-			capv, capPre, mode, modePre, probeAt, probeAtPre, perr, perrPre)
-	}
-	if capv != RegistryCapUnknown || mode != "" {
-		t.Fatalf("凭据变更后 cap/path 应保持已清空: cap=%d mode=%q", capv, mode)
-	}
 	var recState string
 	var recGen, recLast int64
 	if err := s.db.QueryRow(`SELECT state,gen,last_probe_at FROM registry_host_recovery
@@ -193,7 +175,7 @@ func TestCommitHostProbeRejectsStaleGenWithoutSideEffects(t *testing.T) {
 		Scan(&recState, &recGen, &recLast); err != nil {
 		t.Fatal(err)
 	}
-	if recState != "initial" || recGen != 6 || recLast != 0 {
+	if recState != "initial" || recGen != 6 || recLast != 1000 {
 		t.Fatalf("recovery 被旧探测污染: %s/gen=%d/last=%d", recState, recGen, recLast)
 	}
 
@@ -308,7 +290,10 @@ func TestCommitHostProbeRejectsArchivedAndMovedHost(t *testing.T) {
 		t.Fatalf("archived 拒绝后状态变化:\n%s\n%s", before, after)
 	}
 
-	if _, err := s.db.Exec(`UPDATE sources SET status='usable', repo_host='docker.io' WHERE id=?`, id); err != nil {
+	if _, err := s.db.Exec(`UPDATE sources SET status='usable' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id); err != nil {
 		t.Fatal(err)
 	}
 	if res := mustCommit(t, s, HostProbeCommit{
@@ -377,14 +362,19 @@ func TestCommitHostProbeTransportErrorKeepsCap(t *testing.T) {
 		Transport: "timeout", At: 2000, ErrText: "dial timeout", Gen: 1, CredDigest: "d1",
 	})
 
-	var capv, probeAt int64
-	var mode string
-	if err := s.db.QueryRow(`SELECT registry_cap,registry_path_mode,registry_probe_at FROM sources WHERE id=?`, id).
-		Scan(&capv, &mode, &probeAt); err != nil {
+	var effective, mode string
+	var probeAt int64
+	if err := s.db.QueryRow(`SELECT effective_status,registry_path_mode
+		FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id).
+		Scan(&effective, &mode); err != nil {
 		t.Fatal(err)
 	}
-	if capv != 1 || mode != PathNative || probeAt != 1000 {
-		t.Fatalf("传输错误不得改写 cap/probe_at: cap=%d mode=%s at=%d", capv, mode, probeAt)
+	if err := s.db.QueryRow(`SELECT last_probe_at FROM registry_host_recovery
+		WHERE source_id=? AND family='registry' AND scope='quay.io'`, id).Scan(&probeAt); err != nil {
+		t.Fatal(err)
+	}
+	if effective != HostStatusSupported || mode != PathNative || probeAt != 2000 {
+		t.Fatalf("传输错误不得改写 effective；last_probe_at 应记录本次探测: effective=%s mode=%s at=%d", effective, mode, probeAt)
 	}
 
 	var fails, lastAt int64
@@ -483,7 +473,7 @@ func TestApplyCredChangesResetsRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.State != RecoveryInitial || v.Gen != 2 || v.LastProbeAt != 0 ||
+	if v.State != RecoveryInitial || v.Gen != 2 || v.LastProbeAt != 1000 ||
 		v.RecFailures != 0 || v.LastError != "" {
 		t.Fatalf("recovery 未按新代次重置: %+v", v)
 	}
@@ -493,12 +483,12 @@ func TestApplyCredChangesResetsRecovery(t *testing.T) {
 	if v.NextProbeAt == 0 {
 		t.Fatal("next_probe_at 必须置为 now 以便下一轮捞起")
 	}
-	var capv int64
-	if err := s.db.QueryRow(`SELECT registry_cap FROM sources WHERE id=?`, id).Scan(&capv); err != nil {
+	var effective string
+	if err := s.db.QueryRow(`SELECT effective_status FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id).Scan(&effective); err != nil {
 		t.Fatal(err)
 	}
-	if capv != RegistryCapUnknown {
-		t.Fatalf("凭据变更必须清 cap, got %d", capv)
+	if effective != HostStatusUnknown {
+		t.Fatalf("凭据变更必须清 effective, got %s", effective)
 	}
 }
 

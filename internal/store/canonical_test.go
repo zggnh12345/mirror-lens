@@ -86,8 +86,8 @@ func TestAddSourceCanonicalHostSemantics(t *testing.T) {
 func TestEmptyHostStaysUnclassified(t *testing.T) {
 	st, _ := newTestStore(t)
 	defer st.Close()
-	res, err := st.db.Exec(`INSERT INTO sources(base_url,name,docker_cap,github_cap,ghcr_cap,status,enabled,created_at,repo_host)
-		VALUES('https://legacy.example','legacy',1,-1,-1,'usable',1,1,'')`)
+	res, err := st.db.Exec(`INSERT INTO sources(base_url,name,github_cap,status,enabled,created_at)
+		VALUES('https://legacy.example','legacy',-1,'usable',1,1)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +105,8 @@ func TestEmptyHostStaysUnclassified(t *testing.T) {
 func TestEmptyHostDualCapStaysUnclassified(t *testing.T) {
 	st, _ := newTestStore(t)
 	defer st.Close()
-	res, err := st.db.Exec(`INSERT INTO sources(base_url,name,docker_cap,github_cap,ghcr_cap,status,enabled,created_at,repo_host)
-		VALUES('https://dual.example','dual',1,1,-1,'usable',1,1,'')`)
+	res, err := st.db.Exec(`INSERT INTO sources(base_url,name,github_cap,status,enabled,created_at)
+		VALUES('https://dual.example','dual',1,'usable',1,1)`)
 	if err != nil {
 		t.Fatal(err)
 	}

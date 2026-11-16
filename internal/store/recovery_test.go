@@ -12,12 +12,16 @@ var seedSeq int64
 func seedRegistrySource(t *testing.T, s *Store, host string) int64 {
 	t.Helper()
 	n := atomic.AddInt64(&seedSeq, 1)
-	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,created_at,repo_host) VALUES(?,?,?,?)`,
-		"https://"+host+"/x"+strconv.FormatInt(n, 10), "src-"+host+"-"+strconv.FormatInt(n, 10), 1, host)
+	res, err := s.db.Exec(`INSERT INTO sources(base_url,name,created_at) VALUES(?,?,?)`,
+		"https://"+host+"/x"+strconv.FormatInt(n, 10), "src-"+host+"-"+strconv.FormatInt(n, 10), 1)
 	if err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
 	id, _ := res.LastInsertId()
+	if _, err := s.db.Exec(`INSERT INTO source_host_caps(source_id,host,enabled,last_verdict,effective_status)
+		VALUES(?,?,1,'Inconclusive','Unknown')`, id, host); err != nil {
+		t.Fatalf("insert caps: %v", err)
+	}
 	return id
 }
 

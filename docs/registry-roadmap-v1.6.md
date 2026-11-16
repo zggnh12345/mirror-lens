@@ -15,6 +15,7 @@
 
 > 本文只做版本安排、边界和验收口径，不代表下列版本已经实现。
 > 版本号是规划占位，不承诺发布日期。每个版本必须单独验收，未通过不得进入下一版本。
+> 3.5.14 的冻结细则见 `docs/3.5.14-freeze.md`；两者冲突时以冻结文档为准。
 
 ## 1. 本版修正摘要
 
@@ -23,15 +24,15 @@ v1.6 相对 v1.5 的核心修正：
 1. `3.5.10` 已被多能力标签修复占用；原 Source Realm 计划顺延为 **3.5.11**。
 2. `3.5.12` / `3.5.13` 不再写成“从零实现第一批 Registry”，改为**既有实现缺口闭环与验收补齐**。（2026-11-16 后续修订：两者已合并为 3.5.12，3.5.13 编号退役，见 1.1）
 3. `3.5.11` 的 Realm / Token 身份从第一天就采用 **Source + Host**，但不提前实现多 Host UI 和候选调度。
-4. `3.5.14` 拆成 **3.5.14a（回填 + 投影 + 新写路径）** 和 **3.5.14b（只切换权威读路径）**。
+4. `3.5.14` 拆成 **3.5.14a（回填 + 投影 + 新写路径）**、**3.5.14b（只切换权威读路径）** 和 **3.5.14c（旧结构清理）**；14a/14b/14c 是内部里程碑，最终只发布 `v3.5.14`。
 5. `source_host_caps` 成为**所有逻辑 Registry Host 的能力权威**，Docker Hub / GHCR 不再作为例外。
 6. 认证身份改为**每次 attempt 的 request context**，不再要求静态 `adapter.Plan` 携带 `SourceID`。
 7. `ghcr_prefix` 纳入 `source_host_caps` 的兼容投影模型，冻结为布尔，不做枚举。
-8. `probe_status` 从三态改为四态，补上 `Mismatch`，与现有 `RegistryCapMismatch=2` 对齐。
-9. `3.5.14a` 同时包含新写路径；`3.5.14b` 只切读路径，不含旧读路径和 dual-read 开关。
-10. 离线迁移增加 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
+8. 状态模型改为 `last_verdict`（Supported / Unsupported / Inconclusive / Mismatch）+ `effective_status`（Unknown / Supported / Unsupported / Mismatch），`Mismatch` 与现有 `RegistryCapMismatch=2` 对齐。
+9. `3.5.14a` 同时包含新写路径；`3.5.14b` 只切读路径，不含旧读路径和 dual-read 开关；`3.5.14c` 才删除旧 Registry 能力字段和 `repo_host`。
+10. 离线迁移增加 `3.5.7 → 3.5.11 → 3.5.14a` 路径和 `backfillHostCaps` 步骤；3.5.12 的程序版本不产生新的 Schema 输入指纹，生产输入仍是 `3.5.11 / e39e1197…`。
 11. `3.5.15` 收窄为 CredStore + 标准私有 Registry 认证；GitLab PAT 独立 3.5.15a。
-12. `3.5.16` 的公开 Manifest 竞速依赖 3.5.11 + 3.5.14b；私有竞速才依赖 3.5.15。
+12. `3.5.16` 的公开 Manifest 竞速依赖 3.5.11 + 3.5.14c；私有竞速才依赖 3.5.15。竞速不能建立在尚未收敛的 B1 模型上。
 13. 撤回“流式 P0 未关闭”的错误判断；保留为 G0 回归门禁。
 14. 增加 Host 验收矩阵、探测四态、迁移验收和双用途源回归。
 15. 3.5.11 拆成 **11a（身份与 resolver 基础）/ 11b（策略表与切换）/ 11c（编辑与清理）**；3.5.11 只在 11b 验收后算完成。
@@ -44,7 +45,7 @@ v1.6 相对 v1.5 的核心修正：
 1. 原 **3.5.12 + 3.5.13 合并为 3.5.12**；3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
 2. 3.5.12 定位为 **合并验收 + 定点修复**，正式纳入 12c（11c 欠账）、12-F1（Host 关闭隔离）、12-F2（调度缓存 0 窗口验证）、12-S（Source 就绪）、12-T（候选到回退链路测试）。
 3. **3.5.11c 原计划未实施**。3.5.11 以 11b 验收为完成标志；历史记录不追记为已完成，11c 调整并入 3.5.12 作为独立工作批次 12c。
-4. 离线迁移链改为 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a`。
+4. 离线迁移链改为 `3.5.7 → 3.5.11 → 3.5.14a`（2026-11-17 修订：3.5.12 是程序版本，不产生新的 Schema 输入；生产 Schema 仍是 3.5.11）。
 5. 12-S 是**按 Host** 的门禁：`12-S(host)` 未通过，不启动该 Host 的真实回源验收；无公共 Source 的 Host 标记“外部 Source 阻塞”，不阻塞其他 Host 与整体发布。
 6. 生产基线以 2026-11-16 实测为准（见 5 的 3.5.12-A 基线表），不以 Git 标签推断部署状态。
 7. **12c 收敛为 Source 级 Realm 策略管理 + Host 只读汇总**，不新增 Host 级策略模型，不改 Schema；不存在“策略启停”字段，停用语义为删除策略行并 fail closed。
@@ -167,7 +168,7 @@ registry_probe_at     = 0
 ### 3.3 两个不同概念
 
 - **同一 Host 多 Source**：一个 Host 配多个镜像源 → 3.5.12 做正式验收（原 3.5.13 并入）
-- **一源多 Host**：一个镜像源同时服务多个 Host → 3.5.14a/3.5.14b 做能力模型
+- **一源多 Host**：一个镜像源同时服务多个 Host → 3.5.14a/3.5.14b/3.5.14c 做能力模型与旧结构清理
 
 本文说的“其他多源也一样”指后者。任何一条 Source 只要实际支持多个 Host，都必须走同一套 `source_host_caps` 模型，不能按 Host 或按站点单独开分支。
 
@@ -178,16 +179,21 @@ registry_probe_at     = 0
 | 3.5.11 | Source Realm + Source/Host 认证身份 | 3.5.10 | 旧 Source 行为不变 |
 | 3.5.12 | 合并验收 + 定点修复（原 3.5.12 + 3.5.13） | 3.5.11 | 新 Host 默认关闭；修复随开关生效 |
 | 3.5.13 | 编号退役，已并入 3.5.12，不单独发布 | — | — |
-| 3.5.14a | `source_host_caps` 回填 + 旧字段投影 + 新写路径 | 3.5.12 | 读路径不变 |
-| 3.5.14b | 只切换 `source_host_caps` 为权威读路径 | 3.5.14a | 旧单 Host Source 不变 |
-| 3.5.15 | CredStore + 标准私有 Registry 认证 | 3.5.14b | 匿名优先 |
+| 3.5.14a | `source_host_caps` 回填 + 旧字段投影 + 新写路径 | 3.5.12 | 读路径不变；Schema S14a |
+| 3.5.14b | 只切换 `source_host_caps` 为权威读路径 | 3.5.14a | 旧单 Host Source 不变；Schema S14a |
+| 3.5.14c | 删除旧 Registry 能力字段、旧投影和 `repo_host` 业务依赖 | 3.5.14b | Schema S14c；Source × Host 管理 |
+| 3.5.15 | CredStore + 标准私有 Registry 认证 | 3.5.14c | 匿名优先 |
 | 3.5.15a | GitLab PAT / Deploy Token 专项 | 3.5.15 | 单独验收 |
-| 3.5.16 | 公开 Manifest 竞速 | 3.5.11 + 3.5.14b | 默认关闭 |
+| 3.5.16 | 公开 Manifest 竞速 | 3.5.11 + 3.5.14c | 默认关闭 |
 | 3.5.17 | Blob 竞速可行性评估 | 3.5.16 | 仅评估 |
 
 > 3.5.15a 不阻塞 3.5.16 的公开 Manifest 竞速；私有 Manifest 竞速依赖 3.5.15（以及 3.5.15a，如果使用 GitLab 专用凭据）。
 >
-> 本链中明确改 Schema 的是 **3.5.11**（`source_realm_policy`）和 **3.5.14a**（`source_host_caps`）。3.5.14b 只改读路径，不改 Schema。
+> 本链中明确改 Schema 的是 **3.5.11**（`source_realm_policy`）、**3.5.14a**（`source_host_caps`）和 **3.5.14c**（删除旧 Registry 字段）。3.5.14b 只改读路径，不改 Schema。
+>
+> `3.5.14a/b/c` 是 3.5.14 的内部里程碑，不是发布标签；最终发布标签为 `v3.5.14`。
+>
+> Schema 标签：14a/14b 为 `3.5.14a`（`H14a`），14c/最终发布为 `3.5.14`（`H14c`）；14b 不改 Schema，14c 不能复用 14a 的版本号。
 >
 > 3.5.11a / 3.5.11b / 3.5.11c 是 3.5.11 的内部里程碑：11a 只做身份与 resolver 基础，11b 才完成策略切换，11c 做编辑与清理。3.5.11 以 11b 验收通过为完成标志。
 >
@@ -702,7 +708,7 @@ D6 的四段顺序必须完整复刻：
 
 ### 3.5.12 合并验收 + 定点修复（原 3.5.12 + 3.5.13）
 
-> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收。12-S 已逐 Host 执行：gcr.io、registry.k8s.io、quay.io、mcr.microsoft.com 为 `REAL_PASS`；registry.gitlab.com、public.ecr.aws、cgr.dev、asia-east1-docker.pkg.dev 为 `BLOCKED_EXTERNAL_SOURCE`，证据见 `docs/evidence/3.5.12-blocked-hosts-20261116.md`。12a 为 2 个 `REAL_PASS` + 1 个外部阻塞，12b 为 2 个 `REAL_PASS` + 3 个外部阻塞。生产已完成第一阶段程序切换（3.5.11 → 3.5.12，未改 Schema、未迁移数据库）；第二阶段已完成四个 Host 的真实回源验收。记录见 `docs/3.5.12-acceptance.md` 第 6、7 节。
+> **实施状态（2026-11-17 修订）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收。12-S 已逐 Host 执行：gcr.io、registry.k8s.io、quay.io、mcr.microsoft.com 为 `REAL_PASS`；registry.gitlab.com、public.ecr.aws 的 host-prefix 候选已实测 200（`m.daocloud.io/v2/<host>/...`），但尚未经产品级 HostProbe/调度，记为 `CANDIDATE_OBSERVED` + `NOT_EXECUTED`；cgr.dev、asia-east1-docker.pkg.dev 的单一 403 不足以判定整个 Host 无公共源，记为 `NOT_EXECUTED`，保留 per-host 与 host-prefix 两种尝试证据。原 `BLOCKED_EXTERNAL_SOURCE` 不再作为这四个 Host 的统一状态。生产已完成第一阶段程序切换（3.5.11 → 3.5.12，未改 Schema、未迁移数据库）；第二阶段已完成四个 Host 的真实回源验收。记录见 `docs/3.5.12-acceptance.md` 第 6、7 节和 `docs/3.5.14-freeze.md` 第 10 节。
 
 **定位：** 本版不是纯验收版本，也**不改 Schema**。它合并原 3.5.12（GCR / Artifact Registry / K8S）与原 3.5.13（Quay / MCR / GitLab / ECR / cgr + 同 Host 多 Source），并包含 3.5.11c 欠账、两项已确认代码修复、Source 就绪门禁和候选→回退链路测试。原 3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
 
@@ -903,6 +909,8 @@ D6 的四段顺序必须完整复刻：
 
 **目标：** 建立统一能力表、完成确定性回填、把运行时写路径切到“权威表 + 投影”双写，但**不切换读路径**。线上候选集、标签和调度行为保持不变。
 
+> **2026-11-17 冻结修订：** 本节的数据模型、投影边界、状态语义和迁移边界以 `docs/3.5.14-freeze.md` 为准；以下为摘要。
+
 #### 3.5.14a-A 数据模型
 
 ```text
@@ -910,13 +918,10 @@ source_host_caps
   source_id
   host
   enabled
-  probe_status
-  registry_cap
+  last_verdict
+  effective_status
   registry_path_mode
   registry_prefix
-  last_supported_at
-  registry_probe_at
-  registry_probe_error
   PRIMARY KEY(source_id, host)
   FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
 ```
@@ -925,57 +930,55 @@ source_host_caps
 
 ```sql
 CREATE INDEX idx_source_host_caps_host
-ON source_host_caps(host, probe_status, registry_cap);
+ON source_host_caps(host, effective_status, enabled);
 ```
 
 字段语义：
 
 - `enabled`：用户是否允许该 Source 服务此 Host
-- `probe_status`：最近一次探测结论，四态：
-  - `Supported`
-  - `Unsupported`
-  - `Inconclusive`
-  - `Mismatch`
-- `registry_cap`：能力值，必须与 `probe_status` 保持一致：
-  - `1` ↔ `Supported`
-  - `0` ↔ `Unsupported`
-  - `-1` ↔ `Inconclusive`
-  - `2` ↔ `Mismatch`
+- `last_verdict`：最近一次探测观察，四态：`Supported` / `Unsupported` / `Inconclusive` / `Mismatch`
+- `effective_status`：当前有效能力结论，四态：`Unknown` / `Supported` / `Unsupported` / `Mismatch`
 - `registry_path_mode`：已验证的路径模式（`native` / `host_prefix`）
 - `registry_prefix`：GHCR 等前缀路径标志，兼容旧 `ghcr_prefix`；布尔
-- `last_supported_at`：最近一次确认可用
-- `registry_probe_at` / `registry_probe_error`：最近探测事实
 
-`Mismatch` 不是普通 `Unsupported`：
+新表不存 `registry_cap`、`last_supported_at`、`registry_probe_at`、`registry_probe_error`。`registry_cap` 只是旧字段投影，由 `effective_status` 派生；Foreign Host 的探测事实和成功时间以 `registry_host_recovery` 为唯一来源。
 
-- `Mismatch` 表示 Manifest 内容与官方不一致，必须硬排除
-- 不能按 6 小时普通不支持重试
-- 恢复策略与现有 `RecoveryHardExcluded` 一致
+`Inconclusive` 不得覆盖已有 `Supported` / `Unsupported` 结论；`Mismatch` 表示 Manifest 内容与官方不一致，必须硬排除，不能按 6 小时普通不支持重试，只能由管理员显式重置后重新探测。
 
 #### 3.5.14a-B 回填规则
 
 对每个现有 Source：
 
-1. `repo_host` 非空：
+1. `repo_host` 非空且不是 `docker.io` / `ghcr.io`：
    - 写入 `host=repo_host`
-   - `registry_cap=registry_cap`
+   - `last_verdict` / `effective_status` 由旧 `registry_cap` 映射：`1→Supported/Supported`、`0→Unsupported/Unsupported`、`-1→Inconclusive/Unknown`、`2→Mismatch/Mismatch`
    - `registry_path_mode=registry_path_mode`
-   - `probe_status` 按 `registry_cap` 映射：`1→Supported`、`0→Unsupported`、`-1→Inconclusive`、`2→Mismatch`
 2. `docker_cap`：
    - 写入或合并 `host=docker.io`
-   - `registry_cap=docker_cap`
+   - `last_verdict` / `effective_status` 由 `docker_cap` 映射：`1→Supported/Supported`、`0→Unsupported/Unsupported`、`-1→Inconclusive/Unknown`
    - `registry_path_mode=native`
-   - `probe_status` 映射：`1→Supported`、`0→Unsupported`、`-1→Inconclusive`
 3. `ghcr_cap`：
    - 写入或合并 `host=ghcr.io`
-   - `registry_cap=ghcr_cap`
+   - `last_verdict` / `effective_status` 由 `ghcr_cap` 映射：`1→Supported/Supported`、`0→Unsupported/Unsupported`、`-1→Inconclusive/Unknown`
    - `registry_path_mode=native`
    - `registry_prefix=ghcr_prefix`
-   - `probe_status` 映射：`1→Supported`、`0→Unsupported`、`-1→Inconclusive`
-4. 同一 Source 的同一 Host 只能有一行；合并时冲突必须 fail closed，不能静默覆盖。
-5. 旧字段不删除；由同一事务生成投影。
+4. `repo_host=''`：不创建 Foreign caps 行；不从 `base_url` 推断 Host；不把空字符串映射为 `docker.io`；`github_cap` / `git_cap` 不生成 Registry caps 行。
+5. 同一 Source 的同一 Host 只能有一行；合并时冲突必须 fail closed，不能静默覆盖。
+6. 旧字段不删除；由同一事务生成投影。
+7. 回填 `enabled=1`；只有双用途 `ghcr.io` 的 `policy_gaps` 可以把该行置 0。14a 投影不读取 `enabled`，保证旧读路径不变；14b 的 `SetSourceHostEnabled` 才把停用同步为 0。
 
-Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker_cap` / `ghcr_cap`。否则 14b 的候选准入会与旧行为不一致。
+投影规则：
+
+| 新表 Host | 旧字段投影 |
+|---|---|
+| `docker.io` | `docker_cap` |
+| `ghcr.io` | `ghcr_cap`、`ghcr_prefix` |
+| 原 `repo_host` 且是 Foreign Host | `registry_cap`、`registry_path_mode`、`registry_probe_at`、`registry_probe_error` |
+| 其他新增 Foreign Host | 不投影 |
+
+投影值取 `effective_status`，不取 `last_verdict`。新增 Foreign Host 探测成功不能修改 `repo_host`，也不能修改旧 Foreign 投影。`github_cap` 继续只写旧字段，不建 `github.com` caps 行。
+
+Docker / GHCR 的 `effective_status` 映射必须显式实现，不能只写 `docker_cap` / `ghcr_cap`。否则 14b 的候选准入会与旧行为不一致。
 
 冲突处理：
 
@@ -985,6 +988,10 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 - 两个已知值冲突且无法按上述优先级消解：fail closed，输出 `source_id` / `host` / 两个值，人工处理，不自动猜
 - 不能静默选一个值继续迁移
 
+六个双用途 Source（54、69、71、86、88、638）必须同时补 `(source_id, ghcr.io)` 的 `source_realm_policy`；不能安全生成时进入 `policy_gaps`，并把该 caps 行 `enabled=0`，同时在 14b 验收中记录预期差异。
+
+生产只读盘点的预期行数为 194（4 Foreign + 95 Docker + 95 GHCR，无重叠）；实际行数不一致必须解释。明细见 `docs/3.5.14-freeze.md` 4.2。
+
 #### 3.5.14a-C 写入边界
 
 - 迁移工具只做一次性回填。
@@ -992,7 +999,9 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 - API 不允许直接写 `repo_host` / `registry_cap` / `registry_path_mode` / `docker_cap` / `ghcr_cap` / `ghcr_prefix`。
 - 旧字段对 API / 调用方只读；仅 Store 在同一事务内生成投影时允许写。
 - 旧字段不能成为第二个权威入口。
-- 增加一致性测试：随机生成多 Host Source，写入后断言新表与旧投影一致。
+- `SetCapsLive` 只拥有 `docker.io` / `ghcr.io` caps 行和 `docker_cap`、`ghcr_cap`、`ghcr_prefix` 投影；`github_cap` 继续只写旧字段。
+- `CommitHostProbe` 只拥有 Foreign Host caps 行和原 `repo_host` 的 `registry_cap`、`registry_path_mode`、`registry_probe_at`、`registry_probe_error` 投影；不得修改 Docker/GHCR 投影。
+- 增加一致性测试：随机生成多 Host Source，写入后断言新表与旧投影一致；新增 Foreign Host 探测不得改变 `repo_host` / 旧 Foreign 投影。
 
 3.5.14a 必须包含新写路径，不能只建表。这一节是 3.5.14a 的运行时单事务门禁，不属于 3.5.11 的实现范围：
 
@@ -1031,17 +1040,20 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 
 #### 3.5.14a-D 验收
 
-- 迁移前后 `SourceCandidates("docker")` 候选集 diff 为空
-- 迁移前后 `SourceCandidates("ghcr")` 候选集 diff 为空
-- 迁移前后 `SourceCandidates("registry:<host>")` 候选集 diff 为空
+- 旧 `SourceCandidates("docker")` 查询在 14a 前后 diff 为空
+- 旧 `SourceCandidates("ghcr")` 查询在 14a 前后 diff 为空
+- 旧 `SourceCandidates("registry:<host>")` 查询在 14a 前后 diff 为空
+- 新 caps 查询只作 shadow；新增 Host 的预期差异逐条记录，不要求 14a 的 old/new 全量相等
 - 首页 HUB/GHCR/RAW/foreign 标签不变
-- 双用途源（`repo_host=docker.io` + `ghcr_cap=1`）能力不变
+- 双用途源（`repo_host=docker.io` + `ghcr_cap=1`）能力不变；六个双用途 Source 的 `ghcr.io` policy 缺口有明确结论
 - 旧单 Host Source 行为不变
-- `registry_cap=2` 回填为 `probe_status=Mismatch`
-- `docker_cap=-1/0/1` 与 `ghcr_cap=-1/0/1` 的 `probe_status` 映射正确
+- `registry_cap=2` 回填为 `effective_status=Mismatch`
+- `docker_cap=-1/0/1` 与 `ghcr_cap=-1/0/1` 的 `effective_status` 映射正确
 - Docker / GHCR 与 `registry_cap` 冲突按优先级消解；无法消解时 fail closed
 - `SetCapsLive` 失败时权威表和投影都不落库
 - `CommitHostProbe` 失败时权威表和投影都不落库
+- 新增 Foreign Host 探测成功不改变 `repo_host` / `registry_cap` / `registry_path_mode`
+- 性能退化不超过 `docs/3.5.14-freeze.md` 11.4 的阈值
 - 迁移失败不发布目标文件；灾难恢复使用备份库和旧 `secret.key`
 
 #### 3.5.14a-E 能力审计
@@ -1050,40 +1062,51 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 
 - 枚举所有 enabled Source
 - 对每个 Source 按 `host_prefix` 和 `native` 尝试候选 Host
-- 只有实际 Manifest 可读且 Digest 可验证，才记 `probe_status=Supported`
-- 认证失败、网络错误、仓库状态不确定记 `Inconclusive`
-- 固定测试仓库确认路径模式不支持才记 `Unsupported`
-- Manifest 内容与官方不一致记 `Mismatch`
-- 记录 `source_id`、`host`、`path_mode`、`probe_at`、`probe_error`、`last_supported_at`
+- 只有实际 Manifest 可读且 Digest 可验证，才记 `last_verdict=Supported` / `effective_status=Supported`
+- 认证失败、网络错误、仓库状态不确定记 `last_verdict=Inconclusive`；已有 Supported/Unsupported 时保持 `effective_status` 不变
+- 固定测试仓库确认路径模式不支持才记 `last_verdict=Unsupported`
+- Manifest 内容与官方不一致记 `last_verdict=Mismatch` / `effective_status=Mismatch`
+- 记录 `source_id`、`host`、`path_mode`、`probe_at`、`probe_error`；Foreign Host 的成功时间以 `registry_host_recovery.last_success_at` 为准，不再写 `last_supported_at`
 - 不从 `base_url` 推断，不从站点名称推断，不手工补标签
 - 产出“多 Host Source 清单”
 - `Inconclusive` 使用独立冷却和重试策略，不能长时间占用探测配额
 
 #### 3.5.14a-F 离线迁移
 
-3.5.14a 实施时的生产基线是 `3.5.11`（2026-11-16 实测）；3.5.11 新增 `source_realm_policy` 后 Schema 已提升。迁移链从 `3.5.7` 起保留给旧库，因此不是简单的一条 `3.5.7 → 3.5.14a`：
+3.5.14a 实施时的生产程序是 `3.5.12`，Schema 基线是 `3.5.11`（2026-11-16 实测）；3.5.11 新增 `source_realm_policy` 后 Schema 已提升。迁移链从 `3.5.7` 起保留给旧库，因此不是简单的一条 `3.5.7 → 3.5.14a`：
 
 ```text
-3.5.7  → 3.5.11  → 3.5.12  → 3.5.14a
-         Realm 表   验收（不改 Schema）  Host 能力表
+3.5.7  → 3.5.11  → 3.5.14a
+         Realm 表    Host 能力表
 ```
 
-当前 `db-migrate` 不能直接迁移这条链：
+当前 `db-migrate` 已支持 3.5.7 输入，并已有 `backfillPolicies` / `policy_gaps`：
 
-- `inputSchemaFingerprints` 只接受 `3.4.6 / 3.5.4 / 3.5.5`
-- `upgrade356` 只处理 `3.5.6 → 3.5.7`
-- 没有 3.5.7、3.5.11、3.5.12 的输入路径
+- `inputSchemaFingerprints` 已包含 `3.4.6 / 3.5.4 / 3.5.5 / 3.5.7`
+- `3.5.7 → 3.5.11` 可以复用现有复制、Realm 回填和缺失策略报告
+- 缺的是 `3.5.11 → 3.5.14a` 的输入指纹、`source_host_caps` DDL 和 `backfillHostCaps`
 
-因此 3.5.11 和 3.5.14a 都必须各自提供离线升级路径：
+因此 3.5.14a 的迁移要分两段：
 
 - 3.5.11：`3.5.7 → 3.5.11`，新增 `source_realm_policy`，按 `repo_host` 种子化并生成缺失策略报告
-- 3.5.14a：`3.5.12 → 3.5.14`，新增 `source_host_caps` 并回填
-- 这一步同时校验：没有策略的 Source 必须进入报告并在运行时 fail closed，不能回退旧白名单
-- `copyAll` 不会自动生成 `source_realm_policy`；如果只复制旧表，升级后所有自定义 Host 都会认证失败
-- 每一步都更新输入 Schema 指纹
-- 更新 `cmd/db-migrate/main_test.go` 中“只允许三个输入指纹”的断言
-- 迁移输入只读，输出临时库
-- 每一步提升 `schema.Version` 并重新冻结 `CanonicalSchemaHash`
+- 3.5.14a：`3.5.11 → 3.5.14a`，校验 `schema_version=3.5.11` / hash `e39e1197…`，新增 `source_host_caps` 并回填
+
+这一步同时校验：没有策略的 Source 必须进入报告并在运行时 fail closed，不能回退旧白名单。
+
+`copyAll` 不会自动生成 `source_realm_policy`；如果只复制旧表，升级后所有自定义 Host 都会认证失败。
+
+每一步都更新输入 Schema 指纹；`cmd/db-migrate/main_test.go` 中“只允许三个输入指纹”的断言必须同步更新。
+
+迁移输入只读，输出临时库；每一步提升 `schema.Version` 并重新冻结 `CanonicalSchemaHash`。
+
+事务边界必须分开验收：
+
+- 事务内：DDL、复制、回填、metadata、结构 Hash 验证、外键检查、完整性检查
+- `schema.Verify` 当前只接受 `*sql.DB`，必须新增 `VerifyTx(*sql.Tx)` 或等价接口
+- 事务提交后：关闭临时库、清理 sidecar
+- 文件发布：独立执行 `publishNoClobber`
+
+不能把文件系统原子发布写进 SQLite 事务承诺。
 
 迁移顺序：
 
@@ -1107,22 +1130,29 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 - 不发布目标文件
 - 不保留半迁移数据
 - 备份库和旧 `secret.key` 只作为灾难恢复，不作为常规回滚路径
+- 14a 开放流量前回滚 RPO=0；开放后恢复旧库会丢失迁移后的写入，不承诺 RPO=0；若要求 0，必须实现并实测 14a→3.5.11 反向迁移
 
 准确表述是：
 
-> 离线迁移 + 原子发布，失败不留半迁移状态。
+> 14a 的迁移验收要求“staging 单事务 + 文件原子发布”；两者分开验收。
 
-不要写成“单事务迁移”。当前 `db-migrate` 是多阶段提交：
+当前 `db-migrate` 是多阶段提交：
 
 - `EnsureFresh` 一次提交
 - `copyAll` 另一阶段
 - `finalizeTargetMeta` 再更新
 
-如果要求字面单事务，需要重构 `db-migrate`，这是额外工作，不能假设已经成立。
+14a 必须重构为目标临时库上的单事务：DDL、复制、Realm 回填、`backfillHostCaps`、metadata、结构 Hash 验证、外键/完整性检查全部在同一个 `BEGIN IMMEDIATE` 内；`schema.VerifyTx` 在事务内验证；提交后再独立 `publishNoClobber`。
+
+如果本轮不重构，只能按“离线迁移 + 原子发布”验收，不能宣称“单事务迁移”；这两种口径不能混写。
+
+`copyAll` 不能把 `source_host_caps` 当作旧表复制；它是新增表，复制后保持空表，必须由 `backfillHostCaps` 填充。
 
 3.5.14b 不改 Schema、不改 `schema_meta`，保证 3.5.14a 镜像可以接管回滚。
 
 ### 3.5.14b 只切换 `source_host_caps` 为权威读路径
+
+> **2026-11-17 冻结修订：** 本节候选准入、读路径和回滚边界以 `docs/3.5.14-freeze.md` 为准。
 
 **目标：** 让 `source_host_caps` 成为所有逻辑 Registry Host 的能力权威，并切换全部读路径；Docker Hub / GHCR 不再例外。
 
@@ -1158,12 +1188,17 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 ```text
 source.enabled
 AND source_host_caps.enabled
-AND source_host_caps.probe_status = 'Supported'
-AND source_host_caps.registry_cap = 1
+AND source_host_caps.effective_status = 'Supported'
 AND source_host_caps.registry_path_mode IS NOT EMPTY
-AND 健康状态允许
-AND 恢复状态有效
+AND Host 全局准入允许
+AND health / recovery 允许
+AND policy_exists(source_id, host)
+AND（Foreign Host）成功结论未过期
 ```
+
+`policy_exists` 对所有 Host 生效；Docker/GHCR 的 policy 在 14a 回填时补齐。`multi_origin_hosts` 只约束 Foreign Host，Docker/GHCR 不因未列入该白名单被排除。
+
+Docker/GHCR 不要求 `registry_host_recovery` 行；Foreign Host 的 TTL 只认 `registry_host_recovery.last_success_at`。
 
 探测四态：
 
@@ -1176,11 +1211,11 @@ AND 恢复状态有效
 
 规则：
 
-- `Inconclusive` 不得覆盖之前的 `Supported`
-- `Mismatch` 必须硬排除，不能按普通 Unsupported 重试
-- `last_supported_at` 保留最近一次有效能力结论
-- 候选准入必须同时满足 `probe_status='Supported'` 和 `registry_cap=1`
-- Docker/GHCR 行也必须满足同一映射，不允许只写 `docker_cap` / `ghcr_cap`
+- `Inconclusive` 不得覆盖之前的 `Supported` / `Unsupported`
+- `Mismatch` 必须硬排除，不能按普通 Unsupported 重试；只能管理员显式重置
+- `effective_status` 决定候选；`last_verdict` 只记录最近探测事实
+- Docker/GHCR 行也必须使用同一状态模型，不允许只写 `docker_cap` / `ghcr_cap`
+- 新增 Host 是 14b 的预期新增候选，必须显式列出，不能要求与 14a 全量 diff 为空
 
 #### 3.5.14b-C 必须修改的读路径
 
@@ -1201,6 +1236,8 @@ AND 恢复状态有效
 具体代码落点：
 
 - `internal/store/sources.go:147`：`ScopedHealthOf` 不能再 `JOIN sources src ON src.repo_host = g.host`，改为按 `z.scope` 直接关联 `registry_host_gen`
+- `internal/api/policy.go:65`：策略 Host 归属校验不能再比较 `src.RepoHost`，改为检查 `(source_id, host)` 是否存在 `source_host_caps` 行
+- `ListRealmPolicies` / `ListPolicyHosts`：不再通过 `sources.repo_host` 取 Host，改为按 caps 的 Host 集合
 - `internal/store/sources.go:244-254`：Docker / GHCR 候选查询不能再依赖 `repo_host` 和 `s.ghcr_prefix`，改为读 `source_host_caps` 的 `docker.io` / `ghcr.io` 行
 - `internal/store/host.go:462-464`：可以继续把 `docker.io` / `ghcr.io` 排除在 Foreign Host Probe 之外，但它们的能力行必须由 `SetCapsLive` 写入 `source_host_caps`
 - `internal/scheduler/scheduler.go:956`：GHCR 路径改写读 `source_host_caps.registry_prefix`，不再读 `sources.ghcr_prefix`
@@ -1246,6 +1283,9 @@ JOIN sources src ON src.repo_host = g.host
 - 迁移后 HUB/GHCR 标签不变
 - 旧单 Host Source 行为不变
 - 回滚演练通过
+- Source × Host 管理 API/UI 通过：新增、启停、删除（14b 禁止删原 `repo_host`）、重置 verdict
+- 春川多 Host 验收通过；关闭 K8S 不影响 Docker/GHCR
+- 性能退化不超过 `docs/3.5.14-freeze.md` 11.4 的阈值
 
 迁移测试必须包含：
 
@@ -1254,14 +1294,14 @@ JOIN sources src ON src.repo_host = g.host
 - 空 `repo_host` Source
 - 显式 GHCR Source
 - 有 `ghcr_prefix=0/1` 的 Source
-- `registry_cap=2` / `probe_status=Mismatch` 的 Source
+- `effective_status=Mismatch` 的 Source
 - `docker_cap=-1/0/1` 与 `ghcr_cap=-1/0/1` 的映射
 - 已过期探测成功记录
 - 旧代次健康记录
 - 有 recovery 行和无 recovery 行
-- 3.5.7 输入库的 `db-migrate` 迁移
+- 14a 已通过 3.5.7 输入库的 `db-migrate` 迁移；14b 复用其结果，不重复迁移
 - `backfillHostCaps` 前后行数和冲突校验
-- 迁移前后候选集 diff 为空
+- 逐 Host old/new 候选对比；旧 Host 无非预期差异，新增 Host 显式列出
 
 #### 3.5.14b-F 春川样本验收
 
@@ -1271,12 +1311,15 @@ JOIN sources src ON src.repo_host = g.host
 - 关闭春川 K8S 能力不影响 Docker / GHCR
 - Docker / GHCR / K8S / GCR 的健康、冷却、失败互不污染
 
-#### 3.5.14b-G 只读能力矩阵（P1）
+#### 3.5.14b-G Source × Host 管理与只读矩阵
 
-- UI 增加 Source × Host 的只读能力矩阵
-- 展示 `enabled`、`probe_status`、`registry_path_mode`、`last_supported_at`、`probe_error`
-- 只读，不提供手工改标签或手工改能力
-- 用于运维核对春川这类多 Host Source
+- UI 增加 Source × Host 能力矩阵，展示 `enabled`、`last_verdict`、`effective_status`、`registry_path_mode`、`blocked_reason`
+- `enabled` 可编辑；`effective`、探测结论、阻止原因只读
+- API 必须覆盖 `GET/POST /api/sources/{id}/hosts`、`PUT .../enabled`、`DELETE .../{host}`、`POST .../{host}/reset`
+- `AddSourceHost` 必须同时写 caps、policy、health/recovery 和审计
+- `SetSourceHostEnabled` 必须同步旧投影（`enabled ? cap : 0`）、审计和调度缓存失效
+- 14b 期间禁止删除 `host == repo_host`；原主 Host 的移除留到 14c 或走 `SetRepoHost` 迁移
+- 用于运维核对春川这类多 Host Source；14b-F 的 K8S 关闭必须走这个 API，不能靠改配置文件
 
 #### 3.5.14b-H 单轨与回滚
 
@@ -1311,6 +1354,72 @@ JOIN sources src ON src.repo_host = g.host
 - 不为单一 Source 写代码特判
 - 不在 3.5.14b 内做无前缀跨 Registry 自动匹配
 
+
+### 3.5.14c 旧 Registry 结构清理
+
+> **2026-11-17 冻结修订：** 本节以 `docs/3.5.14-freeze.md` 第 8 节为准。
+
+**目标：** 删除旧 Registry 能力字段、旧投影和 `repo_host` 业务依赖，完成单轨运行；不删除 `github_cap` / `git_cap` / `range_cap`。
+
+#### 3.5.14c-A 删除范围
+
+- `sources.repo_host`
+- `sources.registry_cap`
+- `sources.registry_path_mode`
+- `sources.registry_probe_at`
+- `sources.registry_probe_error`
+- `sources.docker_cap`
+- `sources.ghcr_cap`
+- `sources.ghcr_prefix`
+- 旧投影写入和旧读兼容代码
+
+保留 `github_cap`、`git_cap`、`range_cap`：它们代表 GitHub RAW / Release、Git smart HTTP、Range 分片，不是 Registry Host 能力。
+
+#### 3.5.14c-B Host 关系操作
+
+14c 不保留“主 Host”字段。Source 的 Host 集合完全由 `source_host_caps` 表达；UI/API 改为 Source × Host。
+
+`AddSourceHost` / `SetSourceHostEnabled` / `RemoveSourceHost` / `ResetSourceHostVerdict` 已在 14b 建立（见 3.5.14b-G），14c 只做：
+
+- 删除 `repo_host` 后，`RemoveSourceHost` 不再有“不能删原主 Host”的限制，任何 Host 都可移除。
+- `SetRepoHost` 及依赖 `repo_host` 的旧 API 一并删除。
+- 旧字段的 JSON/API 投影删除；UI 完全改为 Source × Host。
+
+事务语义沿用 14b：caps + policy + health/recovery + 审计必须同事务；`registry_host_gen` 是 Host 级全局代次，不随单 Source 的 Host 删除而删除。
+
+#### 3.5.14c-C SQLite 表重建
+
+14c 删列不能只改 Canonical DDL，必须按 SQLite 安全重建流程：
+
+1. 保存 `sources` 相关索引、触发器、视图定义。
+2. 按最终 Canonical 建新表。
+3. 复制保留列。
+4. 检查 `AUTOINCREMENT` / `sqlite_sequence`。
+5. 删旧表，重命名新表。
+6. 恢复索引、触发器、视图。
+7. 确认 `source_host_caps` 的外键仍指向重建后的 `sources`，必要时重建该外键。
+8. `PRAGMA foreign_key_check`。
+9. `PRAGMA integrity_check`。
+10. 校验最终 Canonical Hash。
+
+`PRAGMA foreign_keys` 必须在事务开始前按迁移流程设置；不能指望在事务中修改立即生效。
+
+#### 3.5.14c-D 回滚与 RPO
+
+| 时间区间 | 回滚方式 | RPO |
+|---|---|---|
+| 停服、迁移、隔离验收期间 | 恢复 14c 前 DB + 14b 镜像 | 0 |
+| 开放生产流量之后 | 不能直接恢复旧快照并宣称无损 | 需反向迁移或接受明确数据丢失窗口 |
+
+RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须实现并实测 14c→14b 反向迁移；不能用“有备份”代替证明。
+
+#### 3.5.14c-E 验收
+
+- `repo_host` 和旧 Registry 字段删除；`github_cap` / `git_cap` / `range_cap` 保留。
+- Source × Host API/UI 可用；per-host 启停生效且不影响其他 Host。
+- 表重建后 `foreign_key_check` / `integrity_check` / Canonical Hash 通过。
+- 停服期间回滚 RPO=0 演练通过；开放流量后的数据丢失窗口有书面确认。
+- 反向迁移若未实现，文档明确写“不承诺开放后 RPO=0”。
 
 ### 3.5.15 CredStore + 标准私有 Registry 认证
 
@@ -1371,7 +1480,7 @@ JOIN sources src ON src.repo_host = g.host
 
 依赖：
 
-- 公开竞速：3.5.11 + 3.5.14b
+- 公开竞速：3.5.11 + 3.5.14c
 - 私有竞速：额外依赖 3.5.15；使用 GitLab 专用凭据时再依赖 3.5.15a
 
 范围：
@@ -1411,7 +1520,7 @@ JOIN sources src ON src.repo_host = g.host
 | 3.5.4 B：多 Registry 正式启用 | 3.5.12（含原 3.5.13） | 合并验收：补验证集缺口 + 完成第一批 |
 | 3.5.4 C：Manifest star_race | 3.5.16 | 默认关闭，独立开关 |
 | 3.5.4 D：Blob 竞速 | 3.5.17 | 只评估，单独立项 |
-| 3.5.4 架构债：一源多 Host | 3.5.14a + 3.5.14b | 先回填投影，再切换权威读路径 |
+| 3.5.4 架构债：一源多 Host | 3.5.14a + 3.5.14b + 3.5.14c | 先回填投影，再切换权威读路径，最后删除旧字段 |
 | 3.5.10 Source Realm Draft | 3.5.11 | 3.5.10 已被标签修复占用 |
 
 ## 7. 版本门禁
@@ -1423,10 +1532,11 @@ JOIN sources src ON src.repo_host = g.host
 5. 3.5.14a 的 `backfillHostCaps` 未通过行数、冲突和双用途源校验前，不进入 14b。
 6. 3.5.14b 完成前，不为任何 Source 手工添加多 Host 标签。
 7. 3.5.14b 完成前，不把 Docker Hub / GHCR 的新旧能力模型混用。
-8. 3.5.15 完成前，不宣称支持私有 NVCR / 私有 ECR。
-9. 3.5.15a 完成前，不宣称支持私有 GitLab。
-10. 3.5.16 默认关闭，不能用全局 Hedge 隐式开启。
-11. 3.5.17 不是交付承诺，未评估通过不排期。
+8. 3.5.14c 完成前，不宣称 3.5.14 已完成零残留、单轨运行或旧结构清理。
+9. 3.5.15 完成前，不宣称支持私有 NVCR / 私有 ECR。
+10. 3.5.15a 完成前，不宣称支持私有 GitLab。
+11. 3.5.16 默认关闭，不能用全局 Hedge 隐式开启。
+12. 3.5.17 不是交付承诺，未评估通过不排期。
 
 ## 8. 回归门禁
 
@@ -1434,7 +1544,7 @@ JOIN sources src ON src.repo_host = g.host
 
 这不是“已知未关闭 P0”，而是后续版本的回归门禁。
 
-3.5.11、3.5.14b、3.5.16 合并前必须重新执行：
+3.5.11、3.5.14b、3.5.14c、3.5.16 合并前必须重新执行：
 
 - Source 切换版本一致性
 - 206 Content-Range 起点、总长度、Body 长度
@@ -1469,25 +1579,30 @@ JOIN sources src ON src.repo_host = g.host
 
 ### 已定
 
-1. 3.5.14 拆成 3.5.14a（回填 + 投影 + 新写路径）和 3.5.14b（只切权威读路径）。
+1. 3.5.14 拆成 3.5.14a（回填 + 投影 + 新写路径）、3.5.14b（只切权威读路径）和 3.5.14c（旧结构清理）；14a/14b/14c 是内部里程碑，最终发布 `v3.5.14`。
 2. 14a 的 `SetCapsLive` 和 `CommitHostProbe` 必须在同一事务内写 `source_host_caps` + 旧字段投影。
 3. 14b 只包含新读路径，不包含旧读路径、dual-read 开关或 feature flag；回滚靠重新部署 14a 镜像。
-4. 14a 与 14b 使用同一 Schema 版本；14b 不改表、不改 `schema_meta`。
-5. `probe_status` 冻结为四态：`Supported / Unsupported / Inconclusive / Mismatch`，并与 `registry_cap` 的 `1/0/-1/2` 一一对应。
-6. `Mismatch` 是硬排除，不按普通 Unsupported 的 6 小时周期重试。
+4. 14a 与 14b 使用同一 Schema 版本；14b 不改表、不改 `schema_meta`；14c 改 Schema 并单独验收。
+5. 状态模型冻结为 `last_verdict`（Supported / Unsupported / Inconclusive / Mismatch）+ `effective_status`（Unknown / Supported / Unsupported / Mismatch）；候选准入只看 `effective_status`。
+6. `Mismatch` 是硬排除，不按普通 Unsupported 的 6 小时周期重试；只能管理员显式重置后重探。
 7. `registry_prefix` 冻结为布尔，映射旧 `ghcr_prefix`，不做枚举。
 8. `source_realm_policy` 一行一个 `(source_id, host)`：`primary_realm` + `extra_realms` JSON（最多 3 个）+ 每个 Host 一个 `policy_gen`；不按 Realm 行分散 generation。
 9. GitLab PAT / Deploy Token 独立为 3.5.15a。
 10. 无公共 Source 的 Host 允许用受控 Source 故障边验收代码路径，但对外必须标记“Source 可用性阻塞”，不能宣称已有公共加速能力。
 11. 认证身份通过每次 attempt 的 request context 传递，不依赖静态 `adapter.Plan.SourceID`。
-12. 3.5.14a 的离线迁移必须新增 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
+12. 3.5.14a 的离线迁移走 `3.5.7 → 3.5.11 → 3.5.14a`；3.5.7→3.5.11 复用现有 `backfillPolicies`，新增 3.5.11→3.5.14a 的 `source_host_caps` 回填。
 13. 迁移采用临时库 + 原子发布；失败删除临时库和 sidecar，不保留半迁移状态；不宣称“单事务迁移”。
 14. 3.5.11 分 11a/11b/11c；**11c 原计划未实施，已并入 3.5.12 的 12c**；完成后 Source Realm 只保留 `source_realm_policy`，官方直连走独立 `OfficialPolicy`（不是 fallback）；运行时数据库写入单事务；Token Cache 版本化失效；Schema 迁移离线 + 原子发布；无旧 Realm fallback；Schema 回滚靠备份。
+15. 14a 的旧 Foreign 投影只对应原 `repo_host`；`docker.io`/`ghcr.io` 使用各自协议槽位；新增 Foreign Host 不覆盖旧字段。
+16. 14c 删除 `repo_host` 和旧 Registry 能力字段，不保留“主 Host”；`github_cap` / `git_cap` / `range_cap` 保留。
+17. 14c 开放生产流量前 RPO=0；开放后不承诺 RPO=0，除非实现并实测 14c→14b 反向迁移。
 
-### 仍待冻结
+### 仍需实测的证据项（不需要再拍板）
 
-1. `db-migrate` 的升级命令拆分：3.5.7→3.5.11 和 3.5.12→3.5.14 是新增独立命令，还是扩展 `migrate` 的 baseline 列表。
-2. `Mismatch` 是否允许手动重探，还是只能通过显式重置能力后重探。
-3. `source_host_caps` 的 `probe_status` 用 TEXT 还是整数编码；无论哪种，必须与 `registry_cap` 保持一一映射。
+1. 6 个双用途 Source 的 GHCR policy 能否生成；不能生成的进入 `policy_gaps`，对应 caps 行 `enabled=0`。
+2. GitLab / ECR 的隔离环境产品级 HostProbe、真实调度和 Digest 对照。
+3. cgr / asia-east1 的 per-host 与 host-prefix 完整尝试证据。
+4. 候选查询性能基线：P50 / P95 / P99、吞吐、错误率、SQL 次数。
+5. 14c 反向迁移是否实现；不实现就接受开放流量后的数据丢失窗口。
 
-在这些问题冻结前，3.5.14a 不进入实现。
+在这些证据项完成前，3.5.14a 不进入实现。

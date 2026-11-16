@@ -57,13 +57,12 @@ func (s *Server) policyItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		src, serr := s.st.GetSource(id)
-		if serr != nil {
+		if _, serr := s.st.GetSource(id); serr != nil {
 			writeJSON(w, 404, map[string]string{"error": "Source 不存在"})
 			return
 		}
-		if !strings.EqualFold(strings.TrimSpace(src.RepoHost), host) {
-			writeJSON(w, 400, map[string]string{"error": "host 与 Source 归属不一致"})
+		if _, herr := s.st.GetSourceHost(id, host); herr != nil {
+			writeJSON(w, 400, map[string]string{"error": "host 不属于该 Source"})
 			return
 		}
 	}
@@ -93,6 +92,7 @@ func (s *Server) policyItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
+		s.eng.Changed()
 		s.audit(r, "policy_update", strconv.FormatInt(id, 10), policyAuditDetail(host, old, in.PrimaryRealm, in.ExtraRealms), true)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	case http.MethodDelete:
@@ -105,6 +105,7 @@ func (s *Server) policyItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
+		s.eng.Changed()
 		s.audit(r, "policy_delete", strconv.FormatInt(id, 10), policyAuditDetail(host, old, "", nil), true)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:

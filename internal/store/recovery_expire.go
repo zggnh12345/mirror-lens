@@ -84,10 +84,11 @@ func (s *Store) MaterializeExpired(now time.Time) (n int, err error) {
 
 	rows, err := conn.QueryContext(ctx, `
 		SELECT r.source_id, r.scope, r.gen, r.last_probe_at, r.last_success_at,
-		       r.rec_failures, r.last_error, s.registry_cap
+		       r.rec_failures, r.last_error, 1
 		FROM registry_host_recovery r
 		JOIN sources s ON s.id = r.source_id
-		WHERE r.family='registry' AND r.state='ok' AND s.registry_cap=1
+		JOIN source_host_caps c ON c.source_id = r.source_id AND c.host = r.scope
+		WHERE r.family='registry' AND r.state='ok' AND c.enabled=1 AND c.effective_status='Supported'
 		  AND r.last_success_at > 0 AND r.last_success_at < ?
 		  AND s.status <> 'archived'`, cutoff)
 	if err != nil {

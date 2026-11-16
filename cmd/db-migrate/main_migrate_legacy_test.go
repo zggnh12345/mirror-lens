@@ -264,6 +264,22 @@ func compareLegacyTarget(t *testing.T, baseline, srcPath string, dst *sql.DB) {
 			}
 			continue
 		}
+		if name == "source_host_caps" {
+			// 3.5.14a 新表由 backfillHostCaps 填充，不是旧库复制。
+			n, _ := tableFingerprint(t, dst, name)
+			if n == 0 {
+				t.Fatal("source_host_caps 迁移后不应为空")
+			}
+			var orphans int
+			if err := dst.QueryRow(`SELECT count(*) FROM source_host_caps c
+				LEFT JOIN sources s ON s.id=c.source_id WHERE s.id IS NULL`).Scan(&orphans); err != nil {
+				t.Fatal(err)
+			}
+			if orphans != 0 {
+				t.Fatalf("source_host_caps 有 %d 条孤儿", orphans)
+			}
+			continue
+		}
 		n, _ := tableFingerprint(t, dst, name)
 		if n != 0 {
 			t.Fatalf("旧库没有的表 %s 迁移后应为空，实际 %d 行", name, n)
@@ -306,9 +322,12 @@ func checkLegacySources(t *testing.T, baseline string, src, dst *sql.DB) {
 	}
 	filtered := common[:0]
 	for _, c := range common {
-		if c != "registry_identity_state" {
-			filtered = append(filtered, c)
+		switch c {
+		case "registry_identity_state", "repo_host", "docker_cap", "ghcr_cap", "ghcr_prefix",
+			"registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error":
+			continue
 		}
+		filtered = append(filtered, c)
 	}
 	ns, hs := selectedFingerprint(t, src, "sources", filtered)
 	nd, hd := selectedFingerprint(t, dst, "sources", filtered)
@@ -325,14 +344,12 @@ func checkLegacySources(t *testing.T, baseline string, src, dst *sql.DB) {
 	}
 
 	type row struct {
-		id                            int64
-		baseURL, name                 string
-		createdAt                     int64
-		dockerCap, ghcrCap, githubCap int64
-		repoHost, pathMode, probeErr  string
-		registryCap, probeAt          int64
+		id            int64
+		baseURL, name string
+		createdAt     int64
+		githubCap     int64
 	}
-	rows, err := dst.Query(`SELECT id,base_url,name,created_at,docker_cap,ghcr_cap,github_cap,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error FROM sources ORDER BY id`)
+	rows, err := dst.Query(`SELECT id,base_url,name,created_at,github_cap FROM sources ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +357,7 @@ func checkLegacySources(t *testing.T, baseline string, src, dst *sql.DB) {
 	var got []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.baseURL, &r.name, &r.createdAt, &r.dockerCap, &r.ghcrCap, &r.githubCap, &r.repoHost, &r.registryCap, &r.pathMode, &r.probeAt, &r.probeErr); err != nil {
+		if err := rows.Scan(&r.id, &r.baseURL, &r.name, &r.createdAt, &r.githubCap); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, r)
@@ -349,14 +366,9 @@ func checkLegacySources(t *testing.T, baseline string, src, dst *sql.DB) {
 		t.Fatal(err)
 	}
 	want := []row{
-		{1, "https://docker.example/", "docker", 101, 1, -1, -1, "docker.io", "", "", -1, 0},
-		{2, "https://ghcr.example/", "ghcr", 102, 0, 1, -1, "ghcr.io", "", "", -1, 0},
-		{3, "https://github.example/", "github", 103, 0, 0, 1, "", "", "", -1, 0},
-	}
-	if baseline == "3.5.4" {
-		want[0] = row{1, "https://docker.example/", "docker", 101, 1, -1, -1, "docker.io", "v2", "", 1, 123}
-		want[1] = row{2, "https://ghcr.example/", "ghcr", 102, 0, 1, -1, "ghcr.io", "v2", "", 1, 124}
-		want[2] = row{3, "https://github.example/", "github", 103, 0, 0, 1, "", "", "", -1, 0}
+		{1, "https://docker.example/", "docker", 101, -1},
+		{2, "https://ghcr.example/", "ghcr", 102, -1},
+		{3, "https://github.example/", "github", 103, 1},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("sources 行数=%d，期望=%d", len(got), len(want))
@@ -364,6 +376,40 @@ func checkLegacySources(t *testing.T, baseline string, src, dst *sql.DB) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("sources 第 %d 行=%+v，期望=%+v", i+1, got[i], want[i])
+		}
+	}
+	type capRow struct {
+		id                int64
+		docker, ghcr, any int
+	}
+	var caps []capRow
+	crows, err := dst.Query(`SELECT source_id,
+		MAX(CASE WHEN host='docker.io' AND effective_status='Supported' THEN 1 ELSE 0 END),
+		MAX(CASE WHEN host='ghcr.io' AND effective_status='Supported' THEN 1 ELSE 0 END),
+		MAX(CASE WHEN host NOT IN ('docker.io','ghcr.io') THEN 1 ELSE 0 END)
+		FROM source_host_caps GROUP BY source_id ORDER BY source_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for crows.Next() {
+		var c capRow
+		if err := crows.Scan(&c.id, &c.docker, &c.ghcr, &c.any); err != nil {
+			crows.Close()
+			t.Fatal(err)
+		}
+		caps = append(caps, c)
+	}
+	crows.Close()
+	if err := crows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantCaps := []capRow{{1, 1, 0, 0}, {2, 0, 1, 0}, {3, 0, 0, 0}}
+	if len(caps) != len(wantCaps) {
+		t.Fatalf("caps 行数=%d，期望=%d", len(caps), len(wantCaps))
+	}
+	for i := range wantCaps {
+		if caps[i] != wantCaps[i] {
+			t.Fatalf("caps 第 %d 行=%+v，期望=%+v", i+1, caps[i], wantCaps[i])
 		}
 	}
 }

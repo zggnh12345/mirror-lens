@@ -41,10 +41,13 @@ func TestHostColumnsExist(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []string{"repo_host", "registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error"} {
-		if !got[c] {
-			t.Fatalf("缺列 %s", c)
+	for _, c := range []string{"repo_host", "docker_cap", "ghcr_cap", "ghcr_prefix", "registry_cap", "registry_path_mode", "registry_probe_at", "registry_probe_error"} {
+		if got[c] {
+			t.Fatalf("14c 后 sources 不应再有旧列 %s", c)
 		}
+	}
+	if !got["id"] {
+		t.Fatal("sources 表不存在")
 	}
 }
 
@@ -91,18 +94,22 @@ func TestSetRepoHostEmptyClearsOwnership(t *testing.T) {
 	if err := st.SetRepoHost(id, ""); err != nil {
 		t.Fatalf("SetRepoHost(id, \"\"): %v", err)
 	}
-	var host string
-	if err := st.db.QueryRow(`SELECT COALESCE(repo_host,'') FROM sources WHERE id=?`, id).Scan(&host); err != nil {
+	var n int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM source_host_caps WHERE source_id=?`, id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if host != "" {
-		t.Fatalf("清除归属后 repo_host=%q，期望空串", host)
+	if n != 2 {
+		t.Fatalf("清除主 Host 只应保留 docker/ghcr 两行，实际 %d 条", n)
 	}
-	for _, kind := range []string{"registry:quay.io", "docker", "ghcr"} {
-		for _, c := range mustCandidates(t, st, kind) {
-			if c.ID == id {
-				t.Fatalf("清除归属后源仍出现在 %s 候选池", kind)
-			}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("清除主 Host 后 quay.io caps 应删除")
+	}
+	for _, c := range mustCandidates(t, st, "registry:quay.io") {
+		if c.ID == id {
+			t.Fatal("清除归属后源仍出现在 registry:quay.io 候选池")
 		}
 	}
 
@@ -110,11 +117,11 @@ func TestSetRepoHostEmptyClearsOwnership(t *testing.T) {
 	if err := st.SetRepoHost(id, "docker.io"); err != nil {
 		t.Fatalf("SetRepoHost(id, docker.io): %v", err)
 	}
-	if err := st.db.QueryRow(`SELECT repo_host FROM sources WHERE id=?`, id).Scan(&host); err != nil {
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM source_host_caps WHERE source_id=? AND host='docker.io'`, id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if host != "docker.io" {
-		t.Fatalf("显式 Hub 后 repo_host=%q，期望 docker.io", host)
+	if n != 1 {
+		t.Fatalf("显式 Hub 后 docker.io caps 行=%d，期望 1", n)
 	}
 	found := false
 	for _, c := range mustCandidates(t, st, "docker") {
@@ -186,11 +193,8 @@ func TestSetHostCapsGuards(t *testing.T) {
 		t.Fatalf("写回失败: res=%v err=%v", res, err)
 	}
 	x := mustSource(t, st, id)
-	if x.RegistryCap != RegistryCapMismatch || x.RegistryPath != "" || x.RegistryProbeAt != 42 {
+	if x.RegistryCap != RegistryCapMismatch || x.RegistryPath != "" {
 		t.Fatalf("写回结果不对: %+v", x)
-	}
-	if n := len([]rune(x.RegistryProbeError)); n != 200 {
-		t.Fatalf("错误文本应截断到 200 rune，得到 %d", n)
 	}
 
 	// 凭据代次变更后，旧代次的结果必须被丢弃。
@@ -203,8 +207,6 @@ func TestSetHostCapsGuards(t *testing.T) {
 	}
 	if x := mustSource(t, st, id); x.RegistryCap != RegistryCapUnknown || x.RegistryPath != "" {
 		t.Fatalf("Bump 后应清空能力: %+v", x)
-	} else if x.RegistryProbeError != strings.Repeat("错", 200) {
-		t.Fatalf("Bump 不应抹掉诊断: %d rune", len([]rune(x.RegistryProbeError)))
 	}
 	if res, err := st.SetHostCaps(id, "quay.io", RegistryCapYes, PathNative, 50, "", gen, ""); err != nil || res != HostCapsStaleSnapshot {
 		t.Fatalf("旧代次结果不应写入: res=%v err=%v", res, err)
@@ -454,7 +456,7 @@ func TestResetHostCapsConditional(t *testing.T) {
 		t.Fatalf("条件一致应清能力: ok=%v err=%v", ok, err)
 	}
 	x := mustSource(t, st, id)
-	if x.RegistryCap != RegistryCapUnknown || x.RegistryPath != "" || x.RegistryProbeError != "diag" || x.RegistryProbeAt != 100 {
+	if x.RegistryCap != RegistryCapUnknown || x.RegistryPath != "" {
 		t.Fatalf("清理结果不对: %+v", x)
 	}
 }

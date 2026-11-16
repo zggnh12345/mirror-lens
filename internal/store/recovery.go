@@ -58,8 +58,7 @@ func (s *Store) RecoveryState(sourceID int64, family, scope string) (RecoveryVie
 		       r.rec_failures, r.last_error, r.updated_at
 		FROM registry_host_recovery r
 		JOIN sources s ON s.id = r.source_id
-		WHERE r.source_id=? AND r.family=? AND r.scope=?
-		  AND s.repo_host=?`, sourceID, family, norm, norm).
+		WHERE r.source_id=? AND r.family=? AND r.scope=?`, sourceID, family, norm).
 		Scan(&v.SourceID, &v.Family, &v.Scope, &v.Gen, &v.State,
 			&v.LastProbeAt, &v.LastSuccessAt, &v.NextProbeAt,
 			&v.RecFailures, &v.LastError, &v.UpdatedAt)

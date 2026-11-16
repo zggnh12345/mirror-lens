@@ -95,7 +95,7 @@ func TestHostProbeRetryCASRejects(t *testing.T) {
 			}
 		}},
 		{name: "Host 已换归属", mutate: func(t *testing.T, st *Store, id, gen int64) {
-			if _, err := st.db.Exec(`UPDATE sources SET repo_host='ghcr.io' WHERE id=?`, id); err != nil {
+			if _, err := st.db.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host='quay.io'`, id); err != nil {
 				t.Fatal(err)
 			}
 		}},

@@ -45,6 +45,8 @@ type Source struct {
 	// 信任标记：勾上后私有请求（带 PAT）会发给这个源，多站竞速。
 	Trusted bool `json:"trusted"`
 
+	// 以下 Registry 字段均为 source_host_caps 的派生 JSON，不落库；
+	// 14c 起唯一持久化事实只有 source_host_caps。
 	DockerCap int `json:"docker_cap"`
 	GithubCap int `json:"github_cap"`
 	// GhcrCap 单独记：ghcr.io 的镜像源（ghcr.nju.edu.cn 等）只代 ghcr，
@@ -56,21 +58,21 @@ type Source struct {
 	// 探测时两种都试，据此写回；调度回源时按它拼路径。
 	GhcrPrefix bool `json:"ghcr_prefix"`
 
-	// RepoHost 是该源归属的 Registry Host（"": 无 Registry 归属）。
-	// Docker Hub 必须显式落 "docker.io"；3.5.0 起一个源只服务一个 Registry。
+	// RepoHost 是兼容展示用的主 Host（由 caps 中首个 Foreign Host 派生）；
+	// 14c 起一个源可以同时有多个 Host，真实关系以 Hosts/source_host_caps 为准。
 	RepoHost string `json:"repo_host"`
-	// RegistryCap 是该源对 RepoHost 的能力三态（0..2 见 store 常量），
-	// 与 docker_cap/ghcr_cap 并行存在：Hub 与 ghcr 仍以旧列权威，
-	// 新 Host 只认这两列。
+	// RegistryCap 是该源对 RepoHost 的能力三态派生值，不落库。
 	RegistryCap  int    `json:"registry_cap"`
 	RegistryPath string `json:"registry_path_mode"` // native | host_prefix
 	// RegistryProbeAt/RegistryProbeError 只由独立 Host Probe 写入，
 	// 不得混进 probe_at（后者是旧协议族探测的字段）。
 	RegistryProbeAt    int64  `json:"registry_probe_at"`
 	RegistryProbeError string `json:"registry_probe_error"`
-	// RegistryIdentity 是派生值，不落库：repo_host 非空即 identified；
+	// Hosts 是 14c 的 Source × Host 能力矩阵；旧字段只为 UI 兼容派生。
+	Hosts []SourceHost `json:"hosts,omitempty"`
+	// RegistryIdentity 是派生值，不落库：存在 Registry Host 即 identified；
 	// 空 Host + GitHub 能力为 not_applicable；其余空 Host 为 unclassified。
-	// 保留 JSON 字段是为了 API/UI 兼容，但唯一持久化事实是 repo_host。
+	// 保留 JSON 字段是为了 API/UI 兼容，真实事实在 source_host_caps。
 	RegistryIdentity string `json:"registry_identity_state"`
 	// GitCap 单独记：前缀代理能代 raw/release，不代表支持 git smart HTTP。
 	// 默认 0（不确定），实测通过后置 1。
@@ -147,6 +149,9 @@ type Check struct {
 	HTTPCode  int    `json:"http_code"`
 	Error     string `json:"error"`
 }
+
+// DB 仅用于测试夹具和离线工具访问底层连接；业务代码不要绕过 Store 方法。
+func (s *Store) DB() *sql.DB { return s.db }
 
 type Store struct {
 	db *sql.DB
@@ -230,15 +235,14 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-const srcCols = `id,base_url,name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,ghcr_prefix,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted,repo_host,registry_cap,registry_path_mode,registry_probe_at,registry_probe_error`
+const srcCols = `id,base_url,name,origin,enabled,status,note,github_cap,git_cap,preferred,status_at,status_reason,probe_at,created_at,site_name,group_id,trusted`
 
 const checkCols = `id,source_id,kind,ts,tier,ok,latency_ms,speed_kbps,digest,digest_ok,blob_ok,ttfb_ms,tls_ok,cert_days,http_code,error`
 
 func scanSource(sc interface{ Scan(...any) error }) (Source, error) {
 	var x Source
 	err := sc.Scan(&x.ID, &x.BaseURL, &x.Name, &x.Origin, &x.Enabled, &x.Status, &x.Note,
-		&x.DockerCap, &x.GithubCap, &x.GhcrCap, &x.GhcrPrefix, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted,
-		&x.RepoHost, &x.RegistryCap, &x.RegistryPath, &x.RegistryProbeAt, &x.RegistryProbeError)
+		&x.GithubCap, &x.GitCap, &x.Preferred, &x.StatusAt, &x.StatusReason, &x.ProbeAt, &x.CreatedAt, &x.SiteName, &x.GroupID, &x.Trusted)
 	x.RegistryIdentity = deriveRegistryIdentity(x)
 	return x, err
 }
@@ -271,6 +275,9 @@ func (s *Store) ListSources() ([]Source, error) {
 		out = append(out, x)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachSourceCaps(out); err != nil {
 		return nil, err
 	}
 	since := time.Now().Add(-24 * time.Hour).Unix()
@@ -429,7 +436,11 @@ func (s *Store) GetSource(id int64) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &x, nil
+	list := []Source{x}
+	if err := s.attachSourceCaps(list); err != nil {
+		return nil, err
+	}
+	return &list[0], nil
 }
 
 func (s *Store) ByURL(baseURL string) (*Source, error) {
@@ -437,7 +448,11 @@ func (s *Store) ByURL(baseURL string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &x, nil
+	list := []Source{x}
+	if err := s.attachSourceCaps(list); err != nil {
+		return nil, err
+	}
+	return &list[0], nil
 }
 
 func (s *Store) AddSource(x Source) (int64, error) {
@@ -477,8 +492,23 @@ func (s *Store) AddSource(x Source) (int64, error) {
 		return 0, err
 	}
 	x.RepoHost = host
+	if host == "docker.io" && x.DockerCap == RegistryCapUnknown {
+		x.DockerCap = RegistryCapYes
+	}
+	if host == "ghcr.io" {
+		if x.GhcrCap == RegistryCapUnknown {
+			x.GhcrCap = RegistryCapYes
+		}
+		if x.DockerCap == RegistryCapUnknown {
+			x.DockerCap = RegistryCapNo
+		}
+	}
 	if x.RegistryCap == 0 {
 		x.RegistryCap = CapUnknown
+	}
+	if x.RegistryCap == RegistryCapYes && x.RegistryPath == "" {
+		// 旧调用方只给 cap 不给 path；AddSource 的兼容默认是 native。
+		x.RegistryPath = PathNative
 	}
 	if x.StatusAt == 0 {
 		x.StatusAt = x.CreatedAt
@@ -490,9 +520,9 @@ func (s *Store) AddSource(x Source) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,docker_cap,github_cap,ghcr_cap,git_cap,preferred,status_at,created_at,repo_host,registry_cap,registry_path_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.DockerCap, x.GithubCap, x.GhcrCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt, x.RepoHost, x.RegistryCap, x.RegistryPath)
+	res, err := tx.Exec(`INSERT OR IGNORE INTO sources(base_url,name,site_name,origin,enabled,status,note,github_cap,git_cap,preferred,status_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		x.BaseURL, x.Name, x.SiteName, x.Origin, x.Enabled, x.Status, x.Note, x.GithubCap, x.GitCap, x.Preferred, x.StatusAt, x.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -525,14 +555,53 @@ ON CONFLICT(source_id, family, scope) DO UPDATE SET
 	// 新源立即建立初始 Realm 策略；策略、源、事件必须同一事务。
 	// 未知自定义 Host 也允许新源使用自己的 BaseURL origin，避免新源一创建
 	// 就永远 503；旧库迁移走更严格的 policySeedForSource(..., false)。
+	// 3.5.14a：一个 Source 可能有 Docker/GHCR/Foreign 多个 Host，每个
+	// Supported 能力行都必须有对应策略，不能只给 repo_host 建。
+	// 每个实际落 caps 的 Host 都要有策略：能力可能从 Unknown 被后续探测
+	// 改成 Supported，若那时才补策略，SetCapsLive 会留下「Supported 但无策略」
+	// 的不可调度状态。Docker/GHCR 的 caps 行始终会建，所以策略也始终建。
+	policyHosts := map[string]bool{"docker.io": true, "ghcr.io": true}
 	if x.RepoHost != "" {
-		if primary, extra, ok := policySeedForSource(x.BaseURL, x.RepoHost, true); ok {
-			if err := setRealmPolicyTx(tx, id, x.RepoHost, primary, extra, false); err != nil {
+		policyHosts[x.RepoHost] = true
+	}
+	for ph := range policyHosts {
+		if primary, extra, ok := policySeedForSource(x.BaseURL, ph, true); ok {
+			if err := setRealmPolicyTx(tx, id, ph, primary, extra, false); err != nil {
 				return 0, err
 			}
-			if err := recordPolicyChangeTx(tx, id); err != nil {
-				return 0, err
-			}
+		}
+	}
+	if err := recordPolicyChangeTx(tx, id); err != nil {
+		return 0, err
+	}
+	// 3.5.14a：新源同时建立 Docker/GHCR/Foreign 的能力行；
+	// 14c 起不再写任何旧 Registry 列。
+	for _, h := range []struct {
+		host string
+		cap  int
+		path string
+		pre  int
+	}{
+		{"docker.io", x.DockerCap, PathNative, 0},
+		{"ghcr.io", x.GhcrCap, PathNative, boolToInt(x.GhcrPrefix)},
+	} {
+		last, effective := verdictForCap(h.cap)
+		mode := ""
+		if effective == HostStatusSupported {
+			mode = h.path
+		}
+		if err := upsertHostCapsTx(tx, id, h.host, last, effective, mode, h.pre, 1); err != nil {
+			return 0, err
+		}
+	}
+	if x.RepoHost != "" && x.RepoHost != "docker.io" && x.RepoHost != "ghcr.io" {
+		last, effective := verdictForCap(x.RegistryCap)
+		mode := ""
+		if effective == HostStatusSupported {
+			mode = x.RegistryPath
+		}
+		if err := upsertHostCapsTx(tx, id, x.RepoHost, last, effective, mode, 0, 1); err != nil {
+			return 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -618,7 +687,7 @@ SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, time.Now().Unix(),
 }
 
 func (s *Store) SetCaps(id int64, docker, github, ghcr int) error {
-	_, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?, ghcr_cap=? WHERE id=?`, docker, github, ghcr, id)
+	_, err := s.SetCapsLive(id, docker, github, ghcr, false)
 	return err
 }
 
@@ -630,14 +699,102 @@ func (s *Store) SetStatus(id int64, status string) error {
 // 返回是否真的写入。
 // 探测发起到写回有几十秒，用户可能刚归档该源；把「状态仍是活的」并进
 // UPDATE，由数据库保证不覆盖人工决定。
-func (s *Store) SetCapsLive(id int64, docker, github, ghcr int, ghcrPrefix bool) (bool, error) {
-	res, err := s.db.Exec(`UPDATE sources SET docker_cap=?, github_cap=?, ghcr_cap=?, ghcr_prefix=?
-		WHERE id=? AND status<>'archived'`, docker, github, ghcr, ghcrPrefix, id)
+// upsertHostCapsConn 与 upsertHostCapsTx 同义，供 BEGIN IMMEDIATE 的 *sql.Conn 使用。
+func upsertHostCapsConn(ctx context.Context, conn *sql.Conn, sourceID int64, host, last, effective, pathMode string, prefix, enabled int) error {
+	_, err := conn.ExecContext(ctx, `INSERT INTO source_host_caps
+(source_id,host,enabled,last_verdict,effective_status,registry_path_mode,registry_prefix)
+VALUES(?,?,?,?,?,?,?)
+ON CONFLICT(source_id,host) DO UPDATE SET
+  last_verdict=excluded.last_verdict,
+  effective_status=excluded.effective_status,
+  registry_path_mode=excluded.registry_path_mode,
+  registry_prefix=excluded.registry_prefix`,
+		sourceID, host, enabled, last, effective, pathMode, prefix)
+	return err
+}
+
+func (s *Store) SetCapsLive(id int64, docker, github, ghcr int, ghcrPrefix bool, policyGens ...map[string]int64) (bool, error) {
+	var gens map[string]int64
+	if len(policyGens) > 0 {
+		gens = policyGens[0]
+	}
+	ctx := context.Background()
+	conn, err := beginImmediate(ctx, s.db)
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	defer conn.Close()
+	committed := false
+	defer func() {
+		if !committed {
+			rollbackConn(ctx, conn)
+		}
+	}()
+
+	var status string
+	if err := conn.QueryRowContext(ctx, `SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if status == "archived" {
+		return false, nil
+	}
+
+	for _, x := range []struct {
+		host   string
+		cap    int
+		prefix int
+	}{
+		{"docker.io", docker, 0},
+		{"ghcr.io", ghcr, boolToInt(ghcrPrefix)},
+	} {
+		// 只更新已存在且 enabled=1 的 caps 行：管理员 RemoveSourceHost 删除
+		// docker/ghcr 后，常规探测不得复活；停用的 Host 也不得被旧写路径
+		// 改回 Supported。14c 的 AddSource/迁移都会建行。
+		var enabled int
+		if err := conn.QueryRowContext(ctx, `SELECT enabled FROM source_host_caps WHERE source_id=? AND host=?`, id, x.host).Scan(&enabled); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return false, err
+		}
+		if enabled == 0 {
+			continue
+		}
+		// policy_gen 是策略/重置的探测 epoch。探测发起后策略被改过，
+		// 旧结论不能覆盖 SetRealmPolicy 写入的 Unknown。
+		if gens != nil {
+			var pg int64
+			if err := conn.QueryRowContext(ctx, `SELECT COALESCE(policy_gen,0) FROM source_realm_policy WHERE source_id=? AND host=?`, id, x.host).Scan(&pg); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return false, err
+			}
+			if want, ok := gens[x.host]; !ok || want != pg {
+				continue
+			}
+		}
+		last, effective := verdictForCap(x.cap)
+		pathMode := ""
+		if effective == HostStatusSupported {
+			pathMode = PathNative
+		}
+		if err := upsertHostCapsConn(ctx, conn, id, x.host, last, effective, pathMode, x.prefix, 1); err != nil {
+			return false, err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE sources SET github_cap=? WHERE id=? AND status<>'archived'`,
+		github, id); err != nil {
+		return false, err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return false, err
+	}
+	committed = true
+	return true, nil
 }
 
 // SetRangeCap 记一次 Range 预检结论：1 支持分片，0 不支持（整层吐）。
@@ -688,6 +845,28 @@ func (s *Store) SetStatusWhy(id int64, status, reason string) error {
 		if _, err := tx.Exec(`UPDATE source_realm_policy
 SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, now, id); err != nil {
 			return err
+		}
+		// 归档期间 MaterializeExpired 会跳过该源，Foreign Host 的
+		// last_success_at/ok 会原样保留；恢复时只重启 Docker/GHCR/GitHub
+		// 的 RunSource，不会重探 Foreign Host。因此恢复必须把所有 caps
+		// 结论、scoped 健康、协议健康和 recovery 一起清零，否则归档前
+		// 的 Foreign 证据会直接重新进候选池。
+		if old == "archived" {
+			if _, err := tx.Exec(`UPDATE source_host_caps
+SET effective_status='Unknown', registry_path_mode='' WHERE source_id=?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM source_health_scope WHERE source_id=?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM source_health WHERE source_id=?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE registry_host_recovery
+SET state='initial', next_probe_at=?, rec_failures=0, retry_failures=0, last_error='', updated_at=?
+WHERE source_id=? AND family='registry'`, now, now, id); err != nil {
+				return err
+			}
 		}
 		if err := recordPolicyChangeTx(tx, id); err != nil {
 			return err
@@ -809,25 +988,53 @@ func (s *Store) CleanupArchived(before int64) (int64, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	var n int64
 	for _, id := range ids {
-		if err := s.DeleteSource(id); err != nil {
+		// 读后删的窗口：恢复操作可能已把 status 改回 pending，必须在
+		// 同一事务里重新确认 archived，避免误删刚恢复的源。
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return n, err
+		}
+		if status != "archived" {
+			continue
+		}
+		if err := deleteSourceRows(tx, id); err != nil {
 			return n, err
 		}
 		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return n, nil
 }
 
 func (s *Store) DeleteSource(id int64) error {
-	// 这些语句必须一起成功或一起失败：删一半会留下指向不存在源的检查记录，
-	// 面板上出现「幽灵源」，再删一次也清不掉。
-	// source_health_archive 与 blob_integrity_failures 的 source_id 没有外键级联，必须显式删。
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := deleteSourceRows(tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteSourceRows 在调用方事务内删除源及无外键/老库未开外键的附属行。
+func deleteSourceRows(tx *sql.Tx, id int64) error {
+	// 这些语句必须一起成功或一起失败：删一半会留下指向不存在源的检查记录，
+	// 面板上出现「幽灵源」，再删一次也清不掉。
+	// source_health_archive 与 blob_integrity_failures 的 source_id 没有外键级联，必须显式删。
 	// source_events 没建外键要显式清；checks 有 CASCADE，但老库可能没开
 	// foreign_keys，也一并清掉，不留孤儿。
 	for _, q := range []string{
@@ -844,7 +1051,7 @@ func (s *Store) DeleteSource(id int64) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) AddCheck(c Check) error {
@@ -967,7 +1174,13 @@ func (s *Store) EnabledSources() ([]Source, error) {
 		}
 		out = append(out, x)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachSourceCaps(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) Count() (int, error) {

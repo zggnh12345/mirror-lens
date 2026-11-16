@@ -125,13 +125,48 @@ func (s *Store) SetRealmPolicy(sourceID int64, rawHost, primary string, extra []
 	}
 	defer tx.Rollback()
 	var one int
-	if err := tx.QueryRow(`SELECT 1 FROM sources WHERE id=?`, sourceID).Scan(&one); err != nil {
+	var status string
+	if err := tx.QueryRow(`SELECT 1, status FROM sources WHERE id=?`, sourceID).Scan(&one, &status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSourceNotFound
 		}
 		return err
 	}
+	if status == "archived" {
+		return ErrArchived
+	}
+	if err := tx.QueryRow(`SELECT 1 FROM source_host_caps WHERE source_id=? AND host=?`, sourceID, host).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrHostCapsNotFound
+		}
+		return err
+	}
 	if err := setRealmPolicyTx(tx, sourceID, host, primary, extra, true); err != nil {
+		return err
+	}
+	// 认证 Realm 变了，旧能力结论不再可信：清结论、清当前代 scoped 失败，
+	// 让下一轮探测重新验证；诊断保留为历史事实。
+	now := time.Now().Unix()
+	if _, err := tx.Exec(`UPDATE source_host_caps SET enabled=1, effective_status=?, registry_path_mode=''
+		WHERE source_id=? AND host=?`, HostStatusUnknown, sourceID, host); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM source_health_scope
+		WHERE source_id=? AND family='registry' AND scope=?`, sourceID, host); err != nil {
+		return err
+	}
+	if host == "docker.io" || host == "ghcr.io" {
+		fam := "docker"
+		if host == "ghcr.io" {
+			fam = "ghcr"
+		}
+		if _, err := tx.Exec(`DELETE FROM source_health WHERE source_id=? AND family=?`, sourceID, fam); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE registry_host_recovery
+		SET state='initial', next_probe_at=?, rec_failures=0, retry_failures=0, last_error='', updated_at=?
+		WHERE source_id=? AND family='registry' AND scope=?`, now, now, sourceID, host); err != nil {
 		return err
 	}
 	if err := recordPolicyChangeTx(tx, sourceID); err != nil {
@@ -360,12 +395,13 @@ func (s *Store) ListRealmPolicies(rawHost string) ([]PolicyListItem, error) {
 	if host == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.repo_host, s.enabled, s.status,
-		s.registry_cap, s.registry_path_mode,
+	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, c.host, s.enabled, s.status,
+		c.effective_status, c.registry_path_mode,
 		p.primary_realm, p.extra_realms, p.policy_gen, p.updated_at
-		FROM sources s
-		LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=s.repo_host
-		WHERE s.repo_host=? AND s.status<>'archived'
+		FROM source_host_caps c
+		JOIN sources s ON s.id=c.source_id
+		LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=c.host
+		WHERE c.host=? AND s.status<>'archived'
 		ORDER BY s.id`, host)
 	if err != nil {
 		return nil, err
@@ -376,10 +412,12 @@ func (s *Store) ListRealmPolicies(rawHost string) ([]PolicyListItem, error) {
 		var it PolicyListItem
 		var primary, extra sql.NullString
 		var gen, updated sql.NullInt64
+		var status string
 		if err := rows.Scan(&it.SourceID, &it.Name, &it.BaseURL, &it.RepoHost, &it.Enabled, &it.Status,
-			&it.RegistryCap, &it.RegistryPath, &primary, &extra, &gen, &updated); err != nil {
+			&status, &it.RegistryPath, &primary, &extra, &gen, &updated); err != nil {
 			return nil, err
 		}
+		it.RegistryCap = capForStatus(status)
 		if primary.Valid {
 			extras, err := parseExtraRealms(extra.String)
 			if err != nil {
@@ -404,13 +442,14 @@ type PolicyHostSummary struct {
 
 // ListPolicyHosts 汇总当前有 Source 归属的 Host。
 func (s *Store) ListPolicyHosts() ([]PolicyHostSummary, error) {
-	rows, err := s.db.Query(`SELECT s.repo_host,
+	rows, err := s.db.Query(`SELECT c.host,
 		COUNT(*),
 		SUM(CASE WHEN p.source_id IS NULL THEN 0 ELSE 1 END)
-		FROM sources s
-		LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=s.repo_host
-		WHERE s.repo_host<>'' AND s.status<>'archived'
-		GROUP BY s.repo_host ORDER BY s.repo_host`)
+		FROM source_host_caps c
+		JOIN sources s ON s.id=c.source_id
+		LEFT JOIN source_realm_policy p ON p.source_id=c.source_id AND p.host=c.host
+		WHERE s.status<>'archived'
+		GROUP BY c.host ORDER BY c.host`)
 	if err != nil {
 		return nil, err
 	}

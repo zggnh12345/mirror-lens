@@ -97,7 +97,11 @@ func TestHostProbeRunnerCommitsDiagnostics(t *testing.T) {
 		t.Fatalf("能力未写入: %+v", x)
 	}
 	var d probe.Diagnostics
-	raw := x.RegistryProbeError
+	var raw string
+	if err := f.st.DB().QueryRow(`SELECT COALESCE(diagnostics,'') FROM source_host_caps
+		WHERE source_id=? AND host='quay.io'`, f.srcID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		t.Fatalf("诊断应为完整 JSON: %v (%q)", err, raw)
 	}
@@ -220,6 +224,10 @@ func TestReconcileReposClearsChangedRepo(t *testing.T) {
 		if err != nil || res != store.HostCapsCommitted {
 			t.Fatalf("seed: %v %v", res, err)
 		}
+		if _, err := f.st.DB().Exec(`UPDATE source_host_caps SET diagnostics=? WHERE source_id=? AND host='quay.io'`,
+			note(repo), f.srcID); err != nil {
+			t.Fatalf("seed diagnostics: %v", err)
+		}
 	}
 
 	t.Run("changed", func(t *testing.T) {
@@ -234,8 +242,13 @@ func TestReconcileReposClearsChangedRepo(t *testing.T) {
 		if x.RegistryCap != store.RegistryCapUnknown || x.RegistryPath != "" {
 			t.Fatalf("旧仓库结论应失效: %+v", x)
 		}
-		if x.RegistryProbeError != note("old/repo") {
-			t.Fatalf("诊断不应被清掉: %q", x.RegistryProbeError)
+		var got string
+		if err := f.st.DB().QueryRow(`SELECT COALESCE(diagnostics,'') FROM source_host_caps
+			WHERE source_id=? AND host='quay.io'`, f.srcID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != note("old/repo") {
+			t.Fatalf("诊断不应被清掉: %q", got)
 		}
 	})
 
@@ -350,6 +363,10 @@ func TestReconcileReposClearsUnverifiableDiagnostics(t *testing.T) {
 			if err != nil || res != store.HostCapsCommitted {
 				t.Fatalf("seed: %v %v", res, err)
 			}
+			if _, err := f.st.DB().Exec(`UPDATE source_host_caps SET diagnostics=? WHERE source_id=? AND host='quay.io'`,
+				note, f.srcID); err != nil {
+				t.Fatalf("seed diagnostics: %v", err)
+			}
 			r := NewHostProbeRunner(HostProbeOptions{
 				Store: f.st, Creds: f.creds, Now: func() time.Time { return f.now },
 				Repos: map[string]string{"quay.io": "prometheus/node-exporter"},
@@ -359,8 +376,13 @@ func TestReconcileReposClearsUnverifiableDiagnostics(t *testing.T) {
 			if x.RegistryCap != store.RegistryCapUnknown {
 				t.Fatalf("无法核实仓库的诊断应清能力: %+v", x)
 			}
-			if x.RegistryProbeError != note {
-				t.Fatalf("诊断应保留")
+			var got string
+			if err := f.st.DB().QueryRow(`SELECT COALESCE(diagnostics,'') FROM source_host_caps
+				WHERE source_id=? AND host='quay.io'`, f.srcID).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != note {
+				t.Fatalf("诊断应保留，实际 %q", got)
 			}
 		})
 	}

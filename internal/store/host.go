@@ -79,80 +79,93 @@ func (s *Store) SetRepoHost(id int64, rawHost string) error {
 	if err != nil {
 		return err
 	}
-	// 空 Host 是“清除 Registry 归属”，不是“选择 Docker Hub”。
-	// 显式选择 Hub 必须传 "docker.io"；这里不做空串到 Hub 的兼容映射，
-	// 否则同一个入口同时承担设置 Hub 与清除归属两种职责。
 	return s.withSourceLive(id, func(tx *sql.Tx) error {
-		var oldHost, baseURL string
-		if err := tx.QueryRow(`SELECT COALESCE(repo_host,''), base_url FROM sources WHERE id=?`, id).
-			Scan(&oldHost, &baseURL); err != nil {
+		var baseURL string
+		if err := tx.QueryRow(`SELECT base_url FROM sources WHERE id=?`, id).Scan(&baseURL); err != nil {
 			return err
 		}
-
-		// 旧策略按 (source_id, host) 精确删除，不按 host 全局删。
-		// 同 Host 重设时保留行并由下面的 upsert 递增 policy_gen，避免 generation 回退。
-		if oldHost != "" && oldHost != host {
-			if _, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=? AND host=?`, id, oldHost); err != nil {
+		if host == "" {
+			if _, err := tx.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io')`, id); err != nil {
 				return err
 			}
+			if _, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io')`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM source_health_scope WHERE source_id=? AND family='registry' AND scope NOT IN ('docker.io','ghcr.io')`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM registry_host_recovery WHERE source_id=? AND family='registry' AND scope NOT IN ('docker.io','ghcr.io')`, id); err != nil {
+				return err
+			}
+			return recordPolicyChangeTx(tx, id)
 		}
-
-		// 旧 scope 的行按 (source_id, 'registry', oldHost) 精确删除，不按
-		// host 全局删——同 Host 上的其他源不受影响。
-		if _, err := tx.Exec(`DELETE FROM source_health_scope
-WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
+		if _, err := tx.Exec(`DELETE FROM source_host_caps WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io') AND host<>?`, id, host); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM registry_host_recovery
-WHERE source_id=? AND family='registry' AND scope=?`, id, oldHost); err != nil {
+		if _, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=? AND host NOT IN ('docker.io','ghcr.io') AND host<>?`, id, host); err != nil {
 			return err
 		}
-
-		if _, err := tx.Exec(`UPDATE sources
-SET repo_host=?, registry_cap=?, registry_path_mode='', registry_probe_at=0, registry_probe_error=''
-WHERE id=?`, host, RegistryCapUnknown, id); err != nil {
+		// 归属切换后，新 Host 也不能继承旧的 scoped 失败/恢复状态；
+		// docker/ghcr 没有 Host 探测，保留它们的行。
+		if _, err := tx.Exec(`DELETE FROM source_health_scope WHERE source_id=? AND family='registry' AND scope NOT IN ('docker.io','ghcr.io')`, id); err != nil {
 			return err
 		}
-
-		// 新 Host 的策略与源归属在同一事务完成。
-		// 同 Host 重设时保留管理员配置的策略，只递增 generation 使旧 Token 失效；
-		// 用种子重新 upsert 会把自定义 primary/extra 悄悄覆盖掉。
-		if host != "" {
-			if oldHost == host {
-				res, err := tx.Exec(`UPDATE source_realm_policy
+		if _, err := tx.Exec(`DELETE FROM registry_host_recovery WHERE source_id=? AND family='registry' AND scope NOT IN ('docker.io','ghcr.io')`, id); err != nil {
+			return err
+		}
+		if host == "docker.io" || host == "ghcr.io" {
+			fam := "docker"
+			if host == "ghcr.io" {
+				fam = "ghcr"
+			}
+			if _, err := tx.Exec(`DELETE FROM source_health WHERE source_id=? AND family=?`, id, fam); err != nil {
+				return err
+			}
+			var n int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM source_host_caps WHERE source_id=? AND host=?`, id, host).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				if err := upsertHostCapsTx(tx, id, host, HostVerdictInconclusive, HostStatusUnknown, "", 0, 1); err != nil {
+					return err
+				}
+			}
+		} else if err := upsertHostCapsTx(tx, id, host, HostVerdictInconclusive, HostStatusUnknown, "", 0, 1); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE source_host_caps SET enabled=1 WHERE source_id=? AND host=?`, id, host); err != nil {
+			return err
+		}
+		res, err := tx.Exec(`UPDATE source_realm_policy
 SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=? AND host=?`,
-					time.Now().Unix(), id, host)
-				if err != nil {
-					return err
-				}
-				if n, err := res.RowsAffected(); err != nil {
-					return err
-				} else if n == 0 {
-					// 策略行缺失（例如迁移后尚未补策略）：按新 Host 种子化补上。
-					if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
-						if err := setRealmPolicyTx(tx, id, host, primary, extra, true); err != nil {
-							return err
-						}
-					}
-				}
-			} else if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
+			time.Now().Unix(), id, host)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			if primary, extra, ok := policySeedForSource(baseURL, host, true); ok {
 				if err := setRealmPolicyTx(tx, id, host, primary, extra, true); err != nil {
 					return err
 				}
 			}
 		}
+		var policyN int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM source_realm_policy WHERE source_id=? AND host=?`, id, host).Scan(&policyN); err != nil {
+			return err
+		}
+		if policyN == 0 {
+			return errors.New("新 Host 没有可用 Realm 策略，拒绝留下不可调度的半成品")
+		}
 		if err := recordPolicyChangeTx(tx, id); err != nil {
 			return err
 		}
-
-		// 新 Host 的恢复行：state=initial、gen 取新 Host 的当前代次、
-		// next_probe_at=now，等待新的有效探测证据；没有代次行时按 0 处理。
-		// Hub、ghcr.io 和“无归属”都走旧/无恢复行通道。
-		if host == "" || host == "docker.io" || host == "ghcr.io" {
+		if host == "docker.io" || host == "ghcr.io" {
 			return nil
 		}
 		var gen int64
-		err := tx.QueryRow(`SELECT gen FROM registry_host_gen WHERE host=?`, host).Scan(&gen)
+		err = tx.QueryRow(`SELECT gen FROM registry_host_gen WHERE host=?`, host).Scan(&gen)
 		if errors.Is(err, sql.ErrNoRows) {
 			gen = 0
 		} else if err != nil {
@@ -163,9 +176,9 @@ SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=? AND host=?`,
 (source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
 VALUES(?, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?)
 ON CONFLICT(source_id, family, scope) DO UPDATE SET
-  state='initial', gen=excluded.gen, last_probe_at=0,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0, last_error='',
-  updated_at=excluded.updated_at`,
+  state='initial', gen=excluded.gen,
+  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0,
+  last_error='', updated_at=excluded.updated_at`,
 			id, host, gen, now, now)
 		return err
 	})
@@ -204,7 +217,7 @@ func (s *Store) withSourceLive(id int64, fn func(*sql.Tx) error) error {
 // TestRegistryProbeWritePathsConverged 会拦住生产代码里的调用。
 //
 // 三个条件都放在 SQL 里，不靠 Go 侧提前检查：
-//   - repo_host 必须仍是探测时的 Host（用户可能中途改了归属）；
+//   - source_host_caps 行必须仍是探测时的 Host（用户可能中途改了归属）；
 //   - registry_host_gen 必须仍是探测开始时的代次（凭据可能中途换过）；
 //   - status 不能是 archived（用户可能中途归档）。
 //
@@ -215,14 +228,12 @@ func (s *Store) SetHostCaps(id int64, rawHost string, cap int, pathMode string, 
 	if err != nil {
 		return HostCapsCommitted, err
 	}
-	if host == "" || host == "ghcr.io" {
-		return HostCapsCommitted, errors.New("Hub/ghcr 的能力仍由 docker_cap/ghcr_cap 记录，不走 SetHostCaps")
+	if host == "" || host == "ghcr.io" || host == "docker.io" {
+		return HostCapsCommitted, errors.New("Hub/ghcr 的能力由 source_host_caps 的 docker.io/ghcr.io 行记录，不走 SetHostCaps")
 	}
 	if !validRegistryCap(cap) {
 		return HostCapsCommitted, errors.New("registry_cap 只允许 -1/0/1/2")
 	}
-	// 持久化形状：cap=1 必须带合法路径，其余必须不带。完整聚合语义由
-	// Probe 层保证，这里只拒绝非法组合，防止脏状态进库。
 	if cap == RegistryCapYes {
 		if pathMode != PathNative && pathMode != PathHostPrefix {
 			return HostCapsCommitted, errors.New("registry_cap=1 必须指定 native/host_prefix")
@@ -230,14 +241,14 @@ func (s *Store) SetHostCaps(id int64, rawHost string, cap int, pathMode string, 
 	} else if pathMode != "" {
 		return HostCapsCommitted, errors.New("只有 registry_cap=1 可以带 registry_path_mode")
 	}
-	res, err := s.db.Exec(`UPDATE sources
-SET registry_cap=?, registry_path_mode=?, registry_probe_at=?, registry_probe_error=?
-WHERE id=?
-  AND repo_host=?
-  AND status<>'archived'
+	last, effective := verdictForCap(cap)
+	res, err := s.db.Exec(`UPDATE source_host_caps
+SET last_verdict=?, effective_status=?, registry_path_mode=?
+WHERE source_id=? AND host=?
+  AND EXISTS (SELECT 1 FROM sources s WHERE s.id=source_host_caps.source_id AND s.status<>'archived')
   AND COALESCE((SELECT gen FROM registry_host_gen WHERE host=?),0)=?
   AND COALESCE((SELECT cred_digest FROM registry_host_gen WHERE host=?),'')=?`,
-		cap, pathMode, at, clipProbeNote(errText), id, host, host, gen, host, credDigest)
+		last, effective, pathMode, id, host, host, gen, host, credDigest)
 	if err != nil {
 		return HostCapsCommitted, err
 	}
@@ -255,9 +266,8 @@ WHERE id=?
 // 源本身变了。这次读取只影响「接下来怎么调度」，不参与写回，所以和
 // UPDATE 之间的竞态最多导致一次多余重排，不会写错数据。
 func (s *Store) classifyHostCapsMiss(id int64, host string, gen int64, credDigest string) (HostCapsCommitResult, error) {
-	var repoHost, status string
-	err := s.db.QueryRow(`SELECT COALESCE(repo_host,''), status FROM sources WHERE id=?`, id).
-		Scan(&repoHost, &status)
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM sources WHERE id=?`, id).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return HostCapsSourceUnavailable, nil
 	}
@@ -267,8 +277,12 @@ func (s *Store) classifyHostCapsMiss(id int64, host string, gen int64, credDiges
 	if status == "archived" {
 		return HostCapsSourceUnavailable, nil
 	}
-	if repoHost != host {
-		return HostCapsSourceChanged, nil
+	var one int
+	if err := s.db.QueryRow(`SELECT 1 FROM source_host_caps WHERE source_id=? AND host=?`, id, host).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return HostCapsSourceChanged, nil
+		}
+		return HostCapsCommitted, err
 	}
 	var g int64
 	var d string
@@ -370,7 +384,7 @@ func (s *Store) ApplyCredChanges(changes []CredChange) error {
 		if err != nil {
 			return err
 		}
-		if host == "" || host == "ghcr.io" {
+		if host == "" || host == "ghcr.io" || host == "docker.io" {
 			return errors.New("Hub/ghcr 不使用 Host 代次")
 		}
 		var newGen int64
@@ -388,21 +402,24 @@ RETURNING gen`,
 		}
 		// 只清结论，不抹诊断：诊断是上一次有效 Probe 留下的历史事实，
 		// 凭据变了只意味着它不能再当结论用，不意味着它没发生过。
-		if _, err := tx.Exec(`UPDATE sources
-SET registry_cap=?, registry_path_mode=''
-WHERE repo_host=? AND status<>'archived'`, RegistryCapUnknown, host); err != nil {
+		if _, err := tx.Exec(`UPDATE source_host_caps
+SET effective_status=?, registry_path_mode=''
+WHERE host=? AND EXISTS (SELECT 1 FROM sources s WHERE s.id=source_host_caps.source_id AND s.status<>'archived')`,
+			HostStatusUnknown, host); err != nil {
 			return err
 		}
 		// 代次绑定：recovery 行在同一事务内切到新 gen 并重置为待重验。
 		// last_success_at 保留为历史事实，但 gen 不匹配使它不再参与 ok 判定。
 		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
 (source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
-SELECT id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?
-FROM sources WHERE repo_host=? AND status<>'archived'
+SELECT c.source_id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?
+FROM source_host_caps c
+JOIN sources s ON s.id=c.source_id
+WHERE c.host=? AND s.status<>'archived'
 ON CONFLICT(source_id, family, scope) DO UPDATE SET
-  state='initial', gen=excluded.gen, last_probe_at=0,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0, last_error='',
-  updated_at=excluded.updated_at`,
+  state='initial', gen=excluded.gen,
+  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0,
+  last_error='', updated_at=excluded.updated_at`,
 			host, newGen, now, now, host); err != nil {
 			return err
 		}
@@ -445,9 +462,9 @@ type HostCap struct {
 	Gen        int64  `json:"gen"`
 }
 
-// ListHostCaps 返回所有「新 Host」的源（含已探测的），供面板展示。
-// Docker Hub（空串）与 ghcr.io 的能力以旧列为权威，混进来就会在面板上
-// 出现两套可能矛盾的状态，所以一律排除。
+// ListHostCaps 返回所有 Foreign Host 的源（含已探测的），供面板展示。
+// Docker/GHCR 的能力在 source_host_caps 的 docker.io/ghcr.io 行，独立候选池
+// 不混进 Foreign 列表。
 func (s *Store) ListHostCaps() ([]HostCap, error) {
 	return s.hostCaps("")
 }
@@ -456,30 +473,71 @@ func (s *Store) ListHostCaps() ([]HostCap, error) {
 // 探测时间：诊断确实来自那次有效 Probe，只是它对应的代表性仓库已经不
 // 是当前配置，不能再当结论用。
 //
-// 清理带条件：对账读到的是 (id, repo_host, cap)，写回时必须仍然一致，
+// 清理带条件：对账读到的是 (id, host, cap)，写回时必须仍然一致，
 // 否则说明期间有人改过归属或能力，不能拿旧判断误伤新状态。
 //
 // 刻意不动 registry_host_gen：这是「探测输入变了」，不是凭据变更，也
 // 不应该让在途结果被误判成 stale_snapshot。
 func (s *Store) ResetHostCaps(id int64, host string, cap int) (bool, error) {
-	res, err := s.db.Exec(`UPDATE sources
-SET registry_cap=?, registry_path_mode=''
-WHERE id=? AND repo_host=? AND registry_cap=? AND status<>'archived'`,
-		RegistryCapUnknown, id, host, cap)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE source_host_caps
+SET effective_status=?, registry_path_mode=''
+WHERE source_id=? AND host=? AND effective_status=?`,
+		HostStatusUnknown, id, host, statusForCap(cap))
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n > 0, err
+	if err != nil || n == 0 {
+		return false, err
+	}
+	// 代表性仓库变了，必须立刻重探；只清 cap 会让 recovery 的旧 next_probe_at
+	// 继续把任务压到未来，期间该源一直不可调度。policy_gen 同时充当探测
+	// epoch，重置前启动的旧探测结果会因 policy_gen 不匹配而 stale。
+	now := time.Now().Unix()
+	if _, err := tx.Exec(`UPDATE source_realm_policy
+SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=? AND host=?`, now, id, host); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE registry_host_recovery
+SET state='initial', next_probe_at=?, rec_failures=0, retry_failures=0, last_error='', updated_at=?
+WHERE source_id=? AND family='registry' AND scope=?`, now, now, id, host); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`DELETE FROM source_health_scope
+WHERE source_id=? AND family='registry' AND scope=?`, id, host); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+func statusForCap(cap int) string {
+	switch cap {
+	case RegistryCapYes:
+		return HostStatusSupported
+	case RegistryCapNo:
+		return HostStatusUnsupported
+	case RegistryCapMismatch:
+		return HostStatusMismatch
+	default:
+		return HostStatusUnknown
+	}
 }
 
 // DueHostProbe 是一条到期待探测的源×Host。
 type DueHostProbe struct {
-	SourceID int64
-	Name     string
-	BaseURL  string
-	RepoHost string
-	Gen      int64
+	SourceID  int64
+	Name      string
+	BaseURL   string
+	RepoHost  string
+	Gen       int64
+	PolicyGen int64
 }
 
 // ListDueHostProbes 返回 §6 定义的待探测集合：recovery 行不存在（还没人
@@ -494,24 +552,26 @@ type DueHostProbe struct {
 //   - cap=1 但 recovery 行缺失仍会返回——缺行不等于健康，必须重探。
 func (s *Store) ListDueHostProbes(now int64) ([]DueHostProbe, error) {
 	rows, err := s.db.Query(`
-SELECT s.id, s.name, s.base_url, s.repo_host, COALESCE(g.gen,0)
+SELECT s.id, s.name, s.base_url, c.host, COALESCE(g.gen,0), COALESCE(p.policy_gen,0)
 FROM sources s
-LEFT JOIN registry_host_gen g ON g.host = s.repo_host
+JOIN source_host_caps c ON c.source_id=s.id
+LEFT JOIN registry_host_gen g ON g.host = c.host
+LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=c.host
 WHERE s.status<>'archived'
-  AND s.repo_host<>''
-  AND s.repo_host<>'ghcr.io'
-  AND s.repo_host<>'docker.io'
+  AND c.host<>'ghcr.io'
+  AND c.host<>'docker.io'
   AND s.enabled = 1
-  AND s.registry_cap <> ?
+  AND c.enabled = 1
+  AND c.effective_status <> 'Mismatch'
   AND NOT EXISTS (SELECT 1 FROM registry_host_recovery r
                   WHERE r.source_id=s.id AND r.family='registry'
-                    AND r.scope=s.repo_host AND r.state='hard-excluded')
+                    AND r.scope=c.host AND r.state='hard-excluded')
   AND ( NOT EXISTS (SELECT 1 FROM registry_host_recovery r
-                    WHERE r.source_id=s.id AND r.family='registry' AND r.scope=s.repo_host)
+                    WHERE r.source_id=s.id AND r.family='registry' AND r.scope=c.host)
      OR EXISTS (SELECT 1 FROM registry_host_recovery r
                 WHERE r.source_id=s.id AND r.family='registry'
-                  AND r.scope=s.repo_host AND r.next_probe_at <= ?) )
-ORDER BY s.repo_host, s.name`, RegistryCapMismatch, now)
+                  AND r.scope=c.host AND r.next_probe_at <= ?) )
+ORDER BY c.host, s.name`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +580,7 @@ ORDER BY s.repo_host, s.name`, RegistryCapMismatch, now)
 	var out []DueHostProbe
 	for rows.Next() {
 		var x DueHostProbe
-		if err := rows.Scan(&x.SourceID, &x.Name, &x.BaseURL, &x.RepoHost, &x.Gen); err != nil {
+		if err := rows.Scan(&x.SourceID, &x.Name, &x.BaseURL, &x.RepoHost, &x.Gen, &x.PolicyGen); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -533,20 +593,22 @@ ORDER BY s.repo_host, s.name`, RegistryCapMismatch, now)
 // Deprecated: Runner 已改用 ListDueHostProbes（recovery 驱动的到期查询）。
 // 保留此方法仅供历史测试与只读诊断，不得作为调度依据。
 func (s *Store) ListPendingHostCaps() ([]HostCap, error) {
-	return s.hostCaps("AND s.registry_cap<>1")
+	return s.hostCaps("AND c.effective_status<>'Supported'")
 }
 
 func (s *Store) hostCaps(extra string) ([]HostCap, error) {
 	q := `
-SELECT s.id, s.name, s.base_url, s.repo_host, s.registry_cap, s.registry_path_mode,
-       s.registry_probe_at, s.registry_probe_error, COALESCE(g.gen,0)
-FROM sources s
-LEFT JOIN registry_host_gen g ON g.host = s.repo_host
+SELECT s.id, s.name, s.base_url, c.host, c.effective_status, c.registry_path_mode,
+       COALESCE(r.last_probe_at,0), COALESCE(c.diagnostics,''), COALESCE(g.gen,0)
+FROM source_host_caps c
+JOIN sources s ON s.id=c.source_id
+LEFT JOIN registry_host_recovery r
+  ON r.source_id=c.source_id AND r.family='registry' AND r.scope=c.host
+LEFT JOIN registry_host_gen g ON g.host = c.host
 WHERE s.status<>'archived'
-  AND s.repo_host<>''
-  AND s.repo_host<>'ghcr.io'
-  AND s.repo_host<>'docker.io' ` + extra + `
-ORDER BY s.repo_host, s.name`
+  AND c.host<>'ghcr.io'
+  AND c.host<>'docker.io' ` + extra + `
+ORDER BY c.host, s.name`
 	rows, err := s.db.Query(q)
 	if err != nil {
 		return nil, err
@@ -556,10 +618,12 @@ ORDER BY s.repo_host, s.name`
 	var out []HostCap
 	for rows.Next() {
 		var x HostCap
-		if err := rows.Scan(&x.SourceID, &x.Name, &x.BaseURL, &x.RepoHost, &x.Cap,
+		var status string
+		if err := rows.Scan(&x.SourceID, &x.Name, &x.BaseURL, &x.RepoHost, &status,
 			&x.PathMode, &x.ProbeAt, &x.ProbeError, &x.Gen); err != nil {
 			return nil, err
 		}
+		x.Cap = capForStatus(status)
 		out = append(out, x)
 	}
 	return out, rows.Err()

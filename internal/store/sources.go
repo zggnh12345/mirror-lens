@@ -144,8 +144,7 @@ func (s *Store) ScopedHealthOf(id int64) (map[string]int, error) {
 	rows, err := s.db.Query(`
 		SELECT z.family, z.scope, z.fails, z.gen,
 		       COALESCE((SELECT g.gen FROM registry_host_gen g
-		                 JOIN sources src ON src.repo_host = g.host
-		                 WHERE src.id = z.source_id), 0)
+		                 WHERE g.host = z.scope), 0)
 		FROM source_health_scope z
 		WHERE z.source_id=?`, id)
 	if err != nil {
@@ -213,8 +212,8 @@ func (s *Store) LastProbeAt(id int64, family string) (int64, error) {
 // 能力按协议分开记：GitHub 前缀代理能代 raw/release，但多数做不了 git
 // smart HTTP，git 用单独的 git_cap。
 func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
-	// registry:<host> 是独立调度族：只认 registry_cap 与已验证的路径模式，
-	// 绝不借用 docker_cap/ghcr_cap 间接放行。
+	// registry:<host> 是独立调度族：只认 source_host_caps 的
+	// effective_status 与已验证的路径模式，绝不借用 Docker/GHCR 能力放行。
 	if raw, ok := strings.CutPrefix(kind, "registry:"); ok {
 		host, err := registryhost.Check(raw)
 		if err != nil {
@@ -228,10 +227,8 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	}
 	col := ""
 	switch kind {
-	case "docker":
-		col = "docker_cap"
-	case "ghcr":
-		col = "ghcr_cap"
+	case "docker", "ghcr":
+		return s.capsCandidates(kind)
 	case "git":
 		col = "git_cap"
 	case "raw", "release", "github":
@@ -241,17 +238,11 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	}
 	// 按协议族过滤：docker 挂了不能拖累 github，反之亦然。
 	// 源整体可用但某协议连续失败时，只摘掉这个协议。
-	// Docker 源可以同时是一个 foreign Registry 源（docker_cap 与 repo_host 独立）；
+	// Docker 源可以同时是一个 foreign Registry 源（caps 行相互独立）；
 	// GHCR 池则必须精确匹配 ghcr.io，不能仅凭非空 Host 把 quay/gcr 混进来。
 	hostFilter := ""
-	switch kind {
-	case "docker":
-		hostFilter = " AND s.repo_host <> ''"
-	case "ghcr":
-		hostFilter = " AND s.repo_host = 'ghcr.io'"
-	}
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
-			s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at
+		0, COALESCE(g.rank, 999), s.range_cap, s.range_at
 		FROM sources s LEFT JOIN source_groups g ON g.id = s.group_id
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded') AND s.`+col+` = 1`+hostFilter+`
 		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
@@ -277,12 +268,68 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 	if err != nil {
 		return nil, err
 	}
+	stats, err := s.sampleStatsBatch(out, kind)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		n, ok, lat, spd, last, err := s.sourceSamples(out[i].ID, kind)
-		if err != nil {
+		st := stats[out[i].ID]
+		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = st.n, st.ok, st.lat, st.spd, st.last
+		out[i].Trust = tm[out[i].ID].Level
+	}
+	return out, nil
+}
+
+// capsCandidates 是 Docker/GHCR 的新候选查询：只认 source_host_caps。
+// Docker/GHCR 是核心协议路径，不受 multi_origin_hosts 白名单影响；
+// 但仍要求 Host 策略存在，避免“有 caps 行、认证无策略”的假可用。
+func (s *Store) capsCandidates(kind string) ([]SourceStat, error) {
+	host := "docker.io"
+	if kind == "ghcr" {
+		host = "ghcr.io"
+	}
+	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
+		c.registry_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, c.registry_path_mode
+		FROM sources s
+		JOIN source_host_caps c ON c.source_id=s.id AND c.host=?
+		LEFT JOIN source_groups g ON g.id = s.group_id
+		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
+		  AND c.enabled = 1
+		  AND c.effective_status = 'Supported'
+		  AND c.registry_path_mode IN ('native','host_prefix')
+		  AND EXISTS (SELECT 1 FROM source_realm_policy p WHERE p.source_id=s.id AND p.host=c.host)
+		  AND s.id NOT IN (SELECT source_id FROM source_health WHERE family = ? AND fails >= ?)
+		ORDER BY s.id`, host, Family(kind), HealthFails)
+	if err != nil {
+		return nil, err
+	}
+	var out []SourceStat
+	for rows.Next() {
+		var st SourceStat
+		var prefix int
+		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred,
+			&prefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = n, ok, lat, spd, last
+		st.GhcrPrefix = prefix != 0
+		out = append(out, st)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	tm, err := s.trustMap(kind, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	stats, err := s.sampleStatsBatch(out, kind)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		st := stats[out[i].ID]
+		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = st.n, st.ok, st.lat, st.spd, st.last
 		out[i].Trust = tm[out[i].ID].Level
 	}
 	return out, nil
@@ -292,7 +339,7 @@ func (s *Store) SourceCandidates(kind string) ([]SourceStat, error) {
 // 不经过进程内 Guard 过滤。
 //
 // 资格是五条不可拆分的约束（设计 §5）：
-//  1. registry_cap=1 且路径模式已知（cap 为 2/-1/0 都不能进候选）；
+//  1. source_host_caps.effective_status=Supported 且路径模式已知；
 //  2. 当前凭据代次下没有连续失败（fails<>0，与 ok 的定义逐字一致）；
 //  3. recovery 行存在且 state='ok'；
 //  4. recovery.gen 等于当前代次（旧凭据下的成功结论不得复用）；
@@ -308,38 +355,42 @@ func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
 	}
 	cutoff := s.nowTime().Unix() - int64(s.RecoveryTTL()/time.Second)
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.status, s.preferred,
-		s.ghcr_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, s.registry_path_mode,
+		c.registry_prefix, COALESCE(g.rank, 999), s.range_cap, s.range_at, c.registry_path_mode,
 		r.last_success_at
 		FROM sources s
+		JOIN source_host_caps c ON c.source_id = s.id AND c.host = ?
 		LEFT JOIN source_groups g ON g.id = s.group_id
 		JOIN registry_host_recovery r
-		  ON r.source_id = s.id AND r.family = 'registry' AND r.scope = ?
+		  ON r.source_id = s.id AND r.family = 'registry' AND r.scope = c.host
 		WHERE s.enabled = 1 AND s.status IN ('usable','degraded')
-		  AND s.repo_host <> ''
-		  AND s.registry_cap = 1 AND s.repo_host = ?
-		  AND s.registry_path_mode IN ('native','host_prefix')
+		  AND c.enabled = 1
+		  AND c.effective_status = 'Supported'
+		  AND c.registry_path_mode IN ('native','host_prefix')
+		  AND EXISTS (SELECT 1 FROM source_realm_policy p WHERE p.source_id=s.id AND p.host=c.host)
 		  AND r.state = 'ok'
-		  AND r.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = s.repo_host), 0)
+		  AND r.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = c.host), 0)
 		  AND r.last_success_at > 0
 		  AND r.last_success_at >= ?
 		  AND NOT EXISTS (
 		    SELECT 1 FROM source_health_scope z
-		    WHERE z.source_id = s.id AND z.family = 'registry' AND z.scope = ?
+		    WHERE z.source_id = s.id AND z.family = 'registry' AND z.scope = c.host
 		      AND z.fails <> 0
-		      AND z.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = s.repo_host), 0))
-		ORDER BY s.id`, host, host, cutoff, host)
+		      AND z.gen = COALESCE((SELECT gen FROM registry_host_gen WHERE host = c.host), 0))
+		ORDER BY s.id`, host, cutoff)
 	if err != nil {
 		return nil, err
 	}
 	var out []SourceStat
 	for rows.Next() {
 		var st SourceStat
+		var prefix int
 		if err := rows.Scan(&st.ID, &st.Name, &st.BaseURL, &st.Status, &st.Preferred,
-			&st.GhcrPrefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath,
+			&prefix, &st.GroupRank, &st.RangeCap, &st.RangeAt, &st.RegistryPath,
 			&st.LastSuccess); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		st.GhcrPrefix = prefix != 0
 		out = append(out, st)
 	}
 	rows.Close()
@@ -352,12 +403,13 @@ func (s *Store) registryCandidatesRaw(host string) ([]SourceStat, error) {
 	if err != nil {
 		return nil, err
 	}
+	stats, err := s.sampleStatsBatch(out, kind)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		n, ok, lat, spd, last, err := s.sourceSamples(out[i].ID, kind)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = n, ok, lat, spd, last
+		st := stats[out[i].ID]
+		out[i].Samples, out[i].OK, out[i].LatencyMS, out[i].SpeedKBps, out[i].LastTS = st.n, st.ok, st.lat, st.spd, st.last
 		out[i].Trust = tm[out[i].ID].Level
 	}
 	return out, nil
@@ -379,6 +431,190 @@ func (s *Store) registryCandidates(host string) ([]SourceStat, error) {
 	return FilterByGuard(s.guard, out, func(st SourceStat) GuardKey {
 		return GuardKey{SourceID: st.ID, Family: "registry", Scope: host}
 	}), nil
+}
+
+// sampleStat 是批量取样的聚合结果，字段含义与 SourceStat 的样本字段一致。
+type sampleStat struct {
+	n, ok    int
+	lat, spd int64
+	last     int64
+}
+
+// sampleStatsBatch 一次取完候选源的样本与真实回源速度，避免候选查询
+// 对每个源各发 1~2 条 SQL 的 N+1。聚合规则与 sourceSamples 保持一致：
+// checks 每源最近 sourceSampleWindow 条；本协议无样本时才回退无 kind 的
+// 历史行；proxy_speed 每源最近 20 条、72h 半衰期。
+func (s *Store) sampleStatsBatch(out []SourceStat, kind string) (map[int64]sampleStat, error) {
+	stats := make(map[int64]sampleStat, len(out))
+	if len(out) == 0 {
+		return stats, nil
+	}
+	ids := make([]int64, 0, len(out))
+	for _, st := range out {
+		ids = append(ids, st.ID)
+	}
+	sk := sampleKind(kind)
+	if err := s.sampleChecksBatch(ids, sk, false, stats); err != nil {
+		return nil, err
+	}
+	// 本协议没有样本的源才回退 legacy；不能把两种数据合并重复计数。
+	if sk != "" {
+		var missing []int64
+		for _, id := range ids {
+			if stats[id].n == 0 {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			if err := s.sampleChecksBatch(missing, "", true, stats); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := s.proxySpeedBatch(ids, sk, stats); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+func (s *Store) sampleChecksBatch(ids []int64, kind string, legacy bool, stats map[int64]sampleStat) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+3)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, time.Now().Unix()-proxySpeedMaxAgeSec)
+	kindCond := ""
+	if legacy {
+		kindCond = ` AND (kind IS NULL OR kind = '')`
+	} else {
+		kindCond = ` AND kind = ?`
+		args = append(args, kind)
+	}
+	args = append(args, sourceSampleWindow)
+	q := `SELECT source_id, ts, ok, latency_ms, speed_kbps FROM (
+		SELECT source_id, ts, ok, latency_ms, speed_kbps,
+		       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY ts DESC) AS rn
+		FROM checks
+		WHERE source_id IN (` + ph + `) AND tier >= 2 AND ts >= ?` + kindCond + `
+	) WHERE rn <= ?`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	lats := make(map[int64][]int64, len(ids))
+	spds := make(map[int64][]int64, len(ids))
+	for rows.Next() {
+		var id, ts, ok, lat, spd int64
+		if err := rows.Scan(&id, &ts, &ok, &lat, &spd); err != nil {
+			return err
+		}
+		x := stats[id]
+		x.n++
+		if ok == 1 {
+			x.ok++
+			if lat > 0 {
+				lats[id] = append(lats[id], lat)
+			}
+			if spd > 0 {
+				spds[id] = append(spds[id], spd)
+			}
+		}
+		if ts > x.last {
+			x.last = ts
+		}
+		stats[id] = x
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		x := stats[id]
+		x.lat = median(lats[id])
+		var sw, sv, w float64
+		w = 1
+		for _, v := range spds[id] {
+			sv += float64(v) * w
+			sw += w
+			w *= 0.8
+		}
+		if sw > 0 {
+			x.spd = int64(sv / sw)
+		}
+		stats[id] = x
+	}
+	return nil
+}
+
+func (s *Store) proxySpeedBatch(ids []int64, kind string, stats map[int64]sampleStat) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+3)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, kind, minProxySpeedBytes, time.Now().Unix()-proxySpeedMaxAgeSec)
+	q := `SELECT source_id, bytes, ms, ts FROM (
+		SELECT source_id, bytes, ms, ts,
+		       ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY ts DESC) AS rn
+		FROM proxy_speed
+		WHERE source_id IN (` + ph + `) AND kind = ? AND ms > 0 AND bytes >= ? AND ts >= ?
+	) WHERE rn <= 20`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type ps struct {
+		sv, sw float64
+		n      int
+	}
+	m := map[int64]*ps{}
+	now := time.Now().Unix()
+	for rows.Next() {
+		var id, b, ms, ts int64
+		if err := rows.Scan(&id, &b, &ms, &ts); err != nil {
+			return err
+		}
+		if ms <= 0 {
+			continue
+		}
+		age := float64(now - ts)
+		if age < 0 {
+			age = 0
+		}
+		w := math.Pow(0.5, age/float64(72*3600))
+		x := m[id]
+		if x == nil {
+			x = &ps{}
+			m[id] = x
+		}
+		x.sv += float64(b) / float64(ms) * w
+		x.sw += w
+		x.n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	minN := 3
+	if kind == "ghcr" {
+		minN = 2
+	}
+	for id, x := range m {
+		if x.n < minN || x.sw == 0 {
+			continue
+		}
+		y := stats[id]
+		y.spd = int64(x.sv / x.sw)
+		stats[id] = y
+	}
+	return nil
 }
 
 // sourceSamples 取最近 N 条样本。

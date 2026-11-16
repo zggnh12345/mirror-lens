@@ -229,7 +229,7 @@ func TestDockerAndGhcrPoolsRequireSemanticHost(t *testing.T) {
 		want map[int64]bool
 	}{
 		{"docker", map[int64]bool{hub: true, foreign: true}},
-		{"ghcr", map[int64]bool{ghcr: true}},
+		{"ghcr", map[int64]bool{ghcr: true, foreign: true}},
 	} {
 		got, err := st.SourceCandidates(tc.kind)
 		if err != nil {

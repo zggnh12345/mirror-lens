@@ -467,7 +467,11 @@ func (e *Engine) applyInner(s store.Source, res map[string]probe.Result, tier in
 	}
 	if docker != s.DockerCap || github != s.GithubCap || ghcr != s.GhcrCap || ghcrPrefix != s.GhcrPrefix {
 		// 条件更新：写之前那一瞬被归档，也不覆盖。
-		ok, err := e.st.SetCapsLive(s.ID, docker, github, ghcr, ghcrPrefix)
+		gens := make(map[string]int64, len(s.Hosts))
+		for _, h := range s.Hosts {
+			gens[h.Host] = h.PolicyGen
+		}
+		ok, err := e.st.SetCapsLive(s.ID, docker, github, ghcr, ghcrPrefix, gens)
 		if err != nil {
 			log.Printf("runner: set caps %d: %v", s.ID, err)
 		} else if !ok {

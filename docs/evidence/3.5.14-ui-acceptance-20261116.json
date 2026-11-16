@@ -1,0 +1,97 @@
+{
+  "out": [
+    {
+      "name": "登录跳转",
+      "ok": true,
+      "detail": "http://172.17.0.1:18090/"
+    },
+    {
+      "name": "UI 新增源提示",
+      "ok": true,
+      "detail": "已加入，正在后台识别支持的协议"
+    },
+    {
+      "name": "UI 新增源出现在列表",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "创建 Host 测试源",
+      "ok": true,
+      "detail": "{\"id\":28,\"ok\":true}"
+    },
+    {
+      "name": "Host 测试源出现",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Host 能力块渲染",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "quay.io Host 行",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "docker.io Host 行",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "ghcr.io Host 行",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Host 重置提示",
+      "ok": true,
+      "detail": "Host 结论已重置"
+    },
+    {
+      "name": "Host 停用提示",
+      "ok": true,
+      "detail": "Host 已停用"
+    },
+    {
+      "name": "Host 启用提示",
+      "ok": true,
+      "detail": "Host 已启用"
+    },
+    {
+      "name": "Host 移除提示",
+      "ok": true,
+      "detail": "Host 已移除"
+    },
+    {
+      "name": "移除后 quay.io 行消失",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "缺失 Source 返回错误",
+      "ok": true,
+      "detail": "Source 不存在"
+    },
+    {
+      "name": "非法 Host 返回错误",
+      "ok": true,
+      "detail": "Registry Host 不合法（bad_host!）：域名含非法字符"
+    },
+    {
+      "name": "390px 无横向溢出",
+      "ok": true,
+      "detail": "overflow=0"
+    },
+    {
+      "name": "无页面 JS 错误",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errs": [],
+  "generated_at": "2026-11-16T14:34:25.288213+00:00",
+  "method": "Playwright 1.52 + Chromium (headless), app 3.5.14 final build in isolated Docker"
+}

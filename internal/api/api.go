@@ -29,6 +29,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
@@ -619,6 +620,12 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 			host = "docker.io"
 		}
 	}
+	if host != "" {
+		if _, err := registryhost.Check(host); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	id, err := s.st.AddSource(store.Source{
 		BaseURL: base, Name: name,
 		SiteName: discover.ResolveSiteName("", base),
@@ -800,7 +807,15 @@ func (s *Server) groupItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/sources/"), 10, 64)
+	rest := strings.TrimPrefix(r.URL.Path, "/api/sources/")
+	if i := strings.Index(rest, "/hosts"); i >= 0 {
+		tail := rest[i+len("/hosts"):]
+		if tail == "" || strings.HasPrefix(tail, "/") {
+			s.sourceHosts(w, r, rest)
+			return
+		}
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "id 不对"})
 		return

@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "title": "3.5.14 最终 GitLab/ECR 产品级 HostProbe 与真实回源证据",
+  "generated_at": "2026-11-16T14:31:02.354148+00:00",
+  "method": "product probe.ProbeRegistryHost with StorePolicy-equivalent candidate policy; app HostProbeRunner scheduled the Source×Host; proxy request through /v2/ path",
+  "records": [
+    {
+      "host": "registry.gitlab.com",
+      "repo": "gitlab-org/gitlab-runner",
+      "tag": "latest",
+      "candidate_base": "https://m.daocloud.io",
+      "product_probe": {
+        "selected": "host_prefix",
+        "cap": 1,
+        "verdict": "yes",
+        "path": "/v2/registry.gitlab.com/gitlab-org/gitlab-runner/manifests/latest",
+        "http_code": 200,
+        "digest": "sha256:ffe21f021468d4aa1e56f05316d88597c23bf4818840e8edaa858131fabd7991",
+        "digest_ok": 1,
+        "media_type": "application/vnd.oci.image.index.v1+json",
+        "reason": ""
+      },
+      "official_probe": {
+        "cap": -1,
+        "selected": null,
+        "digest": null,
+        "reason": "incomplete_evidence"
+      },
+      "official_ok": false,
+      "candidate_ok": true,
+      "digest_match": true,
+      "at": "2026-11-16T14:28:58Z"
+    },
+    {
+      "host": "public.ecr.aws",
+      "repo": "docker/library/alpine",
+      "tag": "latest",
+      "candidate_base": "https://m.daocloud.io",
+      "product_probe": {
+        "selected": "host_prefix",
+        "cap": 1,
+        "verdict": "yes",
+        "path": "/v2/public.ecr.aws/docker/library/alpine/manifests/latest",
+        "http_code": 200,
+        "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+        "digest_ok": 1,
+        "media_type": "application/vnd.oci.image.index.v1+json",
+        "reason": ""
+      },
+      "official_probe": {
+        "cap": 1,
+        "selected": "native",
+        "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+        "reason": ""
+      },
+      "official_ok": true,
+      "candidate_ok": true,
+      "digest_match": true,
+      "at": "2026-11-16T14:29:02Z"
+    }
+  ],
+  "scheduling": [
+    {
+      "host": "registry.gitlab.com",
+      "source": "gitlab-live",
+      "base_url": "https://m.daocloud.io/",
+      "caps": "Supported",
+      "path_mode": "host_prefix",
+      "log": "Host registry.gitlab.com 验证通过（host_prefix）",
+      "proxy": {
+        "path": "/v2/registry.gitlab.com/gitlab-org/gitlab-runner/manifests/latest",
+        "status": 200,
+        "bytes": 3872,
+        "digest": "sha256:ffe21f021468d4aa1e56f05316d88597c23bf4818840e8edaa858131fabd7991",
+        "media_type": "application/vnd.oci.image.index.v1+json"
+      }
+    },
+    {
+      "host": "public.ecr.aws",
+      "source": "gitlab-live",
+      "base_url": "https://m.daocloud.io/",
+      "caps": "Supported",
+      "path_mode": "host_prefix",
+      "log": "Host public.ecr.aws 验证通过（host_prefix）",
+      "proxy": {
+        "path": "/v2/public.ecr.aws/docker/library/alpine/manifests/latest",
+        "status": 200,
+        "bytes": 9218,
+        "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+        "media_type": "application/vnd.oci.image.index.v1+json"
+      }
+    }
+  ],
+  "notes": [
+    "GitLab official endpoint returned 403 at token exchange during this run; expected digest used the previously recorded official digest ffe21f02… and the candidate returned the same digest.",
+    "ECR official endpoint returned 200 and its digest was used as expected; candidate returned the same digest.",
+    "No credentials or secret values are included."
+  ]
+}

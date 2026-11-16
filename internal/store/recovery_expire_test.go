@@ -154,7 +154,7 @@ func TestMaterializeExpiredAfterGenBump(t *testing.T) {
 	}
 	// BumpHostGen 会把 cap 清成 Unknown；模拟重新具备 cap=1 的状态，
 	// 确保候选 SQL 不会因为 cap 而提前过滤掉，真正走到代次判断。
-	seedExpireExec(t, st, `UPDATE sources SET registry_cap=1, registry_path_mode='native' WHERE id=?`, id)
+	seedExpireExec(t, st, `UPDATE source_host_caps SET effective_status='Supported', registry_path_mode='native' WHERE source_id=? AND host=(SELECT host FROM source_host_caps WHERE source_id=? LIMIT 1)`, id, id)
 
 	n, err := st.MaterializeExpired(base)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestMaterializeExpiredSkipsNonCandidates(t *testing.T) {
 	old := base.Unix() - int64(24*time.Hour/time.Second) - 1
 
 	hard := seedExpiredOK(t, st, "registry.k8s.io", old, 0)
-	seedExpireExec(t, st, `UPDATE sources SET registry_cap=2 WHERE id=?`, hard)
+	seedExpireExec(t, st, `UPDATE source_host_caps SET effective_status='Mismatch' WHERE source_id=?`, hard)
 
 	arch := seedExpiredOK(t, st, "quay.io", old, 0)
 	seedExpireExec(t, st, `UPDATE sources SET status='archived' WHERE id=?`, arch)

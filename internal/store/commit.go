@@ -53,6 +53,10 @@ type HostProbeCommit struct {
 	Gen           int64
 	CredDigest    string
 	HasCredential bool
+	// PolicyGen 是探测起点看到的 Source×Host 策略代次；HasPolicyGen=false
+	// 时跳过校验（兼容历史测试/调用方）。
+	PolicyGen    int64
+	HasPolicyGen bool
 
 	// TTL 是成功结论的有效期；<=0 时用 RecoveryDefaultTTL。
 	TTL time.Duration
@@ -60,8 +64,8 @@ type HostProbeCommit struct {
 
 // CommitHostProbe 是 Registry 探测结果写回的唯一入口。
 //
-// 一个 BEGIN IMMEDIATE 事务内完成：源归属 / 归档 / 代次 / 摘要校验，
-// 写 registry_cap+path_mode（瞬时传输错误跳过）、按探测起点 gen 写
+// 一个 BEGIN IMMEDIATE 事务内完成：源归属 / 归档 / 代次 / 摘要 / 策略代次
+// 校验，写 effective_status+path_mode（瞬时传输错误跳过）、按探测起点 gen 写
 // source_health_scope、派生并 UPSERT registry_host_recovery。
 // 任一校验不符或任一语句失败即整体回滚，返回对应结果码且不留下任何
 // 持久化副作用。
@@ -70,8 +74,8 @@ func (s *Store) CommitHostProbe(p HostProbeCommit) (HostCapsCommitResult, error)
 	if err != nil {
 		return HostCapsCommitted, err
 	}
-	if host == "" || host == "ghcr.io" {
-		return HostCapsCommitted, errors.New("Hub/ghcr 的能力仍由 docker_cap/ghcr_cap 记录，不走 CommitHostProbe")
+	if host == "" || host == "ghcr.io" || host == "docker.io" {
+		return HostCapsCommitted, errors.New("Hub/ghcr 的能力由 source_host_caps 的 docker.io/ghcr.io 行记录，不走 CommitHostProbe")
 	}
 	if !validRegistryCap(p.Cap) {
 		return HostCapsCommitted, errors.New("registry_cap 只允许 -1/0/1/2")
@@ -117,13 +121,14 @@ func (s *Store) CommitHostProbe(p HostProbeCommit) (HostCapsCommitResult, error)
 }
 
 func (s *Store) commitHostProbeTx(ctx context.Context, conn *sql.Conn, host string, p HostProbeCommit, ttl time.Duration) (HostCapsCommitResult, error) {
-	// 1. 源存在 / 未归档 / 归属仍是探测时的 Host。三项都在事务内读，
-	//    与后续写入同处一个写锁区间。
-	var repoHost, status string
-	var capNow int
-	err := conn.QueryRowContext(ctx,
-		`SELECT COALESCE(repo_host,''), status, registry_cap FROM sources WHERE id=?`, p.SourceID).
-		Scan(&repoHost, &status, &capNow)
+	// 1. 源存在 / 未归档。host 可以是原 repo_host，也可以是已存在的
+	//    source_host_caps 行（14b 的 AddSourceHost 会先建行）。没有行且
+	//    不是原 repo_host 时拒绝，避免给未知 Host 凭空写能力。
+	var status string
+	var err error
+	err = conn.QueryRowContext(ctx,
+		`SELECT status FROM sources WHERE id=?`, p.SourceID).
+		Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return HostCapsSourceUnavailable, nil
 	}
@@ -133,8 +138,30 @@ func (s *Store) commitHostProbeTx(ctx context.Context, conn *sql.Conn, host stri
 	if status == "archived" {
 		return HostCapsSourceUnavailable, nil
 	}
-	if repoHost != host {
+	existing, err := hostCapsConn(ctx, conn, p.SourceID, host)
+	if err != nil {
+		return HostCapsCommitted, err
+	}
+	if existing == nil {
 		return HostCapsSourceChanged, nil
+	}
+	if !existing.Enabled {
+		// 停用后的迟到探测结果不得改写能力/诊断；恢复启用后重新探测。
+		return HostCapsSourceUnavailable, nil
+	}
+	if p.HasPolicyGen {
+		var pg int64
+		err := conn.QueryRowContext(ctx, `SELECT COALESCE(policy_gen,0) FROM source_realm_policy
+			WHERE source_id=? AND host=?`, p.SourceID, host).Scan(&pg)
+		if errors.Is(err, sql.ErrNoRows) {
+			pg = 0
+		} else if err != nil {
+			return HostCapsCommitted, err
+		}
+		if pg != p.PolicyGen {
+			// 探测期间 Realm 策略变了，旧策略下的结论不能写回。
+			return HostCapsStaleSnapshot, nil
+		}
 	}
 
 	// 2. 代次三态：缺行不得用 COALESCE 折算。
@@ -162,25 +189,39 @@ func (s *Store) commitHostProbeTx(ctx context.Context, conn *sql.Conn, host stri
 		}
 	}
 
-	// 3. registry_cap / registry_path_mode。
-	//    瞬时传输错误只跳过 cap 写回，不跳过 scoped 与 recovery。
-	writeCap := true
-	effectiveCap := p.Cap
-	if p.Cap == RegistryCapUnknown && p.Reason == probeReasonTransportError {
-		writeCap = false
-		effectiveCap = capNow
-	}
-	if writeCap {
-		mode := p.PathMode
-		if effectiveCap != RegistryCapYes {
-			mode = ""
-		}
-		if _, err := conn.ExecContext(ctx,
-			`UPDATE sources SET registry_cap=?, registry_path_mode=?, registry_probe_at=?, registry_probe_error=? WHERE id=?`,
-			effectiveCap, mode, p.At, clipProbeNote(p.ErrText), p.SourceID); err != nil {
-			return HostCapsCommitted, err
+	// 3. 写 source_host_caps；旧 sources.registry_* 只投影原 repo_host。
+	//    瞬时传输错误不改变有效能力结论，只把 last_verdict 记为 Inconclusive。
+	lastVerdict, effectiveStatus := verdictForCap(p.Cap)
+	transport := p.Cap == RegistryCapUnknown && p.Reason == probeReasonTransportError
+	if transport {
+		lastVerdict = HostVerdictInconclusive
+		if existing != nil {
+			effectiveStatus = existing.EffectiveStatus
+		} else {
+			effectiveStatus = HostStatusUnknown
 		}
 	}
+	mode := ""
+	if effectiveStatus == HostStatusSupported {
+		mode = p.PathMode
+		if transport && existing != nil {
+			mode = existing.RegistryPathMode
+		}
+	}
+	prefix := 0
+	enabled := 1
+	if existing != nil {
+		prefix = boolToInt(existing.RegistryPrefix)
+		enabled = boolToInt(existing.Enabled)
+	}
+	if err := upsertHostCapsConn(ctx, conn, p.SourceID, host, lastVerdict, effectiveStatus, mode, prefix, enabled); err != nil {
+		return HostCapsCommitted, err
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE source_host_caps SET diagnostics=? WHERE source_id=? AND host=?`,
+		clipProbeNote(p.ErrText), p.SourceID, host); err != nil {
+		return HostCapsCommitted, err
+	}
+	effectiveCap := capForStatus(effectiveStatus)
 
 	// 4. source_health_scope：SQL 与既有 NoteProbeScoped 逐字等价，但
 	//    目标行固定 (source_id,'registry',host,gen=p.Gen)，gen 不在 SQL 里推导。

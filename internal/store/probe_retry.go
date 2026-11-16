@@ -137,12 +137,15 @@ func (s *Store) ScheduleHostProbeRetryClassified(r HostProbeRetry) (RetryReject,
 		                 WHERE g.host=? AND g.gen=?)
 		    AND EXISTS (SELECT 1 FROM sources src
 		                 WHERE src.id=? AND src.enabled=1
-		                   AND src.status<>'archived' AND src.repo_host=?)`,
+		                   AND src.status<>'archived')
+		    AND EXISTS (SELECT 1 FROM source_host_caps c
+		                 WHERE c.source_id=? AND c.host=? AND c.enabled=1)`,
 		nextAt, n, r.At,
 		r.SourceID, r.Host,
 		r.Gen,
 		r.At,
 		r.Host, r.Gen,
+		r.SourceID,
 		r.SourceID, r.Host)
 	if err != nil {
 		return RetryRejectDBError, 0, err
@@ -165,16 +168,18 @@ func (s *Store) ScheduleHostProbeRetryClassified(r HostProbeRetry) (RetryReject,
 // 判定顺序与 CAS 条件一一对应，保证指标原因与真实拒绝原因一致。
 func classifyRetryReject(ctx context.Context, conn *sql.Conn, r HostProbeRetry) RetryReject {
 	var rowGen, hostGen int64
-	var enabled int
-	var status, repoHost, state string
+	var enabled, hasCaps int
+	var status, state string
 	err := conn.QueryRowContext(ctx,
 		`SELECT rec.gen,
 		        COALESCE((SELECT gen FROM registry_host_gen WHERE host=?), -1),
-		        src.enabled, src.status, src.repo_host, rec.state
+		        src.enabled, src.status,
+		        EXISTS(SELECT 1 FROM source_host_caps c WHERE c.source_id=rec.source_id AND c.host=rec.scope AND c.enabled=1),
+		        rec.state
 		   FROM registry_host_recovery rec
 		   JOIN sources src ON src.id=rec.source_id
 		  WHERE rec.source_id=? AND rec.family='registry' AND rec.scope=?`,
-		r.Host, r.SourceID, r.Host).Scan(&rowGen, &hostGen, &enabled, &status, &repoHost, &state)
+		r.Host, r.SourceID, r.Host).Scan(&rowGen, &hostGen, &enabled, &status, &hasCaps, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RetryRejectSourceUnavailable
 	}
@@ -184,7 +189,7 @@ func classifyRetryReject(ctx context.Context, conn *sql.Conn, r HostProbeRetry) 
 	if rowGen != r.Gen || hostGen != r.Gen {
 		return RetryRejectGenMismatch
 	}
-	if enabled != 1 || status == "archived" || repoHost != r.Host || state == "hard-excluded" {
+	if enabled != 1 || status == "archived" || hasCaps != 1 || state == "hard-excluded" {
 		return RetryRejectSourceUnavailable
 	}
 	return RetryRejectCASLost
