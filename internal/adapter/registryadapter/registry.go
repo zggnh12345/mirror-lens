@@ -384,15 +384,7 @@ func (a *Adapter) sched(host string, foreign bool) (kind, schedKey string, offic
 // "*.pkg.dev" 只匹配 IsArtifactRegistry 认可的三段 Artifact Registry Host，
 // 不是任意 *.pkg.dev 通配。
 func (a *Adapter) multiOriginHost(host string) bool {
-	for _, h := range a.MultiOriginHosts {
-		if h == host {
-			return true
-		}
-		if h == "*.pkg.dev" && registryhost.IsArtifactRegistry(host) {
-			return true
-		}
-	}
-	return false
+	return registryhost.Match(a.MultiOriginHosts, host)
 }
 
 // kindForHost 决定回源类型：ghcr.io 走 ghcr 源池，docker hub 与其余 foreign

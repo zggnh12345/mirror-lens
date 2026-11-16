@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/store"
-	"github.com/zggnh12345/mirror-lens/internal/v2auth"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest"
 )
 
 // testGatewayPolicy 只给单元测试使用，复刻 11a 的按 Host 查表行为。
 // 生产路径必须显式注入 store.NewStorePolicy；Gateway 默认只允许官方直连。
-var testGatewayPolicy = v2auth.NewLegacyHostPolicy(nil, true)
+var testGatewayPolicy = v2authtest.New(nil, true)
 
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()

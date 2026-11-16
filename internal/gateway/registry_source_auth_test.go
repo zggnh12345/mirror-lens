@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest"
 )
 
 // recordingPolicy 记录真实路由解析时传进来的 SourceID。
@@ -79,7 +80,7 @@ func TestCandidateRegistryTokenUsesSourceIdentity(t *testing.T) {
 
 	id := f.addRegistrySource(t, mirrorSrv, "native")
 	// 这个测试的 Realm 是本机 token server，显式挂到 quay.io 的过渡策略里。
-	policy := &recordingPolicy{base: v2auth.NewLegacyHostPolicy(map[string][]string{f.host: {tokenSrv.URL}}, false)}
+	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{f.host: {tokenSrv.URL}}, false)}
 	f.gw.policies = policy
 	f.gw.cli = &http.Client{Transport: &bearerTransport{base: http.DefaultTransport, tokens: newTokenCache()}}
 

@@ -21,7 +21,7 @@
 v1.6 相对 v1.5 的核心修正：
 
 1. `3.5.10` 已被多能力标签修复占用；原 Source Realm 计划顺延为 **3.5.11**。
-2. `3.5.12` / `3.5.13` 不再写成“从零实现第一批 Registry”，改为**既有实现缺口闭环与验收补齐**。
+2. `3.5.12` / `3.5.13` 不再写成“从零实现第一批 Registry”，改为**既有实现缺口闭环与验收补齐**。（2026-11-16 后续修订：两者已合并为 3.5.12，3.5.13 编号退役，见 1.1）
 3. `3.5.11` 的 Realm / Token 身份从第一天就采用 **Source + Host**，但不提前实现多 Host UI 和候选调度。
 4. `3.5.14` 拆成 **3.5.14a（回填 + 投影 + 新写路径）** 和 **3.5.14b（只切换权威读路径）**。
 5. `source_host_caps` 成为**所有逻辑 Registry Host 的能力权威**，Docker Hub / GHCR 不再作为例外。
@@ -29,7 +29,7 @@ v1.6 相对 v1.5 的核心修正：
 7. `ghcr_prefix` 纳入 `source_host_caps` 的兼容投影模型，冻结为布尔，不做枚举。
 8. `probe_status` 从三态改为四态，补上 `Mismatch`，与现有 `RegistryCapMismatch=2` 对齐。
 9. `3.5.14a` 同时包含新写路径；`3.5.14b` 只切读路径，不含旧读路径和 dual-read 开关。
-10. 离线迁移增加 `3.5.7 → 3.5.11 → 3.5.13 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
+10. 离线迁移增加 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
 11. `3.5.15` 收窄为 CredStore + 标准私有 Registry 认证；GitLab PAT 独立 3.5.15a。
 12. `3.5.16` 的公开 Manifest 竞速依赖 3.5.11 + 3.5.14b；私有竞速才依赖 3.5.15。
 13. 撤回“流式 P0 未关闭”的错误判断；保留为 G0 回归门禁。
@@ -38,6 +38,19 @@ v1.6 相对 v1.5 的核心修正：
 16. 3.5.11 的“单事务”只覆盖运行时数据库写入；Token Cache 采用 generation 版本化失效，Schema 迁移是离线迁移 + 原子发布，二者都不纳入单事务承诺。
 17. 运行时多表写入统一 `BEGIN IMMEDIATE` 单事务；`SetCapsLive` / `CommitHostProbe` 属于 3.5.14a，不混进 3.5.11；迁移工具仍保持“离线迁移 + 原子发布”，不改造成大事务。
 18. 补充 3.5.11a 实施基线：当前代码基线是 `b4b0b22`，分支从当前 `HEAD` 开；11a 请求路径补 `headOnce` / `rangeReq` / `openUpstream` / resume / `watch.go`；Probe 的 `Realms` 换 resolver 但 `CredentialSnapshot` 不动；Token Cache 容量、fail closed 语义和 D1–D8 一并写入。
+
+### 1.1 2026-11-16 修订
+
+1. 原 **3.5.12 + 3.5.13 合并为 3.5.12**；3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
+2. 3.5.12 定位为 **合并验收 + 定点修复**，正式纳入 12c（11c 欠账）、12-F1（Host 关闭隔离）、12-F2（调度缓存 0 窗口验证）、12-S（Source 就绪）、12-T（候选到回退链路测试）。
+3. **3.5.11c 原计划未实施**。3.5.11 以 11b 验收为完成标志；历史记录不追记为已完成，11c 调整并入 3.5.12 作为独立工作批次 12c。
+4. 离线迁移链改为 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a`。
+5. 12-S 是**按 Host** 的门禁：`12-S(host)` 未通过，不启动该 Host 的真实回源验收；无公共 Source 的 Host 标记“外部 Source 阻塞”，不阻塞其他 Host 与整体发布。
+6. 生产基线以 2026-11-16 实测为准（见 5 的 3.5.12-A 基线表），不以 Git 标签推断部署状态。
+7. **12c 收敛为 Source 级 Realm 策略管理 + Host 只读汇总**，不新增 Host 级策略模型，不改 Schema；不存在“策略启停”字段，停用语义为删除策略行并 fail closed。
+8. **12-S 必须先收窄生产 `multi_origin_hosts` 再逐 Host 加源**。生产当前未显式配置该字段，默认 8 个 Host 全开；先建源再验收不构成灰度。
+9. **12-F1 只过滤真正的探测执行入口**（`jobs()` / `ListDueHostProbes`）。`reconcileRepos` 不执行探测、不写健康状态，不纳入白名单过滤。
+10. **12-F2 不含 `repo_host` 修改**：当前没有修改 `repo_host` 的 API，`SetRepoHost` 仅为 Store 方法；该能力留到 3.5.14 一源多 Host 阶段统一设计。
 
 ## 2. 当前基线
 
@@ -50,7 +63,7 @@ v1.6 相对 v1.5 的核心修正：
 | 3.5.8 | 第一批公开 Registry 多源调度 | 已发布 |
 | 3.5.9 | 多源开关、只读标签、鉴权回退修正 | 已发布 |
 | 3.5.10 | 多能力标签修复（HUB/GHCR/RAW） | 已发布并部署 |
-| 3.5.11 | Source 自有 Realm 与认证隔离 | 规划中 |
+| 3.5.11 | Source 自有 Realm 与认证隔离 | 已发布并部署（11b 验收完成；11c 并入 3.5.12） |
 
 ### 2.2 3.5.8 / 3.5.9 已经完成的部分
 
@@ -97,6 +110,8 @@ v1.6 相对 v1.5 的核心修正：
 3. **实际运行验收**：探测、候选命中、拉取、Digest 校验、失败回退是否全部成立。
 
 没有公共 Source 不等于程序不支持该 Host；有 Source 配置也不等于已完成加速验收。
+
+> **2026-11-16 生产实测修正：** 上表是 3.5.9 的历史验收记录，不是当前生产库存。实测生产库 91 条 Source 中，`docker.io` 34 条（`registry_cap=-1`）、`ghcr.io` 2 条（`registry_cap=1 native`），8 个 foreign Host 的 Source 数均为 **0**。因此 3.5.12 的真实回源验收必须先完成 12-S（Source 就绪），不能把历史覆盖表当成现成测试对象。
 
 ### 2.3 当前模型不变量
 
@@ -151,7 +166,7 @@ registry_probe_at     = 0
 
 ### 3.3 两个不同概念
 
-- **同一 Host 多 Source**：一个 Host 配多个镜像源 → 3.5.13 做正式验收
+- **同一 Host 多 Source**：一个 Host 配多个镜像源 → 3.5.12 做正式验收（原 3.5.13 并入）
 - **一源多 Host**：一个镜像源同时服务多个 Host → 3.5.14a/3.5.14b 做能力模型
 
 本文说的“其他多源也一样”指后者。任何一条 Source 只要实际支持多个 Host，都必须走同一套 `source_host_caps` 模型，不能按 Host 或按站点单独开分支。
@@ -161,9 +176,9 @@ registry_probe_at     = 0
 | 版本 | 主题 | 依赖 | 默认行为 |
 |---|---|---|---|
 | 3.5.11 | Source Realm + Source/Host 认证身份 | 3.5.10 | 旧 Source 行为不变 |
-| 3.5.12 | GCR / Artifact Registry / K8S 既有缺口闭环 | 3.5.11 | 新 Host 默认关闭 |
-| 3.5.13 | 第一批剩余 Host + 同 Host 多 Source 正式验收 | 3.5.12 | 顺序回源 |
-| 3.5.14a | `source_host_caps` 回填 + 旧字段投影 + 新写路径 | 3.5.13 | 读路径不变 |
+| 3.5.12 | 合并验收 + 定点修复（原 3.5.12 + 3.5.13） | 3.5.11 | 新 Host 默认关闭；修复随开关生效 |
+| 3.5.13 | 编号退役，已并入 3.5.12，不单独发布 | — | — |
+| 3.5.14a | `source_host_caps` 回填 + 旧字段投影 + 新写路径 | 3.5.12 | 读路径不变 |
 | 3.5.14b | 只切换 `source_host_caps` 为权威读路径 | 3.5.14a | 旧单 Host Source 不变 |
 | 3.5.15 | CredStore + 标准私有 Registry 认证 | 3.5.14b | 匿名优先 |
 | 3.5.15a | GitLab PAT / Deploy Token 专项 | 3.5.15 | 单独验收 |
@@ -175,6 +190,8 @@ registry_probe_at     = 0
 > 本链中明确改 Schema 的是 **3.5.11**（`source_realm_policy`）和 **3.5.14a**（`source_host_caps`）。3.5.14b 只改读路径，不改 Schema。
 >
 > 3.5.11a / 3.5.11b / 3.5.11c 是 3.5.11 的内部里程碑：11a 只做身份与 resolver 基础，11b 才完成策略切换，11c 做编辑与清理。3.5.11 以 11b 验收通过为完成标志。
+>
+> **2026-11-16 调整：** 11c 原计划未实施，未随 3.5.11 发布；现并入 3.5.12 作为独立工作批次 **12c**，独立提交、独立回滚。历史记录不追记为“3.5.11 已完成 11c”。
 
 ## 5. 各版本安排
 
@@ -190,7 +207,7 @@ registry_probe_at     = 0
 |---|---|---|---|
 | 3.5.11a | 认证身份、策略快照、统一 resolver、Token Cache key | 否 | 行为不变，所有 registry 请求都带身份 |
 | 3.5.11b | `source_realm_policy` + 迁移 + Probe/Gateway 切换 | 是 | 3.5.11 功能完成 |
-| 3.5.11c | 策略编辑 UI/API、审计、旧代码清理 | 否 | 运维完成 |
+| 3.5.11c | 策略编辑 UI/API、审计、旧代码清理 | 否 | 原计划未实施，并入 3.5.12 的 12c |
 
 **3.5.11 只有在 3.5.11b 验收通过后才算完成。** 3.5.11a 是内部基础，不单独对外宣称“3.5.11 已完成”。
 
@@ -524,7 +541,7 @@ db.SetMaxOpenConns(1)
 - 迁移后旧二进制被拒绝启动
 - 回滚演练使用备份库 + 旧 `secret.key`
 
-3.5.11c：
+3.5.11c（原计划未实施，已并入 3.5.12 的 12c；以下清单作为 12c 验收基线）：
 
 - UI/API 可编辑主 Realm 和额外 Realm
 - 主 Realm 唯一
@@ -544,7 +561,7 @@ db.SetMaxOpenConns(1)
 
 #### 3.5.11-F 兼容与扩展
 
-- 3.5.12 / 3.5.13：直接复用 3.5.11b 的 resolver，不再改 Realm 模型
+- 3.5.12（含原 3.5.13）：直接复用 3.5.11b 的 resolver，不再改 Realm 模型
 - 3.5.14：每个新增 Host 能力必须同时有 `source_realm_policy`，否则该 Host 不进候选
 - 3.5.15：继续用 `credential_gen` 扩展，不改策略表主键
 - 3.5.16：竞速按 attempt 带策略快照，不能共享 Source 级 Token
@@ -683,94 +700,204 @@ D6 的四段顺序必须完整复刻：
 
 结论：选择 A 后，Probe/Gateway 的统一语义已落地，11a 的主体实现和可验证项完成；剩余的 `CredGen/PolicyGen=0`、`Plan.Registry` 置位、Token Cache 热更新和真实公共 Source 覆盖均属 11b/后续验收范围。
 
-### 3.5.12 GCR / Artifact Registry / K8S 既有缺口闭环
+### 3.5.12 合并验收 + 定点修复（原 3.5.12 + 3.5.13）
 
-**目标：** 以 3.5.8 / 3.5.9 的现有实现为基线，补齐 GCR、Artifact Registry、K8S 的真实回源验收和剩余缺口；不是重新实施第一批 Registry。
+> **实施状态（2026-11-16）：** 12c、12-F1、12-F2、12-T 已实现并通过自动化与 Docker 模拟验收，记录见 `docs/3.5.12-acceptance.md`。12-S/12a/12b 因生产无 foreign Host Source 且无公共 Source 证据，标记 `BLOCKED_EXTERNAL_SOURCE`，未执行真实回源验收；不得以模拟结果替代。
 
-范围：
+**定位：** 本版不是纯验收版本，也**不改 Schema**。它合并原 3.5.12（GCR / Artifact Registry / K8S）与原 3.5.13（Quay / MCR / GitLab / ECR / cgr + 同 Host 多 Source），并包含 3.5.11c 欠账、两项已确认代码修复、Source 就绪门禁和候选→回退链路测试。原 3.5.13 编号退役，不单独发布，3.5.14 及后续版本不改号。
 
-- 审计 3.5.8 已有实现，确认 `multi_origin_hosts`、Host 准入、`officialOnly`、路径改写和回退仍然有效
-- 三个 Host 的独立启停
-- 三个 Host 的匿名 Bearer Challenge / Realm / Token 流程
-- 每个 Host 的固定测试仓库、Tag 或 Digest
-- 真实进程、真实 Source、完整 Manifest / Blob 拉取
-- 候选失败回官方
-- Docker Hub / GHCR 回归
+#### 3.5.12-A 生产基线（2026-11-16 实测，冻结）
 
-不做：
+| 项目 | 实测结果 |
+|---|---|
+| 生产镜像 | `mirror-lens:3.5.11` |
+| 容器状态 | Up，`/healthz` OK |
+| `schema_version` | 3.5.11 |
+| `schema_hash` | `e39e11971963…` |
+| `source_realm_policy` | 36 行（`docker.io` 34 + `ghcr.io` 2） |
+| SQLite integrity | ok |
+| 生产 Source 分布 | `docker.io` 34（`registry_cap=-1`）、`ghcr.io` 2（`registry_cap=1 native`）、其余 8 个 Host 均为 0 |
+| 发布前备份 | DB + `secret.key`，目录存在 |
+| 多源白名单 | 生产 `config.yaml` 未显式配置 `multi_origin_hosts`，使用默认 8 个 Host 全开 |
+
+基线还必须记录：生产镜像 ID 或不可变 digest、`config.yaml` 的 SHA256、备份 DB 与 `secret.key` 各自的 SHA256。后续数据库变更审查以这份实测状态为起点，不以 Git 标签推断部署状态。
+
+#### 3.5.12-B 工作项与执行顺序
+
+| 顺序 | 工作项 | 内容 | 完成条件 |
+|---|---|---|---|
+| 1 | 12c | Source 级 Realm 策略 API/UI、Host 只读汇总、审计、`LegacyHostPolicy` 清理 | 不改 Schema；独立提交、独立回滚；行为覆盖无净损失 |
+| 2 | 12-F1 | 探测执行入口统一 Host 匹配（仅 `jobs()` 入口） | 关闭并重启后，该 Host 的 recovery/健康行不再更新 |
+| 3 | 12-F2 | 调度缓存 0 窗口验证（已接线，补测） | 修改返回后的下一次调度即读新顺序 |
+| 4 | 12-S | 先收窄白名单，再逐 Host 完成 Source 就绪 | 每 Host ≥1 源，探测记录与 digest 齐备 |
+| 5 | 12-T | 候选→排序→回源→失败切换链路测试 | digest 一致，不只验证第二个源收到请求 |
+| 6 | 12a | GCR / `registry.k8s.io` / 具体 Artifact Registry Host 真实回源 | 真实 digest 证据 |
+| 7 | 12b | Quay / MCR / GitLab / ECR / cgr + 同 Host 多 Source | 真实回源与受控回退分开记录 |
+| 8 | 发布门禁 | 四态分类与阻塞清单 | 每条记录可复核 |
+| 9 | 发布 | 3.5.12 | 阻塞项不伪装成通过 |
+
+**门禁粒度：** 12-S 按 Host 生效，不是全局门禁。`12-S(host)` 未通过，不得启动该 Host 的 12a/12b 真实回源验收；无公共 Source 的 Host 记录“尝试镜像清单 + 失败证据”后标记“外部 Source 阻塞”，不阻塞其他 Host 与整体发布。
+
+#### 3.5.12-C 12c：3.5.11c 欠账（Source 级策略管理）
+
+原 3.5.11c 计划未实施（3.5.11 以 11b 验收为完成标志），现调整并入 3.5.12。**不引入 Host 级策略模型，不改 Schema。**
+
+管理对象分三层，数据来源不同，不能混成一张可编辑的“Host 策略”表：
+
+| 管理对象 | 数据来源 | UI 行为 |
+|---|---|---|
+| Host 启用状态 | `registry.multi_origin_hosts` | 只读展示 |
+| Realm 策略 | `source_realm_policy` | 按 Source 编辑 |
+| Source 数量 | `sources` | 只读汇总 |
+| 策略审计 | `source_events` | 查询展示 |
+
+实现内容：
+
+- 新增 Source 级 Realm 策略 API：按 Host 列出 Source 及其策略、读取单条、更新（复用 `SetRealmPolicy`）、查询审计
+- 新增 Source 级策略编辑 UI；新增 Host 只读汇总页（Host、Source 数、Realm 摘要、多源开关状态）
+- `multi_origin_hosts` 仍由 `config.yaml` 管理，UI 不提供修改
+- 不存在“策略启用/停用”字段；停用语义为**删除策略行**，运行时必须 fail closed（`ErrPolicyMissing`），不能退回不受约束的 Realm
+- 删除 `LegacyHostPolicy` 死代码；8 个测试文件的相关断言迁移为 `StorePolicy` 行为断言，不得直接删测试
+- 旧 Realm 配置读取路径已确认不存在，无需迁移配置
+
+鉴权边界：当前是**单 admin 账号模型**（`internal/auth`），没有角色/权限分级。验收只能要求“未登录或无 CSRF 的请求被拒绝”，不能写“已登录但无权限”的用例；若需要分级权限，属独立版本的新功能。
+
+验收：Schema 版本与 Hash 不变；策略增删改查正确；未登录/无 CSRF 拒绝；删除策略后 fail closed；审计完整；旧测试覆盖无净损失；独立提交、独立测试、独立回滚。
+
+#### 3.5.12-D 12-F1：Host 关闭隔离
+
+已确认缺口：`multi_origin_hosts` 只在 Gateway 选路读取；`ListDueHostProbes`（`internal/store/host.go:495`）不检查该配置，关闭 Host 后探测仍会运行并写入 `registry_host_recovery` / 健康记录。
+
+范围修正：**只有 `jobs()` / `ListDueHostProbes` 是探测执行入口**。`reconcileRepos` 只在代表仓库映射变化时清理 `registry_cap/path_mode`，不执行探测、不写健康状态，保持原职责，不加入白名单过滤。
+
+修复与验收：
+
+- 抽取共享 Host 匹配函数，供 Gateway 与 Runner 共用；规则必须同时支持精确匹配与 `*.pkg.dev` 的 Artifact Registry 规则（`registry.go:383-391`），不能字符串相等，否则 `asia-east1-docker.pkg.dev` 会被误拦
+- 过滤点在 Runner 取得任务之后、执行探测之前
+- 关闭 Host → 重启容器（`registry.multi_origin_hosts` 为 `Restart: true`）→ 等待至少两个扫描窗口 → 断言该 Host 无探测执行、`registry_host_recovery` 与健康记录无新增或更新
+- 重新启用 → 重启 → 断言探测恢复
+- 关闭 foreign 多源不得误伤官方 Registry 的基础回源与健康检查
+- 不以“日志无探测字样”作为唯一证据；以数据库行未变化为主，必要时补探测跳过计数指标
+- 不要求 `reconcileRepos` 在关闭 Host 后停止清理能力状态；改变该语义需另立需求
+
+#### 3.5.12-E 12-F2：调度缓存 0 窗口失效
+
+已核对现状（2026-11-16 修正）：`main.go:396` 已接线 `eng.OnChange(sched.Invalidate)`；源与分组的启停、优先级、分组、删除、归档入口均调用 `s.eng.Changed()`（`internal/api/api.go:698/729/750/783/791/873/886`），删除另有 `Forget`。因此本项**不是代码修复**，而是 0 窗口验证与补测；若补测发现遗漏入口，再按缺陷修复。
+
+验收目标为 0 窗口：
+
+- 覆盖启用、停用、优先级、分组、删除、归档
+- `repo_host` 修改当前没有 API（`SetRepoHost` 仅为 Store 方法），不纳入本版验收，留到 3.5.14 统一设计
+- 通知链必须在持久化成功后、API 返回前完成 `InvalidateLists()`，不能异步延迟
+- 修改操作返回后开始的调度请求，必须读到新顺序；并发场景用同一断言
+- 修改前已取得旧列表的在途请求，不要求中途切换
+- 不得依赖 `ListTTL=30s` 自然过期
+
+#### 3.5.12-F 12-S：Source 就绪（12a/12b 前置门禁）
+
+生产实测：8 个目标 Host 当前 Source 数均为 0。`docker.io` 的 `registry_cap=-1` 不得解释为 foreign Host 能力；3.5.14 之前一个 Source 只能绑定一个 `repo_host`，不能用春川（Source ID 638）替代独立源行。
+
+**生产灰度顺序：先收窄白名单，再建源。** 生产 `config.yaml` 未显式配置 `multi_origin_hosts`，默认 8 个 Host 全开；先建源再验收不构成灰度。
+
+1. 冻结基线（镜像、配置、DB、密钥、Schema、Policy、Source）
+2. 在 `config.yaml` 显式写 `multi_origin_hosts: ["gcr.io"]`，按现有结构合并，不覆盖其他 Registry 配置
+3. 重启容器，确认只有 `gcr.io` 进入多源候选范围
+4. 建 GCR Source（`repo_host=gcr.io`），配置 `ML_HOSTPROBE_REPOS`，重建容器使环境变量生效
+5. 等待自动探测 → `registry_cap=1` → 候选非空 → 真实回源并记录 digest
+6. 通过后每次只追加一个 Host 并重启；不得第一次就恢复 8 个全开
+
+| Host | 当前生产 Source | 12-S 最低要求 |
+|---|---|---|
+| `gcr.io` | 0 | ≥1 |
+| `registry.k8s.io` | 0 | ≥1 |
+| 具体 `<location>-docker.pkg.dev` | 0 | ≥1 |
+| `quay.io` | 0 | ≥1 |
+| `mcr.microsoft.com` | 0 | ≥1 |
+| `registry.gitlab.com` | 0 | ≥1 |
+| `public.ecr.aws` | 0 | ≥1 |
+| `cgr.dev` | 0 | ≥1 |
+
+- `<location>-docker.pkg.dev` 必须写具体三段式 Host（如 `asia-east1-docker.pkg.dev`）；`*.pkg.dev` 只用于 `multi_origin_hosts` 匹配，不能作为 `repo_host`
+- 每条源必须 `repo_host` 正确，探测后 `registry_cap=1` 且 `registry_path_mode` 合法
+- 探测代表仓库必须配置 `ML_HOSTPROBE_REPOS`（`host=repo`，逗号分隔）；未配置映射的 Host 会被跳过，`registry_cap` 永远升不到 1。生产容器当前未设置该变量，12-S 必须补齐并重建
+- 由 `ListDueHostProbes` 自动调度探测，等待真实探测记录，不以手工触发替代
+- 需要验证多 Source 回退的 Host 至少准备两个独立源；受控假上游不计入公共 Source 数量
+- 记录每条源的探测结果与真实镜像 digest；无公共源的 Host 记录尝试清单与失败证据
+- `ML_HOSTPROBE_REPOS` 的仓库必须实测存在、允许匿名拉取，并固定 tag 或 digest；试点阶段只需试点 Host 的映射，其余随 Host 逐个追加，不要为凑齐 8 个映射阻塞试点
+
+| 12-S(host) 状态 | 进入真实回源验收 | 发布处理 |
+|---|---|---|
+| 通过，≥1 个真实源 | 是 | 可验收单源回源 |
+| 通过，≥2 个真实源 | 是 | 可验收真实多源回退 |
+| 通过，仅 1 个真实源 | 是 | 多源回退只能模拟 |
+| 无真实源，有尝试清单与失败证据 | 否 | 标记“外部 Source 阻塞” |
+| 探测仓库未映射或探测未执行 | 否 | 12-S 未完成，不得标外部阻塞 |
+
+#### 3.5.12-G 12-T：候选到回退链路测试
+
+沿用 `internal/gateway/` 已有的 `httptest.NewServer` 设施，不引入新基础设施。每个 Host 使用固定 repo/digest fixture，验证：候选集合 → scheduler 排序 → Gateway 实际请求 → 首选失败 → 下一 Source 回退 → digest 一致。失败切换后必须验证内容身份一致，不能只验证第二个源收到了请求。
+
+场景至少覆盖：正常首选、首选 5xx 回退、首选超时回退、多源均失败、两源 digest 不一致、优先级变化、Host 关闭、Source 停用。
+
+失败缓存断言（不能只看 HTTP 返回码）：
+
+- 固定请求路径、方法、仓库与 tag/digest，用 `plan.CacheKey` 取得实际缓存 Key，测试不得自行实现一套 Key 算法
+- 两个 Source 均失败后，断言响应失败，且 `CacheGet(plan.CacheKey)` 查不到有效条目（`internal/store/accel.go:328`）
+- 确认没有错误响应被写入正向缓存；再次请求不得命中上一次失败内容
+- 不能只检查缓存目录为空；索引、临时文件与正式对象不是同一层
+
+保留现有流式传输、断点续传、hedge 和响应头处理的回归测试，不得因多源修复重新引入内容混合或取消上下文导致的中断。
+
+#### 3.5.12-H 12a / 12b Host 验收矩阵
+
+| Host | 生产 Source 现状 | 验收要求 | 阻塞分类 |
+|---|---|---|---|
+| `gcr.io` | 0 | 真实回源 + 多源回退（源数由 12-S 决定） | Source 待接入 |
+| `registry.k8s.io` | 0 | 真实回源 + Realm | Source 待接入 |
+| `<location>-docker.pkg.dev` | 0 | Host 准入 + 官方故障边 | Source 可用性 |
+| `quay.io` | 0 | 真实回源 + 多源回退 | Source 待接入 |
+| `mcr.microsoft.com` | 0 | 真实回源 + 多源回退 | Source 待接入 |
+| `registry.gitlab.com` | 0 | Realm + 认证回退 | Source 覆盖有限 |
+| `public.ecr.aws` | 0 | Realm + 认证回退 | Source 覆盖有限 |
+| `cgr.dev` | 0 | 官方故障边 | Source 可用性 |
+| `lscr.io` | 范围外 | 不验收 | 范围外 |
+
+真实多源回退范围由 12-S 的实测源数决定：只有 ≥2 个真实公共源的 Host 才做真实回退，其余用受控上游验证机制并标注“模拟”。一个 Host 的结果不得外推到其他 Host，候选查询成功也不等于多 Source 实际回退成功。
+
+#### 3.5.12-I 发布门禁
+
+| 状态 | 含义 | 发布说明 |
+|---|---|---|
+| 真实回源通过 | 功能与公共加速均已验证 | 可声明支持 |
+| 代码路径通过、无可用公共 Source | 软件路径已验证，公共加速不可用 | 标记“Source 可用性阻塞” |
+| 仅模拟/故障注入通过 | 验证了控制逻辑，无真实回源证据 | 不得声明真实加速通过 |
+| 代码路径不通过 | 存在实现缺陷 | 阻止对应 Host 验收 |
+
+每条验收记录至少包含：`source_id`、`host`、测试仓库、digest、完整可复现命令、执行时间、结果。
+
+发布必须项：
+
+- 12c、12-F1、12-F2、12-T 完成
+- 每个纳入验收的 Host 有探测仓库映射，且探测实际执行
+- 真实回源 Host 至少 1 个真实公共 Source；声称真实多源回退的 Host 至少 2 个
+- 无公共源的 Host 有尝试清单与失败证据
+- 模拟测试与真实回源测试分开记录
+- Docker Hub / GHCR 回归通过
+- Schema 版本与 Hash 不变（本版不改 Schema），Policy 行数变化与新增 Host 对应
+- 数据库完整性检查与备份校验通过
+
+#### 3.5.12-J 不做
 
 - 不重写 3.5.8 已完成的候选调度
+- 不引入 `source_host_caps`，不提前做一源多 Host
 - 不让一条 Source 服务多个 Host
-- 不解决春川 K8S 标签
 - 不启用第一批之外的 Host
 - 不把没有公共 Source 的 Host 标成“代码未实现”
+- 不把模拟测试结果等同于真实公共源验证
 
-验收：
+### 3.5.13 编号退役
 
-- 三个 Host 可独立启停，关闭后不能查询候选或借 fallback 绕过
-- 配置 Source 后请求实际命中候选，而不是只检查配置存在
-- 三个 Host 都能完成真实公开仓库拉取
-- Host A 的故障、探测和冷却不污染 Host B
-- Docker Hub / GHCR 无回归
-- 所有验收记录带 Source、Host、测试仓库、Digest、回退结果
-
-### 3.5.13 第一批剩余 Host + 同 Host 多 Source 正式验收
-
-**目标：** 完成第一批剩余 Host 的覆盖验收，并把“同 Host 多 Source”从已有基础能力提升为正式验收能力。
-
-范围：
-
-- `quay.io`
-- `mcr.microsoft.com`
-- `registry.gitlab.com`
-- `public.ecr.aws`
-- `cgr.dev`（受公共 Source 可用性约束）
-- `<location>-docker.pkg.dev`（选择一个真实区域 Host 作为代表）
-
-已有基础能力：
-
-- `SourceCandidates("registry:<host>")` 已能返回多条 Source
-- 每条 Source 已有独立健康记录
-- 候选按顺序尝试
-- 失败后继续回退
-- 最后保留官方回源
-
-3.5.13 不重新设计这套调度，只补：
-
-- 两条以上真实 Source 同时加入同一 Host
-- 第一条 404，第二条成功
-- 第一条 401，第二条成功
-- 第一条 429/503，检查冷却和 Retry-After
-- 全部候选失败，官方回退成功
-- 各 Source 的熔断、健康、并发和缓存归属不串用
-- 修改 Source 优先级后，调度缓存及时更新
-
-Host 验收矩阵：
-
-| Host | 3.5.8/3.5.9 现状 | 3.5.13 要求 | 阻塞分类 |
-|---|---|---|---|
-| `gcr.io` | 多提供方覆盖 | 真实回源回归 | 无 |
-| `<location>-docker.pkg.dev` | 无公共 Source | Host 准入 + 官方故障边 | Source 可用性 |
-| `registry.k8s.io` | 多提供方覆盖 | 真实回源回归 | 无 |
-| `quay.io` | 多提供方覆盖 | 正式验收 | 无 |
-| `mcr.microsoft.com` | 多提供方覆盖 | 正式验收 | 无 |
-| `registry.gitlab.com` | 仅 DaoCloud | 正式验收 + Realm | Source 覆盖有限 |
-| `public.ecr.aws` | 仅 DaoCloud | 正式验收 + Realm | Realm / Source 覆盖有限 |
-| `cgr.dev` | 无可用公共 Source | 只做官方故障边，不承诺公共源 | Source 可用性 |
-| `lscr.io` | 原第一批明确排除 | 单独扩展验收 | 范围外 |
-
-`cgr.dev` 和 `<location>-docker.pkg.dev` 不能被写成“代码未完成”；它们当前主要是 Source 可用性问题。
-
-`cgr.dev` 的官方匿名入口返回 401，不等于可用的故障边。3.5.13 只能用受控 Source 的 404/5xx 验证回退路径，用官方 401 验证 Challenge 透传；对外仍标记“公共 Source 缺失”，不能把 401 当成功，也不能把“代码路径通过”写成“已有公共加速能力”。
-
-验收：
-
-- 第一批全部可验收 Host 的公开代表性仓库可实际拉取
-- 一个 Host 配置两条以上 Source 时按顺序尝试并正确回退
-- 一个 Source 故障不导致同 Host 其他 Source 被错误熔断
-- 不同 Host 的 Source、健康、Manifest 缓存和认证状态不串用
-- 只完成 3.5.12 时只能称“验证集通过”，不能称“第一批全部支持”
-- 没有公共 Source 的 Host 必须明确标记“Source 可用性阻塞”，不能伪造通过
+原 3.5.13（第一批剩余 Host + 同 Host 多 Source 正式验收）已整体并入 3.5.12，不单独发布。编号保留为空，不复用；3.5.14 及后续版本不改号。原 3.5.13 的 Host 矩阵、验收要求和阻塞分类已迁入 3.5.12-H。
 
 ### 3.5.14a `source_host_caps` 回填 + 旧字段投影 + 新写路径
 
@@ -934,23 +1061,23 @@ Docker / GHCR 的 `probe_status` 映射必须显式实现，不能只写 `docker
 
 #### 3.5.14a-F 离线迁移
 
-当前生产 Schema 是 `3.5.7`，但 3.5.11 新增 `source_realm_policy` 后会再次提升 Schema。因此迁移链不是简单的一条 `3.5.7 → 3.5.14a`：
+3.5.14a 实施时的生产基线是 `3.5.11`（2026-11-16 实测）；3.5.11 新增 `source_realm_policy` 后 Schema 已提升。迁移链从 `3.5.7` 起保留给旧库，因此不是简单的一条 `3.5.7 → 3.5.14a`：
 
 ```text
-3.5.7  → 3.5.11  → 3.5.13  → 3.5.14a
-         Realm 表    Host 能力表
+3.5.7  → 3.5.11  → 3.5.12  → 3.5.14a
+         Realm 表   验收（不改 Schema）  Host 能力表
 ```
 
 当前 `db-migrate` 不能直接迁移这条链：
 
 - `inputSchemaFingerprints` 只接受 `3.4.6 / 3.5.4 / 3.5.5`
 - `upgrade356` 只处理 `3.5.6 → 3.5.7`
-- 没有 3.5.7、3.5.11、3.5.13 的输入路径
+- 没有 3.5.7、3.5.11、3.5.12 的输入路径
 
 因此 3.5.11 和 3.5.14a 都必须各自提供离线升级路径：
 
 - 3.5.11：`3.5.7 → 3.5.11`，新增 `source_realm_policy`，按 `repo_host` 种子化并生成缺失策略报告
-- 3.5.14a：`3.5.13 → 3.5.14`，新增 `source_host_caps` 并回填
+- 3.5.14a：`3.5.12 → 3.5.14`，新增 `source_host_caps` 并回填
 - 这一步同时校验：没有策略的 Source 必须进入报告并在运行时 fail closed，不能回退旧白名单
 - `copyAll` 不会自动生成 `source_realm_policy`；如果只复制旧表，升级后所有自定义 Host 都会认证失败
 - 每一步都更新输入 Schema 指纹
@@ -1281,7 +1408,7 @@ JOIN sources src ON src.repo_host = g.host
 | 旧路线 | 新版本 | 说明 |
 |---|---|---|
 | 3.5.4 A：Host 凭据、Realm、Gateway 凭据、独立开关 | 3.5.11 + 3.5.15 | 公开 Realm 先做，私有 CredStore 后做 |
-| 3.5.4 B：多 Registry 正式启用 | 3.5.12 + 3.5.13 | 先补验证集缺口，再完成第一批验收 |
+| 3.5.4 B：多 Registry 正式启用 | 3.5.12（含原 3.5.13） | 合并验收：补验证集缺口 + 完成第一批 |
 | 3.5.4 C：Manifest star_race | 3.5.16 | 默认关闭，独立开关 |
 | 3.5.4 D：Blob 竞速 | 3.5.17 | 只评估，单独立项 |
 | 3.5.4 架构债：一源多 Host | 3.5.14a + 3.5.14b | 先回填投影，再切换权威读路径 |
@@ -1290,8 +1417,8 @@ JOIN sources src ON src.repo_host = g.host
 ## 7. 版本门禁
 
 1. 3.5.11 未通过前，不进入 3.5.12 的 Host 实现。
-2. 3.5.12 只证明三个 Host 可用，不宣称第一批完整支持。
-3. 3.5.13 完成前，不宣称第一批 Registry 全部支持。
+2. 3.5.12 按 Host 门禁声明：只有真实回源通过的 Host 才能声明支持，阻塞 Host 必须标注“Source 可用性阻塞”。
+3. 3.5.12 完成前，不宣称第一批 Registry 全部支持。
 4. 3.5.14a 可以回填、投影和双写，但不得切换候选读路径。
 5. 3.5.14a 的 `backfillHostCaps` 未通过行数、冲突和双用途源校验前，不进入 14b。
 6. 3.5.14b 完成前，不为任何 Source 手工添加多 Host 标签。
@@ -1353,13 +1480,13 @@ JOIN sources src ON src.repo_host = g.host
 9. GitLab PAT / Deploy Token 独立为 3.5.15a。
 10. 无公共 Source 的 Host 允许用受控 Source 故障边验收代码路径，但对外必须标记“Source 可用性阻塞”，不能宣称已有公共加速能力。
 11. 认证身份通过每次 attempt 的 request context 传递，不依赖静态 `adapter.Plan.SourceID`。
-12. 3.5.14a 的离线迁移必须新增 `3.5.7 → 3.5.11 → 3.5.13 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
+12. 3.5.14a 的离线迁移必须新增 `3.5.7 → 3.5.11 → 3.5.12 → 3.5.14a` 路径和 `backfillHostCaps` 步骤，不能只复用旧的三基线迁移。
 13. 迁移采用临时库 + 原子发布；失败删除临时库和 sidecar，不保留半迁移状态；不宣称“单事务迁移”。
-14. 3.5.11 分 11a/11b/11c；完成后 Source Realm 只保留 `source_realm_policy`，官方直连走独立 `OfficialPolicy`（不是 fallback）；运行时数据库写入单事务；Token Cache 版本化失效；Schema 迁移离线 + 原子发布；无旧 Realm fallback；Schema 回滚靠备份。
+14. 3.5.11 分 11a/11b/11c；**11c 原计划未实施，已并入 3.5.12 的 12c**；完成后 Source Realm 只保留 `source_realm_policy`，官方直连走独立 `OfficialPolicy`（不是 fallback）；运行时数据库写入单事务；Token Cache 版本化失效；Schema 迁移离线 + 原子发布；无旧 Realm fallback；Schema 回滚靠备份。
 
 ### 仍待冻结
 
-1. `db-migrate` 的升级命令拆分：3.5.7→3.5.11 和 3.5.13→3.5.14 是新增独立命令，还是扩展 `migrate` 的 baseline 列表。
+1. `db-migrate` 的升级命令拆分：3.5.7→3.5.11 和 3.5.12→3.5.14 是新增独立命令，还是扩展 `migrate` 的 baseline 列表。
 2. `Mismatch` 是否允许手动重探，还是只能通过显式重置能力后重探。
 3. `source_host_caps` 的 `probe_status` 用 TEXT 还是整数编码；无论哪种，必须与 `registry_cap` 保持一一映射。
 

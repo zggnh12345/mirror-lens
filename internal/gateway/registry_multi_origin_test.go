@@ -643,3 +643,43 @@ func mustHealth(t *testing.T, st *store.Store, id int64) map[string]int {
 	}
 	return h
 }
+
+// 12-T：候选集合 → scheduler 排序 → Gateway 实际请求 → 首选失败 → 下一 Source 回退。
+// 断言第二源的内容与 Digest 一致，且 X-ML-Source 指向真正服务的源。
+func TestMultiOriginSecondSourceFailoverKeepsDigest(t *testing.T) {
+	f := newMOFixture(t)
+	bad := &moMirror{path: "/v2/library/alpine/manifests/latest", status: 503, hits: &f.nativeHits}
+	badSrv := httptest.NewServer(bad)
+	defer badSrv.Close()
+	f.addRegistrySource(t, badSrv, "native")
+
+	body := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","mirror":"second"}`
+	sum := sha256.Sum256([]byte(body))
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	hdr := http.Header{}
+	hdr.Set("Docker-Content-Digest", digest)
+	good := &moMirror{path: "/v2/library/alpine/manifests/latest", body: body, hdr: hdr, hits: &f.prefixHits}
+	goodSrv := httptest.NewServer(good)
+	defer goodSrv.Close()
+	goodID := f.addRegistrySource(t, goodSrv, "native")
+
+	w := f.get(t, "/v2/quay.io/library/alpine/manifests/latest")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != body {
+		t.Fatalf("回退后内容不一致: %q", got)
+	}
+	if got := w.Header().Get("Docker-Content-Digest"); got != digest {
+		t.Fatalf("Digest 头不一致: %q != %q", got, digest)
+	}
+	if got := w.Header().Get("X-ML-Source"); got != goodSrv.URL {
+		t.Fatalf("应命中第二源 #%d (%s)，实际 X-ML-Source=%q", goodID, goodSrv.URL, got)
+	}
+	if bad.hits.Load() != 1 || good.hits.Load() != 1 {
+		t.Fatalf("首选应失败一次、第二源应成功一次: bad=%d good=%d", bad.hits.Load(), good.hits.Load())
+	}
+	if f.officialHits.Load() != 0 {
+		t.Fatalf("第二源成功时不应回官方，official=%d", f.officialHits.Load())
+	}
+}

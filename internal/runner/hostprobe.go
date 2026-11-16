@@ -10,6 +10,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
+	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
@@ -49,6 +50,13 @@ type HostProbeOptions struct {
 	ScanInterval time.Duration
 
 	Policies v2auth.PolicyResolver
+
+	// AllowedHosts 是多源 Host 白名单（registry.multi_origin_hosts）。
+	// 探测执行前按它过滤任务：关闭的 Host 不得继续探测或写健康状态。
+	//
+	// nil 表示未配置（测试/离线兼容，允许全部）；非 nil 的空切片表示
+	// 一个 Host 都不允许。生产装配必须传入配置值。
+	AllowedHosts []string
 
 	// Probe 可注入，测试用；默认 probe.ProbeRegistryHost。
 	Probe func(context.Context, probe.RegistryHostProbe) probe.RegistryHostOutcome
@@ -268,40 +276,65 @@ func (r *HostProbeRunner) reconcileRepos() {
 }
 
 func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJob, error) {
-	if r.o.JobsAt != nil {
-		return r.o.JobsAt(ctx, now)
-	}
-	if r.o.Jobs != nil {
-		return r.o.Jobs(ctx)
-	}
-	rows, err := r.o.Store.ListDueHostProbes(now.Unix())
-	if err != nil {
-		return nil, err
-	}
 	var out []HostProbeJob
-	var missing []string
-	seen := map[string]bool{}
-	for _, x := range rows {
-		repo := r.o.Repos[x.RepoHost]
-		if repo == "" {
-			if !seen[x.RepoHost] {
-				seen[x.RepoHost] = true
-				missing = append(missing, x.RepoHost)
-			}
-			continue
+	switch {
+	case r.o.JobsAt != nil:
+		jobs, err := r.o.JobsAt(ctx, now)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, HostProbeJob{
-			SourceID: x.SourceID,
-			Host:     x.RepoHost,
-			Gen:      x.Gen,
-			BaseURL:  x.BaseURL,
-			Repo:     repo,
-		})
+		out = jobs
+	case r.o.Jobs != nil:
+		jobs, err := r.o.Jobs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out = jobs
+	default:
+		rows, err := r.o.Store.ListDueHostProbes(now.Unix())
+		if err != nil {
+			return nil, err
+		}
+		var missing []string
+		seen := map[string]bool{}
+		for _, x := range rows {
+			repo := r.o.Repos[x.RepoHost]
+			if repo == "" {
+				if !seen[x.RepoHost] {
+					seen[x.RepoHost] = true
+					missing = append(missing, x.RepoHost)
+				}
+				continue
+			}
+			out = append(out, HostProbeJob{
+				SourceID: x.SourceID,
+				Host:     x.RepoHost,
+				Gen:      x.Gen,
+				BaseURL:  x.BaseURL,
+				Repo:     repo,
+			})
+		}
+		if len(missing) > 0 {
+			log.Printf("Host 探测缺少仓库配置，已跳过这些 Host: %v（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）", missing)
+		}
 	}
-	if len(missing) > 0 {
-		log.Printf("Host 探测缺少仓库配置，已跳过这些 Host: %v（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）", missing)
+	return r.filterAllowed(out), nil
+}
+
+// filterAllowed 在探测执行前按 multi_origin_hosts 过滤任务。
+// 关闭的 Host 不执行探测，也不会写入 recovery / 健康状态。
+// nil 白名单表示未配置（测试兼容，允许全部）；非 nil 空切片拒绝全部。
+func (r *HostProbeRunner) filterAllowed(in []HostProbeJob) []HostProbeJob {
+	if r.o.AllowedHosts == nil {
+		return in
 	}
-	return out, nil
+	out := in[:0]
+	for _, j := range in {
+		if registryhost.Match(r.o.AllowedHosts, j.Host) {
+			out = append(out, j)
+		}
+	}
+	return out
 }
 
 func jobKey(j HostProbeJob) string {

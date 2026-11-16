@@ -27,6 +27,7 @@
   <button data-tab="account" class="on">账号</button>
   <button data-tab="appearance">外观</button>
   <button data-tab="probe">探测</button>
+  <button data-tab="policy">策略</button>
   <button data-tab="accel">加速器</button>
   <button data-tab="config">配置参数</button>
   <button data-tab="audit">审计</button>
@@ -154,6 +155,37 @@
   </div>
   </div>
 
+  <!-- Realm 策略 -->
+  <div data-panel="policy">
+  <div class="sec">
+    <h2>Realm 策略<span class="qi" data-tip="按 Source 编辑认证 Realm。Host 的多源开关仍由 config.yaml 的 multi_origin_hosts 管理，这里只读展示。删除策略会让该 Source 在运行时 fail closed。">?</span></h2>
+    <div class="saverow" style="margin-top:0">
+      <select id="polHost" style="flex:1;min-width:160px"></select>
+      <button class="btn" id="polReload">刷新</button>
+    </div>
+    <div class="hint" id="polMsg"></div>
+    <div class="tklist" id="polList"><div class="hint">加载中…</div></div>
+
+    <div id="polEdit" hidden>
+      <h2 style="margin-top:18px">编辑策略</h2>
+      <div class="hint" id="polEditWho"></div>
+      <label for="polPrimary">主 Realm</label>
+      <input type="text" id="polPrimary" placeholder="https://quay.io" spellcheck="false">
+      <label for="polExtra">额外 Realm（每行一个，最多 3 个）</label>
+      <textarea id="polExtra" rows="3" spellcheck="false" style="width:100%"></textarea>
+      <div class="saverow" style="margin-top:10px;flex-wrap:wrap">
+        <button class="btn primary" id="polSave">保存</button>
+        <button class="btn danger" id="polDelete">删除策略</button>
+        <button class="btn" id="polCancel">取消</button>
+        <span class="hint" id="polEditMsg"></span>
+      </div>
+    </div>
+
+    <h2 style="margin-top:20px">策略变更</h2>
+    <div id="polAudit" class="hint">加载中…</div>
+  </div>
+  </div>
+
   <!-- 配置参数 -->
   <div data-panel="config">
     <div id="cfgBox"><div class="hint">加载中…</div></div>
@@ -242,6 +274,7 @@ document.querySelectorAll('#tabs button').forEach(function(b){
     window.scrollTo(0, 0);
     if (t === 'config') loadConfig();
     if (t === 'audit') loadAudit();
+    if (t === 'policy') loadPolicyHosts();
   });
 });
 
@@ -264,6 +297,126 @@ async function loadAudit(){
     box.innerHTML = '<div class="hint error">' + esc(err.message) + '</div>';
   }
 }
+
+/* ---- Realm 策略 ---- */
+var POL = { host: '', items: [], edit: 0 };
+
+async function loadPolicyHosts(){
+  var sel = $('#polHost'), box = $('#polList');
+  try{
+    var d = await api('/api/policies');
+    var enabled = {};
+    (d.multi_origin_hosts || []).forEach(function(h){ enabled[h] = true; });
+    var hosts = (d.hosts || []).map(function(x){ return x.host; });
+    (d.multi_origin_hosts || []).forEach(function(h){
+      if (h.indexOf('*') < 0 && hosts.indexOf(h) < 0) hosts.push(h);
+    });
+    if (!hosts.length){ box.innerHTML = '<div class="hint">还没有带 Host 的 Source</div>'; sel.innerHTML = ''; return; }
+    var cur = sel.value;
+    sel.innerHTML = hosts.map(function(h){
+      return '<option value="' + esc(h) + '">' + esc(h) + ' · ' + (enabled[h] ? '多源开' : '多源关') + '</option>';
+    }).join('');
+    if (cur && hosts.indexOf(cur) >= 0) sel.value = cur;
+    POL.host = sel.value;
+    await loadPolicies();
+  }catch(err){
+    box.innerHTML = '<div class="hint error">' + esc(err.message) + '</div>';
+  }
+}
+
+async function loadPolicies(){
+  var host = $('#polHost').value; POL.host = host;
+  var box = $('#polList');
+  if (!host){ box.innerHTML = '<div class="hint">先选 Host</div>'; return; }
+  try{
+    var d = await api('/api/policies?host=' + encodeURIComponent(host));
+    POL.items = d.sources || [];
+    if (!POL.items.length){
+      box.innerHTML = '<div class="hint">该 Host 下没有 Source</div>';
+    } else {
+      box.innerHTML = POL.items.map(function(x){
+        var p = x.policy;
+        var desc = p
+          ? esc(p.primary_realm) + (p.extra_realms && p.extra_realms.length ? ' + ' + esc(p.extra_realms.join(', ')) : '')
+          : '<b style="color:#d33">无策略（fail closed）</b>';
+        return '<div class="kv" style="align-items:baseline;gap:8px">' +
+          '<span>' + esc(x.name) + ' <span style="opacity:.55">#' + x.source_id + ' · cap=' + x.registry_cap + '</span></span>' +
+          '<span style="text-align:right;word-break:break-all">' + desc + '</span>' +
+          '<button class="btn" data-pol-edit="' + x.source_id + '">编辑</button></div>';
+      }).join('');
+      box.querySelectorAll('[data-pol-edit]').forEach(function(b){
+        b.onclick = function(){ openPolicy(parseInt(b.dataset.polEdit, 10)); };
+      });
+    }
+    await loadPolicyAudit();
+  }catch(err){
+    box.innerHTML = '<div class="hint error">' + esc(err.message) + '</div>';
+  }
+}
+
+function findPolicy(id){
+  for (var i = 0; i < POL.items.length; i++){ if (POL.items[i].source_id === id) return POL.items[i]; }
+  return null;
+}
+
+function openPolicy(id){
+  var x = findPolicy(id); if (!x) return;
+  POL.edit = id;
+  $('#polEdit').hidden = false;
+  $('#polEditWho').textContent = '#' + id + ' ' + x.name + ' · ' + x.repo_host;
+  $('#polPrimary').value = x.policy ? x.policy.primary_realm : '';
+  $('#polExtra').value = x.policy && x.policy.extra_realms ? x.policy.extra_realms.join('\n') : '';
+  say($('#polEditMsg'), '');
+  $('#polEdit').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+async function savePolicy(){
+  if (!POL.edit) return;
+  var msg = $('#polEditMsg');
+  var extra = $('#polExtra').value.split('\n').map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+  try{
+    await api('/api/policies/' + POL.edit + '?host=' + encodeURIComponent(POL.host), {
+      method: 'PUT',
+      body: JSON.stringify({ primary_realm: $('#polPrimary').value.trim(), extra_realms: extra })
+    });
+    toast('策略已保存');
+    $('#polEdit').hidden = true; POL.edit = 0;
+    await loadPolicies();
+  }catch(err){ say(msg, err.message, 'bad'); }
+}
+
+async function deletePolicy(){
+  if (!POL.edit) return;
+  if (!confirm('删除该策略？删除后这个 Source 会 fail closed，直到重新配置。')) return;
+  try{
+    await api('/api/policies/' + POL.edit + '?host=' + encodeURIComponent(POL.host), {method:'DELETE'});
+    toast('策略已删除');
+    $('#polEdit').hidden = true; POL.edit = 0;
+    await loadPolicies();
+  }catch(err){ say($('#polEditMsg'), err.message, 'bad'); }
+}
+
+async function loadPolicyAudit(){
+  var box = $('#polAudit');
+  try{
+    var d = await api('/api/policy-audit?limit=30');
+    var ev = d.events || [];
+    if (!ev.length){ box.innerHTML = '<div class="hint">还没有策略变更</div>'; return; }
+    var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    box.innerHTML = ev.map(function(e){
+      var t = new Date(e.ts * 1000);
+      return '<div class="kv"><span style="opacity:.55">' + (t.getMonth() + 1) + '-' + pad(t.getDate()) + ' ' +
+        pad(t.getHours()) + ':' + pad(t.getMinutes()) + ' · #' + e.source_id + '</span>' +
+        '<span style="text-align:right">' + (e.ok ? '变更' : '失败') + '</span></div>';
+    }).join('');
+  }catch(err){ box.innerHTML = '<div class="hint error">' + esc(err.message) + '</div>'; }
+}
+
+$('#polHost').addEventListener('change', loadPolicies);
+$('#polReload').addEventListener('click', loadPolicyHosts);
+$('#polSave').addEventListener('click', savePolicy);
+$('#polDelete').addEventListener('click', deletePolicy);
+$('#polCancel').addEventListener('click', function(){ $('#polEdit').hidden = true; POL.edit = 0; });
 
 /* ---- 加载 ---- */
 var ME = {};

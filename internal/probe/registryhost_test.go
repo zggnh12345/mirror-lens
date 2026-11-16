@@ -18,6 +18,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest"
 )
 
 const (
@@ -145,7 +146,7 @@ func runProbe(t *testing.T, f *fakeHost, expected string, creds v2auth.Credentia
 		Host:           "quay.io",
 		ExpectedDigest: expected,
 		Snapshot:       v2auth.CredentialSnapshot{Host: "quay.io", Generation: 1, Digest: "d", Credentials: creds},
-		Policy:         v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false),
+		Policy:         v2authtest.New(map[string][]string{"quay.io": {srv.URL}}, false),
 		Timeout:        5 * time.Second,
 	})
 }
@@ -212,7 +213,7 @@ func TestRegistryHostMediaTypeWithParameters(t *testing.T) {
 		BaseURL:  srv.URL,
 		Host:     "quay.io",
 		Snapshot: v2auth.CredentialSnapshot{Host: "quay.io"},
-		Policy:   v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false),
+		Policy:   v2authtest.New(map[string][]string{"quay.io": {srv.URL}}, false),
 		Timeout:  5 * time.Second,
 	})
 	if out.Native.Cap != capYes {
@@ -395,7 +396,7 @@ func TestRegistryHostRejectsForeignSnapshot(t *testing.T) {
 		BaseURL:  srv.URL,
 		Host:     "quay.io",
 		Snapshot: v2auth.CredentialSnapshot{Host: "gcr.io", Generation: 9, Digest: "x"},
-		Policy:   v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false),
+		Policy:   v2authtest.New(map[string][]string{"quay.io": {srv.URL}}, false),
 	})
 	if out.Cap != capUnknown || !strings.Contains(out.Native.Error, "不一致") {
 		t.Fatalf("跨 Host 快照应被拒: %+v", out)

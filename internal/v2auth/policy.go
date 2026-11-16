@@ -63,41 +63,8 @@ func (OfficialPolicy) Resolve(_ context.Context, sourceID int64, host string) (P
 	}, nil
 }
 
-// LegacyHostPolicy 复刻 3.5.10 的 Host→Realm 行为。
-//
-// 四段语义：
-//  1. 带 userinfo 的 Realm 一律拒绝；
-//  2. AllowSameHost 时，同 Host、同 scheme 的 Realm 放行；
-//  3. 否则查显式表；显式表为空时查 DefaultRealmsFor。
-//
-// 不支持通配 Realm；通配符不是 11b 的运行时语义。
-// 仅用于测试显式注入，生产装配不再构造这个类型。
-type LegacyHostPolicy struct {
-	Realms        map[string][]string
-	AllowSameHost bool
-}
-
-// NewLegacyHostPolicy 构造 11a 的过渡策略。
-func NewLegacyHostPolicy(realms map[string][]string, allowSameHost bool) *LegacyHostPolicy {
-	return &LegacyHostPolicy{Realms: realms, AllowSameHost: allowSameHost}
-}
-
-func (p *LegacyHostPolicy) Resolve(_ context.Context, sourceID int64, host string) (PolicySnapshot, error) {
-	if sourceID < 0 {
-		return PolicySnapshot{}, fmt.Errorf("%w: source_id=%d", ErrPolicyMissing, sourceID)
-	}
-	allows := p.Realms[host]
-	if len(allows) == 0 {
-		allows = DefaultRealmsFor(host)
-	}
-	return PolicySnapshot{
-		SourceID:      sourceID,
-		LogicalHost:   host,
-		Official:      sourceID == 0,
-		AllowSameHost: p.AllowSameHost,
-		Realms:        append([]string(nil), allows...),
-	}, nil
-}
+// 11a 的 Host→Realm 过渡实现已从生产代码移除；仅测试辅助包
+// internal/v2auth/v2authtest 保留同等语义，供注入式测试使用。
 
 // Allows 校验 Challenge 的 Realm 是否属于本策略。
 func (p PolicySnapshot) Allows(realm *url.URL) error {

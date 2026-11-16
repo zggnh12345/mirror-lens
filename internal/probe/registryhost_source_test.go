@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest"
 )
 
 type probeRecordingPolicy struct {
@@ -32,7 +33,7 @@ func (p *probeRecordingPolicy) sources() []int64 {
 func TestProbePolicyReceivesSourceID(t *testing.T) {
 	f := &fakeHost{native: "ok", prefix: "404"}
 	srv := f.start(t)
-	rec := &probeRecordingPolicy{base: v2auth.NewLegacyHostPolicy(map[string][]string{"quay.io": {srv.URL}}, false)}
+	rec := &probeRecordingPolicy{base: v2authtest.New(map[string][]string{"quay.io": {srv.URL}}, false)}
 
 	out := ProbeRegistryHost(context.Background(), RegistryHostProbe{
 		BaseURL:        srv.URL,

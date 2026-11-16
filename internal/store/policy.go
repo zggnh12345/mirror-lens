@@ -23,12 +23,12 @@ const maxPolicyExtraRealms = 3
 
 // RealmPolicy 是 source_realm_policy 的一行。
 type RealmPolicy struct {
-	SourceID     int64
-	Host         string
-	PrimaryRealm string
-	ExtraRealms  []string
-	PolicyGen    int64
-	UpdatedAt    int64
+	SourceID     int64    `json:"source_id"`
+	Host         string   `json:"host"`
+	PrimaryRealm string   `json:"primary_realm"`
+	ExtraRealms  []string `json:"extra_realms"`
+	PolicyGen    int64    `json:"policy_gen"`
+	UpdatedAt    int64    `json:"updated_at"`
 }
 
 // StorePolicy 是运行时唯一允许的 sourceID>0 策略来源。
@@ -335,4 +335,169 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// PolicyListItem 是某个 Host 下的一条 Source 及其策略（策略可能缺失）。
+type PolicyListItem struct {
+	SourceID     int64        `json:"source_id"`
+	Name         string       `json:"name"`
+	BaseURL      string       `json:"base_url"`
+	RepoHost     string       `json:"repo_host"`
+	Enabled      bool         `json:"enabled"`
+	Status       string       `json:"status"`
+	RegistryCap  int          `json:"registry_cap"`
+	RegistryPath string       `json:"registry_path_mode"`
+	Policy       *RealmPolicy `json:"policy"`
+}
+
+// ListRealmPolicies 返回某个 Host 下所有未归档 Source 及策略。
+// host 为空返回空列表，调用方应先取 Host 汇总。
+func (s *Store) ListRealmPolicies(rawHost string) ([]PolicyListItem, error) {
+	host, err := normalizePolicyHost(rawHost)
+	if err != nil {
+		return nil, err
+	}
+	if host == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT s.id, s.name, s.base_url, s.repo_host, s.enabled, s.status,
+		s.registry_cap, s.registry_path_mode,
+		p.primary_realm, p.extra_realms, p.policy_gen, p.updated_at
+		FROM sources s
+		LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=s.repo_host
+		WHERE s.repo_host=? AND s.status<>'archived'
+		ORDER BY s.id`, host)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PolicyListItem
+	for rows.Next() {
+		var it PolicyListItem
+		var primary, extra sql.NullString
+		var gen, updated sql.NullInt64
+		if err := rows.Scan(&it.SourceID, &it.Name, &it.BaseURL, &it.RepoHost, &it.Enabled, &it.Status,
+			&it.RegistryCap, &it.RegistryPath, &primary, &extra, &gen, &updated); err != nil {
+			return nil, err
+		}
+		if primary.Valid {
+			extras, err := parseExtraRealms(extra.String)
+			if err != nil {
+				return nil, err
+			}
+			it.Policy = &RealmPolicy{
+				SourceID: it.SourceID, Host: it.RepoHost, PrimaryRealm: primary.String,
+				ExtraRealms: extras, PolicyGen: gen.Int64, UpdatedAt: updated.Int64,
+			}
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// PolicyHostSummary 是 Host 只读汇总的一行。
+type PolicyHostSummary struct {
+	Host       string `json:"host"`
+	Sources    int    `json:"sources"`
+	WithPolicy int    `json:"with_policy"`
+}
+
+// ListPolicyHosts 汇总当前有 Source 归属的 Host。
+func (s *Store) ListPolicyHosts() ([]PolicyHostSummary, error) {
+	rows, err := s.db.Query(`SELECT s.repo_host,
+		COUNT(*),
+		SUM(CASE WHEN p.source_id IS NULL THEN 0 ELSE 1 END)
+		FROM sources s
+		LEFT JOIN source_realm_policy p ON p.source_id=s.id AND p.host=s.repo_host
+		WHERE s.repo_host<>'' AND s.status<>'archived'
+		GROUP BY s.repo_host ORDER BY s.repo_host`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PolicyHostSummary
+	for rows.Next() {
+		var x PolicyHostSummary
+		if err := rows.Scan(&x.Host, &x.Sources, &x.WithPolicy); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// DeleteRealmPolicy 删除一行策略并记录事件。删除后运行时必须 fail closed。
+func (s *Store) DeleteRealmPolicy(sourceID int64, rawHost string) error {
+	host, err := normalizePolicyHost(rawHost)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=? AND host=?`, sourceID, host)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return v2auth.ErrPolicyMissing
+	}
+	if err := recordPolicyChangeTx(tx, sourceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// PolicyEvent 是策略变更事件（source_events 的 policy_change 行）。
+type PolicyEvent struct {
+	ID       int64 `json:"id"`
+	SourceID int64 `json:"source_id"`
+	TS       int64 `json:"ts"`
+	OK       bool  `json:"ok"`
+}
+
+// ListPolicyEvents 返回策略变更事件，sourceID=0 表示全部。
+func (s *Store) ListPolicyEvents(sourceID int64, limit int) ([]PolicyEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT id, source_id, ts, ok FROM source_events WHERE kind=?`
+	args := []any{SourceEventPolicyChange}
+	if sourceID > 0 {
+		q += ` AND source_id=?`
+		args = append(args, sourceID)
+	}
+	q += ` ORDER BY ts DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PolicyEvent
+	for rows.Next() {
+		var e PolicyEvent
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.TS, &e.OK); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func parseExtraRealms(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

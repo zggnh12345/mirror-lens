@@ -127,6 +127,30 @@ func IsArtifactRegistry(host string) bool {
 	return true
 }
 
+// Match 判断 host 是否命中多源白名单。
+//
+// 规则只有两条，Gateway 与 Runner 必须共用，不能各写一份：
+//   - 精确匹配（区分大小写前的规范化由调用方保证）；
+//   - "*.pkg.dev" 只匹配 IsArtifactRegistry 认可的三段 Artifact Registry Host。
+//
+// 空列表返回 false；nil 与空列表同义（没有 Host 被允许）。
+func Match(patterns []string, host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	for _, raw := range patterns {
+		p := strings.ToLower(strings.TrimSpace(raw))
+		if p == "" {
+			continue
+		}
+		if p == h {
+			return true
+		}
+		if p == "*.pkg.dev" && IsArtifactRegistry(h) {
+			return true
+		}
+	}
+	return false
+}
+
 // Allowed 判断规范化后的 Host 是否在可回源白名单内。
 // 空串（Docker Hub）始终允许。
 func Allowed(host string) bool {

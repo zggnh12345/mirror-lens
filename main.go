@@ -415,6 +415,7 @@ func main() {
 			Store:        st,
 			Creds:        hostCreds,
 			Repos:        parseHostProbeRepos(os.Getenv("ML_HOSTPROBE_REPOS")),
+			AllowedHosts: cfg.Registry.MultiOriginHosts,
 			Interval:     hostProbeInterval(),
 			ScanInterval: hostProbeScanInterval(),
 			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,

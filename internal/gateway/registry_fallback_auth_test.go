@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/zggnh12345/mirror-lens/internal/store"
-	"github.com/zggnh12345/mirror-lens/internal/v2auth"
+	"github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest"
 )
 
 // 裸 Docker Hub 名 fallback 到 ghcr 时，认证身份必须切到 ghcr 的
@@ -69,7 +69,7 @@ func TestFallbackToGhcrCarriesCandidateIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	policy := &recordingPolicy{base: v2auth.NewLegacyHostPolicy(map[string][]string{"ghcr.io": {tokenSrv.URL}}, false)}
+	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{"ghcr.io": {tokenSrv.URL}}, false)}
 	f.gw.policies = policy
 	f.gw.cli = &http.Client{Transport: &bearerTransport{
 		base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
