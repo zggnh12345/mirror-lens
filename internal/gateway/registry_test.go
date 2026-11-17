@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
+	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 )
@@ -482,5 +484,65 @@ func TestRegistryReferrersEmptyIndex(t *testing.T) {
 	}
 	if p, err := a.ParsePath("/v2/foo/referrers/bar/manifests/latest"); err != nil || p.Kind != registryadapter.KindManifest {
 		t.Errorf("清单路径被误判成 referrers: %+v %v", p, err)
+	}
+}
+
+// S14：旧 epoch 的私有 Manifest 不能被匿名请求命中；清理后物理消失。
+func TestRegistryOldEpochNotHit(t *testing.T) {
+	f := newRegFixture(t, false)
+	target := "/v2/library/alpine/manifests/latest"
+	hdr := map[string]string{"Accept": manifestsAccept}
+
+	// 先用 epoch=0 生成旧格式 key，并放入一条“看起来新鲜”的缓存。
+	req := httptest.NewRequest(http.MethodGet, "http://gw"+target, nil)
+	oldPlan, err := f.ad.Plan(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 64)
+	blobPath := f.gw.CacheStore().BlobPath(sha)
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blobPath, []byte("old-private-bytes"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.CachePut(store.CacheEntry{
+		Key: oldPlan.CacheKey, SHA256: sha, Size: 17,
+		ContentType: manifestsAccept, CreatedAt: time.Now().Unix(), TTL: int64(time.Hour / time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 切到 epoch=2；旧 key 必须立即不可达。
+	f.ad.Epoch = func() int64 { return 2 }
+
+	w := f.do(t, http.MethodGet, target, hdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("旧 epoch 应回源 200，实际 %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-ML-Cache"); got == "HIT" {
+		t.Fatalf("旧 epoch 缓存被匿名命中: %q", got)
+	}
+	if n := atomic.LoadInt32(&f.up.manifestHits); n != 1 {
+		t.Fatalf("旧 epoch 应触发一次回源，实际 %d", n)
+	}
+
+	keys, err := f.st.CacheEpochKeysBefore(2, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := gc.New(f.st, f.gw.CacheStore()).DeleteKeys(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Entries != 1 {
+		t.Fatalf("应清理 1 条旧 epoch 索引，实际 %d", res.Entries)
+	}
+	if e, _ := f.st.CacheGet(oldPlan.CacheKey); e != nil {
+		t.Fatal("旧 epoch 索引清理后仍存在")
+	}
+	if f.gw.CacheStore().Has(sha) {
+		t.Fatal("旧 epoch 物理文件清理后仍存在")
 	}
 }

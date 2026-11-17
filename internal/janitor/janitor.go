@@ -36,6 +36,9 @@ type Options struct {
 	// BackupKey 是 secret.key 的路径，随快照一起复制；为空时跳过备份，
 	// 绝不生成缺 key 的「不完整备份」。
 	BackupKey string
+	// BackupCreds 是 registry_creds.enc 的路径；存在时随 DB/key 一起备份。
+	// 文件不存在表示尚未配置凭据，可以省略；其他读取错误让备份失败。
+	BackupCreds string
 }
 
 type Stats struct {

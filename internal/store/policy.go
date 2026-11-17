@@ -46,7 +46,9 @@ func (p *StorePolicy) Resolve(ctx context.Context, sourceID int64, host string) 
 		return v2auth.PolicySnapshot{}, fmt.Errorf("%w: source_id=%d", v2auth.ErrPolicyMissing, sourceID)
 	}
 	if sourceID == 0 {
-		return v2auth.OfficialPolicy{}.Resolve(ctx, 0, host)
+		// 官方直连策略必须带真实 generation：静态 OfficialPolicy 的
+		// CredGen 恒为 0，会让轮换后的凭据继续通过门禁（P0-1）。
+		return p.resolveOfficial(ctx, host)
 	}
 	logical, err := normalizePolicyHost(host)
 	if err != nil {
@@ -82,6 +84,39 @@ func (p *StorePolicy) Resolve(ctx context.Context, sourceID int64, host string) 
 		Scheme:        "https",
 		Realms:        append([]string{primary}, extras...),
 	}, nil
+}
+
+// resolveOfficial 是官方直连策略的唯一生产实现。
+//
+// Host 来自已解析 plan，可能是测试/内网地址；这里只做基本收敛，不做
+// registryhost 白名单校验。generation 读取失败（DB 错误）必须 fail closed；
+// 行缺失时 CredGenKnown=false，由 AuthorizeCredential 拒绝凭据认证，
+// 匿名路径不受影响。
+func (p *StorePolicy) resolveOfficial(ctx context.Context, host string) (v2auth.PolicySnapshot, error) {
+	logical := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "/"))
+	if logical == "" {
+		return v2auth.PolicySnapshot{}, fmt.Errorf("%w: 官方 Host 为空", v2auth.ErrPolicyMissing)
+	}
+	snap := v2auth.PolicySnapshot{
+		SourceID:      0,
+		LogicalHost:   logical,
+		Official:      true,
+		AllowSameHost: true,
+		Scheme:        "https",
+		Realms:        append([]string(nil), v2auth.DefaultRealmsFor(logical)...),
+	}
+	var gen int64
+	err := p.s.db.QueryRowContext(ctx, `SELECT gen FROM registry_host_gen WHERE host=?`, logical).Scan(&gen)
+	switch {
+	case err == nil:
+		snap.CredGen = gen
+		snap.CredGenKnown = true
+	case errors.Is(err, sql.ErrNoRows):
+		// 没有代次行：匿名可用，凭据认证会被门禁拒绝。
+	default:
+		return v2auth.PolicySnapshot{}, fmt.Errorf("读取官方凭据代次: %w", err)
+	}
+	return snap, nil
 }
 
 // GetRealmPolicy 读取一行策略；没有行时返回 ErrPolicyMissing 语义的错误。

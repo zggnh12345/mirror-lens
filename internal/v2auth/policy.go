@@ -18,10 +18,13 @@ var ErrPolicyMissing = errors.New("认证策略不存在")
 // 3.5.11a 只有 LegacyHostPolicy 会生成它；3.5.11b 由 StorePolicy 生成。
 // 快照必须随请求 context 走，不能在下游重新按 Host 查表。
 type PolicySnapshot struct {
-	SourceID      int64
-	LogicalHost   string
-	PolicyGen     int64
-	CredGen       int64
+	SourceID    int64
+	LogicalHost string
+	PolicyGen   int64
+	CredGen     int64
+	// CredGenKnown 表示 CredGen 来自真实读取的 registry_host_gen。
+	// 缺行为 false：凭据认证必须 fail closed，不能默认 0 继续。
+	CredGenKnown  bool
 	Official      bool
 	AllowSameHost bool
 	Scheme        string

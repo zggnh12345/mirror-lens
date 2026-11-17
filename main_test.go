@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/config"
+	"github.com/zggnh12345/mirror-lens/internal/secret"
 )
 
 // 明确写过的参数必须压过环境变量：写反了运维会以为 -addr 生效，
@@ -96,6 +100,32 @@ func TestCheckUpgradeJournal(t *testing.T) {
 	if !strings.Contains(err.Error(), "upgrade-db.sh --recover") || !strings.Contains(err.Error(), jp) {
 		t.Fatalf("错误信息应指路 --recover 与路径，得到: %v", err)
 	}
+}
+
+// S21：Pending 后台对账必须周期性触发，不能只依赖人工点按钮。
+func TestRetryPendingCredsTicker(t *testing.T) {
+	var calls atomic.Int32
+	f := &fakeReconciler{calls: &calls}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go retryPendingCredsEvery(ctx, f, 10*time.Millisecond)
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if calls.Load() >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("Pending 对账 ticker 应至少触发 2 次，实际 %d", got)
+	}
+}
+
+type fakeReconciler struct{ calls *atomic.Int32 }
+
+func (f *fakeReconciler) ReconcileAll() (int, []secret.Status, error) {
+	f.calls.Add(1)
+	return 1, nil, nil
 }
 
 // 启动早期顺序：先看 journal，再碰密钥。数据目录里同时有 journal 和

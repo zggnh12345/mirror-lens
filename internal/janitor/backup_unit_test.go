@@ -258,3 +258,70 @@ func TestPruneRemovesStaleTmpAndKeepsInvalidUnit(t *testing.T) {
 		t.Error("有效单元不应被误删")
 	}
 }
+
+func TestBackupUnitIncludesCreds(t *testing.T) {
+	_, _, _, j := setup(t, 1<<30)
+	root := t.TempDir()
+	keySrc := filepath.Join(root, "secret.key")
+	credSrc := filepath.Join(root, "registry_creds.enc")
+	if err := os.WriteFile(keySrc, []byte("test-key-material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credSrc, []byte("encrypted-credentials"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j.opt.BackupDir = filepath.Join(root, "backup")
+	j.opt.BackupKeep = 3
+	j.opt.BackupKey = keySrc
+	j.opt.BackupCreds = credSrc
+	day := time.Date(2026, 11, 14, 3, 0, 0, 0, time.Local)
+	if err := j.BackupNow(day); err != nil {
+		t.Fatal(err)
+	}
+	unit := filepath.Join(j.opt.BackupDir, backupUnitsDir, backupPrefix+"20261114")
+	ok, err := validBackupUnit(unit)
+	if err != nil || !ok {
+		t.Fatalf("带凭据的备份单元无效: ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(filepath.Join(unit, unitCredsName)); err != nil {
+		t.Fatalf("备份单元缺少 registry_creds.enc: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(unit, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m backupManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Schema != manifestSchema || m.Creds == nil || m.Creds.File != unitCredsName {
+		t.Fatalf("manifest 未记录 creds: %+v", m)
+	}
+	// 凭据文件被篡改后，整份单元必须失效。
+	if err := os.WriteFile(filepath.Join(unit, unitCredsName), []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := validBackupUnit(unit); ok {
+		t.Fatal("凭据文件被篡改后备份单元仍通过校验")
+	}
+}
+
+func TestBackupUnitWithoutCredsFileIsValid(t *testing.T) {
+	_, _, _, j := setup(t, 1<<30)
+	root := t.TempDir()
+	keySrc := filepath.Join(root, "secret.key")
+	if err := os.WriteFile(keySrc, []byte("test-key-material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j.opt.BackupDir = filepath.Join(root, "backup")
+	j.opt.BackupKeep = 3
+	j.opt.BackupKey = keySrc
+	j.opt.BackupCreds = filepath.Join(root, "registry_creds.enc") // 不存在
+	if err := j.BackupNow(time.Date(2026, 11, 15, 3, 0, 0, 0, time.Local)); err != nil {
+		t.Fatal(err)
+	}
+	unit := filepath.Join(j.opt.BackupDir, backupUnitsDir, backupPrefix+"20261115")
+	if ok, err := validBackupUnit(unit); err != nil || !ok {
+		t.Fatalf("没有凭据文件时备份单元应有效: ok=%v err=%v", ok, err)
+	}
+}

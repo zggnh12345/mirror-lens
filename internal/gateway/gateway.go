@@ -88,6 +88,9 @@ type Gateway struct {
 	disabledHosts map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
+	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
+	privNeg       *negCache                                  // 认证失败负缓存
+	cacheEpoch    int64                                      // Registry 缓存命名空间代次
 	trusted       atomic.Value                               // []TrustedRelay，面板热更新
 	privMu        sync.Mutex
 	privFails     map[string]int
@@ -172,8 +175,10 @@ type Options struct {
 	Hedge             HedgeOptions
 	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
-	CDN          CDNOptions
-	Private      PrivateOptions
+	// PrivateAuth 是 3.5.15 的私有认证运行时开关（默认全关）。
+	PrivateAuth PrivateAuthOptions
+	CDN         CDNOptions
+	Private     PrivateOptions
 	// 三类加速的独立开关（默认全开，零值即开启）。
 	// Off 而不是 On：老调用方不传这几个字段时行为不变。
 	DockerOff bool
@@ -207,14 +212,30 @@ func New(st *store.Store, o Options) *Gateway {
 		policies = v2auth.OfficialPolicy{}
 	}
 	cli := guard.Client()
+	var privNeg *negCache
 	if o.Registry != nil {
-		// 401 + Bearer 挑战时自动换 token 重发，只对配置的那个上游生效
+		privNeg = newNegCache()
+		// 401 + Bearer 挑战时自动换 token 重发；私有认证在同一处执行
+		// 「匿名优先 → 401 后凭据」，不存在第二条认证路径。
+		baseCheck := cli.CheckRedirect
 		cli = &http.Client{
-			Transport: &bearerTransport{
-				base:   cli.Transport,
-				tokens: newTokenCache(o.TokenCacheMax),
+			Transport: &registryAuthTransport{
+				base:     cli.Transport,
+				tokens:   newTokenCache(o.TokenCacheMax),
+				priv:     o.PrivateAuth,
+				neg:      privNeg,
+				resolver: policies,
+				now:      time.Now,
 			},
-			CheckRedirect: cli.CheckRedirect,
+			CheckRedirect: func(r *http.Request, via []*http.Request) error {
+				if v2auth.IsRegistryRequest(r.Context()) {
+					return applyRedirectPolicy(r, via, isCDNRedirect(r.Context()), policies)
+				}
+				if baseCheck != nil {
+					return baseCheck(r, via)
+				}
+				return nil
+			},
 		}
 	}
 	disabledHosts := make(map[string]bool, len(o.DisabledHosts))
@@ -256,6 +277,8 @@ func New(st *store.Store, o Options) *Gateway {
 		requireToken:  o.RequireToken,
 		cdn:           o.CDN,
 		priv:          o.Private,
+		privAuth:      o.PrivateAuth,
+		privNeg:       privNeg,
 		privClient:    newPrivClient(),
 	}
 	gw.bufs.New = func() any { b := make([]byte, 64<<10); return &b }
@@ -567,6 +590,84 @@ func (g *Gateway) policyResolver() v2auth.PolicyResolver {
 	return defaultGatewayPolicy
 }
 
+type cdnRedirectKey struct{}
+
+func withCDNRedirect(ctx context.Context) context.Context {
+	return context.WithValue(ctx, cdnRedirectKey{}, true)
+}
+
+func isCDNRedirect(ctx context.Context) bool {
+	v, _ := ctx.Value(cdnRedirectKey{}).(bool)
+	return v
+}
+
+// isBlobPlan 只把 Registry blob 请求标记为 CDN 可重定向；Manifest 仍走
+// Registry 规则，不能被 CDN 的跨 Host 规则放宽。
+func isBlobPlan(plan *adapter.Plan) bool {
+	return plan != nil && plan.Registry && plan.ResourceKind == adapter.ResourceBlob
+}
+
+// applyRedirectPolicy 是 Registry 重定向的唯一裁决入口。
+//
+// cdn=true 表示上一跳是 blob：按 CDN 规则只允许 GET/HEAD、HTTPS，
+// 清 Authorization 和 Cookie，保留签名 query；cdn=false 走 Registry
+// 规则，跨 Host 清 Authorization，同 Host 重新校验策略。
+func applyRedirectPolicy(r *http.Request, via []*http.Request, cdn bool, resolver v2auth.PolicyResolver) error {
+	if r == nil || len(via) == 0 {
+		return errors.New("重定向缺少上一跳")
+	}
+	from := via[len(via)-1].URL
+	kind := v2auth.RedirectRegistry
+	if cdn {
+		kind = v2auth.RedirectCDN
+	}
+	d, err := v2auth.RedirectPolicy(kind, r.Method, from, r.URL, len(via))
+	if err != nil {
+		return err
+	}
+	if d.StripAuth {
+		r.Header.Del("Authorization")
+	}
+	if cdn {
+		r.Header.Del("Cookie")
+	}
+	if d.RecheckPolicy {
+		return recheckRedirectPolicy(r.Context(), resolver, from, r.URL)
+	}
+	return nil
+}
+
+// recheckRedirectPolicy 在 Registry 重定向时重新校验目标 Host 的策略。
+//
+// 只对同 Host/同 Scheme 的跳转做完整重解析；跨 Host 跳转不重新认证，
+// Authorization 已由 RedirectPolicy 清除，凭据 transport 也会因
+// targetHost != policy.LogicalHost 拒绝发送凭据。
+func recheckRedirectPolicy(ctx context.Context, resolver v2auth.PolicyResolver, from, to *url.URL) error {
+	if from == nil || to == nil {
+		return v2auth.ErrPolicyMissing
+	}
+	if !strings.EqualFold(from.Scheme, to.Scheme) || !strings.EqualFold(from.Host, to.Host) {
+		return nil
+	}
+	p, ok := v2auth.PolicyFromContext(ctx)
+	if !ok {
+		return v2auth.ErrPolicyMissing
+	}
+	if resolver == nil {
+		return v2auth.ErrPolicyMissing
+	}
+	np, err := resolver.Resolve(ctx, p.SourceID, to.Host)
+	if err != nil {
+		return err
+	}
+	if np.SourceID != p.SourceID || np.Official != p.Official ||
+		!strings.EqualFold(np.LogicalHost, p.LogicalHost) ||
+		np.CredGen != p.CredGen || np.CredGenKnown != p.CredGenKnown {
+		return fmt.Errorf("%w: 重定向目标策略发生变化", v2auth.ErrPolicyMissing)
+	}
+	return nil
+}
+
 // withRegistryPolicy 在请求 context 写入唯一一份认证身份。
 //
 // Registry plan 必须显式带 LogicalHost；缺失时在发请求前失败关闭，
@@ -597,7 +698,19 @@ func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, so
 		scheme = plan.Upstream.Scheme
 	}
 	p.Scheme = scheme
-	return v2auth.WithPolicy(ctx, p), nil
+	// 身份只能在这里构造：sourceID=0 是官方直连，>0 是候选源。
+	// 两者用不同构造函数，普通调用方无法字面量造出 Official。
+	var id v2auth.Identity
+	if sourceID == 0 {
+		id, err = v2auth.NewOfficialIdentity(host)
+	} else {
+		id, err = v2auth.NewCandidateIdentity(sourceID, host)
+	}
+	if err != nil {
+		metrics.AuthPolicyMissing()
+		return nil, fmt.Errorf("%w: %v", v2auth.ErrPolicyMissing, err)
+	}
+	return v2auth.WithIdentity(v2auth.WithPolicy(ctx, p), id), nil
 }
 
 // targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
@@ -1164,6 +1277,9 @@ type upstream struct {
 // openUpstream 只负责到响应头为止，不读 Body。
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
 func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
+	if isBlobPlan(plan) {
+		ctx = withCDNRedirect(ctx)
+	}
 	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err

@@ -245,6 +245,60 @@ else
 fi
 rm -rf "$r"
 
+# 17. 3.5.15：DB + key + registry_creds.enc 作为同一备份单元
+make_creds_fixture() { # $1=root
+  local root=$1
+  make_fixture "$root"
+  printf 'OLD-CREDS' >"$root/data/registry_creds.enc"
+  printf 'NEW-CREDS' >"$root/unit/registry_creds.enc"
+  chmod 600 "$root/data/registry_creds.enc" "$root/unit/registry_creds.enc"
+  local cs cn
+  cs=$(sha "$root/unit/registry_creds.enc"); cn=$(stat -c %s "$root/unit/registry_creds.enc")
+  python3 - "$root/unit/manifest.json" "$cs" "$cn" <<'PY'
+import json, sys
+p, sha, size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+m = json.load(open(p))
+m["schema"] = 2
+m["creds"] = {"file": "registry_creds.enc", "sha256": sha, "size": size}
+json.dump(m, open(p, "w"))
+PY
+}
+
+creds_pair_is() { # $1=data $2=db $3=key $4=creds
+  pair_is "$1" "$2" "$3" && [ "$(cat "$1/registry_creds.enc" 2>/dev/null)" = "$4" ]
+}
+
+r=$(mktemp -d); make_creds_fixture "$r"
+if "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1 &&
+   creds_pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT NEW-CREDS; then
+  ok "DB/key/凭据同单元恢复"
+else
+  bad "凭据恢复失败: $(tail -3 "$r/log")"
+fi
+rm -rf "$r"
+
+# 18. 凭据文件被篡改：拒绝恢复且旧凭据可用
+r=$(mktemp -d); make_creds_fixture "$r"
+printf 'TAMPERED' >>"$r/unit/registry_creds.enc"
+if "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1; then
+  bad "凭据篡改应被拒绝"
+elif creds_pair_is "$r/data" OLD-DB-CONTENT OLD-KEY-CONTENT OLD-CREDS; then
+  ok "凭据篡改被拒绝且旧单元可用"
+else
+  bad "凭据篡改后旧单元受损"
+fi
+rm -rf "$r"
+
+# 19. after_creds 中断后 --recover 收敛到完整三件套
+r=$(mktemp -d); make_creds_fixture "$r"
+RESTORE_TEST_CRASH=after_creds "$RESTORE" --backup "$r/unit" --data "$r/data" >"$r/log" 2>&1
+if run_recover "$r" && creds_pair_is "$r/data" NEW-DB-CONTENT NEW-KEY-CONTENT NEW-CREDS; then
+  ok "after_creds 后 --recover 收敛到完整三件套"
+else
+  bad "after_creds 恢复失败: $(tail -3 "$r/recover.log" 2>/dev/null)"
+fi
+rm -rf "$r"
+
 echo "----"
 echo "PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ "$FAIL" -eq 0 ]

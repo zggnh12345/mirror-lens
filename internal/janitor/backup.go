@@ -18,12 +18,14 @@ import (
 )
 
 const (
-	backupPrefix   = "mirror-lens-"
-	backupUnitsDir = "units"
-	manifestName   = "manifest.json"
-	manifestSchema = 1
-	unitDBName     = "mirror-lens.db"
-	unitKeyName    = "secret.key"
+	backupPrefix     = "mirror-lens-"
+	backupUnitsDir   = "units"
+	manifestName     = "manifest.json"
+	manifestSchema   = 2
+	manifestSchemaV1 = 1
+	unitDBName       = "mirror-lens.db"
+	unitKeyName      = "secret.key"
+	unitCredsName    = "registry_creds.enc"
 )
 
 // manifestChmod 是 manifest 权限设置的测试注入点；生产默认行为与 os.Chmod 一致。
@@ -45,9 +47,12 @@ type backupManifest struct {
 	CreatedAtUnix int64        `json:"created_at_unix"`
 	DB            manifestFile `json:"db"`
 	Key           manifestFile `json:"key"`
+	// Creds 可选：3.5.15 起凭据文件必须和 DB/key 同一备份单元；
+	// 没有配置凭据时省略，保持 schema 2 的单元仍可恢复。
+	Creds *manifestFile `json:"creds,omitempty"`
 }
 
-// backupDaily 每天留一份完整备份单元（DB + key + manifest），失败只记日志：
+// backupDaily 每天留一份完整备份单元（DB + key + 可选凭据 + manifest），失败只记日志：
 // 备份坏了不能影响主流程。
 func (j *Janitor) backupDaily(now time.Time) {
 	if err := j.BackupNow(now); err != nil {
@@ -133,6 +138,23 @@ func (j *Janitor) buildBackupUnit(stage string, now time.Time) error {
 		DB:            manifestFile{File: unitDBName, SHA256: dbSum, Size: dbSize},
 		Key:           manifestFile{File: unitKeyName, SHA256: keySum, Size: keySize},
 	}
+	// 3.5.15 D.3：凭据文件必须和 DB/key 同一单元。文件不存在表示尚未
+	// 配置凭据，可以省略；存在但复制/校验失败必须让整份备份失败。
+	if j.opt.BackupCreds != "" {
+		credPath := filepath.Join(stage, unitCredsName)
+		if _, statErr := os.Stat(j.opt.BackupCreds); statErr == nil {
+			if err := copyFileSync(j.opt.BackupCreds, credPath, 0o600); err != nil {
+				return fmt.Errorf("复制 registry_creds.enc: %w", err)
+			}
+			credSum, credSize, err := hashFile(credPath)
+			if err != nil {
+				return err
+			}
+			m.Creds = &manifestFile{File: unitCredsName, SHA256: credSum, Size: credSize}
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("检查 registry_creds.enc: %w", statErr)
+		}
+	}
 	body, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -173,13 +195,26 @@ func validBackupUnit(dir string) (bool, error) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return false, err
 	}
-	if m.Schema != manifestSchema || m.AppVersion == "" || m.DB.File != unitDBName || m.Key.File != unitKeyName {
+	if (m.Schema != manifestSchema && m.Schema != manifestSchemaV1) || m.AppVersion == "" || m.DB.File != unitDBName || m.Key.File != unitKeyName {
 		return false, errors.New("manifest 字段不合法")
 	}
-	for _, f := range []struct {
+	if m.Schema == manifestSchemaV1 && m.Creds != nil {
+		return false, errors.New("schema 1 备份单元不能包含 creds")
+	}
+	files := []struct {
 		meta manifestFile
 		name string
-	}{{m.DB, unitDBName}, {m.Key, unitKeyName}} {
+	}{{m.DB, unitDBName}, {m.Key, unitKeyName}}
+	if m.Creds != nil {
+		if m.Creds.File != unitCredsName {
+			return false, errors.New("manifest 的 creds.file 非法")
+		}
+		files = append(files, struct {
+			meta manifestFile
+			name string
+		}{*m.Creds, unitCredsName})
+	}
+	for _, f := range files {
 		p := filepath.Join(dir, f.name)
 		fi, err := os.Stat(p)
 		if err != nil {

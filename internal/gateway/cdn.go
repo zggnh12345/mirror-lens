@@ -3,7 +3,6 @@ package gateway
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -36,10 +35,10 @@ func (g *Gateway) cacheHeaders(h http.Header, e *store.CacheEntry, now time.Time
 	}
 
 	switch {
-	case strings.HasPrefix(e.Key, "docker:blob:"):
+	case store.RegistryCacheKind(e.Key) == "blob":
 		// 摘要就是内容本身，字节永远不会变。
 		h.Set("Cache-Control", "public, max-age="+strconv.Itoa(blobMaxAge)+", immutable")
-	case strings.HasPrefix(e.Key, "docker:manifest:"):
+	case store.RegistryCacheKind(e.Key) == "manifest":
 		// manifest 缓存键带了 Accept，边缘必须按 Accept 分开存，
 		// 否则会把 manifest list 发给要单架构的客户端。
 		h.Set("Cache-Control", "public, max-age="+strconv.Itoa(manifestMaxAge))

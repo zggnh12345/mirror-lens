@@ -69,6 +69,10 @@ type credRegistry struct {
 	srv      *httptest.Server
 	upstream string // 非空：manifest 请求代理到真实 registry
 
+	// allowAnon 让匿名请求也能拿到 manifest（用于「探测期间变更凭据」，
+	// 此时上游本身是公开可读的；仍然不允许携带任何凭据）。
+	allowAnon bool
+
 	mu     sync.Mutex
 	creds  map[string]string // "user:pass" -> 标签
 	tokens map[string]string // token -> 标签
@@ -79,9 +83,16 @@ type credRegistry struct {
 	holdAt     int    // 0 = 不设闸门；否则在第 N 次 token 请求上挂起
 	tokenCalls int
 	fired      bool
-	armed      chan struct{}
-	release    chan struct{}
-	relOnce    sync.Once
+
+	// manifest 闸门：挂住第一个 manifest 请求，供「探测期间变更凭据」用。
+	holdManifestAt int
+	manifestCalls  int
+	mArmed         chan struct{}
+	mRelease       chan struct{}
+	mOnce          sync.Once
+	armed          chan struct{}
+	release        chan struct{}
+	relOnce        sync.Once
 }
 
 // gateTimeout 是一次闸门等待的上限：超时说明装配和被测时序脱节
@@ -130,6 +141,18 @@ func (c *credRegistry) arm(t *testing.T, at int) (armed chan struct{}) {
 	c.mu.Unlock()
 	t.Cleanup(c.releaseGate)
 	return armed
+}
+
+// holdManifest 让第 1 个 manifest 请求挂起；返回 armed（已挂起）与 release。
+func (c *credRegistry) holdManifest() (armed, release chan struct{}) {
+	c.mu.Lock()
+	c.holdManifestAt = 1
+	c.manifestCalls = 0
+	c.mArmed = make(chan struct{})
+	c.mRelease = make(chan struct{})
+	armed, release = c.mArmed, c.mRelease
+	c.mu.Unlock()
+	return armed, release
 }
 
 func (c *credRegistry) releaseGate() {
@@ -218,7 +241,41 @@ func (c *credRegistry) serveRegistry(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.URL.Path, "/manifests/") {
 		kind = "manifest"
 	}
+	c.mu.Lock()
+	hold := c.holdManifestAt > 0 && kind == "manifest"
+	var armed, release chan struct{}
+	if hold {
+		c.manifestCalls++
+		if c.manifestCalls == c.holdManifestAt {
+			armed, release = c.mArmed, c.mRelease
+		}
+	}
+	c.mu.Unlock()
+	if armed != nil {
+		close(armed)
+		<-release
+	}
+
 	h := r.Header.Get("Authorization")
+	if c.allowAnon && h == "" {
+		if kind == "root" {
+			c.record(credReq{Kind: "root", Path: r.URL.Path, Identity: "anon", Status: http.StatusOK})
+			w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		// 落到下面统一的 manifest 分支（allowAnon 只跳过认证挑战）。
+		body, ctype, status := c.manifest(r)
+		c.record(credReq{Kind: kind, Path: r.URL.Path, Identity: "anon", Status: status})
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Docker-Content-Digest", "sha256:"+sumHex(body))
+		_, _ = w.Write(body)
+		return
+	}
 	if !strings.HasPrefix(h, "Bearer ") {
 		c.record(credReq{Kind: "challenge", Path: r.URL.Path, Identity: "-", Status: http.StatusUnauthorized})
 		w.Header().Set("Www-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="e2e"`, c.srv.URL))
@@ -470,227 +527,106 @@ func mustOneIdentity(t *testing.T, recs []credReq, want string) {
 	}
 }
 
-// ---- 场景 1：只用 A，不更新 ----
+// ---- 3.5.15-C.2 新契约：候选探测完全匿名 ----
 
-func TestProbeCredentialScenario1Stable(t *testing.T) {
+// 候选 Source 探测不得读取或传递官方凭据：上游只能看到无认证的
+// challenge，探测结果按 auth_error/Inconclusive 记账，不标 Unsupported。
+func TestProbeCandidateNeverUsesOfficialCredentials(t *testing.T) {
 	reg := newCredRegistry(t)
 	f := newCredFixture(t, reg)
-	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
+	if _, err := f.creds.PutCredential(credTestHost,
+		secret.Credential{Mode: string(secret.ModeBearerTokenBasic), Username: "userA", Password: "passA"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	f.now = 1000
-	n := reg.mark()
-	reg.setJob("S1-A")
-	f.wait(t, "S1", f.run(f.runner()))
+	mark := reg.mark()
+	f.wait(t, "匿名", f.run(f.runner()))
 
-	recs := reg.since(n)
-	mustOneIdentity(t, recs, "A")
-	if row := f.source(); row.cap != store.RegistryCapYes || row.probeAt != 1000 {
-		t.Fatalf("应提交 Committed（cap=1, probe_at=1000），实际 %+v", row)
+	recs := reg.since(mark)
+	if got := identities(recs); len(got) != 0 {
+		t.Fatalf("候选探测不得携带任何凭据，实际 %v（记录 %+v）", got, recs)
 	}
-	if hasChallenge(recs) == 0 {
-		t.Fatal("应有未认证的 /v2/ challenge 记录，便于区分认证前后")
+	// 401 归为 auth_error / Inconclusive，不是 Unsupported。
+	src := f.source()
+	if src.cap != store.RegistryCapUnknown {
+		t.Fatalf("匿名 401 应记 Unknown/Inconclusive，实际 cap=%d", src.cap)
 	}
-	dumpLog(t, "S1", recs)
-	dumpRow(t, "S1", f.source())
+	if f.healthRows() != 0 {
+		t.Fatal("认证失败不得产生健康样本")
+	}
 }
 
-// ---- 场景 2：更新为 B 后启动 ----
-
-func TestProbeCredentialScenario2NewSnapshot(t *testing.T) {
+// 凭据在探测期间变更：提交按旧 gen CAS 失败，诊断/探测时间不被覆盖。
+func TestProbeCandidateCredentialChangeMidFlight(t *testing.T) {
 	reg := newCredRegistry(t)
 	f := newCredFixture(t, reg)
-	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
+	if _, err := f.creds.PutCredential(credTestHost,
+		secret.Credential{Mode: string(secret.ModeBearerTokenBasic), Username: "userA", Password: "passA"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	f.now = 1000
-	reg.setJob("S2-preA")
-	f.wait(t, "S2-preA", f.run(f.runner()))
-	if _, err := f.creds.Put(credTestHost, "userB", "passB"); err != nil {
-		t.Fatal(err)
-	}
+	f.seedDiagnostics(t, 900, "prev-probe")
 
-	f.now = 2000
-	n := reg.mark()
-	reg.setJob("S2-B")
-	f.wait(t, "S2-B", f.run(f.runner()))
-	recs := reg.since(n)
-	mustOneIdentity(t, recs, "B")
-	if row := f.source(); row.cap != store.RegistryCapYes || row.probeAt != 2000 {
-		t.Fatalf("B 代次应提交 Committed（cap=1, probe_at=2000），实际 %+v", row)
-	}
-	dumpLog(t, "S2", recs)
-	dumpRow(t, "S2", f.source())
-}
-
-// ---- 场景 3：任务执行中 A→B ----
-
-func TestProbeCredentialScenario3UpdateMidFlight(t *testing.T) {
-	reg := newCredRegistry(t)
-	f := newCredFixture(t, reg)
-	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
-		t.Fatal(err)
-	}
-	f.seedDiagnostics(t, 500, "上一次诊断")
-
-	// 第二个 token 请求 = native 路径的 manifest：此时已用 A 换到 token。
-	armed := reg.arm(t, 2)
-	n := reg.mark()
-	f.now = 3000
-	reg.setJob("S3-A")
+	reg.allowAnon = true
+	armed, release := reg.holdManifest()
 	done := f.run(f.runner())
-	awaitGate(t, "S3", "闸门#2(armed)", armed, reg.state)
-
-	if _, err := f.creds.Put(credTestHost, "userB", "passB"); err != nil {
+	awaitGate(t, "变更中", "manifest 挂起", armed, reg.state)
+	if _, err := f.creds.PutCredential(credTestHost,
+		secret.Credential{Mode: string(secret.ModeBearerTokenBasic), Username: "userB", Password: "passB"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	baseline := f.source()    // 凭据变更完成后的状态，才是 stale 的比对基准
-	afterUpdate := reg.mark() // 变更完成之后的请求必须仍然来自 A
-	reg.releaseGate()
-	f.wait(t, "S3", done)
+	close(release)
+	f.wait(t, "变更中", done)
 
-	recs := reg.since(n)
-	mustOneIdentity(t, recs, "A") // 任务中途不得改读 B
-	trailing := reg.since(afterUpdate)
-	if len(trailing) == 0 {
-		t.Fatal("变更后旧任务没有继续发请求，无法证明「不换凭据」")
+	src := f.source()
+	if src.probeAt != 900 {
+		t.Fatalf("旧 gen 的探测不得覆盖 last_probe_at，实际 %d", src.probeAt)
 	}
-	mustOneIdentity(t, trailing, "A")
-	if n := countKind(trailing, "manifest"); n == 0 {
-		t.Fatal("变更后应至少完成一次 manifest 请求，否则不能证明任务带着 A 走完")
+	if src.errText != "prev-probe" {
+		t.Fatalf("旧 gen 的探测不得覆盖诊断，实际 %q", src.errText)
 	}
-	if after := f.source(); after != baseline {
-		t.Fatalf("stale 提交覆盖了状态: 变更后 %+v，任务结束后 %+v", baseline, after)
-	}
-	if baseline.cap != store.RegistryCapUnknown || baseline.path != "" || baseline.probeAt != 500 || baseline.errText != "上一次诊断" {
-		t.Fatalf("凭据变更应清能力、留诊断，实际 %+v", baseline)
-	}
-	if got := f.healthRows(); got != 0 {
-		t.Fatalf("stale 任务不应写健康样本，实际 %d 条", got)
-	}
-	dumpLog(t, "S3", recs)
-	dumpRow(t, "S3 baseline", baseline)
-	dumpRow(t, "S3 after", f.source())
 }
 
-// ---- 场景 4：任务执行中删除凭据 ----
-
-func TestProbeCredentialScenario4DeleteMidFlight(t *testing.T) {
+// 凭据在探测期间被删除：同样按 stale 丢弃，不写回任何结论。
+func TestProbeCandidateCredentialDeleteMidFlight(t *testing.T) {
 	reg := newCredRegistry(t)
 	f := newCredFixture(t, reg)
-	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
+	if _, err := f.creds.PutCredential(credTestHost,
+		secret.Credential{Mode: string(secret.ModeBearerTokenBasic), Username: "userA", Password: "passA"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	f.seedDiagnostics(t, 500, "上一次诊断")
+	f.seedDiagnostics(t, 901, "prev-delete")
 
-	armed := reg.arm(t, 2)
-	n := reg.mark()
-	f.now = 4000
-	reg.setJob("S4-A")
+	reg.allowAnon = true
+	armed, release := reg.holdManifest()
 	done := f.run(f.runner())
-	awaitGate(t, "S4", "闸门#2(armed)", armed, reg.state)
-
-	if err := f.creds.Delete(credTestHost); err != nil {
+	awaitGate(t, "删除中", "manifest 挂起", armed, reg.state)
+	if _, err := f.creds.DeleteCredential(credTestHost, nil); err != nil {
 		t.Fatal(err)
 	}
-	baseline := f.source()
-	afterUpdate := reg.mark()
-	reg.releaseGate()
-	f.wait(t, "S4", done)
+	close(release)
+	f.wait(t, "删除中", done)
 
-	recs := reg.since(n)
-	mustOneIdentity(t, recs, "A") // 手里已有 A 快照，允许走完，但不能改读别的代次
-	if trailing := reg.since(afterUpdate); len(trailing) == 0 {
-		t.Fatal("删除后旧任务没有继续发请求，无法证明「不换凭据」")
-	} else {
-		mustOneIdentity(t, trailing, "A")
+	src := f.source()
+	if src.probeAt != 901 || src.errText != "prev-delete" {
+		t.Fatalf("删除期间的结果不得写回: probeAt=%d err=%q", src.probeAt, src.errText)
 	}
-	if after := f.source(); after != baseline {
-		t.Fatalf("删除后的 stale 提交覆盖了状态: 变更后 %+v，任务结束后 %+v", baseline, after)
-	}
-
-	// 新任务不得再取得 A：快照为空，只能匿名，令牌端点拒绝。
-	n2 := reg.mark()
-	f.now = 5000
-	reg.setJob("S4-new")
-	f.wait(t, "S4-new", f.run(f.runner()))
-	recs2 := reg.since(n2)
-	if got := identities(recs2); len(got) != 0 {
-		t.Fatalf("删除后新任务不应再使用任何凭据，实际 %v", got)
-	}
-	if !hasAnonToken(recs2) {
-		t.Fatalf("新任务应以匿名身份申请 token 并被拒，实际 %+v", recs2)
-	}
-	if got := f.healthRows(); got != 0 {
-		t.Fatalf("探测任务不应写健康样本，实际 %d 条", got)
-	}
-	dumpLog(t, "S4", recs)
-	dumpLog(t, "S4-new", recs2)
-	dumpRow(t, "S4 baseline", baseline)
-	dumpRow(t, "S4 after", f.source())
 }
 
-// ---- 场景 5：任务执行中取消 Context ----
-
-// 闸门挂住时取消：探测请求被中止，runOne 必须在限时内退出。
-// 这条用例故意不放闸门就等 done，证明退出不依赖闸门释放。
+// 任务取消必须及时退出（不因为认证/负缓存挂住）。
 func TestProbeCredentialCancelStopsTask(t *testing.T) {
 	reg := newCredRegistry(t)
 	f := newCredFixture(t, reg)
-	if _, err := f.creds.Put(credTestHost, "userA", "passA"); err != nil {
-		t.Fatal(err)
-	}
-	f.now = 6000
-	armed := reg.arm(t, 2)
-	reg.setJob("S5-cancel")
+	reg.allowAnon = true
+	armed, release := reg.holdManifest()
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := f.runCtx(ctx, f.runner())
-	awaitGate(t, "S5", "闸门#2(armed)", armed, reg.state)
-
+	awaitGate(t, "取消", "manifest 挂起", armed, reg.state)
 	cancel()
-	f.wait(t, "S5", done)
-	reg.releaseGate()
-}
-
-// dumpLog 把上游看到的请求逐条打印出来，作为验收证据（-test.v 可见）。
-func dumpLog(t *testing.T, title string, recs []credReq) {
-	t.Helper()
-	for _, r := range recs {
-		t.Logf("%s | job=%-6s %-9s id=%-7s %3d %-60s scope=%s", title, r.Job, r.Kind, r.Identity, r.Status, r.Path, r.Scope)
-	}
-}
-
-func dumpRow(t *testing.T, title string, row sourceRow) {
-	t.Helper()
-	t.Logf("%s | DB cap=%d path=%q probe_at=%d err=%q", title, row.cap, row.path, row.probeAt, row.errText)
-}
-
-func countKind(recs []credReq, kind string) int {
-	n := 0
-	for _, r := range recs {
-		if r.Kind == kind && r.Status == 200 {
-			n++
-		}
-	}
-	return n
-}
-
-func hasChallenge(recs []credReq) int {
-	n := 0
-	for _, r := range recs {
-		if r.Kind == "challenge" {
-			n++
-		}
-	}
-	return n
-}
-
-func hasAnonToken(recs []credReq) bool {
-	for _, r := range recs {
-		if r.Kind == "token" && r.Identity == "anon" {
-			return true
-		}
-	}
-	return false
+	f.wait(t, "取消", done)
 }

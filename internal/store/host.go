@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -369,72 +370,47 @@ func (s *Store) HostCredStates() ([]CredState, error) {
 
 // ApplyCredChanges 递增代次、写入摘要、清空能力结论，全部在一个事务里。
 // 代次涨了但能力没清，会出现「新凭据 + 旧结论」。
+//
+// 新代码请用 ApplyCredWrite：它额外提供 expected_gen 乐观并发与同事务审计。
 func (s *Store) ApplyCredChanges(changes []CredChange) error {
 	if len(changes) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 	now := time.Now().Unix()
 	for _, c := range changes {
-		host, err := registryhost.Check(c.Host)
+		host, err := credentialGenHost(c.Host)
 		if err != nil {
 			return err
 		}
-		if host == "" || host == "ghcr.io" || host == "docker.io" {
-			return errors.New("Hub/ghcr 不使用 Host 代次")
-		}
-		var newGen int64
-		if c.Digest == nil {
-			if err := tx.QueryRow(`INSERT INTO registry_host_gen(host,gen,updated_at) VALUES(?,1,?)
-ON CONFLICT(host) DO UPDATE SET gen=gen+1, updated_at=excluded.updated_at
-RETURNING gen`, host, now).Scan(&newGen); err != nil {
-				return err
-			}
-		} else if err := tx.QueryRow(`INSERT INTO registry_host_gen(host,gen,cred_digest,updated_at) VALUES(?,1,?,?)
-ON CONFLICT(host) DO UPDATE SET gen=gen+1, cred_digest=excluded.cred_digest, updated_at=excluded.updated_at
-RETURNING gen`,
-			host, *c.Digest, now).Scan(&newGen); err != nil {
-			return err
-		}
-		// 只清结论，不抹诊断：诊断是上一次有效 Probe 留下的历史事实，
-		// 凭据变了只意味着它不能再当结论用，不意味着它没发生过。
-		if _, err := tx.Exec(`UPDATE source_host_caps
-SET effective_status=?, registry_path_mode=''
-WHERE host=? AND EXISTS (SELECT 1 FROM sources s WHERE s.id=source_host_caps.source_id AND s.status<>'archived')`,
-			HostStatusUnknown, host); err != nil {
-			return err
-		}
-		// 代次绑定：recovery 行在同一事务内切到新 gen 并重置为待重验。
-		// last_success_at 保留为历史事实，但 gen 不匹配使它不再参与 ok 判定。
-		if _, err := tx.Exec(`INSERT INTO registry_host_recovery
-(source_id, family, scope, state, gen, last_probe_at, last_success_at, next_probe_at, rec_failures, retry_failures, last_error, updated_at)
-SELECT c.source_id, 'registry', ?, 'initial', ?, 0, 0, ?, 0, 0, '', ?
-FROM source_host_caps c
-JOIN sources s ON s.id=c.source_id
-WHERE c.host=? AND s.status<>'archived'
-ON CONFLICT(source_id, family, scope) DO UPDATE SET
-  state='initial', gen=excluded.gen,
-  next_probe_at=excluded.next_probe_at, rec_failures=0, retry_failures=0,
-  last_error='', updated_at=excluded.updated_at`,
-			host, newGen, now, now, host); err != nil {
+		if _, err := applyCredChangeSQL(ctx, conn, host, c.Digest, now); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // BumpHostGen 递增代次并清空能力，保留已提交的凭据摘要。
 func (s *Store) BumpHostGen(rawHost string) (int64, error) {
 	return s.bump(rawHost, nil)
-}
-
-// BumpHostGenDigest 递增代次并把该 Host 的凭据摘要置为新值。
-func (s *Store) BumpHostGenDigest(rawHost, digest string) (int64, error) {
-	return s.bump(rawHost, &digest)
 }
 
 func (s *Store) bump(rawHost string, digest *string) (int64, error) {

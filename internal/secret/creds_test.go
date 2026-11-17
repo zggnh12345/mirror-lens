@@ -128,20 +128,20 @@ func TestCredsRoundTrip(t *testing.T) {
 
 // 逐 Host 摘要：改 B 不能影响 A 的 gen / 摘要 / 能力状态。
 func TestCredsPerHostIsolation(t *testing.T) {
-	f := newCredFixture(t, "quay.io", "lscr.io")
+	f := newCredFixture(t, "quay.io", "gcr.io")
 	if _, err := f.cs.Reconcile(); err != nil {
 		t.Fatal(err)
 	}
 	f.mustPut(t, "quay.io", "u1", "p1")
-	f.mustPut(t, "lscr.io", "u2", "p2")
+	f.mustPut(t, "gcr.io", "u2", "p2")
 	genQ, digQ := f.genOf(t, "quay.io")
 
-	if err := f.db.ApplyCredChanges([]store.CredChange{{Host: "lscr.io", Digest: strPtr(f.mustPut(t, "lscr.io", "u2", "p2-new"))}}); err != nil {
+	if err := f.db.ApplyCredChanges([]store.CredChange{{Host: "gcr.io", Digest: strPtr(f.mustPut(t, "gcr.io", "u2", "p2-new"))}}); err != nil {
 		t.Fatal(err)
 	}
 	genQ2, digQ2 := f.genOf(t, "quay.io")
 	if genQ != genQ2 || digQ != digQ2 {
-		t.Fatalf("改 lscr 影响了 quay 的版本: (%d,%s) -> (%d,%s)", genQ, digQ, genQ2, digQ2)
+		t.Fatalf("改 gcr 影响了 quay 的版本: (%d,%s) -> (%d,%s)", genQ, digQ, genQ2, digQ2)
 	}
 	// quay 的凭据仍然可读，说明其摘要未被打乱。
 	if c, ok, err := f.cs.Get("quay.io"); err != nil || !ok || c.Password != "p1" {
@@ -181,19 +181,33 @@ func TestCredsCorruptRejected(t *testing.T) {
 	if _, _, err := f.cs.Get("quay.io"); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("损坏文件不应读出凭据，得到 %v", err)
 	}
-	// 写入也必须先校验现有文件，不能把损坏的部分覆盖掉当没事。
-	if _, err := f.cs.Put("lscr.io", "u", "p"); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("文件损坏时写入应失败，得到 %v", err)
+	// 3.5.15 记录级隔离：别的 Host 仍可写，损坏的 Host 保持 Quarantined，
+	// 只有管理员显式重写该 Host 才能修复（不能静默把损坏记录覆盖成「没事」）。
+	if _, err := f.cs.Put("gcr.io", "u", "p"); err != nil {
+		t.Fatalf("其他 Host 不应被单条损坏拖死: %v", err)
+	}
+	if st, _ := f.cs.Status("quay.io"); st.State != StateQuarantined {
+		t.Fatalf("损坏的 Host 应为 Quarantined，得到 %+v", st)
+	}
+	if st, _ := f.cs.Status("gcr.io"); st.State != StateReady {
+		t.Fatalf("未损坏的 Host 应为 Ready，得到 %+v", st)
+	}
+	// 显式重写该 Host 是修复动作。
+	if _, err := f.cs.PutCredential("quay.io", Credential{Mode: string(ModeBasic), Username: "u", Password: "p2"}, nil); err != nil {
+		t.Fatalf("重写损坏 Host 应成功: %v", err)
+	}
+	if st, _ := f.cs.Status("quay.io"); st.State != StateReady {
+		t.Fatalf("重写后应为 Ready，得到 %+v", st)
 	}
 }
 
 func TestCredsMissingRecordRejected(t *testing.T) {
-	f := newCredFixture(t, "quay.io", "lscr.io")
+	f := newCredFixture(t, "quay.io", "gcr.io")
 	if _, err := f.cs.Reconcile(); err != nil {
 		t.Fatal(err)
 	}
 	digest := f.mustPut(t, "quay.io", "u", "p")
-	f.mustPut(t, "lscr.io", "u2", "p2")
+	f.mustPut(t, "gcr.io", "u2", "p2")
 	gen, _ := f.genOf(t, "quay.io")
 
 	// 模拟文件被截断/从旧备份恢复：quay 的记录凭空消失。
@@ -354,7 +368,7 @@ func TestCredsDBFailureBlocks(t *testing.T) {
 }
 
 func TestCredsConcurrent(t *testing.T) {
-	hosts := []string{"quay.io", "lscr.io", "gcr.io", "registry.k8s.io"}
+	hosts := []string{"quay.io", "gcr.io"}
 	f := newCredFixture(t, hosts...)
 	if _, err := f.cs.Reconcile(); err != nil {
 		t.Fatal(err)
@@ -397,6 +411,48 @@ func TestCredsConcurrent(t *testing.T) {
 	}
 	if _, ok, err := f.cs.Get("quay.io"); err != nil || !ok {
 		t.Fatalf("并发后应可读: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestCredsConcurrentDeleteAndPut(t *testing.T) {
+	f := newCredFixture(t, "quay.io")
+	if _, err := f.cs.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := f.cs.Put("quay.io", "robot", "p-"+string(rune('a'+i))); err != nil {
+				t.Errorf("并发 Put: %v", err)
+			}
+		}(i)
+		go func() {
+			defer wg.Done()
+			if err := f.cs.Delete("quay.io"); err != nil {
+				t.Errorf("并发 Delete: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// 最终状态只能是 Ready 或 Absent；不能出现文件/DB 半状态。
+	gen, digest := f.genOf(t, "quay.io")
+	doc := readDoc(t, f.path)
+	rec, ok := doc.Hosts["quay.io"]
+	if ok {
+		if got := recordDigest("quay.io", rec); got != digest {
+			t.Fatalf("文件与 DB 摘要不一致: file=%s db=%s gen=%d", got, digest, gen)
+		}
+		if _, ok, err := f.cs.Get("quay.io"); err != nil || !ok {
+			t.Fatalf("文件有记录但 Get 失败: ok=%v err=%v", ok, err)
+		}
+	} else if digest != "" && digest != emptyDigest("quay.io") {
+		t.Fatalf("文件无记录但 DB 仍是非空摘要: %s gen=%d", digest, gen)
+	}
+	if _, err := f.cs.Reconcile(); err != nil {
+		t.Fatalf("并发后对账不应失败: %v", err)
 	}
 }
 
@@ -469,6 +525,10 @@ func (f *failingDB) ApplyCredChanges([]store.CredChange) error {
 	return errors.New("数据库不可用")
 }
 
+func (f *failingDB) ApplyCredWrite(store.CredWrite) (store.CredWriteResult, error) {
+	return store.CredWriteResult{}, errors.New("数据库不可用")
+}
+
 func mustDigest(t *testing.T, f *credFixture, host string) string {
 	t.Helper()
 	_, d := f.genOf(t, host)
@@ -515,7 +575,7 @@ func tamper(t *testing.T, path string, fn func(map[string]any)) {
 
 // Snapshot 必须一次给出 gen/digest/凭据三件事，且与数据库当前版本一致。
 func TestSnapshotConsistent(t *testing.T) {
-	f := newCredFixture(t, "quay.io", "lscr.io")
+	f := newCredFixture(t, "quay.io", "gcr.io")
 	if _, err := f.cs.Snapshot("quay.io"); !errors.Is(err, ErrNotReconciled) {
 		t.Fatalf("对账前应拒绝快照，得到 %v", err)
 	}
@@ -538,14 +598,14 @@ func TestSnapshotConsistent(t *testing.T) {
 
 	// 没配置凭据的 Host：快照仍然可用，Digest 必须与 SetHostCaps 的
 	// COALESCE 语义一致（无记录时为 ""）。
-	snap2, err := f.cs.Snapshot("lscr.io")
+	snap2, err := f.cs.Snapshot("gcr.io")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap2.HasCredential {
-		t.Fatalf("lscr.io 不应有凭据: %+v", snap2)
+		t.Fatalf("gcr.io 不应有凭据: %+v", snap2)
 	}
-	g2, d2 := f.genOf(t, "lscr.io")
+	g2, d2 := f.genOf(t, "gcr.io")
 	if snap2.Generation != g2 || snap2.Digest != d2 {
 		t.Fatalf("无凭据快照与库不一致: %+v gen=%d digest=%q", snap2, g2, d2)
 	}

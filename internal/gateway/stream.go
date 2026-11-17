@@ -1076,6 +1076,8 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	copyHeader(w.Header(), resp.Header, "Content-Type", "Content-Length", "Content-Range",
 		"Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Cache-Control", "Retry-After",
 		"Docker-Content-Digest", "Docker-Distribution-Api-Version",
+		// 稳定认证错误码：私有认证失败必须让客户端/验收脚本看见。
+		"X-ML-Auth-Error",
 		// 上游偶尔无视 Accept-Encoding: identity；不转发这个头，客户端会把
 		// 压缩体当原文件写盘，拉取直接失败。
 		"Content-Encoding")
@@ -1091,7 +1093,22 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	if src != "" {
 		w.Header().Set("X-ML-Source", src)
 	}
-	w.Header().Set("X-ML-Cache", "PASS")
+	if plan.NoStore {
+		// 私有认证 Host：明确标记绕过，不读也不写共享缓存。
+		//
+		// 上游的 Cache-Control 不能透传：私有 manifest/blob 常带
+		// public, max-age=31536000, immutable，一旦被反代/CDN 缓存，
+		// 就等于把私有内容公开。这里强制 no-store，并清掉共享缓存标记。
+		w.Header().Set("X-ML-Cache", "BYPASS")
+		w.Header().Set("Cache-Control", "no-store, private")
+		w.Header().Del("Expires")
+		w.Header().Del("Age")
+		w.Header().Del("Cache-Tag")
+		w.Header().Del("Surrogate-Key")
+		w.Header().Del("CDN-Cache-Control")
+	} else {
+		w.Header().Set("X-ML-Cache", "PASS")
+	}
 	w.WriteHeader(resp.StatusCode)
 	// 直通也要归因：Range/HEAD 都走这条路，不记的话 429
 	// 既不进熔断也不进 429 率。

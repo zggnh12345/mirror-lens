@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/dblock"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
+	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/ghapi"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
 	"github.com/zggnh12345/mirror-lens/internal/limits"
@@ -80,6 +83,35 @@ func checkUpgradeJournal(dataDir string) error {
 	default:
 		return fmt.Errorf("无法确认数据库升级日志状态（%s）: %w；在确认前拒绝启动", jp, err)
 	}
+}
+
+// credSource 把 secret.Store 适配成 gateway 需要的只读视图。
+// 适配放在装配层：gateway 不 import secret，secret 也不需要知道 gateway。
+type credSource struct{ s *secret.Store }
+
+func (c credSource) CredentialView(host string) (gateway.CredentialView, error) {
+	snap, err := c.s.Snapshot(host)
+	switch {
+	case errors.Is(err, secret.ErrCredentialPending):
+		return gateway.CredentialView{}, gateway.ErrCredPending
+	case errors.Is(err, secret.ErrNotReconciled):
+		return gateway.CredentialView{}, gateway.ErrCredNotReconciled
+	case errors.Is(err, secret.ErrCorrupt):
+		return gateway.CredentialView{}, gateway.ErrCredQuarantined
+	case err != nil:
+		return gateway.CredentialView{}, err
+	}
+	return gateway.CredentialView{
+		Host:          snap.Host,
+		Generation:    snap.Generation,
+		Digest:        snap.Digest,
+		HasCredential: snap.HasCredential,
+		Username:      snap.Credential.Username,
+		Password:      snap.Credential.Password,
+		Mode:          snap.Credential.Mode,
+		TokenMethod:   snap.Credential.TokenMethod,
+		TokenAuth:     snap.Credential.TokenAuth,
+	}, nil
 }
 
 // mustSecretKey 加载或创建数据目录里的密钥文件。Host 凭据与设置页 Token
@@ -279,6 +311,123 @@ func main() {
 		log.Printf("回源 IP 族: 仅 %s", cfg.Network.IPFamily)
 	}
 	policyResolver := store.NewStorePolicy(st)
+
+	// 仓库凭据：3.5.15 起同时服务 Host 探测与 Gateway 私有认证。
+	// 文件级损坏才是致命错误；单 Host 损坏只隔离该 Host，其余继续 Ready。
+	var hostCreds *secret.Store
+	var cacheEpoch int64
+	// R04：凭据文件存在但没有密钥 = 无法解密，必须 fail closed。
+	// 自动生成新密钥会让全部记录解不开（转 Quarantined），还会把
+	// 密钥路径覆盖掉，等于悄悄销毁现有凭据。
+	credPath := filepath.Join(cfg.Data, "registry_creds.enc")
+	if _, serr := os.Stat(credPath); serr == nil {
+		if _, kerr := os.Stat(filepath.Join(cfg.Data, "secret.key")); kerr != nil {
+			log.Fatalf("凭据文件存在但 secret.key 缺失，拒绝自动生成新密钥（请恢复原密钥或先备份并删除 %s）", credPath)
+		}
+	}
+	hostCreds, cerr := secret.NewCredStore(credPath, mustSecretKey(cfg.Data), st)
+	if cerr != nil {
+		log.Printf("仓库凭据存储初始化失败：Host 探测与私有认证都不启动: %v", cerr)
+		hostCreds = nil
+	} else {
+		n, quarantined, rerr := hostCreds.ReconcileAll()
+		if rerr != nil {
+			log.Printf("仓库凭据对账失败（文件级损坏），私有认证 fail closed: %v", rerr)
+		} else {
+			log.Printf("仓库凭据对账完成：变更 %d 条，隔离 %d 个 Host", n, len(quarantined))
+		}
+		for _, q := range quarantined {
+			log.Printf("凭据 Host 已隔离: %s（%s）", q.Host, q.Reason)
+		}
+	}
+
+	// 缓存命名空间：3.5.15 首次启动递增一次，让升级前的旧键空间不可达。
+	// 标记位保证只切一次，不会每次重启都清空缓存。
+	var epochBumped bool
+	if e, bumped, eerr := st.InitCacheEpoch(); eerr != nil {
+		log.Fatalf("初始化 Registry 缓存 epoch 失败: %v", eerr)
+	} else {
+		cacheEpoch = e
+		epochBumped = bumped
+		if bumped {
+			log.Printf("Registry 缓存 epoch 已切换到 %d（历史条目不可达）", e)
+		}
+	}
+	if regAd != nil {
+		regAd.Epoch = func() int64 { return atomic.LoadInt64(&cacheEpoch) }
+	}
+
+	// 私有认证准入：Host 必须是代码 allowlist 子集，且必须有有效 Access Token。
+	privAuth := gateway.PrivateAuthOptions{
+		Enabled:      cfg.Registry.PrivateAuthEnabled,
+		Hosts:        map[string]bool{},
+		RequireToken: cfg.Auth.RequireToken,
+	}
+	if hostCreds != nil {
+		privAuth.Creds = credSource{s: hostCreds}
+	}
+	if cfg.Registry.PrivateAuthEnabled {
+		if !cfg.Auth.RequireToken {
+			log.Fatalf("registry.private_auth_enabled=true 必须同时 auth.require_token=true")
+		}
+		if hostCreds == nil {
+			log.Fatalf("私有认证已开启但凭据存储不可用")
+		}
+		toks, terr := st.ListTokens()
+		if terr != nil {
+			log.Fatalf("读取 Access Token 失败: %v", terr)
+		}
+		valid := false
+		for _, tk := range toks {
+			if !tk.Revoked {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			log.Fatalf("私有认证已开启但没有任何有效 Access Token，拒绝启动")
+		}
+		for _, h := range cfg.Registry.PrivateAuthHosts {
+			if !secret.CredentialHostAllowed(h) {
+				log.Fatalf("registry.private_auth_hosts 含未授权 Host %q（代码 allowlist: %v）",
+					h, secret.CredentialCapableHosts())
+			}
+			privAuth.Hosts[h] = true
+		}
+		// 私有认证必须跑在 epoch>=1 的键空间上；epoch=0 与 3.5.14c 相同，
+		// 无法隔离升级前的私有内容。
+		e, eerr := st.EnsureCacheEpoch(1)
+		if eerr != nil {
+			log.Fatalf("私有认证需要 epoch>=1，切换失败: %v", eerr)
+		}
+		// 私有 Host 集合变化（新增/删除）会让「原本公共的内容」变成私有：
+		// 必须递增 epoch 让旧键不可达，并留审计。
+		hosts := append([]string(nil), cfg.Registry.PrivateAuthHosts...)
+		sort.Strings(hosts)
+		sig := strings.Join(hosts, ",")
+		prev, perr := st.MetaGet(metaPrivateHosts)
+		if perr != nil {
+			log.Fatalf("读取私有 Host 记录失败: %v", perr)
+		}
+		// 首次开启（prev 为空）也必须切：此前缓存的公共内容在开启后
+		// 属于私有 Host，不能继续命中。只有「本进程刚切过 epoch」才跳过。
+		if prev != sig && (prev != "" || !epochBumped) {
+			e, eerr = st.BumpCacheEpoch()
+			if eerr != nil {
+				log.Fatalf("私有 Host 集合变化，递增缓存 epoch 失败: %v", eerr)
+			}
+			st.AuditCacheEpoch(e, "system", "private_hosts_changed: "+prev+" -> "+sig)
+			log.Printf("私有 Host 集合变化（%s → %s），缓存 epoch 递增到 %d", prev, sig, e)
+		}
+		if perr := st.MetaSet(metaPrivateHosts, sig); perr != nil {
+			log.Printf("记录私有 Host 集合失败: %v", perr)
+		}
+		atomic.StoreInt64(&cacheEpoch, e)
+		log.Printf("私有认证已开：%v（Access Token 必需，缓存绕过生效）", cfg.Registry.PrivateAuthHosts)
+	} else if len(cfg.Registry.PrivateAuthHosts) > 0 {
+		log.Printf("registry.private_auth_hosts 已配置但 private_auth_enabled=false，不生效")
+	}
+
 	gw := gateway.New(st, gateway.Options{
 		Cache:             cstore,
 		MaxBytes:          cfg.Cache.MaxFileMB << 20,
@@ -290,6 +439,7 @@ func main() {
 		CacheMaxBytes:     cfg.Cache.MaxGB << 30,
 		CacheMinFreeBytes: cfg.Cache.MinFreeGB << 30,
 		RequireToken:      cfg.Auth.RequireToken,
+		PrivateAuth:       privAuth,
 		// 与探测共用放行策略：自建局域网源要能回源，否则面板允许探测、
 		// 真正下载时又被拦下，等于配置无效。
 		Guard: safehttp.New(safehttp.Options{MaxRedirects: 6, AllowPrivate: cfg.Probe.AllowPrivate, IPFamily: cfg.Network.IPFamily}),
@@ -396,20 +546,17 @@ func main() {
 		eng.OnChange(sched.Invalidate)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Pending 记录自愈：每分钟对账一次，不依赖人工点按钮或重启。
+	if hostCreds != nil {
+		go retryPendingCreds(ctx, hostCreds)
+	}
+	// 旧 epoch 物理清理：分批删索引，孤儿文件由常规回收处理。
+	if cacheEpoch > 0 {
+		go sweepOldEpoch(ctx, st, gw.GC(), func() int64 { return atomic.LoadInt64(&cacheEpoch) })
+	}
 	defer stop()
 	go eng.Loop(ctx)
 
-	// 仓库凭据与 Host 探测：对账成功才允许启动探测 Runner。
-	// 对账失败只关掉 Host 探测，不影响现有回源（阶段 4 仍不接业务路径）。
-	hostCreds, cerr := secret.NewCredStore(filepath.Join(cfg.Data, "registry_creds.enc"),
-		mustSecretKey(cfg.Data), st)
-	if cerr != nil {
-		log.Printf("仓库凭据存储初始化失败，Host 探测不启动: %v", cerr)
-		hostCreds = nil
-	} else if _, rerr := hostCreds.Reconcile(); rerr != nil {
-		log.Printf("仓库凭据对账失败，Host 探测不启动: %v", rerr)
-		hostCreds = nil
-	}
 	if hostCreds != nil {
 		go runner.NewHostProbeRunner(runner.HostProbeOptions{
 			Store:        st,
@@ -459,6 +606,7 @@ func main() {
 		BackupDir:     backupDir,
 		BackupKeep:    backupKeep,
 		BackupKey:     filepath.Join(cfg.Data, "secret.key"),
+		BackupCreds:   filepath.Join(cfg.Data, "registry_creds.enc"),
 	})
 	if cfg.Cache.MaxGB > 0 {
 		msg := fmt.Sprintf("缓存上限 %d GB", cfg.Cache.MaxGB)
@@ -518,7 +666,7 @@ func main() {
 	// 访问控制套在限流器外层：被 ACL 拒绝的请求不占配额，避免刷 403 把管理员限流掉。
 	app := api.New(st, eng, gw, jan, sched,
 		api.WithMetrics(cfg.Metrics.Enabled, cfg.Metrics.RequireToken),
-		api.WithConfig(cfg, path), api.WithAlerts(alerts))
+		api.WithConfig(cfg, path), api.WithAlerts(alerts), api.WithCredentials(hostCreds))
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -584,4 +732,112 @@ func recoveryTTL() time.Duration {
 		return store.RecoveryDefaultTTL
 	}
 	return d
+}
+
+// metaPrivateHosts 记录上一次生效的私有 Host 集合，用于检测集合变化。
+const metaPrivateHosts = "registry_private_hosts"
+
+// retryPendingCreds 周期性对账：文件已写、DB 未提交的 Pending 记录会自愈。
+func retryPendingCreds(ctx context.Context, cs *secret.Store) {
+	retryPendingCredsEvery(ctx, cs, time.Minute)
+}
+
+type credReconciler interface {
+	ReconcileAll() (int, []secret.Status, error)
+}
+
+// retryPendingCredsEvery 允许测试用短周期验证 ticker 确实在重试；
+// 生产入口固定一分钟，不把测试节奏带进运行时。
+func retryPendingCredsEvery(ctx context.Context, cs credReconciler, every time.Duration) {
+	if every <= 0 {
+		every = time.Minute
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, quarantined, err := cs.ReconcileAll()
+			if err != nil {
+				log.Printf("凭据后台对账失败: %v", err)
+				continue
+			}
+			if n > 0 || len(quarantined) > 0 {
+				log.Printf("凭据后台对账：变更 %d 条，隔离 %d 个 Host", n, len(quarantined))
+			}
+		}
+	}
+}
+
+// sweepOldEpoch 分批清理早于当前 epoch 的 Registry 缓存索引和物理文件。
+// 每批 500 行、批间 100ms，避免和正常回源抢 IO。
+func sweepOldEpoch(ctx context.Context, st *store.Store, gc *gc.GC, epoch func() int64) {
+	total := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		cur := epoch()
+		keys, err := st.CacheEpochKeysBefore(cur, 500)
+		if err != nil {
+			log.Printf("旧 epoch 缓存清理失败（已删 %d 条）: %v", total, err)
+			st.Audit(store.AuditEvent{
+				Action: "cache_epoch_sweep",
+				Target: "registry_cache_epoch",
+				Detail: fmt.Sprintf("epoch=%d deleted=%d error=%v", cur, total, err),
+				OK:     false,
+			})
+			// 1.6 B.3/D-15-12：清理失败必须继续重试，不能静默停掉。
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+		if len(keys) == 0 {
+			break
+		}
+		res, derr := gc.DeleteKeys(keys)
+		if derr != nil {
+			log.Printf("旧 epoch 缓存删除失败（已删 %d 条）: %v", total, derr)
+			st.Audit(store.AuditEvent{
+				Action: "cache_epoch_sweep",
+				Target: "registry_cache_epoch",
+				Detail: fmt.Sprintf("epoch=%d deleted=%d error=%v", cur, total, derr),
+				OK:     false,
+			})
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+		total += res.Entries
+		if err := st.MetaSet(fmt.Sprintf("registry_cache_epoch_sweep_progress:%d", cur), strconv.Itoa(total)); err != nil {
+			log.Printf("记录旧 epoch 清理进度失败: %v", err)
+		}
+		if res.Entries == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	st.Audit(store.AuditEvent{
+		Action: "cache_epoch_sweep",
+		Target: "registry_cache_epoch",
+		Detail: fmt.Sprintf("epoch=%d deleted=%d complete", epoch(), total),
+		OK:     true,
+	})
+	if total > 0 {
+		log.Printf("旧 epoch 缓存索引已清理 %d 条（当前 epoch=%d）", total, epoch())
+	}
 }

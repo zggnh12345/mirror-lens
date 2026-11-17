@@ -28,6 +28,7 @@
   <button data-tab="appearance">外观</button>
   <button data-tab="probe">探测</button>
   <button data-tab="policy">策略</button>
+  <button data-tab="creds">凭据</button>
   <button data-tab="accel">加速器</button>
   <button data-tab="config">配置参数</button>
   <button data-tab="audit">审计</button>
@@ -183,6 +184,37 @@
 
     <h2 style="margin-top:20px">策略变更</h2>
     <div id="polAudit" class="hint">加载中…</div>
+  </div>
+  </div>
+
+  <!-- 私有仓库凭据 -->
+  <div data-panel="creds">
+  <div class="sec">
+    <h2>私有仓库凭据<span class="qi" data-tip="Host 级凭据只用于官方直连的私有拉取。开启私有认证后，该 Host 的公共内容也会失去共享缓存（本版不做按仓库识别）。">?</span></h2>
+    <div class="hint" id="crBlast">仅支持 allowlist 内的 Host；凭据是 Host 级，持有访问令牌的客户端可访问该凭据覆盖的所有私有仓库。</div>
+    <div class="hint" id="crMsg"></div>
+    <div class="tklist" id="crList"><div class="hint">加载中…</div></div>
+
+    <h2 style="margin-top:18px">新增 / 更新</h2>
+    <label for="crHost">Host</label>
+    <select id="crHost"></select>
+    <label for="crMode">认证方式</label>
+    <select id="crMode">
+      <option value="bearer_token_basic">Bearer + Token 端点 Basic</option>
+      <option value="bearer_token_none">Bearer（Token 端点不带 Basic）</option>
+      <option value="basic">Registry 直接 Basic</option>
+    </select>
+    <label for="crUser">用户名</label>
+    <input type="text" id="crUser" autocomplete="off" spellcheck="false">
+    <label for="crPass">密码 / Token<span class="qi" data-tip="留空表示保留现有密码。删除凭据请用右侧删除按钮，不能用空密码表达删除。">?</span></label>
+    <input type="password" id="crPass" autocomplete="new-password">
+    <div class="saverow" style="margin-top:10px;flex-wrap:wrap">
+      <button class="btn primary" id="crSave">保存</button>
+      <button class="btn danger" id="crDelete">删除</button>
+      <button class="btn" id="crVerify">验证</button>
+      <span class="hint" id="crFormMsg"></span>
+    </div>
+    <div class="hint">没有"查看密码"入口；密码与 Token 不会出现在列表、日志或错误信息里。</div>
   </div>
   </div>
 
@@ -1008,6 +1040,113 @@ $('#trAdd').addEventListener('click', async function(){
 });
 
 loadTrusted();
+
+
+/* ---- 私有仓库凭据（3.5.15） ---- */
+var crRows = [];
+var CR_STATE = {Ready:'已配置', Pending:'待对账', Quarantined:'损坏', Error:'错误', Absent:'未配置'};
+var CR_KIND = {Ready:'ok', Pending:'warn', Quarantined:'bad', Error:'bad', Absent:''};
+
+function crPick(host){
+  var row = null;
+  crRows.forEach(function(x){ if (x.host === host) row = x; });
+  if (!row) return;
+  $('#crUser').value = row.username || '';
+  if (row.mode) $('#crMode').value = row.mode;
+  $('#crPass').value = '';
+  say($('#crFormMsg'), row.state === 'Ready' ? ('当前 gen=' + row.gen) : '', '');
+}
+
+async function loadCreds(){
+  try{
+    var d = await api('/api/credentials');
+    crRows = d.hosts || [];
+    var sel = $('#crHost');
+    var prev = sel.value;
+    sel.innerHTML = '';
+    (d.capable || []).forEach(function(h){
+      var o = document.createElement('option');
+      o.value = h; o.textContent = h;
+      sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+    var box = $('#crList');
+    box.innerHTML = '';
+    if (!crRows.length){
+      box.innerHTML = '<div class="hint">尚未配置凭据</div>';
+    }
+    crRows.forEach(function(x){
+      var row = document.createElement('div');
+      row.className = 'tkrow';
+      var name = document.createElement('div');
+      name.innerHTML = '<strong>' + esc(x.host) + '</strong> <span class="hint">' +
+        esc(CR_STATE[x.state] || x.state) + (x.username ? ' · ' + esc(x.username) : '') +
+        (x.mode ? ' · ' + esc(x.mode) : '') + (x.gen ? ' · gen ' + x.gen : '') + '</span>';
+      row.appendChild(name);
+      var edit = document.createElement('button');
+      edit.className = 'btn'; edit.textContent = '编辑';
+      edit.addEventListener('click', function(){ $('#crHost').value = x.host; crPick(x.host); });
+      row.appendChild(edit);
+      if (x.state === 'Pending' || x.state === 'Quarantined'){
+        var fix = document.createElement('button');
+        fix.className = 'btn'; fix.textContent = '对账';
+        fix.addEventListener('click', async function(){
+          try{ await api('/api/credentials/' + encodeURIComponent(x.host) + '/reconcile', {method:'POST'});
+            toast('已对账'); loadCreds();
+          }catch(e){ say($('#crMsg'), e.message, 'bad'); }
+        });
+        row.appendChild(fix);
+      }
+      box.appendChild(row);
+    });
+    $('#crBlast').textContent = d.private_auth
+      ? '私有认证已开启：Host 级凭据生效，该 Host 的公共内容也失去共享缓存；持有访问令牌的客户端可使用该凭据覆盖的所有私有仓库。'
+      : '私有认证当前关闭（registry.private_auth_enabled=false）：凭据可保存但不生效，回源仍为匿名。';
+  }catch(e){ say($('#crMsg'), e.message, 'bad'); }
+}
+
+$('#crHost').addEventListener('change', function(){ crPick($('#crHost').value); });
+
+$('#crSave').addEventListener('click', async function(){
+  var host = $('#crHost').value;
+  if (!host){ say($('#crFormMsg'), '先选 Host', 'bad'); return; }
+  var body = {mode: $('#crMode').value, username: $('#crUser').value.trim()};
+  var pw = $('#crPass').value;
+  if (pw) body.password = pw;
+  var cur = null;
+  crRows.forEach(function(x){ if (x.host === host) cur = x; });
+  if (cur && (cur.state === 'Ready' || cur.state === 'Pending')) body.expected_gen = cur.gen;
+  try{
+    var r = await api('/api/credentials/' + encodeURIComponent(host), {method:'PUT', body: JSON.stringify(body)});
+    toast(r.state === 'Pending' ? '已写入，等待对账' : '已保存');
+    $('#crPass').value = '';
+    loadCreds();
+  }catch(e){ say($('#crFormMsg'), e.message, 'bad'); }
+});
+
+$('#crDelete').addEventListener('click', async function(){
+  var host = $('#crHost').value;
+  if (!host) return;
+  if (!confirm('删除 ' + host + ' 的凭据？删除后该 Host 的私有拉取会立即失效。')) return;
+  var cur = null;
+  crRows.forEach(function(x){ if (x.host === host) cur = x; });
+  var body = (cur && (cur.state === 'Ready' || cur.state === 'Pending')) ? {expected_gen: cur.gen} : {};
+  try{
+    await api('/api/credentials/' + encodeURIComponent(host), {method:'DELETE', body: JSON.stringify(body)});
+    toast('已删除'); loadCreds();
+  }catch(e){ say($('#crFormMsg'), e.message, 'bad'); }
+});
+
+$('#crVerify').addEventListener('click', async function(){
+  var host = $('#crHost').value;
+  if (!host) return;
+  try{
+    var r = await api('/api/credentials/' + encodeURIComponent(host) + '/verify', {method:'POST'});
+    say($('#crFormMsg'), r.ok ? '认证成功' : ('认证失败：' + r.code), r.ok ? 'ok' : 'bad');
+  }catch(e){ say($('#crFormMsg'), e.message, 'bad'); }
+});
+
+loadCreds();
 
 /* 问号气泡：点一下显示这条说明，再点/点别处收起；手机上按视口夹住，不会出屏 */
 (function(){

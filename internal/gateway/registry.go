@@ -127,6 +127,10 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
+	// 私有认证 Host：缓存查询之前就分流，读和写都不进共享缓存。
+	if g.servePrivateRegistry(w, r, plan) {
+		return
+	}
 
 	e, _ := g.st.CacheGet(plan.CacheKey)
 	// 用 plan 的 TTL 判断新鲜度：条目自己的 ttl 字段在历史数据里可能是 0，
@@ -158,6 +162,62 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 	}
 	setSource(w, plan)
 	g.writeManifest(w, r, e, fromCache)
+}
+
+// InvalidateCredentialCaches 在凭据变更后清掉该 Host 的认证缓存与负缓存。
+//
+// 凭据变更必须立刻生效：否则改对密码后仍会被旧负缓存拦成 auth_backoff，
+// 或者继续用旧 gen 换来的 Token。管理 API 每次写入/删除后调用。
+func (g *Gateway) InvalidateCredentialCaches(host string) {
+	if g == nil || g.cli == nil {
+		return
+	}
+	tr, ok := g.cli.Transport.(*registryAuthTransport)
+	if !ok || tr == nil {
+		return
+	}
+	host = normalizeHostKey(host)
+	if tr.tokens != nil {
+		tr.tokens.invalidateHost(host)
+	}
+	if tr.neg != nil {
+		tr.neg.clearHost(host)
+	}
+}
+
+// privateRegistryHost 报告逻辑 Host 是否启用私有认证。
+func (g *Gateway) privateRegistryHost(host string) bool {
+	return g.privAuth.hostEnabled(host)
+}
+
+// servePrivateRegistry 是私有认证 Host 的唯一入口。
+//
+// 返回 true 表示请求已被处理：缓存查询之前就分流，读/写都不进共享缓存，
+// OfficialOnly 贯穿 Manifest/Blob/Range/HEAD/重试/重定向全生命周期。
+// 认证由 registryAuthTransport 执行（匿名优先，401 后才用凭据）。
+func (g *Gateway) servePrivateRegistry(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) bool {
+	if !g.privateRegistryHost(plan.LogicalHost) {
+		return false
+	}
+	if !g.privAuth.RequireToken {
+		// 运行时 Access Token 被关闭：私有认证必须立刻 fail closed，
+		// 不能继续使用 Host 凭据（D-15-15）。
+		noStore(w.Header())
+		w.Header().Set("X-ML-Auth-Error", "private_auth_requires_token")
+		http.Error(w, "401 私有认证要求 Access Token", http.StatusUnauthorized)
+		return true
+	}
+	metrics.PrivateBypass()
+	// 复制一份 plan：不改调用方的对象，也不让候选源/备用站点混进认证请求。
+	priv := *plan
+	priv.NoStore = true
+	priv.OfficialOnly = true
+	priv.Fallbacks = nil
+	// 401/403 在私有 Host 上是「需要认证」，不是「镜像不在这个站点」：
+	// 绝不能像公共裸名那样换源重试，否则会把请求打到别的上游去。
+	priv.OnFallback = nil
+	g.passThrough(w, r, &priv)
+	return true
 }
 
 // fromCache=false 时字节已记 fill，再记 hit 会把每次未命中都算成命中。
@@ -213,6 +273,10 @@ func (g *Gateway) serveBlob(w http.ResponseWriter, r *http.Request, parsed regis
 		code := statusFor(err)
 		markPolicyMissing(w, err)
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
+		return
+	}
+	// 私有认证 Host：Blob/Range/HEAD 同样在缓存查询前绕过。
+	if g.servePrivateRegistry(w, r, plan) {
 		return
 	}
 	digest := "sha256:" + plan.ExpectSHA
@@ -353,7 +417,7 @@ func (g *Gateway) headBlob(w http.ResponseWriter, r *http.Request, plan *adapter
 // 不写 Body，也不把上游错误响应的 Content-Length 当成资源大小。
 func (g *Gateway) writeHeadStatus(w http.ResponseWriter, hdr http.Header, code int) {
 	noStore(w.Header())
-	copyHeadHeaders(w.Header(), hdr, "WWW-Authenticate", "Retry-After", "Docker-Distribution-Api-Version")
+	copyHeadHeaders(w.Header(), hdr, "WWW-Authenticate", "Retry-After", "Docker-Distribution-Api-Version", "X-ML-Auth-Error")
 	w.Header().Set("X-ML-Cache", "MISS")
 	w.WriteHeader(code)
 }

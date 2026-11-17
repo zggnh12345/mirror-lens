@@ -14,6 +14,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
+	"github.com/zggnh12345/mirror-lens/internal/store"
 )
 
 type Kind int
@@ -46,6 +47,10 @@ type Adapter struct {
 	// Foreign Host 使用多源。
 	MultiOriginHosts []string
 
+	// Epoch 返回当前缓存命名空间代次（3.5.15）。nil 或 0 时保持旧键格式，
+	// 未启用私有认证的部署与 3.5.14c 完全兼容。
+	Epoch func() int64
+
 	mu       sync.RWMutex
 	repoHost map[string]string // 裸格式镜像名 → 实测所在站点（Docker Hub 没有时自动找 ghcr）
 }
@@ -54,6 +59,14 @@ type Adapter struct {
 // 列表本体在 internal/registryhost，这里只是别名：3.5.x 起 store 的
 // repo_host 校验与路由必须用同一份清单，分叉会变成「能写进去但回源不了」。
 var DefaultHosts = registryhost.Hosts()
+
+// epoch 读取当前缓存代次；未注入时按 0（旧键格式）处理。
+func (a *Adapter) epoch() int64 {
+	if a.Epoch == nil {
+		return 0
+	}
+	return a.Epoch()
+}
 
 func (a *Adapter) hostAllowed(h string) bool {
 	// 全局白名单永远是第一道闸：旧 Hosts map 不能把不在白名单里的站
@@ -312,6 +325,7 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 		kindName, schedKey, official := a.sched(host, foreign)
 		p := &adapter.Plan{
 			Kind:         kindName,
+			ResourceKind: adapter.ResourceManifest,
 			SchedKey:     schedKey,
 			LogicalHost:  host,
 			Registry:     true,
@@ -323,7 +337,8 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 			// 缓存键里的 Accept 固定按客户端原样归一（foreign=false），
 			// 不能跟着回源站点补 OCI 类型：否则同一个 tag 在「官方/镜像」
 			// 两条路径上算出两个键，换源就丢命中。
-			CacheKey:  "docker:manifest:" + origin + "/" + name + ":" + ref + "|accept=" + UpstreamAccept(r.Header.Get("Accept"), false),
+			CacheKey: store.RegistryCacheKey(a.epoch(), "manifest",
+				origin+"/"+name+":"+ref+"|accept="+UpstreamAccept(r.Header.Get("Accept"), false)),
 			Cacheable: true,
 			TTL:       a.TagTTL,
 		}
@@ -345,6 +360,7 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 		kindName, schedKey, official := a.sched(host, foreign)
 		return &adapter.Plan{
 			Kind:         kindName,
+			ResourceKind: adapter.ResourceBlob,
 			SchedKey:     schedKey,
 			LogicalHost:  host,
 			Registry:     true,
@@ -352,7 +368,8 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 			OfficialOnly: official,
 			Method:       http.MethodGet,
 			Label:        "layer " + shortDigest(ref),
-			CacheKey:     "docker:blob:" + ref, // 内容寻址：同一个 digest 跨仓库复用
+			// 内容寻址：同一个 digest 跨仓库复用
+			CacheKey:     store.RegistryCacheKey(a.epoch(), "blob", ref),
 			Cacheable:    true,
 			Immutable:    true,
 			Stream:       true,

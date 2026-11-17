@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,7 +110,9 @@ func (c *tokenCache) pruneLocked() {
 }
 
 // get 返回 token；同一个 key 同时只有一个 leader 打 Token 端点。
-func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey, realm, service, scope string) (string, error) {
+//
+// creds 为 nil 表示匿名流程；非 nil 时按凭据模式决定 Token 端点是否带 Basic。
+func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey, ch v2auth.Challenge, scope string, creds *v2auth.Credentials) (string, error) {
 	c.mu.Lock()
 	if e, ok := c.m[key]; ok && time.Now().Before(e.exp) {
 		c.mu.Unlock()
@@ -132,7 +135,7 @@ func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey
 
 	// leader 不能跟着第一个请求的取消一起死：否则同 key 的等待者全被拖垮。
 	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	tok, ttl, err := fetchToken(fetchCtx, rt, realm, service, scope)
+	tok, ttl, err := fetchToken(fetchCtx, rt, ch, scope, creds)
 	cancel()
 
 	c.mu.Lock()
@@ -148,25 +151,103 @@ func (c *tokenCache) get(ctx context.Context, rt http.RoundTripper, key tokenKey
 	return tok, err
 }
 
-func fetchToken(ctx context.Context, rt http.RoundTripper, realm, service, scope string) (string, time.Duration, error) {
-	u, err := url.Parse(realm)
+// invalidate 删除单个 key：401 失效刷新与凭据变更都走这里。
+func (c *tokenCache) invalidate(key tokenKey) {
+	c.mu.Lock()
+	delete(c.m, key)
+	c.mu.Unlock()
+	metrics.PrivateTokenInvalidated()
+}
+
+// invalidateHost 清掉某 Host 的全部 Token（凭据变更/删除时调用）。
+func (c *tokenCache) invalidateHost(host string) int {
+	c.mu.Lock()
+	n := 0
+	for k := range c.m {
+		if k.Host == host {
+			delete(c.m, k)
+			n++
+		}
+	}
+	c.mu.Unlock()
+	if n > 0 {
+		metrics.TokenCacheEntries(len(c.m))
+	}
+	return n
+}
+
+// clear 清空整个 Token Cache（恢复流程的硬性步骤）。
+func (c *tokenCache) clear() {
+	c.mu.Lock()
+	c.m = map[tokenKey]tokenEntry{}
+	c.mu.Unlock()
+	metrics.TokenCacheEntries(0)
+}
+
+// fetchToken 换取 Token。
+//
+// Token 端点规则（15-C.3）：
+//   - 最多 3 跳，只允许同源 HTTPS；跨源重定向直接拒绝；
+//   - Basic 只发往 Token 端点本身，任何来源变化都清除；
+//   - Basic 模式补 account=<username>（不支持的端点会忽略）。
+func fetchToken(ctx context.Context, rt http.RoundTripper, ch v2auth.Challenge, scope string, creds *v2auth.Credentials) (string, time.Duration, error) {
+	u, err := url.Parse(ch.Realm)
 	if err != nil {
 		return "", 0, err
 	}
 	q := u.Query()
-	if service != "" {
-		q.Set("service", service)
+	if ch.Service != "" {
+		q.Set("service", ch.Service)
 	}
 	if scope != "" {
 		q.Set("scope", scope)
 	}
+	method := http.MethodGet
+	useBasic := false
+	if creds != nil {
+		switch creds.AuthMode() {
+		case v2auth.ModeBasic:
+			// 直接 Basic 不走 Token 端点；到这里说明配置矛盾，fail closed。
+			return "", 0, errors.New("basic 模式不应请求 Token 端点")
+		case v2auth.ModeBearerTokenBasic:
+			useBasic = true
+		case v2auth.ModeBearerTokenNone:
+			useBasic = false
+		default:
+			return "", 0, v2auth.ErrCredentialModeInvalid
+		}
+		if strings.EqualFold(strings.TrimSpace(creds.TokenMethod), "POST") {
+			return "", 0, v2auth.ErrTokenMethodUnsupported
+		}
+		if useBasic {
+			q.Set("account", creds.Username)
+		}
+	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
 	if err != nil {
 		return "", 0, err
 	}
-	resp, err := rt.RoundTrip(req)
+	req.Header.Set("User-Agent", "mirror-lens/1.0 (+https://github.com/zggnh12345/mirror-lens)")
+	if useBasic {
+		req.SetBasicAuth(creds.Username, creds.Password)
+	}
+	cli := &http.Client{
+		Transport: rt,
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			from := via[len(via)-1].URL
+			if _, err := v2auth.RedirectPolicy(v2auth.RedirectToken, http.MethodGet, from, r.URL, len(via)); err != nil {
+				return err
+			}
+			// 同源才保留 Basic；规则已保证同源，这里再显式清一次防御。
+			if !strings.EqualFold(from.Host, r.URL.Host) || !strings.EqualFold(from.Scheme, r.URL.Scheme) {
+				r.Header.Del("Authorization")
+			}
+			return nil
+		},
+	}
+	resp, err := cli.Do(req)
 	if err != nil {
 		return "", 0, err
 	}
@@ -207,75 +288,16 @@ func (e *tokenError) Error() string {
 	return "上游 token 申请失败: HTTP " + strconv.Itoa(e.code)
 }
 
-// bearerTransport 对所有 Registry 上游生效：401 + Bearer 挑战时换 token 重发。
-// Realm 只接受策略快照允许的 Host；没有身份时 fail closed，不能退回按 Host 查表。
-type bearerTransport struct {
-	base   http.RoundTripper
-	tokens *tokenCache
-}
-
-func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !v2auth.IsRegistryRequest(req.Context()) {
-		// Git/Private/Raw 走同一个 http.Client，但不属于 Registry 身份链。
-		return t.base.RoundTrip(req)
-	}
-	policy, ok := v2auth.PolicyFromContext(req.Context())
-	if !ok {
-		metrics.AuthIdentityMissing()
-		return authErrorResponse(req, http.StatusServiceUnavailable, "auth_policy_missing"), nil
-	}
-	resp, err := t.base.RoundTrip(req)
-	if err != nil || resp == nil {
-		return resp, err
-	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		return resp, nil
-	}
-	ch := v2auth.ParseChallenge(resp.Header.Get("WWW-Authenticate"))
-	if ch.Realm == "" {
-		return resp, nil
-	}
-	ru, err := url.Parse(ch.Realm)
-	if err != nil {
-		return resp, nil
-	}
-	if err := policy.Allows(ru); err != nil {
-		return resp, nil
-	}
-	scope := ch.Scope
-	if scope == "" {
-		scope = scopeFromPath(req.URL.Path, policy.LogicalHost)
-	}
-	host := policy.LogicalHost
-	if host == "" {
-		host = req.URL.Host
-	}
-	key := tokenKey{
-		SourceID:  policy.SourceID,
-		Host:      host,
-		Realm:     ch.Realm,
-		Service:   ch.Service,
-		Scope:     scope,
-		CredGen:   policy.CredGen,
-		PolicyGen: policy.PolicyGen,
-	}
-	tok, err := t.tokens.get(req.Context(), t.base, key, ch.Realm, ch.Service, scope)
-	if err != nil {
-		metrics.TokenRefreshError()
-		return resp, nil // 拿不到 token 就把 401 原样给客户端，信息更准确
-	}
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	resp.Body.Close()
-
-	r2 := req.Clone(req.Context())
-	r2.Header.Set("Authorization", "Bearer "+tok)
-	return t.base.RoundTrip(r2)
-}
+// bearerTransport 是 registryAuthTransport 的历史别名：
+// 3.5.11 的调用点与测试仍用这个名字，实现只有一份。
+type bearerTransport = registryAuthTransport
 
 func authErrorResponse(req *http.Request, code int, msg string) *http.Response {
 	h := make(http.Header)
 	h.Set("Content-Type", "text/plain; charset=utf-8")
 	h.Set("X-ML-Error", msg)
+	// 稳定错误码：与 withAuthCode 同名，客户端/验收脚本只看这个。
+	h.Set("X-ML-Auth-Error", msg)
 	return &http.Response{
 		StatusCode: code,
 		Status:     fmt.Sprintf("%d %s", code, http.StatusText(code)),
@@ -305,4 +327,13 @@ func scopeFromPath(p, logicalHost string) string {
 		}
 	}
 	return ""
+}
+
+// drainClose 读完并关闭上游响应体，避免连接池里留下半截连接。
+func drainClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	_ = resp.Body.Close()
 }

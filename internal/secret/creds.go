@@ -46,11 +46,13 @@ var (
 //
 // TokenMethod / TokenAuth 与用户名密码一起封在同一个 AEAD 里，因此
 // 「凭据 + 认证方式」天然来自同一次一致性读取，不会出现拼装错版本。
-// 空值表示历史记录：TokenMethod 按 GET，TokenAuth 按「有凭据则 basic」。
+// Mode 是 3.5.15 的显式认证模式；历史记录没有它，按 CredentialMode() 派生。
 type Credential struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	// TokenMethod: "" | "GET"（POST 暂不支持，由 v2auth 显式拒绝）。
+	// Mode: ""（历史记录）| basic | bearer_token_basic | bearer_token_none
+	Mode string `json:"mode,omitempty"`
+	// TokenMethod: "" | "GET"（POST 明确拒绝）。
 	TokenMethod string `json:"token_method,omitempty"`
 	// TokenAuth: ""（自动）| "none"（永不带 Basic）| "basic"（必须带 Basic）。
 	TokenAuth string `json:"token_auth,omitempty"`
@@ -74,6 +76,8 @@ type DB interface {
 	HostGenState(host string) (int64, string, error)
 	HostCredStates() ([]store.CredState, error)
 	ApplyCredChanges([]store.CredChange) error
+	// ApplyCredWrite 是 3.5.15 的唯一提交路径：CAS + 同事务审计。
+	ApplyCredWrite(store.CredWrite) (store.CredWriteResult, error)
 }
 
 // Store 管理 <data>/registry_creds.enc。
@@ -118,97 +122,12 @@ func (s *Store) Reconciled() bool {
 	return s.reconciled
 }
 
-// Put 写入（或覆盖）某 Host 的凭据，返回该 Host 的新摘要。
-//
-// 返回值错误里若带「数据库版本未提交」，说明文件已换新但 DB 事务失败：
-// 此时 Probe 会因摘要不符拒绝启动，重启进程跑 Reconcile 即可补齐。
-func (s *Store) Put(rawHost, username, password string) (string, error) {
-	host, err := credentialHost(rawHost)
-	if err != nil {
-		return "", err
-	}
-	if username == "" {
-		return "", errors.New("用户名不能为空")
-	}
-	if password == "" {
-		return "", errors.New("密码不能为空")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := s.lockFile()
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
-
-	doc, err := s.readValidated()
-	if err != nil {
-		return "", err
-	}
-	rec, err := s.seal(host, Credential{Username: username, Password: password})
-	if err != nil {
-		return "", err
-	}
-	doc.Hosts[host] = rec
-	delete(doc.Revoked, host)
-	if err := s.writeAtomic(doc); err != nil {
-		return "", err
-	}
-	digest := recordDigest(host, rec)
-	if err := s.db.ApplyCredChanges([]store.CredChange{{Host: host, Digest: &digest}}); err != nil {
-		return "", fmt.Errorf("凭据已写入 %s，但数据库版本未提交（重启后自动对账）：%w", s.path, err)
-	}
-	return digest, nil
-}
-
-// Delete 显式删除某 Host 的凭据：文件里移除记录，数据库记为「无凭据摘要」。
-func (s *Store) Delete(rawHost string) error {
-	host, err := credentialHost(rawHost)
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := s.lockFile()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	doc, err := s.readValidated()
-	if err != nil {
-		return err
-	}
-	if _, ok := doc.Hosts[host]; !ok {
-		// 文件里本来就没有：只有数据库已经是「无凭据」才算幂等成功；
-		// 否则就是记录丢了，不能顺手把它当作删除。
-		_, cur, err := s.db.HostGenState(host)
-		if err != nil {
-			return err
-		}
-		if cur == "" || cur == emptyDigest(host) {
-			return nil
-		}
-		return fmt.Errorf("%w: %s", ErrRecordMissing, host)
-	}
-	delete(doc.Hosts, host)
-	if doc.Revoked == nil {
-		doc.Revoked = map[string]bool{}
-	}
-	doc.Revoked[host] = true
-	if err := s.writeAtomic(doc); err != nil {
-		return err
-	}
-	digest := emptyDigest(host)
-	if err := s.db.ApplyCredChanges([]store.CredChange{{Host: host, Digest: &digest}}); err != nil {
-		return fmt.Errorf("凭据已删除但数据库版本未提交（重启后自动对账）：%w", err)
-	}
-	return nil
-}
+// Put 是 3.5.14 的兼容包装，见 credstate.go 的 PutCredential。
 
 // Get 返回某 Host 的凭据。未对账、文件与数据库摘要不一致时拒绝返回。
+// 其他 Host 的记录损坏不影响本 Host（记录级隔离）。
 func (s *Store) Get(rawHost string) (Credential, bool, error) {
-	host, err := credentialHost(rawHost)
+	host, err := credentialStatusHost(rawHost)
 	if err != nil {
 		return Credential{}, false, err
 	}
@@ -217,7 +136,7 @@ func (s *Store) Get(rawHost string) (Credential, bool, error) {
 	if !s.reconciled {
 		return Credential{}, false, ErrNotReconciled
 	}
-	doc, err := s.readValidated()
+	doc, err := s.readDoc()
 	if err != nil {
 		return Credential{}, false, err
 	}
@@ -234,16 +153,18 @@ func (s *Store) Get(rawHost string) (Credential, bool, error) {
 		}
 		return Credential{}, false, nil
 	}
+	// 先解密：记录级损坏必须报 ErrCorrupt（该 Host 隔离），
+	// 不能因为摘要对不上就误报成「Pending」，把损坏掩盖成可恢复状态。
+	c, err := s.open(host, rec)
+	if err != nil {
+		return Credential{}, false, err
+	}
 	_, cur, err := s.db.HostGenState(host)
 	if err != nil {
 		return Credential{}, false, err
 	}
 	if cur != recordDigest(host, rec) {
 		return Credential{}, false, fmt.Errorf("%w: %s", ErrCredentialPending, host)
-	}
-	c, err := s.open(host, rec)
-	if err != nil {
-		return Credential{}, false, err
 	}
 	return c, true, nil
 }
@@ -263,7 +184,7 @@ type Snapshot struct {
 
 // Snapshot 一次性取回某 Host 的凭据版本。
 func (s *Store) Snapshot(rawHost string) (Snapshot, error) {
-	host, err := credentialHost(rawHost)
+	host, err := credentialStatusHost(rawHost)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -272,7 +193,7 @@ func (s *Store) Snapshot(rawHost string) (Snapshot, error) {
 	if !s.reconciled {
 		return Snapshot{}, ErrNotReconciled
 	}
-	doc, err := s.readValidated()
+	doc, err := s.readDoc()
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -288,13 +209,14 @@ func (s *Store) Snapshot(rawHost string) (Snapshot, error) {
 		}
 		return Snapshot{Host: host, Generation: gen, Digest: cur}, nil
 	}
-	digest := recordDigest(host, rec)
-	if cur != digest {
-		return Snapshot{}, fmt.Errorf("%w: %s", ErrCredentialPending, host)
-	}
+	// 先解密，理由同 Get：记录级损坏不能被摘要比较掩盖。
 	c, err := s.open(host, rec)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	digest := recordDigest(host, rec)
+	if cur != digest {
+		return Snapshot{}, fmt.Errorf("%w: %s", ErrCredentialPending, host)
 	}
 	return Snapshot{Host: host, Generation: gen, Digest: digest, Credential: c, HasCredential: true}, nil
 }
@@ -308,75 +230,80 @@ func (s *Store) Has(rawHost string) (bool, string, error) {
 	return true, c.Username, nil
 }
 
-// Reconcile 在启动时把文件与 registry_host_gen 对齐。
+// Reconcile 是 3.5.14 的兼容入口：按 Host 对账后返回聚合错误。
 //
-// 只有文件结构合法、每条记录的 AEAD 都能通过时才允许提交；任何校验失败
-// 都直接返回错误，绝不在「可能损坏」的基础上更新 cred_digest。
+// 单条记录损坏只隔离该 Host（其余 Host 继续 Ready），但为了调用方能看见
+// 问题，这里把隔离 Host 归类成 ErrCorrupt / ErrRecordMissing 返回。
+// 新代码请用 ReconcileAll，它把「隔离」与「致命」分开。
 func (s *Store) Reconcile() (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := s.lockFile()
+	n, quarantined, err := s.ReconcileAll()
 	if err != nil {
-		return 0, err
+		return n, err
 	}
-	defer unlock()
-
-	doc, err := s.readValidated()
-	if err != nil {
-		return 0, err
-	}
-	states, err := s.db.HostCredStates()
-	if err != nil {
-		return 0, err
-	}
-	known := make(map[string]store.CredState, len(states))
-	for _, st := range states {
-		known[st.Host] = st
-	}
-
-	var changes []store.CredChange
-	for host := range doc.Revoked {
-		st, ok := known[host]
-		if ok && st.Digest != "" && st.Digest != emptyDigest(host) {
-			d := emptyDigest(host)
-			changes = append(changes, store.CredChange{Host: host, Digest: &d})
+	for _, st := range quarantined {
+		if st.Reason == "record_missing" {
+			return n, fmt.Errorf("%w: %s", ErrRecordMissing, st.Host)
 		}
+		return n, fmt.Errorf("%w: %s（%s）", ErrCorrupt, st.Host, st.Reason)
 	}
-	for host, rec := range doc.Hosts {
-		digest := recordDigest(host, rec)
-		if st, ok := known[host]; ok && st.Digest == digest {
-			continue
-		}
-		d := digest
-		changes = append(changes, store.CredChange{Host: host, Digest: &d})
-	}
-	// 文件里没有、数据库里却有摘要：只有「显式删除」（Revoked 或已提交的
-	// 空摘要）可以接受，其余一律视为记录丢失。
-	for host, st := range known {
-		if _, ok := doc.Hosts[host]; ok {
-			continue
-		}
-		if doc.Revoked[host] || st.Digest == "" || st.Digest == emptyDigest(host) {
-			continue
-		}
-		return 0, fmt.Errorf("%w: %s", ErrRecordMissing, host)
-	}
-	if err := s.db.ApplyCredChanges(changes); err != nil {
-		return 0, err
-	}
-	s.reconciled = true
-	return len(changes), nil
+	return n, nil
 }
 
 // credentialHost 只接受规范化后的受支持 Host；空串（Docker Hub）与
 // 非法字符串都不接受。
+//
+// 读取/对账/删除走这一层：3.5.14 遗留文件里可能有非 allowlist 的 Host，
+// 读路径必须能识别并清理它们，不能把整份文件判成损坏。
 func credentialHost(raw string) (string, error) {
-	host, err := registryhost.Check(raw)
+	host, err := NormalizeHost(raw)
 	if err != nil {
 		return "", err
 	}
 	if host == "" || host == "docker.io" || host == "ghcr.io" {
 		return "", errors.New("Docker Hub/GHCR 不支持配置 Host 代次凭据")
+	}
+	// 1.6 D.1：*.pkg.dev 本版不支持凭据；localhost 也不得进入凭据 Host。
+	// 写入门禁之外，状态/列表路径也必须用同一收敛规则，否则 DB 里的
+	// 历史行仍会被当成可配置凭据的 Host 展示。
+	if registryhost.IsArtifactRegistry(host) {
+		return "", errors.New("*.pkg.dev 需要 GCP ADC，本版不支持配置凭据")
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", errors.New("localhost 不允许作为凭据 Host")
+	}
+	return host, nil
+}
+
+// credentialStatusHost 是运行/API 读路径的门禁：除格式与安全规则外，
+// 还必须在凭据 allowlist 内。文件解析仍用 credentialHost，避免历史
+// 非 allowlist 记录把整份文件判成损坏。
+func credentialStatusHost(raw string) (string, error) {
+	host, err := credentialHost(raw)
+	if err != nil {
+		return "", err
+	}
+	if !CredentialHostAllowed(host) {
+		return "", errors.New("该 Host 不在 3.5.15 私有凭据 allowlist 内")
+	}
+	return host, nil
+}
+
+// credentialWriteHost 是 3.5.15 的写入门禁：除格式合法外，还必须在
+// 3.5.15-D.1 的代码 allowlist 内。*.pkg.dev / registry.gitlab.com 明确排除：
+// 前者需要 GCP ADC，后者属于 3.5.15a。
+func credentialWriteHost(raw string) (string, error) {
+	host, err := credentialHost(raw)
+	if err != nil {
+		return "", err
+	}
+	if host == "registry.gitlab.com" {
+		return "", errors.New("GitLab 专用凭据属于 3.5.15a，本版不开放")
+	}
+	if registryhost.IsArtifactRegistry(host) {
+		return "", errors.New("*.pkg.dev 需要 GCP ADC，本版不支持配置凭据")
+	}
+	if !CredentialHostAllowed(host) {
+		return "", errors.New("该 Host 不在 3.5.15 私有凭据 allowlist 内（仅 quay.io / gcr.io）")
 	}
 	return host, nil
 }
@@ -426,9 +353,10 @@ func (s *Store) open(host string, r cipherRecord) (Credential, error) {
 	return c, nil
 }
 
-// readValidated 读取并完整校验文件：结构、Host 合法性、每条记录的 AEAD。
-// 文件不存在时返回空文档（全新安装）。
-func (s *Store) readValidated() (*credsDoc, error) {
+// readDoc 只做结构校验：JSON 可解析、版本已知、Host 合法、记录字段非空。
+// 不做 AEAD：单条记录解密失败属于「记录级损坏」，只能隔离该 Host，
+// 不能让其他 Host 一起 fail closed。
+func (s *Store) readDoc() (*credsDoc, error) {
 	doc := &credsDoc{Version: credsVersion, Hosts: map[string]cipherRecord{}, Revoked: map[string]bool{}}
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -450,7 +378,8 @@ func (s *Store) readValidated() (*credsDoc, error) {
 		doc.Revoked = map[string]bool{}
 	}
 	// 同一 Host 不能既是有效记录又是删除标记：两种解释同时成立时，
-	// 无论取哪个都可能误删或误用凭据，直接判文件损坏。
+	// 无论取哪个都可能误删或误用凭据，直接判文件损坏（这是文件级矛盾，
+	// 不属于单条记录损坏）。
 	for host := range doc.Revoked {
 		if _, ok := doc.Hosts[host]; ok {
 			return nil, fmt.Errorf("%w: %s 同时存在密文记录与删除标记", ErrCorrupt, host)
@@ -461,11 +390,6 @@ func (s *Store) readValidated() (*credsDoc, error) {
 		if err != nil || norm != host {
 			return nil, fmt.Errorf("%w: 已删除记录里的 Host %q 不合法", ErrCorrupt, host)
 		}
-		// 同一 Host 不能既是有效记录又是删除标记：两种解释同时成立时，
-		// 无论按哪个处理都可能误删或误用凭据。
-		if _, ok := doc.Hosts[host]; ok {
-			return nil, fmt.Errorf("%w: %s 同时存在密文记录与删除标记", ErrCorrupt, host)
-		}
 	}
 	for host, rec := range doc.Hosts {
 		norm, err := credentialHost(host)
@@ -473,8 +397,21 @@ func (s *Store) readValidated() (*credsDoc, error) {
 			return nil, fmt.Errorf("%w: Host %q 不合法", ErrCorrupt, host)
 		}
 		if rec.Nonce == "" || rec.CT == "" {
-			return nil, fmt.Errorf("%w: %s 的记录不完整", ErrCorrupt, host)
+			// 字段缺失是记录级问题，交给 open() 在按 Host 读取时报错。
+			continue
 		}
+	}
+	return doc, nil
+}
+
+// readValidated 读取并完整校验文件：结构 + 每条记录的 AEAD。
+// 仅用于需要「整文件可信」的运维检查；运行路径按 Host 隔离读取。
+func (s *Store) readValidated() (*credsDoc, error) {
+	doc, err := s.readDoc()
+	if err != nil {
+		return nil, err
+	}
+	for host, rec := range doc.Hosts {
 		if _, err := s.open(host, rec); err != nil {
 			return nil, err
 		}
@@ -571,6 +508,13 @@ func emptyDigest(host string) string {
 	writeField(&b, host)
 	sum := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(sum[:])
+}
+
+// HasCredentialDigest 判断数据库摘要是否代表真实凭据。
+// 空摘要（从未配置）与 emptyDigest（显式删除）都不是凭据，不能把
+// 「已删除」误当成「有凭据」传给候选探测快照。
+func HasCredentialDigest(host, digest string) bool {
+	return digest != "" && digest != emptyDigest(host)
 }
 
 // writeField 写「十进制长度:内容」，是摘要编码里唯一的字段边界来源。

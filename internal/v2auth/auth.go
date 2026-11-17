@@ -42,8 +42,11 @@ var (
 //     "none" 永不附带 Basic（即使快照里残留用户名密码）；
 //     "basic" 必须带 Basic，缺凭据时报错。
 type Credentials struct {
-	Username    string
-	Password    string
+	Username string
+	Password string
+	// Mode 是 3.5.15 的显式认证模式（basic / bearer_token_basic /
+	// bearer_token_none）；空值表示历史记录，按「有凭据 = Token 端点 Basic」。
+	Mode        string
 	TokenMethod string
 	TokenAuth   string
 }
@@ -58,6 +61,8 @@ type CredentialSnapshot struct {
 	Generation  int64
 	Digest      string
 	Credentials Credentials
+	// HasCredential 与 Generation 必须来自同一次一致性读取。
+	HasCredential bool
 }
 
 // Challenge 是 WWW-Authenticate: Bearer 的字段。

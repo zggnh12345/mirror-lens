@@ -31,7 +31,7 @@ v1.6 相对 v1.5 的核心修正：
 8. 状态模型改为 `last_verdict`（Supported / Unsupported / Inconclusive / Mismatch）+ `effective_status`（Unknown / Supported / Unsupported / Mismatch），`Mismatch` 与现有 `RegistryCapMismatch=2` 对齐。
 9. `3.5.14a` 同时包含新写路径；`3.5.14b` 只切读路径，不含旧读路径和 dual-read 开关；`3.5.14c` 才删除旧 Registry 能力字段和 `repo_host`。
 10. 离线迁移增加 `3.5.7 → 3.5.11 → 3.5.14a` 路径和 `backfillHostCaps` 步骤；3.5.12 的程序版本不产生新的 Schema 输入指纹，生产输入仍是 `3.5.11 / e39e1197…`。
-11. `3.5.15` 收窄为 CredStore + 标准私有 Registry 认证；GitLab PAT 独立 3.5.15a。
+11. `3.5.15` 重新定义为 **CredStore 业务接入 + 官方私有 Registry 认证 + 凭据安全边界闭环**，不重建现有 CredStore；GitLab PAT 独立 3.5.15a。
 12. `3.5.16` 的公开 Manifest 竞速依赖 3.5.11 + 3.5.14c；私有竞速才依赖 3.5.15。竞速不能建立在尚未收敛的 B1 模型上。
 13. 撤回“流式 P0 未关闭”的错误判断；保留为 G0 回归门禁。
 14. 增加 Host 验收矩阵、探测四态、迁移验收和双用途源回归。
@@ -52,6 +52,23 @@ v1.6 相对 v1.5 的核心修正：
 8. **12-S 必须先收窄生产 `multi_origin_hosts` 再逐 Host 加源**。生产当前未显式配置该字段，默认 8 个 Host 全开；先建源再验收不构成灰度。
 9. **12-F1 只过滤真正的探测执行入口**（`jobs()` / `ListDueHostProbes`）。`reconcileRepos` 不执行探测、不写健康状态，不纳入白名单过滤。
 10. **12-F2 不含 `repo_host` 修改**：当前没有修改 `repo_host` 的 API，`SetRepoHost` 仅为 Store 方法；该能力留到 3.5.14 一源多 Host 阶段统一设计。
+
+### 1.2 2026-11-17 修订
+
+1. `3.5.15` 不再定义为“从零建设 CredStore”。3.5.14 已有 Host 级加密存储、代次、Snapshot、Reconcile 和 Probe 认证基础；3.5.15 的重点是把凭据安全接入 Gateway 业务回源，并补齐管理入口。
+2. `3.5.15` 拆成 **15-A（凭据管理与一致性）**、**15-B（Gateway 私有认证与缓存隔离）**、**15-C（身份、Probe 与重定向安全）**、**15-D（范围冻结与验收）** 四个内部工作块；1.3 已按二次评审整体重写。
+3. 凭据授权冻结为 **AND** 门禁：必须同时满足 `SourceID == 0` 和 `PolicySnapshot.Official == true`，否则禁止使用用户凭据。`Official` 只能由可信内部调用路径设置，不能由请求参数或候选源配置声明。（1.3 已扩展为 `IdentityKind=Official` + Host/gen 校验；本条保留为历史修订记录。）
+4. 候选源即使拥有合法的 Realm Policy，也不能获得官方用户名密码或官方私有 Token；重定向后必须重新校验目标 Host 和 Realm。
+5. Hub/GHCR 暂不纳入首批；GitLab PAT / Deploy Token 仍独立为 3.5.15a。生产目录当前没有 `registry_creds.enc` 只作为部署基线记录，不能作为代码安全验收通过的证据。
+
+### 1.3 2026-11-17 二次修订（3.5.15 整体重写）
+
+1. 3.5.15 上一版不能直接冻结。P0-1～P0-7 全部接受：官方 `CredGen` 恒为 0、私有内容进入共享缓存、`SourceID` 零值身份、重定向认证头、Basic 范围矛盾、文件/DB 非原子、版本号冲突。
+2. 3.5.15 以“唯一权威设计”重写，保留 15-A/15-B/15-C/15-D 结构，新增威胁模型、决策记录、最终复核裁定、凭据一致性状态机、私有缓存隔离、身份与重定向安全、Probe/Gateway 职责边界、回滚降级和完整验收矩阵。
+3. 五项决策已定（正文见 3.5.15 决策记录 D-15-1～D-15-5）：Registry 直接 Basic 纳入；私有 Host 使用明确 allowlist；私有认证开启时强制 Gateway Access Token；私有/认证响应绕过共享缓存；官方 Realm 本版只支持同 Host 和已有内置 Realm。
+4. `3.5.16` 保持“公开 Manifest 竞速”，`3.5.17` 保持“Blob 竞速可行性评估”；认证运维能力不占用这两个版本号，后续单独排期。
+5. 本版不进入代码实施；先完成最终设计复核，再按 15-A → 15-B → 15-C → 15-D 顺序开工。
+6. 2026-11-17 最终复核追加裁定：真实账号保持 `BLOCKED_EXTERNAL_SOURCE`；fixture 固定隔离容器 + 443 + allowlist 域名 + 测试 CA；epoch 由 Gateway 缓存管理模块清理；公共内容失去共享缓存接受；不增加 `CredDigest`；`PrivateAuthEnabled ⇒ GatewayAccessTokenRequired`；`OfficialOnly` 全生命周期；epoch 持久化与回滚闭合。
 
 ## 2. 当前基线
 
@@ -182,7 +199,7 @@ registry_probe_at     = 0
 | 3.5.14a | `source_host_caps` 回填 + 旧字段投影 + 新写路径 | 3.5.12 | 读路径不变；Schema S14a |
 | 3.5.14b | 只切换 `source_host_caps` 为权威读路径 | 3.5.14a | 旧单 Host Source 不变；Schema S14a |
 | 3.5.14c | 删除旧 Registry 能力字段、旧投影和 `repo_host` 业务依赖 | 3.5.14b | Schema S14c；Source × Host 管理 |
-| 3.5.15 | CredStore + 标准私有 Registry 认证 | 3.5.14c | 匿名优先 |
+| 3.5.15 | CredStore 业务接入 + 官方私有 Registry 认证 + 凭据安全边界闭环 | 3.5.14c | 私有认证默认关闭；Access Token 必需；缓存绕过；Hub/GHCR 暂缓 |
 | 3.5.15a | GitLab PAT / Deploy Token 专项 | 3.5.15 | 单独验收 |
 | 3.5.16 | 公开 Manifest 竞速 | 3.5.11 + 3.5.14c | 默认关闭 |
 | 3.5.17 | Blob 竞速可行性评估 | 3.5.16 | 仅评估 |
@@ -1421,43 +1438,482 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 - 停服期间回滚 RPO=0 演练通过；开放流量后的数据丢失窗口有书面确认。
 - 反向迁移若未实现，文档明确写“不承诺开放后 RPO=0”。
 
-### 3.5.15 CredStore + 标准私有 Registry 认证
+### 3.5.15 CredStore 业务接入、官方私有 Registry 认证与凭据安全边界闭环
 
-**目标：** 让需要用户凭据的业务回源使用统一 CredStore，补齐标准私有 Registry 认证。
+**目标：** 不重建 CredStore。复用 3.5.14 已有的 Host 级加密存储、`registry_host_gen` 代次、`Snapshot`、`Reconcile` 和 Probe 认证基础，把凭据安全接入 Gateway 的真实 Manifest/Blob 回源，并补齐凭据管理入口和官方/候选源隔离。
 
-范围：
+**依赖：** 3.5.14c（v3.5.14）；3.5.11 的 `source_realm_policy`、`PolicySnapshot` 和 Token Cache 身份键。**代码基线：** `6e07752`（2026-11-17）。
 
-- Basic Auth
-- Docker 用户名 / 密码
-- 标准 Bearer Token 交换
-- 匿名优先
-- 凭据 Snapshot 和 generation
-- 凭据轮换后旧 generation 不能覆盖新状态
-- 日志脱敏
+#### 3.5.15.0 范围与非目标
 
-后续独立阶段：
+**范围：** 15-A 凭据管理与一致性、15-B Gateway 私有认证与缓存隔离、15-C 身份/Probe/重定向安全、15-D 范围冻结与验收。
 
-- GCP ADC / OAuth
-- AWS ECR IAM
-- OIDC / 工作负载身份
+**非目标：**
 
-安全边界：
+- 不重建 CredStore，不新增平行凭据文件、凭据表或 generation 机制。
+- 不重写 Gateway 的代理、调度和流式传输主架构；只增加认证执行、缓存准入和请求身份。
+- Docker Hub 私有仓库、GHCR 用户名/PAT 不纳入首批；`credentialHost` 继续拒绝 `docker.io` / `ghcr.io`。
+- GitLab PAT / Deploy Token 留在 3.5.15a；GCP ADC / OAuth、AWS ECR IAM、OIDC / 工作负载身份不纳入。
+- 不做 per-client、per-repository 授权；本版只建立 Host 级凭据能力，权限边界见 15-D。
+- 不新增 Registry 类型，不改 `3.5.16`（公开 Manifest 竞速）和 `3.5.17`（Blob 竞速可行性评估）的版本目标。
 
-- 用户凭据只发给明确授权的官方 Registry / Realm
-- 不因为第三方 Source 声称需要认证，就把用户凭据发给它
-- 匿名 401 才进入凭据认证；403、404、429、5xx 不默认用凭据重试
+**Schema 边界：** 凭据管理、审计、状态机使用现有 `registry_creds.enc`、`registry_host_gen`、`audit` 和 `meta`，不改变 Schema 迁移基线。后续若要增加 official realm 配置、per-client 授权或 per-tenant 缓存身份，属于新的 Schema/配置变更，必须单独定版，不能塞进本版。
 
-验收：
+#### 3.5.15.1 威胁模型与信任边界
 
-- 匿名公开仓库继续成功
-- 需要认证的私有仓库可按凭据访问
-- 业务回源真正使用 CredStore
-- Probe 成功不能代替业务回源验收
-- 跨 Host Realm、Token 和凭据泄漏测试通过
+**资产：** Registry 用户名/密码、Token、Authorization、私有 Manifest/Blob、共享缓存内容、`secret.key`。
+
+**不可信面：**
+
+- 第三方候选 Source 及其返回的 `WWW-Authenticate`、重定向和内容。
+- 能访问 `/v2/` 的 LAN 客户端（默认匿名，开启 Access Token 后共享令牌）。
+- 任意跨 Host、跨 Scheme、跨来源的重定向目标。
+- 损坏、截断或被替换的凭据文件、数据库记录和缓存条目。
+- 管理员误操作（配错 Host、重复写入、并发修改）。
+
+**信任边界：**
+
+- 官方直连 = `IdentityKind=Official` 且 `SourceID=0`，只能由可信内部入口构造。
+- 候选 Source = `IdentityKind=Candidate`，永远不能读取或使用官方凭据、官方私有 Token。
+- 共享缓存 = 公共资源；私有/认证响应不得进入，也不得从缓存命中后绕过认证。
+- 面板管理员 = 可信操作者；但凭据 API 仍要 CSRF、HTTPS、no-store 和审计。
+- Gateway Access Token = 共享访问令牌，不是 per-user 身份；本版不提供 per-client 授权。
+
+**必须成立的不变量：**
+
+1. 官方凭据只用于官方 attempt；候选 Source 即使有合法 Realm Policy 也拿不到用户名密码或官方私有 Token。
+2. 需要凭据的请求在缓存查询前就绕过共享缓存；认证失败不得回退到匿名缓存结果。
+3. `Authorization` 不跨 Host、不跨 Scheme、不跟随未授权重定向；Token 端点 Basic 不离开 Token 端点来源。
+4. 身份零值 = `Unknown`，一律拒绝凭据；`Official` 不能由请求参数、Header、候选源配置或 Challenge 声明。
+5. 凭据、Token、Authorization、可逆密文不进入普通日志、审计明文、API 响应和错误体。
+6. 单 Host 凭据损坏只隔离该 Host；文件级损坏才全局 fail closed；匿名回源不受影响。
+7. 文件与 SQLite 不承诺原子提交；只承诺可检测的 Pending 状态和可恢复的状态机。
+8. 没有真实私有 Host 证据时，只能声明“机制通过受控 fixture”，不能声明“私有 Registry 已支持”。
+
+#### 3.5.15-A 凭据管理与一致性
+
+##### 3.5.15-A.1 统一写入接口
+
+- 新增 `PutCredential(host, Credential)`，`Credential` 至少包含 `Username`、`Password`、`TokenMethod`、`TokenAuth`；`Put(rawHost, username, password)` 只保留为兼容包装，内部必须走同一路径，禁止两个写入实现。
+- 认证模式在 API 层用枚举表达，避免调用方拼非法字段组合：
+  - `basic`：Registry 直接 Basic；`TokenMethod`/`TokenAuth` 不参与。
+  - `bearer_token_basic`：Bearer Challenge，Token 端点使用 Basic。
+  - `bearer_token_none`：Bearer Challenge，Token 端点不带 Basic。
+- 严格校验：`TokenMethod` 只允许空值 / `GET`，`POST` 明确拒绝；`TokenAuth` 只允许空值 / `none` / `basic`；`basic` 必须有非空用户名密码；未知值拒绝写入。`bearer_token_none` 允许空凭据条目，但必须显式标记，不能靠空字符串猜。
+- 幂等更新：解密现有凭据，与目标 `Credential` 逐字段比较；完全相同则不写文件、不递增 generation、不失效 Token。仅 `TokenMethod` / `TokenAuth` 变化也算变更。
+- 更新语义：`PUT` 是“目标状态整体替换”；`password` 省略表示保留现有密码，显式空串拒绝；删除用 `DELETE`，不能用空密码表达删除。
+- Host 规范化：统一走 `credentialHost` / `registryhost.Check`；禁止端口、IP、localhost、私网字面量和未授权 Host。UI 只展示 `credentialCapableHosts()` 返回的 Host，不展示“理论上可配但实际不支持”的 Host。
+
+##### 3.5.15-A.2 凭据一致性状态机
+
+文件和 SQLite 不是一个事务系统。本版不声称原子提交，只承诺以下状态可检测、可恢复；状态按 Host 独立维护。
+
+| 状态 | 含义 | 允许认证 | API 展示 | 恢复方式 |
+|---|---|---|---|---|
+| `Absent` | 该 Host 没有凭据，数据库摘要为空 | 否（匿名流程） | 未配置 | `PutCredential` |
+| `Ready` | 文件记录与数据库 `gen` / `cred_digest` 一致 | 是 | 已配置 + gen | 正常读取 |
+| `Pending` | 文件已更新，数据库事务未提交；或删除只完成一半 | 否（fail closed） | 待对账 | 后台 `ReconcileHost` 重试；成功后转 `Ready` / `Absent` |
+| `Quarantined` | 该 Host 记录损坏、AEAD 失败或摘要无法对齐 | 否（仅该 Host） | 损坏 | 管理员修复/删除；不影响其他 Host |
+| `Error` | 写文件失败、磁盘满、fsync 失败、锁失败 | 是，仅限旧 `Ready` 快照；新写入未生效 | 错误 | 修复磁盘/权限后重试；旧文件仍有效时继续用旧快照 |
+
+**写入顺序（唯一允许的顺序）：**
+
+1. 校验 Host 和 `Credential`；读取现有记录并判断是否幂等。
+2. 在 `Store.mu` + 文件 `flock` 内，写临时文件、`fsync`、`rename`、父目录 `fsync`。
+3. 在同一临界区内执行数据库事务：`registry_host_gen` 递增、写入 `cred_digest`、写审计事件。
+4. 事务成功 → `Ready`；事务失败 → `Pending`，文件保留，后台按 Host 重试；不得回滚文件、不得静默使用旧摘要。
+5. 进程在步骤 2 后、步骤 3 前崩溃 → 启动时 `ReconcileHost` 以文件为事实来源，补写摘要并递增 gen；补写前该 Host 为 `Pending`。
+6. 进程在步骤 3 后崩溃 → 文件已 durable、DB 已提交，重启后 `Ready`。
+7. 删除：文件移除记录；数据库写 `emptyDigest` 并递增 gen；审计写 `credential_delete`；失败同样进入 `Pending`，不得把“文件里没有”当成删除成功。
+8. 并发管理写：`Store.mu` + `flock` 串行化；API 带 `expected_gen` 做乐观并发，冲突返回 409；禁止后写覆盖先写。
+9. 磁盘满 / `fsync` 失败：临时文件清理，原文件保持不变，数据库不变；保留旧 `Ready` 快照，返回 `Error`。
+10. 文件级 JSON/版本损坏 → 所有 Host fail closed；单条记录 AEAD/摘要损坏 → 只隔离该 Host，其他 Host 继续 `Ready`。
+
+**Generation 规则：**
+
+- `registry_host_gen` 行永不删除；删除凭据写 `emptyDigest` 并 `gen+1`，避免重新添加时 ABA。
+- 每次有效变更 `gen+1`；幂等更新不递增。
+- 凭据变更的失效范围只限该 Host：清该 Host 的 Token、负缓存和认证健康；不清除公共候选健康、不重置 `source_host_caps`、不把候选源标 `Unsupported`。
+- Token Cache 的 `CredGen` 必须来自同一次一致性读取；不得先读 gen 再读凭据拼装。
+- 数据库恢复/回滚可能让 gen 回退；恢复流程必须清空 Token Cache 并重新校验，不能假设 gen 全局单调。
+- 认证执行前重新读取当前 gen，与快照 `Generation` 比较；不一致时放弃本次认证并重新解析一次，仍不一致则 fail closed。该检查是边界，不是原子锁；不能声称覆盖检查与发请求之间的所有竞态。
+
+##### 3.5.15-A.3 管理 API 与 UI
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/credentials` | 列出 credential-capable Host、状态、用户名、模式、gen；不返回密码/Token |
+| `GET` | `/api/credentials/{host}` | 单 Host 状态；`Pending` / `Quarantined` 带原因码 |
+| `PUT` | `/api/credentials/{host}` | 新增/更新；body `{mode, username, password?, expected_gen?}`；`password` 省略表示保留；更新必须带 `expected_gen` |
+| `DELETE` | `/api/credentials/{host}` | 删除；成功 204；`Pending` / 冲突 409 |
+| `POST` | `/api/credentials/{host}/verify` | 可选：官方 Host 真实认证验证；不走缓存、不返回 Token；结果只用于运维展示 |
+
+- 写操作必须 `guard(csrf(...))`，只允许管理员会话；GET 也要求管理员登录。
+- 凭据 API 必须 HTTPS（或可信反代 `X-Forwarded-Proto=https`）；纯 HTTP 默认拒绝写入，除非显式本地调试开关。
+- 响应 `Cache-Control: no-store`；请求体上限 64 KiB；密码/Token 不出现在 URL、query、日志、错误体、审计 detail。
+- `PUT` 校验顺序：Host 合法性 → 模式合法 → 字段组合 → `expected_gen` → 写入；任何一步失败不得产生半写文件。
+- UI 只显示“已配置/待对账/损坏/错误”、用户名、模式、gen、最近更新时间；没有“查看密码”入口；删除需确认。
+- 审计事件：`credential_put`、`credential_delete`、`credential_verify`；记录 host、mode、gen、结果、操作者/IP；不记录密码、Token、Authorization、密文。
+- 审计必须可靠：凭据变更的审计与 `registry_host_gen` 更新在同一数据库事务内，或使用同步审计路径；不能只依赖队列满即丢的异步旁路。
+- 备份单元：`mirror-lens.db` + `secret.key` + `registry_creds.enc` 必须一起备份/恢复；`secret.key` 缺失时 fail closed，不自动生成新密钥；密钥轮换不在本版。
+
+##### 3.5.15-A.4 启动与运行时对账
+
+- 启动时按 Host 执行 `ReconcileHost`，不得因为一个 Host 失败把整个 `hostCreds` 置 nil。
+- 热路径不得每次 `Snapshot` 全量解密所有 Host；按 Host 读取并缓存 `(host, gen)`，全量校验只放启动、对账和管理操作。
+- `Reconcile` 失败分类：文件级损坏 → 全局禁用凭据但保留匿名回源；记录级损坏 → 只隔离该 Host。
+- `Pending` 状态由后台重试处理；重试只针对该 Host，使用 `flock` 与数据库事务；成功后写审计（`credential_reconcile`）。
+- 管理 API 必须能显示 `Pending` / `Quarantined` / `Error`，并允许管理员触发一次 `ReconcileHost`；不能要求重启进程才能修复。
+- 匿名回源、公共缓存、非 Registry 路径不受凭据状态影响。
+
+#### 3.5.15-B Gateway 私有认证与缓存隔离
+
+##### 3.5.15-B.1 前置条件
+
+私有认证默认关闭。只有同时满足以下条件，才允许对某个 Host 使用凭据：
+
+1. `registry.private_auth_enabled=true`。
+2. Host 在 `registry.private_auth_hosts` 显式 allowlist 内。
+3. `auth.require_token=true`；否则启动失败，不能静默降级。
+4. 该 Host 的凭据状态为 `Ready`。
+5. 请求身份通过 15-C 的 `IdentityKind=Official` 门禁。
+
+- `registry.private_auth_hosts` 必须是 3.5.15-D.1 代码 allowlist 的子集；启动时校验，配置未授权 Host 直接拒绝启动。
+- `auth.require_token=true` 但未配置有效 Access Token 时拒绝启动，不能以空令牌放行。
+- 强制不变式：`registry.private_auth_enabled=true` ⇒ `auth.require_token=true` 且存在有效 Access Token。运行时 Access Token 被关闭或失效时，私有认证必须在请求路径上立即 fail closed，不能继续使用 Host 凭据。
+
+##### 3.5.15-B.2 请求流程
+
+```text
+收到 Registry 请求
+  |
+  v
+Host 是否在私有认证 allowlist？
+  |-- 否：走原有匿名流程（缓存行为不变）
+  |
+  v 是
+缓存查询前直接绕过共享缓存（读和写都不进入）
+  |
+  v
+匿名回源（不带凭据）
+  |
+  +-- 200：直接返回；该 Host 不写共享缓存（BYPASS）
+  |
+  +-- 401：解析 Challenge
+  |     |
+  |     +-- 无 Challenge / 非法：401，结束
+  |     |
+  |     v
+  |   身份门禁 + 凭据快照 + gen 复核
+  |     |
+  |     +-- 失败：401/503，fail closed，不读缓存
+  |     |
+  |     v
+  |   直接 Basic 或 Bearer Token 流程
+  |     |
+  |     +-- 成功：重试一次，强制 OfficialOnly，不写缓存
+  |     |
+  |     +-- 失败：准确 401/403；负缓存；不回退匿名缓存
+  |
+  +-- 403/404/429/5xx：按 15-B.5 分类；不默认用凭据重试
+```
+
+- **缓存绕过必须在缓存查询之前**：不能只在认证成功后设置 `no-store`。私有认证 Host 的请求一律不读、不写共享缓存，包括 Manifest、Blob、Range、resume、HEAD 和并行分片。
+- **认证后强制 OfficialOnly（全生命周期）**：一旦本次请求使用了凭据，Manifest、Blob、Range/resume、HEAD、重试、hedge、Source 切换和重定向都必须保持 OfficialOnly；不得重新进入候选源竞速，不得把认证后的请求交给第三方候选 Source。OfficialOnly 不是一次认证标志，而是整个请求生命周期的约束。
+- Blob CDN 重定向按 15-C.3 的受控无认证 GET/HEAD 规则执行，仍属于官方请求链，不得转候选源。
+- **认证失败不回退缓存**：401/403 之后不得读取该 key 的旧缓存并返回；否则等于用旧公共内容掩盖私有认证失败。
+- **匿名 200 也不写缓存**：私有认证 Host 的匿名成功响应同样不进入共享缓存，避免“先匿名成功、后转私有”的窗口。未开启私有认证的 Host 不受影响，匿名成功响应维持原有缓存行为。这是对“缓存查询前绕过”的保守解释：Host 级私有认证开启后，该 Host 的所有请求都视为可能涉及私有认证，不做 per-repo 猜测。代价是该 Host 的公共内容也失去共享缓存；本版接受这个代价，per-repo 可见性/租户缓存留到后续版本。
+
+##### 3.5.15-B.3 历史缓存隔离
+
+仅从 3.5.15 开始禁止写入，不能证明升级前的私有内容已经消失。必须做命名空间隔离：
+
+- 在 `meta` 增加 `registry_cache_epoch`（或等价配置），所有 Registry 缓存键加入 epoch 前缀：`docker:m:<epoch>:...`、`docker:b:<epoch>:...`。epoch 必须是持久化状态，不能只是进程内变量。
+- 升级到 3.5.15 时递增一次；每次新增私有认证 Host 时递增一次（全局失效，接受一次性成本）；不得按请求递增。旧 epoch 的条目立即不可达。
+- epoch 切换必须先于新版本对外提供服务；启动时先读取 epoch 并确认新键空间生效，再开放 Gateway 流量。启动失败或 epoch 切换失败时，不得以旧 epoch 继续服务私有认证请求。
+- 滚动升级时，旧实例必须先停止接收私有认证流量，再切换 epoch；不能让旧实例与新实例同时服务私有认证。
+- 物理清理由 Gateway 缓存管理模块（现有或新增的缓存管理路径）负责，不放进迁移逻辑；清理任务必须具备限速、进度、失败重试和审计记录。
+- 旧 epoch 清理完成前，旧条目也不可被新请求命中；不能只依赖 TTL。清理失败不得回退或重新开放旧 epoch，清理任务继续重试。
+- 回滚到 3.5.14c 时，旧二进制不认识 epoch，会按旧键读取；回滚步骤必须先确认旧格式 `docker:*` 缓存不可达并完成清理，清理失败时阻断回滚，不能假定旧缓存安全。
+- 验收必须注入“旧 epoch 的私有 Manifest/Blob”，证明匿名请求无法命中，清理后物理条目消失。
+
+##### 3.5.15-B.4 Token Cache
+
+- 保留现有身份键：`SourceID`、`Host`、`Realm`、`Service`、`Scope`、`CredGen`、`PolicyGen`；不得删字段或退化成仅 Host/Realm。
+- 本版不增加 `CredDigest`；恢复流程必须清空 Token Cache（见 D.3），不依赖进程重启。
+- `Realm` 规范化为 `scheme://host[:port]`，去尾部斜杠；`Scope` 排序、去重、去空；多 scope 用固定分隔符编码后再入键。
+- `CredGen` 必须来自官方 resolver 的 `registry_host_gen`；`PolicyGen` 来自策略解析；两者任一不一致都不得复用 Token。
+- Token 端点使用 Basic 时补 `account=<username>`（按 Registry 协议要求；不支持该参数的端点忽略）。
+- 401 失效：带 Token 的请求仍返回 401 时，删除该 key，重新获取 Token 并重试一次；第二次仍 401 直接返回，不循环。
+- 同一 key 的并发刷新用 singleflight；旧 generation 的刷新只能写旧 key，不能覆盖新 generation；不得使用全局“当前 Token”槽位。
+- Token 端点 5xx 归为上游认证服务故障（502/503），不计入 Registry Source 健康，不触发候选回退。
+
+##### 3.5.15-B.5 错误分类与健康
+
+| 上游结果 | 处理 | 是否用凭据重试 | 是否影响 Source 健康 |
+|---|---|---|---|
+| 401 + 合法 Challenge | 进入认证流程 | 是，一次 | 否 |
+| 401 无 Challenge / 解析失败 | 返回 401 `auth_challenge_missing` | 否 | 否 |
+| 认证后仍 401 | 返回 401 `auth_failed`；负缓存 | 否（同凭据不重试） | 否 |
+| 403 匿名且带 Challenge | 允许一次认证尝试 | 是，一次 | 否 |
+| 403 匿名且无 Challenge | 返回 403 | 否 | 否 |
+| 403 认证后 | 返回 403 `auth_forbidden` | 否 | 否 |
+| 404 | 返回 404；候选源可跳过 | 否 | 候选按现有规则，不因认证失败惩罚 |
+| 429 | 现有冷却/限流 | 否 | 按现有策略 |
+| 5xx | 现有上游故障策略 | 否 | 按现有策略 |
+| Realm 不在策略内 | 返回 401/403 `auth_realm_denied`；记录安全事件（限流） | 否 | 否 |
+| 凭据 gen 不一致 | 重解析一次；仍不一致返回 503 `auth_stale` | 一次 | 否 |
+| Token 端点 401/403 | 返回 401/403 `token_auth_failed` | 否 | 否 |
+| Token 端点 5xx | 返回 502 `token_upstream_error` | 否 | 否 |
+
+- 认证失败不得计入 Source 失败、冷却、`Unsupported` 或候选降级；候选源 401/403 只跳过，不惩罚。
+- 错误密码必须负缓存：按 Host + 模式 30s 起，指数退避到 5m；凭据变更立即清除；防止把 Registry 账号打到锁定。
+- 所有认证错误返回稳定错误码，不返回上游响应体、Token、Authorization 或密码。
+
+#### 3.5.15-C 身份、Probe 与重定向安全
+
+##### 3.5.15-C.1 可信身份
+
+- 引入 `IdentityKind`：`Unknown=0`、`Official`、`Candidate`。零值必须是 `Unknown`，一律拒绝凭据。
+- 身份对象使用不可由普通调用方随意构造的形态：私有字段 + 受控构造函数（`NewOfficialIdentity` / `NewCandidateIdentity`），或封装在认证上下文里；仅增加一个导出枚举字段不够，内部代码仍可字面量构造 `Official`。
+- `Official` 只能由官方直连入口构造：`SourceID=0`、Host 来自已解析 plan、`PolicySnapshot.Official=true`。不得由请求参数、HTTP Header、候选源配置、Challenge 或缓存内容决定。
+- 门禁 API：`AuthorizeCredential(ctx) (CredentialSnapshot, error)`，在凭据读取处和最终认证执行处各校验一次：
+  - `IdentityKind=Official`；
+  - `SourceID=0`；
+  - `PolicySnapshot.Official=true`；
+  - `snap.Host == policy.LogicalHost`（规范化后）；
+  - `snap.HasCredential=true`；
+  - `snap.Generation == policy.CredGen`。
+- 官方策略解析必须从 `registry_host_gen` 填充 `PolicySnapshot.CredGen`：`OfficialPolicy.Resolve` 按 `LogicalHost` 读取对应 generation，不得保留默认 0。静态 `OfficialPolicy` 只允许用于不涉及真实凭据的测试；生产路径必须走带 generation 的 resolver。
+- generation 读取失败（DB 错误、行缺失、Host 不匹配）不得默认 0 继续认证，必须 fail closed 并返回 `auth_stale` / `auth_unavailable`。
+- 解析后同时校验 `snap.Host == policy.LogicalHost`（规范化后）和凭据状态与认证模式一致：`basic` 必须有非空用户名密码；`bearer_token_basic` 必须有 TokenMethod/TokenAuth；`bearer_token_none` 必须显式标记。任何不一致都拒绝认证。
+- 认证执行前重新读取当前 `registry_host_gen`；与快照 gen 不一致时重新解析一次，仍不一致 fail closed。不能只依赖快照读取时的检查。
+- 候选源永远不能获得官方凭据或官方私有 Token；候选 Token 缓存键必须包含其 `SourceID`，不得与官方 key 合并。
+
+##### 3.5.15-C.2 Probe 与官方私有验证
+
+- 当前 `ListDueHostProbes` 只从 `sources` 生成任务，即只有候选 Source（`SourceID>0`），没有官方直连探测；`HostProbeRunner` 现在把官方 Host 凭据快照和候选 `SourceID` 一起传给 Probe。这两个事实意味着不能只加认证门禁就认为 Probe 安全。
+- **候选 Source 探测：不读取、不传递官方凭据。** `CredentialSnapshot` 为空；401/403 记为 `auth_error` / `Inconclusive`，不得标 `Unsupported`，不得惩罚候选源。
+- **官方私有 Registry 验证：独立入口、独立身份、独立结果。** 使用 `IdentityKind=Official`、`SourceID=0`、不走缓存；结果只用于凭据验证/运维展示，不写 `source_host_caps`、`registry_host_recovery` 或候选健康。
+- 两种结果分开记录：候选可用性 ≠ 官方私有认证能力；匿名探测成功 ≠ 官方私有认证成功。
+- `Probe` 与 `Gateway` 共用 Challenge 解析、Realm 判定、Token 参数、Basic 规则和错误分类，但**不共用官方凭据**；凭据只由官方 Gateway attempt 和官方 verify 使用。
+
+##### 3.5.15-C.3 重定向
+
+| 请求类型 | 规则 |
+|---|---|
+| Registry API | 最多 5 跳；每跳 SSRF 检查；只允许 HTTPS；Host 或 Scheme 变化时清除 `Authorization`；跨 Host 不重新认证；同 Host 也重新校验策略 |
+| Token 端点 | 最多 3 跳；只允许同源 HTTPS；跨源重定向直接拒绝；任何变化都清除 Basic；不得把 Basic 带到其他来源 |
+| Blob CDN | 只允许 GET/HEAD；只允许 HTTPS；不携带 `Authorization` / Cookie；保留签名 query；每跳 SSRF 检查；最多 5 跳；不记录 query |
+
+- HTTPS → HTTP 一律拒绝，不允许“先降级再重定向”。
+- 跨 Host 必须清除认证头；跨 Scheme 必须重新检查安全边界；不能依赖 Go 默认的同域/子域复制行为。
+- Token 是不透明字符串，不能从 Token 内容判断归属；Token 归属只由缓存键和受控获取上下文保证。
+- 未授权目标必须停止凭据转发，不能“先发再根据响应判断”。
+- 重定向次数必须有限制；每次重定向都重新经过 SSRF 检查。
+
+##### 3.5.15-C.4 Realm 授权
+
+- 官方直连：只允许同 Host 和 `DefaultRealmsFor(host)` 的内置 Realm；本版不提供 official realm 管理入口，不引入新 Schema。
+- 候选 Source：继续使用 `source_realm_policy`；候选即使有合法 Realm，也不能获得官方凭据。
+- 外部 Token Realm（Harbor/Keycloak 等）不在 3.5.15 支持范围；需要单独版本和配置/ Schema 设计，不能靠候选策略绕过。
+
+#### 3.5.15-D 支持范围、回滚与验收冻结
+
+##### 3.5.15-D.1 私有 Host allowlist
+
+**原则：** 首批使用明确 allowlist，不开放任意 Host；不为测试方便扩大生产凭据发送范围。
+
+| Host | 私有仓库 | 认证方式 | 直接 Basic | 本版状态 |
+|---|---|---|---|---|
+| `quay.io` | 有 | Bearer + Token 端点 Basic | 按真实 fixture | `PENDING_REAL_FIXTURE` |
+| `gcr.io` | 有 | Bearer + Token 端点 Basic | 按真实 fixture | `PENDING_REAL_FIXTURE` |
+| `registry.gitlab.com` | 有 | PAT / Deploy Token | 不适用 | 3.5.15a |
+| `registry.k8s.io` | 无 | 匿名 | 否 | `ANONYMOUS_ONLY` |
+| `mcr.microsoft.com` | 无 | 匿名 | 否 | `ANONYMOUS_ONLY` |
+| `lscr.io` | 无 | 匿名 | 否 | `ANONYMOUS_ONLY` |
+| `public.ecr.aws` | 无 | 匿名 | 否 | `ANONYMOUS_ONLY` |
+| `cgr.dev` | 无 | 匿名 | 否 | `ANONYMOUS_ONLY` |
+| `*.pkg.dev` | 有 | GCP ADC / `_json_key` | 不适用 | `NOT_SUPPORTED`（本版） |
+| `docker.io` / `ghcr.io` | 仅公共 | 匿名 | 否 | 私有 `NOT_SUPPORTED` |
+
+- 未列出的内置 Host 默认 `ANONYMOUS_ONLY`；本版不为它们开放凭据入口。
+- `credentialHost` 继续拒绝端口、IP、localhost、私网字面量和未授权 Host；生产 allowlist 不因测试放宽。
+- `*.pkg.dev` 本版不支持凭据：`credentialHost` 应排除，避免 UI 让用户配置一个用不了的 Host；公共匿名拉取保持现有路径。
+- 直接 Basic 是协议能力，不等于每个 Host 都使用；Host 状态按真实 Challenge 和真实 fixture 记录。
+- 现有 `tokenAuthMode` 的 Basic 只覆盖 Token 端点认证，不能作为 Registry 直接 Basic 已支持的证据；两者必须分别有实现和真实 fixture。
+- UI 只展示 `credentialCapableHosts()`；`ANONYMOUS_ONLY` / `NOT_SUPPORTED` 不显示“添加凭据”入口。
+- 测试环境固定采用“隔离容器 + 443 + allowlist 域名 + 测试 CA”；测试 CA 只注入测试环境，不改变生产信任根，禁止关闭 TLS 校验；测试域名固定解析到隔离环境，不允许任意解析到公网目标；测试 Host 只存在于测试构建或测试配置，生产二进制和默认 allowlist 不包含测试域名；不得把 `localhost:5000` 或任意 IP 加入生产 allowlist。
+
+##### 3.5.15-D.2 客户端访问控制
+
+- 私有认证默认关闭；`registry.private_auth_enabled=false`。
+- 开启私有认证必须同时 `auth.require_token=true`；装配时校验，不满足直接拒绝启动。
+- 运行时 Access Token 被关闭或失效时，私有认证必须立即失效（fail closed）：新请求不得使用 Host 凭据；在途请求不得再发起新的凭据认证或候选回退。该检查在请求路径执行，不能只依赖启动校验。
+- Access Token 是共享令牌，不是 per-user 身份；任何持有有效令牌的客户端都能使用 Host 级凭据访问该凭据可访问的所有私有仓库。
+- UI 和文档必须写明 Host 级 blast radius；本版不宣称 per-client、per-repository 授权。
+- 未开启 Access Token 时，私有认证请求不得生效；不能靠“只在 UI 隐藏”实现。
+
+##### 3.5.15-D.3 回滚与降级
+
+- 本版不改 Schema；回滚以二进制/配置为主。
+- 关闭 `registry.private_auth_enabled`：停止使用凭据，恢复匿名流程；凭据保留但不再生效；Token Cache 清空或按 Host 失效；共享缓存行为恢复。
+- 回滚到 3.5.14c 前必须处理两件事：
+  1. 3.5.14c 的 `HostProbeRunner` 仍会把官方 Host 凭据传给候选 Source；若 `registry_creds.enc` 存在，会重新引入 P0 泄漏。回滚前必须备份并删除凭据文件，或确认 HostProbe 不使用凭据。
+  2. 3.5.14c 不认识新的 cache epoch，会按旧键读取；回滚前必须确认旧格式 `docker:*` 缓存不可达并完成清理，清理失败时阻断回滚。
+- 坏凭据导致 401 风暴：负缓存 + 关闭开关；不惩罚 Source，不影响匿名路径。
+- 文件/DB 不一致：按 Host `Pending`/`Quarantined`；匿名路径不受影响；管理员可 `ReconcileHost`。
+- 恢复硬性顺序：
+  1. 恢复 DB、`secret.key`、`registry_creds.enc` 作为一个备份单元。
+  2. 完成凭据文件与 DB 对账，校验 generation 和摘要。
+  3. 清空进程内 Token Cache。
+  4. 增加或切换 `registry_cache_epoch`。
+  5. 确认旧缓存不可达。
+  6. 最后开放 Gateway 流量。
+- 不重启进程的在线数据库恢复，必须显式失效 Token Cache，不能依赖“重启会清空”这个假设。
+- `secret.key` 缺失时 fail closed，不自动生成新密钥。
+
+##### 3.5.15-D.4 发布门禁
+
+- 15-A/15-B/15-C/15-D 全部通过前，不宣称“私有 Registry 已支持”。
+- 私有认证默认关闭；未同时满足 allowlist、Access Token、身份门禁、缓存绕过、历史缓存隔离时，不得开启。
+- 没有真实私有 Host 证据时，只能写“机制通过受控 fixture”；真实 fixture 失败时必须缩小 3.5.15 的支持声明（Host 或认证方式），不得用模拟测试替代。`PENDING_REAL_FIXTURE` 不能写成 `REAL_PASS`。
+- 验收状态只允许 `REAL_PASS` / `SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` / `NOT_EXECUTED`；公共仓库回源成功不能写成私有 `REAL_PASS`。
+- `3.5.16` / `3.5.17` 保持原规划；认证运维能力另排版本，不占用这两个号。
+
+#### 3.5.15 验收矩阵
+
+**证据状态（不得互相替代）：**
+
+- `REAL_PASS`：真实私有 Registry 账号完成实际认证和内容读取。
+- `SIMULATED_PASS`：隔离测试环境通过（隔离容器 + 443 + allowlist 域名 + 测试 CA）。
+- `BLOCKED_EXTERNAL_SOURCE`：账号、网络、权限或外部服务条件不足。
+- `NOT_EXECUTED`：尚未执行，不能当作通过。
+
+每项还必须标注证据类型：`代码测试` / `真实进程` / `真实私有 Host`。
+
+##### 功能验收
+
+| 编号 | 验收项 | 必须证明 | 失败判定 |
+|---|---|---|---|
+| F01 | 公共匿名回归 | 原有匿名 Manifest/Blob 回源不退化 | 任一匿名路径需要凭据或返回认证错误 |
+| F02 | 私有直接 Basic Manifest | 真实私有 Basic fixture（官方 Host 或受控 fixture）完成 Manifest 认证 | 只验证 Token 端点 Basic |
+| F03 | 私有 Bearer Manifest | Challenge、Realm、Token 流程完整 | 只验证匿名 Token |
+| F04 | 私有 Blob | Blob 使用正确身份且 Digest 一致 | Manifest 成功但 Blob 401/403 或身份串用 |
+| F05 | 错误密码 | 返回真实 401 `auth_failed` | 改写成源不可用、404 或匿名成功 |
+| F06 | 403 | 不触发密码重试 | 用凭据重试并掩盖原始状态 |
+| F07 | 404 | 不触发凭据重试，不污染源健康 | 用凭据重试或标 Unsupported |
+| F08 | 429/5xx | 遵循既有冷却与故障策略 | 用凭据重试 |
+| F09 | 凭据新增/修改/删除 | API/UI 成功，重启后仍有效 | 任一步留下半状态 |
+| F10 | 凭据修改 | gen 更新，新请求使用新凭据 | 新请求仍用旧 gen |
+| F11 | 凭据删除 | 后续请求不再使用旧凭据/旧 Token | 删除后仍命中旧身份 |
+| F12 | 凭据文件损坏 | 文件级 fail closed；记录级只隔离该 Host | 单条损坏导致全部 Host 失效 |
+| F13 | 摘要不一致 | 拒绝使用并产生可审计错误 | 静默使用旧快照 |
+| F14 | Token 缓存隔离 | Source/Host/Realm/Service/Scope/CredGen/PolicyGen 不串用 | 任一维度串用 |
+| F15 | HEAD | HEAD 走同一认证与缓存绕过规则 | HEAD 绕过认证或命中私有缓存 |
+| F16 | Range/resume | 分片/断点使用同一身份，不写 `.part` | 分片绕过缓存或身份串用 |
+| F17 | Token 过期/401 | 删除旧 key，刷新一次，不循环 | 一直 401 到 TTL 或无限重试 |
+| F18 | 删除幂等 | 已删除再删返回 204/明确状态 | 误报记录丢失或半删除 |
+| F19 | 幂等更新 | 相同内容不写文件、不 bump gen | 重复保存导致 token/探测抖动 |
+| F20 | 重启/恢复 | 重启、Pending、Quarantined 状态可解释 | 重启后状态丢失或全部禁用 |
+
+##### 安全验收
+
+| 编号 | 验收项 | 必须证明 | 失败判定 |
+|---|---|---|---|
+| S01 | 官方请求使用凭据 | 同时满足 Official、SourceID=0、Host/gen 一致 | 任一条件缺失仍发凭据 |
+| S02 | 候选源访问官方 Host | 不获得官方用户名密码 | 候选收到 Basic |
+| S03 | 候选源访问官方 Realm | 不获得官方私有 Token | 候选复用官方 Token |
+| S04 | 候选源伪造 Official | 无法通过最终认证门禁 | 字面量构造的 Official 可用 |
+| S05 | 非白名单 Realm | 不发送凭据 | 向未授权 Realm 发 Basic |
+| S06 | 同 Host 不同 Source | Token 不跨 Source 共享 | 候选命中官方 key |
+| S07 | 跨 Host 重定向 | 不转发原始 Authorization | 认证头跨 Host |
+| S08 | 重定向至未授权 Realm | 不发送凭据、不请求 Token | 先发再判断 |
+| S09 | 日志检查 | 不出现密码、Token、Authorization、可逆密文 | 任一敏感值进日志 |
+| S10 | API 响应检查 | 不返回凭据明文/可逆密文/Token | 错误体或列表泄露 |
+| S11 | 凭据轮换 | 旧 generation 不覆盖新 generation | 旧刷新覆盖新状态 |
+| S12 | 并发刷新 | 旧 Token 刷新不污染新代次缓存 | 新 key 被旧结果覆盖 |
+| S13 | 私有缓存泄漏 | 私有请求连续两次均绕过共享缓存；匿名客户端无法命中 | 任一私有内容进入共享缓存 |
+| S14 | 历史缓存 | 升级前旧 epoch 私有内容不可匿名命中，清理后物理消失 | 旧缓存仍可命中 |
+| S15 | Unknown 身份 | 零值身份不能获取凭据 | Unknown 被当成 Official |
+| S16 | 伪造 Official | 普通调用方无法构造可用官方上下文 | 导出字段可随意构造 |
+| S17 | Token 端点重定向 | 不向其他来源发送 Basic | Basic 跨源 |
+| S18 | HTTPS 降级 | HTTPS→HTTP 重定向被拒绝 | 降级后继续认证 |
+| S19 | CDN 重定向 | 无认证 GET/HEAD 可按规则访问获准 CDN | 带 Authorization 访问 CDN |
+| S20 | 记录级损坏 | 单 Host 损坏不影响其他 Host | 全局禁用 |
+| S21 | 文件/DB 故障恢复 | 崩溃后可恢复 Pending，状态可解释 | 必须重启或永久 pending |
+| S22 | 审计耐久性 | 凭据变更审计不因队列满静默丢失 | 审计缺失 |
+| S23 | 客户端访问控制 | 私有认证开启时未授权客户端无法使用 Gateway | 无令牌仍可拉私有 |
+| S24 | 认证失败退避 | 错误密码不会持续高频请求导致锁定 | 每请求都打 Token 端点 |
+
+##### 并发、恢复与性能验收
+
+| 编号 | 验收项 | 必须证明 |
+|---|---|---|
+| C01 | 两连接并发 | 两个独立 SQLite 连接，在 Snapshot 与 gen 校验之间注入修改，断言旧快照被拒绝 |
+| C02 | 旧/新 generation | 旧 gen Token 刷新只写旧 key，不覆盖新 gen |
+| C03 | 多进程写同一 Host | `flock` + DB 事务串行化，无丢失更新 |
+| C04 | 文件后 DB 前崩溃 | 启动 `ReconcileHost` 补写摘要，Pending→Ready |
+| C05 | DB 后崩溃 | 文件已 durable，重启 Ready，不重复 bump |
+| C06 | 并发删除/更新 | 结果确定，无半删除/半更新 |
+| C07 | singleflight | 同 key 并发只打一次 Token 端点；不同 key 不合并 |
+| C08 | 缓存绕过并发 | 私有/公共请求并发时不串缓存、不互相污染 |
+| R01 | 文件新于 DB | 启动对账以文件为准，补写摘要，gen+1 |
+| R02 | DB 新于文件 | 该 Host Quarantined；其他 Host 不受影响 |
+| R03 | 单条损坏 | 只隔离该 Host；文件级损坏才全局 fail closed |
+| R04 | `secret.key` 缺失 | fail closed，不自动生成新密钥 |
+| R05 | 磁盘满/fsync 失败 | 原文件不变，旧 Ready 继续可用，返回 Error |
+| R06 | 备份恢复 | DB + key + 凭据文件作为单元恢复，状态可解释 |
+| P01 | 匿名路径 A/B | 3.5.14c vs 3.5.15，同环境重复≥5 次，报告 P50/P95/P99、吞吐、错误率；预先确定 P95 阈值 |
+| P02 | 认证路径 | 单独统计 Basic/Bearer、Token 命中/未命中，不与匿名混算 |
+| P03 | 50 Host 成本 | Snapshot/对账在 50 Host 下的延迟与锁竞争 |
+| P04 | Token Cache | 命中率、singleflight 合并率、401 刷新率 |
+| P05 | 缓存命中 vs 绕过 | 公共 Host 缓存不退化；私有认证 Host 明确记录 BYPASS 成本 |
+
+#### 3.5.15 决策记录与最终复核裁定
+
+**状态：** 五项待决事项已形成明确决策；3.5.15 进入最终设计复核。真实私有账号验证未完成前，相关验收保持 `BLOCKED_EXTERNAL_SOURCE`，不能宣称“私有 Registry 已支持”。
+
+##### 决策记录
+
+| 编号 | 决策 | 裁定 |
+|---|---|---|
+| D-15-1 | Registry 直接 Basic | 纳入 3.5.15；与 Token 端点 Basic 分开实现、分开验收 |
+| D-15-2 | 私有 Host 范围 | 明确 allowlist；不开放任意 Host、端口、IP、localhost、私网 |
+| D-15-3 | 私有认证与 Access Token | 私有认证默认关闭；开启必须 `auth.require_token=true`，否则拒绝启动 |
+| D-15-4 | 认证/私有响应缓存 | 私有认证 Host 的请求在缓存查询前绕过共享缓存；认证失败不回退缓存 |
+| D-15-5 | 官方 Realm | 本版只支持同 Host 和已有内置 Realm；外部 Realm 留后续版本 |
+| D-15-6 | 版本号 | `3.5.16` 公开 Manifest 竞速、`3.5.17` Blob 竞速评估保持不变 |
+| D-15-7 | `*.pkg.dev` | 本版不支持凭据；`credentialHost` 排除，公共匿名拉取不变 |
+| D-15-8 | 客户端授权 | 不做 per-client / per-repository 授权；明确 Host 级 blast radius |
+| D-15-9 | 审计 | 凭据变更审计与 gen 更新同事务或同步写；不接受队列满静默丢失 |
+| D-15-10 | 真实私有账号 | 外部实测前保持 `BLOCKED_EXTERNAL_SOURCE`；不得用公共仓库或模拟测试替代 |
+| D-15-11 | Basic/Bearer fixture | 固定采用隔离容器 + 443 + allowlist 域名 + 测试 CA；不改变生产信任根，不关闭 TLS 校验 |
+| D-15-12 | 历史缓存清理 | `registry_cache_epoch` 负责逻辑隔离；Gateway 缓存管理模块负责物理清理，限速、进度、重试、审计；清理失败不重开旧 epoch |
+| D-15-13 | 私有 Host 公共内容缓存 | 接受失去共享缓存；3.5.15 不做 per-repo 公私识别 |
+| D-15-14 | Token Key `CredDigest` | 不增加，维持七字段；恢复时强制清空 Token Cache |
+| D-15-15 | 私有认证与 Access Token | `PrivateAuthEnabled=true` ⇒ `GatewayAccessTokenRequired=true`；运行时关闭 Access Token 使私有认证失效 |
+| D-15-16 | OfficialOnly | 贯穿 Manifest、Blob、重试、hedge、Source 切换和重定向全生命周期 |
+| D-15-17 | epoch 与回滚 | epoch 持久化；切换先于对外服务；回滚前确认旧缓存不可达并完成清理；清理失败阻断回滚 |
+
+##### 最终复核裁定（2026-11-17）
+
+1. **真实私有账号**：外部实测前保持 `BLOCKED_EXTERNAL_SOURCE`。验收状态只允许 `REAL_PASS`（真实私有 Registry 账号完成实际认证和内容读取）、`SIMULATED_PASS`（隔离测试环境通过）、`BLOCKED_EXTERNAL_SOURCE`（账号、网络、权限或外部服务条件不足）三种，未执行记 `NOT_EXECUTED`；这些状态不得互相替代。quay.io / gcr.io 公共仓库回源成功不能作为私有认证成功的证据。
+2. **Basic/Bearer fixture**：固定采用“隔离容器 + 443 + allowlist 域名 + 测试 CA”。测试 CA 只注入测试环境，不改变生产信任根，禁止通过关闭 TLS 校验简化测试；测试域名固定解析到隔离环境，不允许任意解析到公网目标；不把 `localhost:5000` 或任意 IP 加入生产 allowlist。
+3. **历史缓存清理**：`registry_cache_epoch` 只负责逻辑隔离；物理清理由 Gateway 缓存管理模块负责，不放进迁移逻辑。清理任务必须具备限速、进度、失败重试和审计记录；清理失败不能重新开放旧 epoch。回滚前必须确认旧格式缓存不可达并完成必要清理；清理失败时阻断回滚，不能假定旧缓存安全。epoch 切换必须先于新版本对外提供服务，不能出现新版本已接受请求但历史缓存隔离尚未生效的窗口。
+4. **公共内容失去共享缓存**：接受该 Host 公共内容失去共享缓存。3.5.15 不引入仓库级私有/公共内容识别，因为需要额外证明 Manifest 仓库权限识别、Blob 跨仓库复用、Tag/Digest/多架构 Manifest 一致性和缓存键授权身份覆盖；这些超出本版范围。per-repo 可见性/租户缓存留后续版本。
+5. **Token Key 是否增加 `CredDigest`**：不增加，维持 `SourceID`、`Host`、`Realm`、`Service`、`Scope`、`CredGen`、`PolicyGen` 七字段。恢复流程写成硬性顺序：恢复 DB、`secret.key`、`registry_creds.enc` → 完成凭据文件与 DB 对账 → 校验 generation 和摘要 → 清空进程内 Token Cache → 增加或切换 `registry_cache_epoch` → 确认旧缓存不可达 → 最后开放 Gateway 流量。存在不重启进程的在线数据库恢复场景时，必须显式失效 Token Cache，不能依赖进程重启。
+6. **外部 Token Realm**：本版不承诺；Harbor/Keycloak 等外部 Token Realm 单独立项，需单独配置/Schema 设计，不能靠候选策略绕过。
+
+##### 必须检查的三个设计细节
+
+1. **私有认证开关与 Access Token**：`PrivateAuthEnabled=true` 必须推出 `GatewayAccessTokenRequired=true`。运行时 Access Token 被关闭或失效时，私有认证必须立即失效（fail closed），不能继续使用 Host 凭据；该检查在请求路径上执行，不能只依赖启动校验。
+2. **OfficialOnly 全生命周期**：不能只在第一次认证成功时设置。Manifest、Blob、Range/resume、HEAD、重试、hedge、Source 切换和重定向都必须遵守同一身份约束；认证后的请求不得重新进入候选源竞速，也不得交给第三方候选 Source。OfficialOnly 是整个请求生命周期的约束，不是一次认证标志。
+3. **epoch 与回滚语义**：`registry_cache_epoch` 必须是持久化状态（`meta`），不能只是进程内变量。新版本启动失败或 epoch 切换失败时，不得以旧 epoch 继续服务私有认证请求。回滚到 3.5.14c 前必须完成缓存清理和验证；清理失败时回滚流程必须阻断，不能假定旧缓存安全。
 
 ### 3.5.15a GitLab PAT / Deploy Token 专项
 
-**目标：** 单独验证 GitLab 专用凭据，不混入 3.5.15 的标准 Bearer 认证。
+**目标：** 单独验证 GitLab 专用凭据，不混入 3.5.15 的标准 Foreign Registry 认证。
 
 范围：
 
@@ -1503,6 +1959,42 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 - loser 资源正确清理
 - 有固定环境、基线、重复次数和 P50/P95 阈值的对照测速
 
+#### 3.5.16-H 认证运维硬化（附加工作块）
+
+> 本工作块是 3.5.15 验收遗留项的后续承载，不替代 3.5.16 的公开 Manifest 竞速目标；若排期冲突，Manifest 竞速优先，本工作块顺延。
+
+**H.1 私有凭据 Host 范围扩展（P03 产品级）**
+
+- 现状：`credentialCapable` 仍是代码内 `gcr.io` / `quay.io` 两项，P03 只能做存储层 fixture，不能算产品级 50 Host。
+- 目标：把凭据 Host allowlist 改为显式配置驱动，仍禁止通配符、端口、IP、私网字面量和 `*.pkg.dev`。
+- 启动校验：`registry.private_auth_hosts` 必须是配置 allowlist 的子集；非法项拒绝启动，不能静默忽略。
+- 验收：50 个显式 Host 的 `ListStatus`、写入、删除、对账、UI 列表；P03 在 50 Host 下达到阈值；任何未列入 allowlist 的 Host 仍不可写入/发送凭据。
+- 非目标：不为跑分临时放宽 allowlist；不改变 3.5.15 的默认两项范围。
+
+**H.2 恢复与故障注入硬化**
+
+- 目标：把 3.5.15 只靠单元测试覆盖的恢复路径，升级为真实进程/文件系统演练。
+- 场景：写入过程中 `kill -9`；磁盘满；`fsync` 失败；文件与 SQLite 摘要不一致；备份恢复；Pending 后台重试；回滚到 3.5.14c 前的缓存清理。
+- 要求：失败后不得出现假 Ready；不得匿名命中旧私有缓存；审计记录恢复结果；故障注入点只能存在于测试构建，不进入生产路径。
+- 验收：每个场景有可重复脚本、真实退出码/日志、恢复前后状态对照；无法自动化的场景必须写明人工步骤和判定标准。
+
+**3.5.15 延期项映射**
+
+| 3.5.15 验收项 | 延期到 | 延期原因 |
+|---|---|---|
+| C03 多进程写同一 Host | 3.5.16-H.2 | 3.5.15 只有单进程并发测试；需真实两进程 + `flock` + DB 事务演练 |
+| C05 COMMIT 后崩溃 | 3.5.16-H.2 | 需在 COMMIT 后精确 `kill -9`，当前只有幂等等价证明 |
+| R05 磁盘满/fsync 失败 | 3.5.16-H.2 | 需故障注入点与文件系统级演练，不能靠单元测试代替 |
+| S21 真实 Pending 窗口崩溃 | 3.5.16-H.2 | 后台 `retryPendingCreds` 已实现并有调度测试；真实进程在 Pending 窗口内崩溃仍需 H.2 演练 |
+| P03 50 Host 产品级 | 3.5.16-H.1 | 产品 allowlist 仍为 `quay.io`/`gcr.io`；扩 Host 属 H.1，不能用存储层 fixture 冒充 |
+
+F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生命周期已通过。
+
+**H.3 公网 CDN 302 验收**
+
+- 3.5.15 已完成本地 TLS 302 fixture；本节补一个可控公网 302 端点，验证 CDN 跳转不带 `Authorization`/`Cookie`、保留签名 query、拒绝 HTTPS 降级和 POST。
+- 若没有可控公网端点，保持 `SIMULATED_PASS`，不能写成 `REAL_PASS`。
+
 ### 3.5.17 Blob 竞速可行性评估
 
 只做评估，不作为版本承诺：
@@ -1533,10 +2025,15 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 6. 3.5.14b 完成前，不为任何 Source 手工添加多 Host 标签。
 7. 3.5.14b 完成前，不把 Docker Hub / GHCR 的新旧能力模型混用。
 8. 3.5.14c 完成前，不宣称 3.5.14 已完成零残留、单轨运行或旧结构清理。
-9. 3.5.15 完成前，不宣称支持私有 NVCR / 私有 ECR。
-10. 3.5.15a 完成前，不宣称支持私有 GitLab。
-11. 3.5.16 默认关闭，不能用全局 Hedge 隐式开启。
-12. 3.5.17 不是交付承诺，未评估通过不排期。
+9. 3.5.15-A/15-B/15-C/15-D 全部通过前，不宣称支持私有 NVCR / 私有 ECR，也不宣称“私有 Registry 已支持”。
+10. 3.5.15 的凭据授权门禁未通过前，不开放凭据管理 API/UI；门禁必须同时满足 `IdentityKind=Official`、`SourceID=0`、`PolicySnapshot.Official=true`、Host/gen 一致、凭据状态 `Ready`。
+11. 3.5.15 私有认证默认关闭；未同时满足 `registry.private_auth_enabled=true`、Host 在 `registry.private_auth_hosts`、`auth.require_token=true`、缓存绕过和历史缓存隔离时，不得开启。
+12. 3.5.15 的 S13～S24、C01～C08、R01～R06 未通过前不得发布；`go test -race` 不能替代 SQLite 多连接并发与崩溃恢复验收。
+13. 3.5.15a 完成前，不宣称支持私有 GitLab。
+14. 3.5.16 默认关闭，不能用全局 Hedge 隐式开启。
+15. 3.5.17 不是交付承诺，未评估通过不排期。
+16. 3.5.15 未完成 epoch 持久化、历史缓存清理和回滚验证前，不开放私有认证流量。
+17. 3.5.15 的 `REAL_PASS` 只能由真实私有 Registry 账号产生；`SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` 不得写成 `REAL_PASS`。
 
 ## 8. 回归门禁
 
@@ -1596,6 +2093,26 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 15. 14a 的旧 Foreign 投影只对应原 `repo_host`；`docker.io`/`ghcr.io` 使用各自协议槽位；新增 Foreign Host 不覆盖旧字段。
 16. 14c 删除 `repo_host` 和旧 Registry 能力字段，不保留“主 Host”；`github_cap` / `git_cap` / `range_cap` 保留。
 17. 14c 开放生产流量前 RPO=0；开放后不承诺 RPO=0，除非实现并实测 14c→14b 反向迁移。
+18. 3.5.15 不重建 CredStore；范围冻结为 15-A 凭据管理与一致性、15-B Gateway 私有认证与缓存隔离、15-C 身份/Probe/重定向安全、15-D 范围冻结与验收。
+19. 3.5.15 的用户凭据使用门禁为 AND，但不再以 `SourceID == 0` 单独承担身份边界：必须 `IdentityKind=Official`、`SourceID=0`、`PolicySnapshot.Official=true`、`snap.Host == policy.LogicalHost`、`snap.Generation == policy.CredGen`、`snap.HasCredential=true`；`IdentityKind` 零值 Unknown 一律拒绝，身份对象用受控构造函数。
+20. 3.5.15 私有认证默认关闭；开启必须 `auth.require_token=true`；Access Token 是共享令牌，不做 per-client/per-repository 授权，Host 级 blast radius 必须写入 UI/文档。
+21. 3.5.15 私有认证 Host 的请求在缓存查询前绕过共享缓存（读和写）；认证失败不回退匿名缓存；认证后 OfficialOnly 贯穿全生命周期。
+22. 3.5.15 引入 `registry_cache_epoch` 命名空间隔离历史缓存；升级和每次新增私有认证 Host 时递增 epoch（全局失效，一次性成本），旧条目不可达并由 Gateway 缓存管理模块限速清理；回滚到 3.5.14c 前确认旧格式缓存不可达并完成清理，清理失败阻断回滚。
+23. 3.5.15 私有 Host 使用明确 allowlist；不开放任意 Host、端口、IP、localhost、私网；`*.pkg.dev` 本版不支持凭据；Docker Hub/GHCR 私有不纳入。
+24. 3.5.15 纳入 Registry 直接 Basic，并与 Token 端点 Basic、用户名密码换 Bearer 三种语义分开实现/验收。
+25. 3.5.15 文件与 SQLite 不承诺原子提交；使用 `Ready/Pending/Quarantined/Error` 状态机、按 Host `ReconcileHost`、后台重试和单 Host 隔离；启动对账失败不得把整个 CredStore 置空。
+26. 3.5.15 凭据变更审计与 `registry_host_gen` 更新同事务或同步写；备份单元为 DB + `secret.key` + `registry_creds.enc`。
+27. 3.5.15 官方 Realm 本版只支持同 Host 和已有内置 Realm；外部 Realm 留后续版本。
+28. 3.5.16 保持公开 Manifest 竞速，3.5.17 保持 Blob 竞速可行性评估；认证运维能力不占用这两个版本号。
+29. 生产目录没有 `registry_creds.enc` 只作为部署基线记录，不作为代码安全验收通过的证据；必须先通过 15-C 的授权门禁和缓存隔离，再开放凭据管理 API/UI。
+30. 真实私有账号未实测前，相关验收保持 `BLOCKED_EXTERNAL_SOURCE`；`REAL_PASS` / `SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` 三态不得互相替代，公共仓库回源成功不能写成私有 `REAL_PASS`。
+31. Basic/Bearer fixture 固定采用隔离容器 + 443 + allowlist 域名 + 测试 CA；测试 CA 只注入测试环境，不改变生产信任根，不关闭 TLS 校验，测试域名固定解析到隔离环境。
+32. 历史缓存清理：`registry_cache_epoch` 负责逻辑隔离，Gateway 缓存管理模块负责物理清理（限速、进度、重试、审计）；清理失败不重开旧 epoch，回滚前必须确认旧缓存不可达并完成清理。
+33. 私有认证 Host 的公共内容失去共享缓存，本版接受；不做 per-repo 公私识别。
+34. Token Key 不增加 `CredDigest`，维持七字段；恢复时强制清空 Token Cache，不依赖进程重启。
+35. `PrivateAuthEnabled=true` ⇒ `GatewayAccessTokenRequired=true`；运行时关闭 Access Token 即私有认证 fail closed。
+36. `OfficialOnly` 贯穿 Manifest、Blob、重试、hedge、Source 切换和重定向全生命周期，不是一次认证标志。
+37. `registry_cache_epoch` 必须持久化；epoch 切换先于对外服务；启动或切换失败不得以旧 epoch 继续私有认证。
 
 ### 仍需实测的证据项（不需要再拍板）
 
@@ -1604,5 +2121,8 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 3. cgr / asia-east1 的 per-host 与 host-prefix 完整尝试证据。
 4. 候选查询性能基线：P50 / P95 / P99、吞吐、错误率、SQL 次数。
 5. 14c 反向迁移是否实现；不实现就接受开放流量后的数据丢失窗口。
+6. 真实私有 Host（quay.io / gcr.io）的私有 Manifest/Blob、Token 端点 Basic、轮换和错误处理证据；没有账号就记 `BLOCKED_EXTERNAL_SOURCE` / `NOT_EXECUTED`。
+7. 受控私有 Basic/Bearer fixture（隔离容器 + 443 + allowlist 域名 + 测试 CA，见 3.5.15-D.1）与 Registry 直接 Basic 的真实请求证据。
+8. 历史缓存 epoch 隔离演练：旧 epoch 私有 Manifest/Blob 不可匿名命中，清理后物理消失。
 
 在这些证据项完成前，3.5.14a 不进入实现。

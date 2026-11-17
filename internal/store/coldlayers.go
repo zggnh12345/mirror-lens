@@ -15,7 +15,7 @@ func (s *Store) ColdLayerStats(cutoff int64) (coldBytes, totalBytes, coldCount, 
 			COALESCE(SUM(CASE WHEN last_hit < ? THEN 1 ELSE 0 END), 0),
 			COUNT(*)
 		FROM cache_entries
-		WHERE key LIKE 'docker:blob:%'`, cutoff, cutoff).
+		WHERE (key LIKE 'docker:blob:%' OR key LIKE 'docker:b:%')`, cutoff, cutoff).
 		Scan(&coldBytes, &totalBytes, &coldCount, &totalCount)
 	return
 }

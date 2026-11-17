@@ -12,9 +12,14 @@ set -euo pipefail
 
 DB_NAME=mirror-lens.db
 KEY_NAME=secret.key
+CRED_NAME=registry_creds.enc
 MANIFEST=manifest.json
 JOURNAL=.restore-journal.json
 SELF=$(basename "$0")
+HAS_CREDS=0
+CRED_SHA=""
+CRED_SIZE=""
+OLD_CRED_SHA=""
 
 die() { echo "[restore] 错误: $*" >&2; exit 1; }
 log() { echo "[restore] $*"; }
@@ -81,7 +86,10 @@ read_manifest() {
   KEY_SHA=$(printf '%s' "$MFLAT" | grep -o '"key"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([0-9a-fA-F]*\)"/\1/')
   DB_SIZE=$(printf '%s' "$MFLAT" | grep -o '"db"[^}]*' | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
   KEY_SIZE=$(printf '%s' "$MFLAT" | grep -o '"key"[^}]*' | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//')
-  [ "$SCHEMA" = "1" ] || die "manifest schema 不支持: $SCHEMA"
+  CRED_FILE=$(printf '%s' "$MFLAT" | grep -o '"creds"[^}]*' | grep -o '"file"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//' || true)
+  CRED_SHA=$(printf '%s' "$MFLAT" | grep -o '"creds"[^}]*' | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([0-9a-fA-F]*\)"/\1/' || true)
+  CRED_SIZE=$(printf '%s' "$MFLAT" | grep -o '"creds"[^}]*' | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | head -1 | sed 's/.*:[[:space:]]*//' || true)
+  [ "$SCHEMA" = "1" ] || [ "$SCHEMA" = "2" ] || die "manifest schema 不支持: $SCHEMA"
   [ -n "$APP_VERSION" ] || die "manifest 缺少 app_version"
   [ -n "$DB_SHA" ] && [ -n "$KEY_SHA" ] || die "manifest 缺少 sha256"
   [ "$DB_FILE" = "$DB_NAME" ] || die "manifest 的 db.file 非法: $DB_FILE"
@@ -91,6 +99,14 @@ read_manifest() {
   [ "$(fsize "$UNIT/$KEY_NAME")" = "$KEY_SIZE" ] || die "key 字节数与 manifest 不符"
   [ "$(sha "$UNIT/$DB_NAME")" = "$DB_SHA" ] || die "DB SHA-256 与 manifest 不符"
   [ "$(sha "$UNIT/$KEY_NAME")" = "$KEY_SHA" ] || die "key SHA-256 与 manifest 不符"
+  if [ -n "$CRED_FILE" ]; then
+    [ "$CRED_FILE" = "$CRED_NAME" ] || die "manifest 的 creds.file 非法: $CRED_FILE"
+    [ -n "$CRED_SHA" ] && [ -n "$CRED_SIZE" ] || die "manifest 缺少 creds 的 sha256/size"
+    [ -f "$UNIT/$CRED_NAME" ] || die "备份单元缺少 $CRED_NAME"
+    [ "$(fsize "$UNIT/$CRED_NAME")" = "$CRED_SIZE" ] || die "凭据文件字节数与 manifest 不符"
+    [ "$(sha "$UNIT/$CRED_NAME")" = "$CRED_SHA" ] || die "凭据文件 SHA-256 与 manifest 不符"
+    HAS_CREDS=1
+  fi
 }
 
 write_journal() {
@@ -98,7 +114,8 @@ write_journal() {
   cat >"$tmp" <<EOF
 {"txid":"$TX","unit":"$UNIT","stage":"$STAGE","old_dir":"$OLD",
  "db_sha":"$DB_SHA","db_size":$DB_SIZE,"key_sha":"$KEY_SHA","key_size":$KEY_SIZE,
- "old_db_sha":"$OLD_DB_SHA","old_key_sha":"$OLD_KEY_SHA"}
+ "creds_present":$HAS_CREDS,"creds_sha":"$CRED_SHA","creds_size":${CRED_SIZE:-0},
+ "old_db_sha":"$OLD_DB_SHA","old_key_sha":"$OLD_KEY_SHA","old_creds_sha":"$OLD_CRED_SHA"}
 EOF
   sync "$tmp" 2>/dev/null || sync
   mv -f "$tmp" "$JOURNAL_PATH"
@@ -109,6 +126,12 @@ verify_pair() { # verify_pair <db> <key> <sha_db> <sha_key>
   [ -f "$1" ] && [ -f "$2" ] || return 1
   [ "$(sha "$1")" = "$3" ] || return 1
   [ "$(sha "$2")" = "$4" ] || return 1
+}
+
+verify_creds() { # verify_creds <path> <sha>
+  # 空 sha 表示该侧没有凭据文件（旧数据目录可能从未配置凭据）。
+  [ -z "$2" ] && return 0
+  [ -f "$1" ] && [ "$(sha "$1")" = "$2" ]
 }
 
 rollback() {
@@ -147,6 +170,10 @@ rollback() {
     log "错误: 旧配对 SHA-256 校验失败；正式目录与现场保持原样，journal 保留"
     set -e; return 1
   fi
+  if [ "$HAS_CREDS" = 1 ] && [ -n "${OLD_CRED_SHA:-}" ] && ! verify_creds "$OLD/$CRED_NAME" "$OLD_CRED_SHA"; then
+    log "错误: 旧凭据文件 SHA-256 校验失败；正式目录与现场保持原样，journal 保留"
+    set -e; return 1
+  fi
 
   # 2. 在数据目录外复制一份并通过复核，之后所有切换都基于这份副本。
   rm -rf "$chk"
@@ -156,11 +183,12 @@ rollback() {
   fi
   cp -f "$OLD/$DB_NAME" "$chk/$DB_NAME" || rc=1
   cp -f "$OLD/$KEY_NAME" "$chk/$KEY_NAME" || rc=1
+  [ -n "$OLD_CRED_SHA" ] && [ -f "$OLD/$CRED_NAME" ] && { cp -f "$OLD/$CRED_NAME" "$chk/$CRED_NAME" || rc=1; }
   for f in "$DB_NAME-wal" "$DB_NAME-shm"; do
     [ -f "$OLD/$f" ] && { cp -f "$OLD/$f" "$chk/$f" || rc=1; }
   done
   sync
-  if [ $rc -ne 0 ] || ! verify_pair "$chk/$DB_NAME" "$chk/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+  if [ $rc -ne 0 ] || ! verify_pair "$chk/$DB_NAME" "$chk/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA" || ! verify_creds "$chk/$CRED_NAME" "$OLD_CRED_SHA"; then
     log "错误: 回滚副本复制/校验失败；正式目录与现场保持原样，journal 保留"
     set -e; return 1
   fi
@@ -170,7 +198,7 @@ rollback() {
     log "错误: 无法创建失败现场目录 $failed；未改动任何文件"
     set -e; return 1
   fi
-  for f in "$DB_NAME" "$DB_NAME-wal" "$DB_NAME-shm" "$KEY_NAME"; do
+  for f in "$DB_NAME" "$DB_NAME-wal" "$DB_NAME-shm" "$KEY_NAME" "$CRED_NAME"; do
     if [ -f "$DATA/$f" ]; then
       mv -f "$DATA/$f" "$failed/$f" || rc=1
     fi
@@ -198,9 +226,11 @@ rollback() {
     [ -f "$chk/$f" ] && { mv -f "$chk/$f" "$DATA/$f" || rc=1; }
   done
   mv -f "$chk/$KEY_NAME" "$DATA/$KEY_NAME" || rc=1
+  [ -n "$OLD_CRED_SHA" ] && [ -f "$chk/$CRED_NAME" ] && { mv -f "$chk/$CRED_NAME" "$DATA/$CRED_NAME" || rc=1; }
   chmod 600 "$DATA/$DB_NAME" "$DATA/$KEY_NAME" 2>/dev/null
+  [ -f "$DATA/$CRED_NAME" ] && chmod 600 "$DATA/$CRED_NAME"
   sync
-  if [ $rc -ne 0 ] || ! verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+  if [ $rc -ne 0 ] || ! verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA" || ! verify_creds "$DATA/$CRED_NAME" "$OLD_CRED_SHA"; then
     log "错误: 回滚后校验失败；$failed、$OLD、$chk 均保留，journal 保留，请人工处理"
     set -e; return 1
   fi
@@ -229,19 +259,26 @@ if [ "$MODE" = recover ]; then
   get() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*\(\"[^\"]*\"\|[0-9]*\)" "$JOURNAL_PATH" | head -1 | sed 's/.*:[[:space:]]*//; s/"//g'; }
   TX=$(get txid); UNIT=$(get unit); STAGE=$(get stage); OLD=$(get old_dir)
   DB_SHA=$(get db_sha); KEY_SHA=$(get key_sha)
-  OLD_DB_SHA=$(get old_db_sha); OLD_KEY_SHA=$(get old_key_sha)
-  if verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA"; then
+  CREDS_PRESENT=$(get creds_present); CRED_SHA=$(get creds_sha)
+  OLD_DB_SHA=$(get old_db_sha); OLD_KEY_SHA=$(get old_key_sha); OLD_CRED_SHA=$(get old_creds_sha)
+  HAS_CREDS=${CREDS_PRESENT:-0}
+  if verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" &&
+     verify_creds "$DATA/$CRED_NAME" "$CRED_SHA"; then
     rm -f "$JOURNAL_PATH"; sync
     [ -n "${STAGE:-}" ] && rm -rf "$STAGE"
     log "上次恢复其实已完成，已清理切换日志"
   elif [ -n "$OLD_DB_SHA" ] && [ -n "$OLD_KEY_SHA" ] &&
-       verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA"; then
+       verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$OLD_DB_SHA" "$OLD_KEY_SHA" &&
+       verify_creds "$DATA/$CRED_NAME" "$OLD_CRED_SHA"; then
     rm -f "$JOURNAL_PATH"; sync
     [ -n "${STAGE:-}" ] && rm -rf "$STAGE"
     log "切换尚未开始（原配对完好），已清理切换日志"
   elif [ -f "$STAGE/$KEY_NAME" ] && [ "$(sha "$DATA/$DB_NAME" 2>/dev/null)" = "$DB_SHA" ]; then
     mv -f "$STAGE/$KEY_NAME" "$DATA/$KEY_NAME"; sync
-    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
+    [ "$HAS_CREDS" = 1 ] && [ -f "$STAGE/$CRED_NAME" ] && { mv -f "$STAGE/$CRED_NAME" "$DATA/$CRED_NAME"; chmod 600 "$DATA/$CRED_NAME"; }
+    sync
+    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" &&
+      verify_creds "$DATA/$CRED_NAME" "$CRED_SHA" ||
       fail_restore "补齐 key 后校验失败，已尝试回滚"
     rm -f "$JOURNAL_PATH"; sync
     log "已补完新配对（DB 已切换，key 先前未落位）"
@@ -250,9 +287,12 @@ if [ "$MODE" = recover ]; then
     # 继续向前完成比回滚更安全，旧配对（若有）仍原样留在 $OLD。
     mv -f "$STAGE/$DB_NAME" "$DATA/$DB_NAME"
     mv -f "$STAGE/$KEY_NAME" "$DATA/$KEY_NAME"
+    [ "$HAS_CREDS" = 1 ] && [ -f "$STAGE/$CRED_NAME" ] && { mv -f "$STAGE/$CRED_NAME" "$DATA/$CRED_NAME"; }
     chmod 600 "$DATA/$DB_NAME" "$DATA/$KEY_NAME"
+    [ -f "$DATA/$CRED_NAME" ] && chmod 600 "$DATA/$CRED_NAME"
     sync
-    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
+    verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" &&
+      verify_creds "$DATA/$CRED_NAME" "$CRED_SHA" ||
       fail_restore "补齐新配对后校验失败，已尝试回滚"
     rm -f "$JOURNAL_PATH"; sync
     log "已补完新配对（数据目录此前没有 DB）"
@@ -272,9 +312,10 @@ read_manifest
 TX=$(date +%Y%m%d%H%M%S)-$$
 STAGE="$(dirname "$DATA")/.ml-restore-stage-$TX"
 OLD="$DATA/.restore-old-$TX"
-OLD_DB_SHA=""; OLD_KEY_SHA=""
+OLD_DB_SHA=""; OLD_KEY_SHA=""; OLD_CRED_SHA=""
 [ -f "$DATA/$DB_NAME" ] && OLD_DB_SHA=$(sha "$DATA/$DB_NAME")
 [ -f "$DATA/$KEY_NAME" ] && OLD_KEY_SHA=$(sha "$DATA/$KEY_NAME")
+[ -f "$DATA/$CRED_NAME" ] && OLD_CRED_SHA=$(sha "$DATA/$CRED_NAME")
 
 mkdir -p "$STAGE" "$OLD"
 chmod 700 "$STAGE" "$OLD"
@@ -283,12 +324,14 @@ crashpoint after_journal
 
 cp -f "$UNIT/$DB_NAME" "$STAGE/$DB_NAME"
 cp -f "$UNIT/$KEY_NAME" "$STAGE/$KEY_NAME"
+[ "$HAS_CREDS" = 1 ] && cp -f "$UNIT/$CRED_NAME" "$STAGE/$CRED_NAME"
 chmod 600 "$STAGE/$DB_NAME" "$STAGE/$KEY_NAME"
+[ "$HAS_CREDS" = 1 ] && chmod 600 "$STAGE/$CRED_NAME"
 sync
 crashpoint after_stage
 
 # 保存现场：先移走旧配对，再落新配对。日志已存在，任何中断都可 --recover。
-for f in "$DB_NAME" "$DB_NAME-wal" "$DB_NAME-shm" "$KEY_NAME"; do
+for f in "$DB_NAME" "$DB_NAME-wal" "$DB_NAME-shm" "$KEY_NAME" "$CRED_NAME"; do
   [ -f "$DATA/$f" ] && mv -f "$DATA/$f" "$OLD/$f"
 done
 sync
@@ -303,7 +346,12 @@ chmod 600 "$DATA/$KEY_NAME"
 sync
 crashpoint after_key
 
-verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" ||
+[ "$HAS_CREDS" = 1 ] && { mv -f "$STAGE/$CRED_NAME" "$DATA/$CRED_NAME"; chmod 600 "$DATA/$CRED_NAME"; }
+sync
+crashpoint after_creds
+
+verify_pair "$DATA/$DB_NAME" "$DATA/$KEY_NAME" "$DB_SHA" "$KEY_SHA" &&
+  verify_creds "$DATA/$CRED_NAME" "$CRED_SHA" ||
   fail_restore "切换后校验失败，已尝试回滚"
 # 旧 WAL/SHM 已随旧配对移入 OLD；正式目录里再出现就是被错误关联的残留。
 for f in "$DB_NAME-wal" "$DB_NAME-shm"; do

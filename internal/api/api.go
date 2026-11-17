@@ -32,6 +32,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
+	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/tuning"
 	"github.com/zggnh12345/mirror-lens/internal/version"
@@ -51,6 +52,7 @@ type Server struct {
 	jan    *janitor.Janitor
 	sch    *scheduler.Scheduler
 	alerts *alert.Ring
+	creds  *secret.Store
 
 	metricsOn    bool
 	metricsToken bool
@@ -73,6 +75,12 @@ type Option func(*Server)
 // WithAlerts 挂上日志告警环（面板铃铛的数据源）。
 func WithAlerts(r *alert.Ring) Option {
 	return func(s *Server) { s.alerts = r }
+}
+
+// WithCredentials 挂上凭据管理 API（3.5.15-A.3）。cs 为 nil 时接口返回 503，
+// 不会假装成功。
+func WithCredentials(cs *secret.Store) Option {
+	return func(s *Server) { s.creds = cs }
 }
 
 func WithMetrics(enabled, requireToken bool) Option {
@@ -223,6 +231,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/alerts/clear", guard(csrf(s.alertsClear)))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
+	mux.HandleFunc("/api/credentials", guard(csrf(s.credentialsList)))
+	mux.HandleFunc("/api/credentials/", guard(csrf(s.credentialItem)))
 	mux.HandleFunc("/api/policies", guard(csrf(s.policies)))
 	mux.HandleFunc("/api/policies/", guard(csrf(s.policyItem)))
 	mux.HandleFunc("/api/policy-audit", guard(s.policyAudit))

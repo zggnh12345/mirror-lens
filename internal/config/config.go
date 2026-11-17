@@ -106,6 +106,14 @@ type Registry struct {
 	// DisabledHosts 是访问准入的拒绝列表；只接受精确 Host，且不接管
 	// docker.io / registry-1.docker.io / ghcr.io（它们有各自开关）。
 	DisabledHosts []string `yaml:"disabled_hosts"`
+
+	// PrivateAuthEnabled 是 3.5.15 的私有 Registry 认证总开关（默认关闭）。
+	// 开启时必须同时 auth.require_token=true 且存在有效 Access Token，
+	// 否则拒绝启动（D-15-3 / D-15-15）。
+	PrivateAuthEnabled bool `yaml:"private_auth_enabled"`
+	// PrivateAuthHosts 是允许使用 Host 级凭据的 Host 列表；必须是
+	// 3.5.15-D.1 代码 allowlist 的子集，不开放任意 Host/端口/IP。
+	PrivateAuthHosts []string `yaml:"private_auth_hosts"`
 }
 
 // GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。
@@ -495,6 +503,30 @@ func (c *Config) Validate() error {
 	}
 	if c.Cache.MaxFileMB < 0 || c.Registry.MaxFileMB < 0 || c.Cache.MaxGB < 0 || c.Cache.MinFreeGB < 0 || c.Registry.TokenCacheMax < 0 {
 		return fmt.Errorf("容量上限不能是负数")
+	}
+	// 私有认证：开关与 Access Token 必须同时成立，不能静默降级。
+	if c.Registry.PrivateAuthEnabled {
+		if !c.Auth.RequireToken {
+			return fmt.Errorf("registry.private_auth_enabled=true 必须同时 auth.require_token=true")
+		}
+		if len(c.Registry.PrivateAuthHosts) == 0 {
+			return fmt.Errorf("registry.private_auth_enabled=true 但 private_auth_hosts 为空")
+		}
+		seen := map[string]bool{}
+		for i, raw := range c.Registry.PrivateAuthHosts {
+			h := strings.ToLower(strings.TrimSpace(raw))
+			if h == "" {
+				return fmt.Errorf("registry.private_auth_hosts[%d] 为空", i)
+			}
+			if strings.ContainsAny(h, ":/") {
+				return fmt.Errorf("registry.private_auth_hosts 只接受精确 Host，收到 %q", raw)
+			}
+			if seen[h] {
+				return fmt.Errorf("registry.private_auth_hosts 重复: %q", h)
+			}
+			seen[h] = true
+			c.Registry.PrivateAuthHosts[i] = h
+		}
 	}
 	if c.Raw.TTL.Duration < 0 || c.Git.TTL.Duration < 0 || c.Registry.TagTTL.Duration < 0 {
 		return fmt.Errorf("TTL 不能是负数")

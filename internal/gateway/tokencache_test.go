@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
 // 过期的 token 不能一直堆在 map 里（key 带 scope，每个仓库一条）。
@@ -67,7 +69,7 @@ func TestTokenCacheSingleFlight(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			tok, err := c.get(context.Background(), rt, key, key.Realm, key.Service, key.Scope)
+			tok, err := c.get(context.Background(), rt, key, v2auth.Challenge{Realm: key.Realm, Service: key.Service}, key.Scope, nil)
 			if err == nil && tok != "shared" {
 				err = fmt.Errorf("token=%q", tok)
 			}
@@ -102,7 +104,7 @@ func TestTokenCacheLeaderCancelDoesNotFailWaiters(t *testing.T) {
 	key := tokenKey{SourceID: 1, Host: "registry.example", Realm: "https://auth.example/token", Service: "registry", Scope: "repository:g/p:pull"}
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	go func() {
-		_, _ = c.get(leaderCtx, rt, key, key.Realm, key.Service, key.Scope)
+		_, _ = c.get(leaderCtx, rt, key, v2auth.Challenge{Realm: key.Realm, Service: key.Service}, key.Scope, nil)
 	}()
 	deadline := time.Now().Add(time.Second)
 	for hits.Load() == 0 && time.Now().Before(deadline) {
@@ -119,7 +121,7 @@ func TestTokenCacheLeaderCancelDoesNotFailWaiters(t *testing.T) {
 	}
 	waiter := make(chan result, 1)
 	go func() {
-		tok, err := c.get(context.Background(), rt, key, key.Realm, key.Service, key.Scope)
+		tok, err := c.get(context.Background(), rt, key, v2auth.Challenge{Realm: key.Realm, Service: key.Service}, key.Scope, nil)
 		waiter <- result{tok, err}
 	}()
 	time.Sleep(20 * time.Millisecond)

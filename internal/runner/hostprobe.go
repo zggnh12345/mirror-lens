@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"sync"
 	"time"
@@ -421,21 +420,22 @@ func (r *HostProbeRunner) runOne(parent context.Context, j HostProbeJob) {
 	key := jobKey(j)
 	defer r.release(key)
 
-	snap, err := r.o.Creds.Snapshot(j.Host)
+	// 15-C.2：候选 Source 探测不读取、不传递官方凭据。
+	//
+	// 这里只读 registry_host_gen 的 (gen, digest) 元数据用于提交 CAS；
+	// 探测请求本身是匿名的。401/403 由 probe 归为 auth_error /
+	// Inconclusive，不标 Unsupported，也不惩罚候选源。
+	gen, digest, err := r.o.Store.HostGenState(j.Host)
 	if err != nil {
-		switch {
-		case errors.Is(err, secret.ErrNotReconciled):
-			// 启动门禁应当已经拦住这种情况；再遇到就是装配错误，
-			// 不能靠重试掩盖。
-			log.Printf("Host 探测中止：凭据未对账（%v）", err)
-		case errors.Is(err, secret.ErrCredentialPending):
-			log.Printf("Host %s 凭据正在变更，稍后重试: %v", j.Host, err)
-			r.scheduleRetry(j, j.Gen, retryCredentialPending)
-		default:
-			log.Printf("读取 %s 凭据失败: %v", j.Host, err)
-			r.scheduleRetry(j, j.Gen, retryLocalExecution)
-		}
+		log.Printf("读取 %s 凭据代次失败: %v", j.Host, err)
+		r.scheduleRetry(j, j.Gen, retryLocalExecution)
 		return
+	}
+	snap := secret.Snapshot{
+		Host:          j.Host,
+		Generation:    gen,
+		Digest:        digest,
+		HasCredential: secret.HasCredentialDigest(j.Host, digest),
 	}
 
 	ctx, cancel := context.WithTimeout(parent, r.o.Timeout)

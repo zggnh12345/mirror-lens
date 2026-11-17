@@ -26,9 +26,23 @@ const (
 	DigestSourceSUMS   = "publisher_checksum_file"
 )
 
+// ResourceKind 是资源的协议语义，不是缓存键格式。
+// 认证、重定向、缓存准入等安全逻辑必须依赖它，不能解析 CacheKey 字符串。
+type ResourceKind int
+
+const (
+	ResourceUnknown ResourceKind = iota
+	ResourceManifest
+	ResourceBlob
+	ResourceOther
+)
+
 // Plan 是一次代理请求的完整执行计划。
 type Plan struct {
 	Kind string // raw / release / http / git / docker / registry
+
+	// ResourceKind 是协议层资源类型；Registry 的 Manifest/Blob 必须显式填写。
+	ResourceKind ResourceKind
 
 	// SchedKey 是调度身份：Candidates / Rewrite / Report 的 kind 参数。
 	// 空表示等于 Kind。Registry 多源用它把每个 Host 拆成独立调度族
