@@ -114,6 +114,11 @@ type Registry struct {
 	// PrivateAuthHosts 是允许使用 Host 级凭据的 Host 列表；必须是
 	// 3.5.15-D.1 代码 allowlist 的子集，不开放任意 Host/端口/IP。
 	PrivateAuthHosts []string `yaml:"private_auth_hosts"`
+
+	// RaceAfterMS 是 3.5.16 Manifest 竞速启动第二候选的耐心预算。
+	// 0 表示复用 hedge.after_ms。竞速本身不在这里开关：Host 级总开关存
+	// settings 表（默认全关），Source 资格是星标，配置无法绕过这两道门。
+	RaceAfterMS int `yaml:"race_after_ms"`
 }
 
 // GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。

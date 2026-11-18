@@ -486,6 +486,9 @@ func main() {
 			After:   time.Duration(cfg.Hedge.AfterMS) * time.Millisecond,
 			Grace:   time.Duration(cfg.Hedge.GraceMS) * time.Millisecond,
 		},
+		Race: gateway.RaceOptions{
+			After: time.Duration(cfg.Registry.RaceAfterMS) * time.Millisecond,
+		},
 	})
 	if cfg.Auth.RequireToken {
 		log.Printf("代理路径需要 Access Token（auth.require_token=true）")

@@ -136,6 +136,15 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 	// 用 plan 的 TTL 判断新鲜度：条目自己的 ttl 字段在历史数据里可能是 0，
 	// 那样 tag 会永远被判过期，每次都去回源验证（实测 1.5s 起步）。
 	fromCache := e != nil && g.freshFor(e, plan)
+	// 3.5.16 竞速准入：判定点只有这里。客户端 HEAD 在这里被标记为强制
+	// 顺序执行并与 Race Flight 隔离；GET 只有在 Host 开关、星标资格、
+	// 能力/健康、不可变 Digest 全部满足时才允许进入竞速。
+	if fromCache {
+		// 命中新鲜缓存：不进入竞速，也不做资格判定（T33）。
+		metrics.RegistryRaceIneligible("cache_hit")
+	} else {
+		g.evaluateRegistryRace(plan, r.Method, e != nil)
+	}
 	if !fromCache {
 		ne, notMod, ferr := g.fetchOnce(r.Context(), plan, e)
 		if ferr != nil {

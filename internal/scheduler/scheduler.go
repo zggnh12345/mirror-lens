@@ -6,6 +6,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"log"
 	"math"
 	"net/url"
@@ -843,6 +844,30 @@ func (s *Scheduler) AcquireLease(ctx context.Context, id int64, kind LeaseKind) 
 		return nil, nil
 	}
 	return s.acquireLeaseMode(ctx, id, kind, s.cfg.Admission)
+}
+
+// TryAcquireLease 只尝试一次，名额已满时返回 (nil, nil)，不排队、不等待。
+//
+// 3.5.16 的第二竞速候选必须走这条路径：拿不到名额就不启动第二路，
+// 让第一路照常跑完，而不是让一个「可能根本用不上」的并行请求阻塞请求本身。
+func (s *Scheduler) TryAcquireLease(ctx context.Context, id int64, kind LeaseKind) (*Lease, error) {
+	if s == nil || id == 0 || s.cfg.MaxPerSource <= 0 {
+		return nil, nil
+	}
+	if s.deleted(id) {
+		return nil, nil
+	}
+	if s.cfg.Admission == "observe" {
+		return s.acquireLeaseMode(ctx, id, kind, "observe")
+	}
+	l, err := s.acquireLeaseMode(ctx, id, kind, "non_blocking")
+	if errors.Is(err, ErrLeaseAtCap) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 func (s *Scheduler) acquireLeaseMode(ctx context.Context, id int64, kind LeaseKind, mode string) (*Lease, error) {

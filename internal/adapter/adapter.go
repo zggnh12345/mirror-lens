@@ -120,6 +120,28 @@ type Plan struct {
 	// 适配器用它记住「这个 repo 其实在别处」，下次直接走对站点，
 	// 不用再白等一轮 Docker Hub 的 401。
 	OnFallback func(host string)
+
+	// ---- 3.5.16 执行策略（不是缓存身份，不参与 CacheKey）----
+
+	// RaceReady 表示本次请求已经过 Registry 竞速准入判定，允许执行层
+	// 在同 Host 合格镜像源之间做 Manifest 竞速。判定点只有一个
+	// （serveManifest），执行层只读这个结果，不自己再推一遍资格。
+	RaceReady bool
+
+	// FlightPolicy 是 singleflight 的执行策略命名空间。空值表示沿用
+	// CacheKey（默认执行策略）；registry-race / registry-no-race 用于
+	// 隔离竞速执行态。它只在 star_race 实际形成竞速时才会非空，
+	// 关闭态与「开启但合格源不足两个」都保持空值，行为与基线一致。
+	FlightPolicy string
+
+	// Sequential 强制按顺序回源：客户端 HEAD 必须为真。它同时禁止
+	// Registry 竞速和通用响应头对冲，且只对 Registry Manifest 设置，
+	// 不能拿去全局关掉 HEAD 的 Hedge。
+	Sequential bool
+
+	// FallbackChain 表示这个 plan 副本属于 fetchRace 的备用链：
+	// 备用链不再叠加内部对冲，避免「每链两路 × 多链」的四路并发。
+	FallbackChain bool
 }
 
 // Sched 返回调度身份，未显式设置时回落到 Kind。

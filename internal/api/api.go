@@ -231,6 +231,9 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/alerts/clear", guard(csrf(s.alertsClear)))
 	mux.HandleFunc("/api/sources", guard(csrf(s.sources)))
 	mux.HandleFunc("/api/sources/", guard(csrf(s.sourceItem)))
+	// 3.5.16：Host 级竞速总开关与「星标/能力/开关」三态视图。
+	mux.HandleFunc("/api/star-race", guard(csrf(s.starRace)))
+	mux.HandleFunc("/api/star-race/", guard(csrf(s.starRace)))
 	mux.HandleFunc("/api/credentials", guard(csrf(s.credentialsList)))
 	mux.HandleFunc("/api/credentials/", guard(csrf(s.credentialItem)))
 	mux.HandleFunc("/api/policies", guard(csrf(s.policies)))
@@ -878,6 +881,14 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if in.Enabled != nil || in.Name != nil || in.Note != nil || in.Preferred != nil {
+			// 星标是人工竞速资格：变更前后各取一次值，落一条管理审计（T49）。
+			// 探测流程从不调用这里，所以「探测成功自动加星」在结构上不可能发生。
+			starBefore := false
+			if in.Preferred != nil {
+				if cur, err := s.st.GetSource(id); err == nil && cur != nil {
+					starBefore = cur.Preferred
+				}
+			}
 			if err := s.st.UpdateSource(id, in.Enabled, in.Name, in.Note, in.Preferred); err != nil {
 				if errors.Is(err, store.ErrArchived) {
 					writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -885,6 +896,10 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				}
 				writeJSON(w, 500, map[string]string{"error": err.Error()})
 				return
+			}
+			if in.Preferred != nil {
+				s.starRaceAudit(r, id, starBefore, *in.Preferred)
+				s.gw.InvalidateStarRace()
 			}
 		}
 		if in.GroupID != nil {

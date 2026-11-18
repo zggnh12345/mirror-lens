@@ -125,6 +125,14 @@
   </div>
 
   <div class="list" id="list"></div>
+
+  <!-- 3.5.16 Manifest 竞速：Host 开关（人工启停）、星标（人工资格）、
+       能力状态（探测结果）三个概念分开显示，绝不合并成「已授权竞速」。 -->
+  <section id="raceSec" class="sec" style="margin-top:14px;display:none">
+    <h2>Manifest 竞速 <span style="font-weight:400;color:var(--faint);font-size:11px">3.5.16 · 默认关闭</span></h2>
+    <p class="hint" style="margin:2px 0 8px">只对<b>不可变 Digest</b> 的 Manifest 生效，可变 tag 仍按原顺序回源。开关是必要条件：还要有两个已星标、且在该 Host 能力合格的源。</p>
+    <div id="raceRows"></div>
+  </section>
 </div>
 
 <!-- 添加 -->
@@ -653,7 +661,7 @@ function rowHtml(x){
     +   L1 + l1 + '</div>'
     +   L2 + l2 + '</div>'
     + '</div>'
-    + '<button class="pref' + (x.preferred?' on':'') + '" data-pref="' + x.id + '" title="' + (x.preferred?'取消优先':'设为优先') + '">' + (x.preferred?'★':'☆') + '</button>'
+    + '<button class="pref' + (x.preferred?' on':'') + '" data-pref="' + x.id + '" title="' + (x.preferred?'取消星标（退出竞速资格）':'设为星标（获得竞速资格）') + '">' + (x.preferred?'★':'☆') + '</button>'
     + '<label class="sw" title="启用/停用"><input type="checkbox" data-tog="' + x.id + '"' + (x.enabled?' checked':'') + '><span></span></label>'
     + '</div>'
     + (OPEN === x.id
@@ -777,8 +785,51 @@ async function load(quiet){
     SCORES = d.scores || {}; KSCORES = d.scores_kind || {};
     try{ SORDER = await api('/api/sched-order'); }catch(e){}
     render();
+    loadRace();
   }catch(e){ if(!quiet) toast(e.message); }
 }
+
+/* ---- Manifest 竞速（3.5.16） ---- */
+var RACE = [];
+async function loadRace(){
+  try{
+    var d = await api('/api/star-race');
+    RACE = d.hosts || [];
+  }catch(e){ RACE = []; }
+  renderRace();
+}
+function renderRace(){
+  var box = $('#raceSec'), rows = $('#raceRows');
+  if (!box || !rows) return;
+  if (!RACE.length){ box.style.display = 'none'; rows.innerHTML = ''; return; }
+  box.style.display = '';
+  rows.innerHTML = RACE.map(function(h){
+    var tone = h.host_switch ? (h.ready ? 'var(--ok)' : 'var(--warn)') : 'var(--faint)';
+    return '<div class="row" data-race="' + esc(h.host) + '">'
+      + '<span class="dot" style="background:' + tone + '"></span>'
+      + '<div class="main"><div class="rl1"><b>' + esc(h.host) + '</b>'
+      +   '<span class="note">' + esc(h.note || '') + '</span></div>'
+      +   '<div class="rl2"><i>星标源 ' + h.starred_sources + '</i>'
+      +   '<i>能力合格 ' + h.capable_sources + '</i>'
+      +   '<i>可竞速 ' + h.eligible_sources + '</i></div></div>'
+      + '<label class="sw" title="Host 级竞速总开关"><input type="checkbox" data-race-sw="' + esc(h.host) + '"'
+      +   (h.host_switch ? ' checked' : '') + '><span></span></label>'
+      + '</div>';
+  }).join('');
+}
+async function setRaceHost(host, on){
+  try{
+    await api('/api/star-race/' + encodeURIComponent(host), {method:'PUT', body: JSON.stringify({enabled: !!on})});
+    toast(on ? '已开启 ' + host + ' 的竞速' : '已关闭 ' + host + ' 的竞速');
+    await loadRace();
+  }catch(e){ toast(e.message); await loadRace(); }
+}
+document.addEventListener('change', function(ev){
+  var t = ev.target;
+  if (t && t.getAttribute && t.getAttribute('data-race-sw')){
+    setRaceHost(t.getAttribute('data-race-sw'), t.checked);
+  }
+});
 
 /* ---- 历史 ---- */
 function drawHist(id){

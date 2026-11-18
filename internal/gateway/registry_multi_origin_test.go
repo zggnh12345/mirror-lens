@@ -37,6 +37,8 @@ type moFixture struct {
 	nativeHits   atomic.Int32
 	prefixHits   atomic.Int32
 	officialHits atomic.Int32
+	// officialURL 是假官方 httptest 的地址，供需要自建 plan 的用例复用。
+	officialURL string
 	// officialTargets 记录官方请求实际使用的逻辑 Host，用于 F7 证明
 	// “没有候选命中”时确实回到对应 Host，而不是笼统的 Docker Hub。
 	officialMu      sync.Mutex
@@ -130,6 +132,7 @@ func newMOFixture(t *testing.T) *moFixture {
 	t.Cleanup(official.Close)
 
 	host := strings.TrimPrefix(official.URL, "http://")
+	f.officialURL = official.URL
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
 	ad.MultiOriginHosts = []string{f.host}

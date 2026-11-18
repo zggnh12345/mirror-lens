@@ -78,6 +78,10 @@ type Gateway struct {
 	relayLimit    int
 	semOnce       sync.Once
 	hedge         HedgeOptions
+	// race 是 3.5.16 Registry Manifest 竞速的运行时参数；零值用 hedge.After。
+	race          RaceOptions
+	raceCfg       atomic.Value // *starRaceSnapshot（Host 级 star_race 开关快照）
+	raceMu        sync.Mutex
 	switchBudget  time.Duration                              // 测试注入用，0 时走 3s 默认
 	parTargets    func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
 	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
@@ -154,6 +158,14 @@ type HedgeOptions struct {
 	Grace   time.Duration // 条件请求里等 304 的宽限
 }
 
+// RaceOptions 是 Registry Manifest 竞速（3.5.16）的运行时参数。
+// 开关本身不在这里：Host 级总开关存 settings 表，Source 资格是星标，
+// 两者都不该被一份静态配置绕过。
+type RaceOptions struct {
+	// After 是启动第二候选的耐心预算；0 表示复用 HedgeOptions.After。
+	After time.Duration
+}
+
 type Options struct {
 	Cache    *cache.Store
 	RawBase  string
@@ -173,6 +185,8 @@ type Options struct {
 	Guard             *safehttp.Guard
 	Parallel          ParOptions
 	Hedge             HedgeOptions
+	// Race 是 3.5.16 Registry Manifest 竞速的运行时参数（默认零值 = 用 hedge.After）。
+	Race RaceOptions
 	// 默认 false 匿名可读（适合公共加速站）；true 时客户端必须带 token。
 	RequireToken bool
 	// PrivateAuth 是 3.5.15 的私有认证运行时开关（默认全关）。
@@ -271,6 +285,7 @@ func New(st *store.Store, o Options) *Gateway {
 		now:           time.Now,
 		par:           o.Parallel,
 		hedge:         o.Hedge,
+		race:          o.Race,
 		tasks:         newTaskReg(),
 		degradeAt:     map[int64]time.Time{},
 		probeAt:       map[int64]time.Time{},
@@ -537,8 +552,12 @@ func (g *Gateway) freshFor(e *store.CacheEntry, plan *adapter.Plan) bool {
 }
 
 // fetchOnce 保证同一缓存键同时只有一次回源，其余请求等结果。
+// 3.5.16 起合并键是 FlightKey（CacheKey + 执行策略）：竞速执行态与非竞速
+// 执行态不能并进同一个 Flight，否则 HEAD 会蹭到竞速结果、GET 会被 HEAD 拖成
+// 顺序执行。FlightPolicy 为空时它就是 plan.CacheKey，行为与基线一致。
 func (g *Gateway) fetchOnce(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry) (*store.CacheEntry, bool, error) {
-	v, loaded := g.flights.LoadOrStore(plan.CacheKey, &flight{done: make(chan struct{})})
+	key := flightKeyFor(plan)
+	v, loaded := g.flights.LoadOrStore(key, &flight{done: make(chan struct{})})
 	f := v.(*flight)
 	if loaded {
 		select {
@@ -550,7 +569,7 @@ func (g *Gateway) fetchOnce(ctx context.Context, plan *adapter.Plan, prev *store
 	}
 	f.entry, f.notMod, f.err = g.fetch(ctx, plan, prev)
 	close(f.done)
-	g.flights.Delete(plan.CacheKey)
+	g.flights.Delete(key)
 	return f.entry, f.notMod, f.err
 }
 
@@ -837,15 +856,21 @@ func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []
 	// 另一份 manifest。
 	var claimed atomic.Bool
 	claim := func() bool { return claimed.CompareAndSwap(false, true) }
-	run := func(ts []fetchTarget) {
+	run := func(ts []fetchTarget, fallback bool) {
 		// 每条链用独立副本：回源过程会改写 Source 和提交令牌。
 		pc := *plan
 		pc.Claim = claim
+		// 链级 Hedge 语义：备用链不再叠加内部对冲（防四路并发），
+		// 也不参与 Registry 竞速（竞速是同一 Host 内的事，备用链换了 Host）。
+		pc.FallbackChain = fallback
+		if fallback {
+			pc.RaceReady = false
+		}
 		e, notMod, err := g.fetchSeq(ctx, &pc, nil, ts)
 		ch <- result{e, notMod, pc.Source, err}
 	}
-	go run(main)
-	go run(fb)
+	go run(main, false)
+	go run(fb, true)
 	var last result
 	for i := 0; i < 2; i++ {
 		r := <-ch
@@ -977,6 +1002,10 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 // fetchSeq 按给定顺序逐个源试，直到有一个交出文件。
 // 第一轮会在前两个候选之间做响应头对冲：首选源超过 hedge.After
 // 还没吐响应头，就并行发第二个，谁先给出可用响应头用谁。
+//
+// 3.5.16：允许竞速的请求（plan.RaceReady）先走一次同 Host 双源竞速。
+// 竞速替代同层的响应头对冲（不同时开两层），正文校验失败时按 §3.8 回到
+// 顺序回退，并把两个竞速参与源都计入已试集合，避免重复请求同一 Source。
 func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*store.CacheEntry, bool, error) {
 	var lastErr error
 	// policyErr 单独保存策略/身份缺失：换源链里后续的上游状态码
@@ -989,10 +1018,75 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 		}
 		return lastErr
 	}
-	// 回退链（裸格式猜站点）由 fetchRace 做整链并行，里面不再套对冲：
-	// 否则每条链各开两路，一个请求会变成四个上游请求。
-	hedged := g.hedge.Enabled && len(targets) > 1 && !targets[0].fb && len(plan.Fallbacks) == 0
+	// 本次请求已经试过的 target：竞速双方与顺序路径共享这一份，
+	// 保证「不复用输家」「不重复请求同一 Source」两条规则不冲突。
+	tried := map[int]bool{}
+
+	raceFormed := false
+	if plan.RaceReady && prev == nil && !plan.OfficialOnly {
+		if pair := g.raceEligibleTargets(plan); len(pair) == 2 {
+			if ia, ib, ok := raceTargets(targets, pair); ok {
+				raceFormed = true
+				tried[ia], tried[ib] = true, true
+				up, win, start, rerr := g.raceManifest(ctx, plan, prev, pair)
+				if up != nil {
+					winIdx := ia
+					if win == 1 {
+						winIdx = ib
+					}
+					t := targets[winIdx]
+					e, notMod, code, berr := g.saveBody(ctx, plan, prev, up, t)
+					act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, berr)
+					switch act {
+					case settleDone:
+						tried[winIdx] = true
+						metrics.RegistryRaceWin(win + 1)
+						if t.fb && plan.OnFallback != nil {
+							plan.OnFallback(t.fbHost)
+						}
+						return entry, nm, nil
+					case settleAbort:
+						return nil, false, lerr
+					default:
+						// 胜者正文失败：不提交缓存，资源已释放，继续顺序回退。
+						metrics.RegistryRaceBodyFail()
+						metrics.RegistryRaceFallback()
+						lastErr = lerr
+						if errors.Is(lerr, v2auth.ErrPolicyMissing) && policyErr == nil {
+							policyErr = lerr
+						}
+					}
+				} else {
+					// 竞速没能形成（预算不足/两路都失败）：回到原有顺序路径，
+					// 已确认失败的源不再重试。
+					metrics.RegistryRaceFallback()
+					if errors.Is(rerr, v2auth.ErrPolicyMissing) && policyErr == nil {
+						policyErr = rerr
+					}
+					if rerr != nil && !errors.Is(rerr, errRaceNoBudget) {
+						lastErr = rerr
+					}
+				}
+			}
+		}
+	}
+
+	// 通用响应头对冲的准入按链判定：
+	//  - 备用链（FallbackChain）不叠加，避免「每链两路 × 多链」的四路并发；
+	//  - 客户端 HEAD（Sequential）不产生任何并发上游请求；
+	//  - 已经形成竞速时不再叠一层（同层只允许一种并行机制）。
+	// 既有「有 fallback 就不对冲」的保护保留：A 的竞速资格由 plan.RaceReady
+	// 独立判定，不靠这个条件打开。
+	hedged := !raceFormed && !plan.Sequential && !plan.FallbackChain &&
+		g.hedge.Enabled && len(targets) > 1 && !targets[0].fb && len(plan.Fallbacks) == 0
+	first := -1
 	for i := 0; i < len(targets); i++ {
+		if tried[i] {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
 		t := targets[i]
 		start := time.Now()
 		var (
@@ -1001,14 +1095,14 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 			code   int
 			err    error
 		)
-		if hedged && i == 0 {
+		if hedged && i == first {
 			var (
-				up    *upstream
-				idx   int
-				tried int
-				herr  error
+				up     *upstream
+				idx    int
+				triedN int
+				herr   error
 			)
-			up, idx, tried, herr = g.pickUpstream(ctx, plan, prev, targets)
+			up, idx, triedN, herr = g.pickUpstream(ctx, plan, prev, targets)
 			if up == nil {
 				if ctx.Err() != nil {
 					return nil, false, ctx.Err()
@@ -1017,10 +1111,10 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 					policyErr = herr
 				}
 				lastErr = herr
-				if tried >= len(targets) {
+				if triedN >= len(targets) {
 					return nil, false, finish()
 				}
-				i = tried - 1 // 试过的候选不再重来
+				i = triedN - 1 // 试过的候选不再重来
 				continue
 			}
 			t = targets[idx]
@@ -1031,9 +1125,9 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 		act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, err)
 		switch act {
 		case settleDone:
-			// 只有真从这个站点拿到东西才记住它。之前是「开始试就记」，
-			// 主链成功、备链被取消也会写，于是第一次请求就把镜像锁死在
-			// ghcr.io，后续全量 404/401（library/golang 实测如此）。
+			// 只有真从这个站点拿到东西才记住它。之前是「开始试就记」，主链成功、
+			// 备链被取消也会写，于是第一次请求就把镜像锁死在 ghcr.io，后续全量
+			// 404/401（library/golang 实测如此）。
 			if t.fb && plan.OnFallback != nil {
 				plan.OnFallback(t.fbHost)
 			}

@@ -94,10 +94,20 @@ type Registry struct {
 	hedgeTrigger uint64
 	hedgeWins    [2]uint64
 	hedgeExtra   uint64
-	srcDur       map[srcDurKey]*hist
-	srcTTFB      map[srcDurKey]*hist
-	inflight     map[int64]int
-	srclimit     map[int64]int
+	// 3.5.16 Registry Manifest 竞速：与通用 Hedge 分开计量，
+	// 否则两者混在一起既看不出竞速是否生效，也会污染既有 dashboard 查询。
+	raceStarted    map[string]uint64 // layer|host -> 次数
+	raceWins       [2]uint64         // 竞速中的名次胜出（1=首选 2=第二）
+	raceExtra      uint64            // 竞速额外发出的上游请求
+	raceCancel     uint64            // 输家被取消
+	raceBodyFail   uint64            // 胜者正文校验失败
+	raceFallback   uint64            // 竞速失败后顺序回退
+	raceBudget     uint64            // 第二候选预算不足、未形成双路
+	raceIneligible map[string]uint64 // 未获资格的原因
+	srcDur         map[srcDurKey]*hist
+	srcTTFB        map[srcDurKey]*hist
+	inflight       map[int64]int
+	srclimit       map[int64]int
 	// P0 观测：闸门排队时长、并发占用的时间加权均值。
 	gateWait    map[int64]*hist
 	inflightAvg map[int64]float64
@@ -197,6 +207,8 @@ func New() *Registry {
 		srcMiss:            map[srcMissKey]uint64{},
 		srcDur:             map[srcDurKey]*hist{},
 		srcTTFB:            map[srcDurKey]*hist{},
+		raceStarted:        map[string]uint64{},
+		raceIneligible:     map[string]uint64{},
 		inflight:           map[int64]int{},
 		srclimit:           map[int64]int{},
 		gateWait:           map[int64]*hist{},
@@ -377,6 +389,96 @@ func HedgeTrigger() {
 	r.hedgeTrigger++
 	r.hedgeExtra++
 	r.mu.Unlock()
+}
+
+// RegistryRaceStarted 记一次真正形成双路的同 Host 竞速。
+// layer 是固定枚举（A 阶段只有 same_host，B 阶段复用同一指标加 cross_registry）。
+func RegistryRaceStarted(layer, host string) {
+	if layer == "" {
+		layer = "same_host"
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.raceStarted[layer+"|"+host]++
+	r.mu.Unlock()
+}
+
+// RegistryRaceExtra 记录竞速真正多发出去的上游请求（每启动一路计一次）。
+// 只在 attempt 实际拨号后计数，预算不足或被取消的那一路不计。
+func RegistryRaceExtra() {
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceExtra++
+		r.mu.Unlock()
+	}
+}
+
+// RegistryRaceWin 记录竞速胜出的名次（1 = 第一候选，2 = 第二候选）。
+func RegistryRaceWin(rank int) {
+	if rank < 1 || rank > 2 {
+		return
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.raceWins[rank-1]++
+	r.mu.Unlock()
+}
+
+// RegistryRaceCancel 记录输家被取消（竞速正常结束的一半）。
+func RegistryRaceCancel() {
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceCancel++
+		r.mu.Unlock()
+	}
+}
+
+// RegistryRaceBodyFail 记录胜者正文校验失败（不提交缓存、走顺序回退）。
+func RegistryRaceBodyFail() {
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceBodyFail++
+		r.mu.Unlock()
+	}
+}
+
+// RegistryRaceFallback 记录竞速失败后回到顺序回源。
+func RegistryRaceFallback() {
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceFallback++
+		r.mu.Unlock()
+	}
+}
+
+// RegistryRaceBudgetSkip 记录第二候选因并发预算不足没有启动。
+func RegistryRaceBudgetSkip() {
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceBudget++
+		r.mu.Unlock()
+	}
+}
+
+// RegistryRaceIneligible 记录请求未进入竞速的原因，标签是固定枚举。
+func RegistryRaceIneligible(reason string) {
+	switch reason {
+	case "host_off", "no_star", "one_candidate", "not_digest",
+		"official_only", "revalidate", "cache_hit", "sched_off", "head", "private":
+	default:
+		reason = "other"
+	}
+	if r := current.Load(); r != nil {
+		r.mu.Lock()
+		r.raceIneligible[reason]++
+		r.mu.Unlock()
+	}
 }
 
 // HedgeWin 记录胜出者的候选排名（1 = 首选源，2 = 备用源）。
@@ -983,6 +1085,43 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "hedge_wins_total counter\n")
 		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"1\"} %d\n", prefix, r.hedgeWins[0])
 		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"2\"} %d\n", prefix, r.hedgeWins[1])
+	}
+	if len(r.raceStarted) > 0 {
+		b.WriteString("# HELP " + prefix + "registry_race_started_total 形成同 Host 双路竞速的次数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_started_total counter\n")
+		for _, k := range sortedKeys(r.raceStarted) {
+			layer, host := k, ""
+			if i := strings.IndexByte(k, '|'); i >= 0 {
+				layer, host = k[:i], k[i+1:]
+			}
+			fmt.Fprintf(&b, "%sregistry_race_started_total{layer=%q,host=%q} %d\n", prefix, layer, host, r.raceStarted[k])
+		}
+		b.WriteString("# HELP " + prefix + "registry_race_extra_requests_total 竞速额外发出的上游请求数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_extra_requests_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_extra_requests_total %d\n", prefix, r.raceExtra)
+		b.WriteString("# HELP " + prefix + "registry_race_wins_total 竞速按名次胜出的次数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_wins_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_wins_total{rank=\"1\"} %d\n", prefix, r.raceWins[0])
+		fmt.Fprintf(&b, "%sregistry_race_wins_total{rank=\"2\"} %d\n", prefix, r.raceWins[1])
+		b.WriteString("# HELP " + prefix + "registry_race_cancelled_total 竞速中被取消的输家次数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_cancelled_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_cancelled_total %d\n", prefix, r.raceCancel)
+		b.WriteString("# HELP " + prefix + "registry_race_body_failures_total 竞速胜者正文校验失败次数（不入缓存）\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_body_failures_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_body_failures_total %d\n", prefix, r.raceBodyFail)
+		b.WriteString("# HELP " + prefix + "registry_race_fallback_total 竞速失败后回到顺序回源的次数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_fallback_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_fallback_total %d\n", prefix, r.raceFallback)
+		b.WriteString("# HELP " + prefix + "registry_race_budget_skipped_total 第二候选并发预算不足、未形成双路的次数\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_budget_skipped_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_race_budget_skipped_total %d\n", prefix, r.raceBudget)
+	}
+	if len(r.raceIneligible) > 0 {
+		b.WriteString("# HELP " + prefix + "registry_race_ineligible_total 未进入竞速的请求数（按原因）\n")
+		b.WriteString("# TYPE " + prefix + "registry_race_ineligible_total counter\n")
+		for _, k := range sortedKeys(r.raceIneligible) {
+			fmt.Fprintf(&b, "%sregistry_race_ineligible_total{reason=%q} %d\n", prefix, k, r.raceIneligible[k])
+		}
 	}
 	if len(r.srcResp) > 0 {
 		b.WriteString("# HELP " + prefix + "source_http_responses_total 收到真实 HTTP 响应的次数（429 率的分母）\n")
