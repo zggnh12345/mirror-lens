@@ -1949,6 +1949,8 @@ Host 是否在私有认证 allowlist？
 
 本版本只处理公开 Registry Manifest，不扩展 Blob、私有凭据竞速、Token 请求或 Registry 上传流程。
 
+**收益边界（冻结）：** 3.5.16 的竞速对象是**不可变 Digest Manifest**，不是可变 Tag Manifest（见 3.7、T43）。因此 A 的性能目标是降低「已确定内容身份的 Manifest」上游回源 TTFB 与尾延迟，**不承诺 `docker pull <tag>` 的整个 Manifest 阶段获得同等收益**。可变 Tag 请求按既有顺序回源与 TTL/重验证执行。性能验收必须据此设定预期：不得用 `docker pull nginx:latest` 的总体提升有限来否定竞速算法。
+
 **1.2 核心原则**
 
 - Registry Race 默认关闭，不改变现有生产行为。
@@ -2286,6 +2288,16 @@ HEAD 必须进入强制禁止竞速的回源执行路径。可通过以下任一
 - 同策略 GET 可以合并；同策略 HEAD 可以合并。
 - GET 竞速 Flight 与 HEAD 顺序 Flight 不得合并。
 - HEAD 顺序 Flight 与其他竞速策略 Flight 不得合并。
+- **Flight 隔离的边界是「竞速执行态」，不是 HTTP 方法本身（冻结不变量）：** HEAD 不意味着永远独立 Flight，也不意味着 Race participant；无 Race 时 HEAD 可与 GET 共享顺序 Flight，存在 Race 时 HEAD 必须与 Race Flight 隔离。不得把「GET 竞速 Flight 与 HEAD 顺序 Flight 不得合并」扩大解释为「HEAD 永远独立 Flight」。
+- 按执行态的完整判定：
+
+| 执行态 | Flight 语义 |
+|---|---|
+| 默认 / `star_race` 关闭 | GET 与 HEAD 共享 `plan.CacheKey` 顺序 Flight |
+| `star_race` 开启但合格 Source < 2（不形成竞速） | 共享 `plan.CacheKey` 顺序 Flight |
+| `star_race` 开启且 ≥2 合格 Source，GET | 独立 Race Flight |
+| 上述竞速态下的 HEAD | 不进入 Race Flight，走顺序路径并与 Race Flight 隔离 |
+
 - 不得通过改变 CacheKey 实现隔离，不得因此产生重复缓存身份。
 - 同一 CacheKey 被不同 Flight 并发提交时必须保持缓存完整性。
 
@@ -2425,7 +2437,7 @@ Host 和 Source 标签必须使用规范化、受控标识，避免任意输入�
 - **阶段 A：现状冻结与执行路径基线** — 修改代码前固定当前行为：确认 serveManifest GET/HEAD 入口、fetchOnce singleflight 键、fetchSeq 通用 Hedge 准入、fetchRace 主备边界、Blob 四路径不进旧 Hedge、saveBody 校验与提交；固定 Git Hedge / Manifest HEAD / Blob / GHCR fallback 测试基线。验收要求有调用链证据、已有测试通过，不修改生产配置与数据库。
 - **阶段 B：数据模型和配置** — 建立独立、默认关闭的授权体系：Host 级 `star_race` 总开关、Source 星标竞速资格、配置读写持久化恢复、禁用/归档/删除/能力失配资格失效、API 与审计、UI 展示。**Host 总开关载体（已定）：** 存于现有 `settings` 表，以 Host 名为键（如 `docker.io → 关闭`），不新建 `hosts` 表；默认所有 Host 关闭，与 3.5.14c 零残留约束对齐（无设置项时行为与基线一致）。当前代码无 `star_race` / `registry_race` 字段，二者均为 3.5.16 新增，迁移时不引入任何旧字段、也不存在需删除的旧竞速判断。**存储约束（开工第一件事）：** 星标（人工策略）与 `source_host_caps`（探测能力权威表）必须彻底分离。`source_host_caps` 只记录探测能力、探测结果、有效期与状态，不再承载竞速授权；不新增第二套竞速资格字段，避免双轨模型。Source 在某 Host 的实际竞速生效 = 星标 AND Host 开关 AND 该 Host 的 `source_host_caps` 能力/状态/有效期合格 AND 健康准入，以此实现 Host 级隔离。验收：旧配置升级后竞速全关、无自动授权、旧字段不再参与判断、Host 开关独立、星标与探测能力表相互独立、状态可持久化、无效组合无法启用、一个 Host 的星标与开关不影响其他 Host。
 - **阶段 C：执行策略与 HEAD 隔离** — 解决客户端方法在执行层丢失：serveManifest 识别原始 Method；GET 用正常策略、HEAD 用强制 no-race 策略；通过 Plan 标志或独立 fetch 变体传递；fetchSeq 增加最终准入；保持非 Registry 原有 Hedge。验收：HEAD 即使 Hedge 开启也不产生并发上游请求；GET 竞速完全由资格决定；Git 不变；不依赖 Plan.Method；HEAD 仍上游 GET、完整校验、原缓存行为。
-- **阶段 D：Singleflight 隔离** — FlightKey 加执行策略命名空间**仅在 `star_race` 实际生效的 Host 上启用**；关闭竞速的 Host 仍以 `plan.CacheKey` 为 FlightKey，保持现状（HEAD 继续蹭 GET flight），不得因本版本引入默认配置下的额外上游请求与 CachePut。保持 CacheKey 语义不变；同策略可合并；检查并验证 5.4 全部并发提交场景，必要时最小范围修复。验收：默认关闭时 HEAD 与 GET 共用 flight、上游请求与 CachePut 无放大；开启竞速后 GET 竞速 Flight 不接收 HEAD follower、HEAD 顺序 Flight 不接收 GET follower、同策略可合并、无重复 CacheKey、并发提交不损坏缓存。
+- **阶段 D：Singleflight 隔离** — FlightKey 加执行策略命名空间**仅在 `star_race` 实际生效的 Host 上启用**；关闭竞速的 Host、以及 `star_race` 开启但未形成竞速（合格 Source < 2）时，均以 `plan.CacheKey` 为 FlightKey，保持现状（HEAD 继续蹭 GET flight），不得因本版本引入默认配置下的额外上游请求与 CachePut；只有实际形成竞速（≥2 合格 Source）才启用独立 Race Flight 并与 HEAD 顺序路径隔离（见 5.3 冻结不变量）。保持 CacheKey 语义不变；同策略可合并；检查并验证 5.4 全部并发提交场景，必要时最小范围修复。验收：默认关闭时 HEAD 与 GET 共用 flight、上游请求与 CachePut 无放大；开启竞速后 GET 竞速 Flight 不接收 HEAD follower、HEAD 顺序 Flight 不接收 GET follower、同策略可合并、无重复 CacheKey、并发提交不损坏缓存。
 - **阶段 E：Manifest Race 执行** — 从 Scheduler 获取候选并按 3.4 过滤出合格镜像集合；最多两个竞速者；官方源不参与竞速；复用响应头 Hedge 基础机制；每个 attempt 独立 Context；遵守 Source 并发与 Lease；完整读取胜者正文并复用 saveBody 校验；校验通过才提交；正文失败清理并按顺序 fallback；第二候选预算不足按 7.1 语义处理。不修改 Blob 和 fetchRace。验收：默认关闭无新增竞速、只有合格 Source 参与、最多两个候选、校验通过才提交、失败可回退、无资源泄漏与缓存污染、主备并行不变。
 - **阶段 F：指标与回归测试** — 复用 Hedge 指标、增加可区分维度、区分三类并发机制、增加资格变更审计日志、执行完整测试矩阵及 `go test ./...`、`go vet ./...`、竞态检测。验收：指标口径清晰无重复、标签基数可控、日志不泄露凭据、全部新增与回归测试通过。
 - **阶段 G：性能验收与发布** — 按第 12 节固定环境、基线与候选对照、至少 5 轮、统计 P50/P95/P99 等、预确定阈值、覆盖必测场景、灰度后决定范围。验收：P95 达阈值、错误率在容忍范围、无吞吐退化、额外请求成本可量化、高并发不突破并发限制、结果可复现。
@@ -2546,6 +2558,16 @@ Host 和 Source 标签必须使用规范化、受控标识，避免任意输入�
 **12.2 对照组** — 基线为 Registry Race 关闭，候选为 Registry Race 开启，两组使用相同环境、请求集合和负载。
 
 **12.3 重复与统计** — 同环境至少重复 5 次；报告 P50、P95、P99、吞吐、错误率、额外上游请求数、候选 Source 胜出分布、并发资源占用；P95 改善阈值必须在测试开始前确定，不得事后修改。
+
+**12.3.1 性能三指标（冻结口径）** — Race 触发率高不等于加速有效，必须分三维报告：
+
+| 维度 | 指标 |
+|---|---|
+| Race effectiveness | 合格双源比例、Race trigger rate、winner distribution（第一名/第二名胜出占比） |
+| Latency benefit | baseline 与 race 的 p50/p95/p99 对照、TTFB reduction、尾延迟改善 |
+| Request amplification | upstream attempts/request、hedge extra requests、失败后补位请求；并区分正常 race（2 upstream）、winner body 失败（可能 3 upstream）、预算不足（1 upstream） |
+
+核心判据：**Race 触发率不是性能收益指标。** 若第二路经常启动但第一路最终胜出，应同时看 TTFB/尾延迟改善与额外上游请求成本，不得只看 `hedge_triggered_total`。
 
 **12.4 必测场景** — 第一候选正常/第二候选较慢；第一候选延迟/第二候选较快；第一候选快速失败；两个候选都慢；第一候选响应头成功但正文失败；多客户端同时请求同一 Manifest；多客户端请求不同 Repository；Source 并发上限接近饱和；缓存命中与 TTL 重验证；**Manifest HEAD 对照（竞速开/关两态）**：量化 FlightKey 策略命名空间对 HEAD 上游请求数与 CachePut 次数的放大，竞速关闭态必须与基线一致。性能验收不能只看单次最快或绝对下载速度。
 
@@ -2883,7 +2905,9 @@ Blob 仍使用标准代理与内容寻址缓存，不并行拼接多个上游 Bl
 
 这不是“已知未关闭 P0”，而是后续版本的回归门禁。
 
-3.5.11、3.5.14b、3.5.14c、3.5.16 合并前必须重新执行：
+3.5.11、3.5.14b、3.5.14c、3.5.16 合并前必须重新执行；**3.5.17 亦纳入 G0，但当前仅作预留门禁**：B 进入实施时必须重新跑完整 G0，不得在身份映射工程骨架完成前声称 3.5.17 已通过 G0。跨 Registry Race 同样涉及流式正确性，不得拥有另一套标准（尤其须防 Source switch 后 `plan.Upstream` 未同步、206 只验证起点未验证 total/verifier 等已发现问题）：
+
+合并前必须重新执行：
 
 - Source 切换版本一致性
 - 206 Content-Range 起点、总长度、Body 长度
@@ -2945,6 +2969,9 @@ Blob 仍使用标准代理与内容寻址缓存，不并行拼接多个上游 Bl
 - A 层（3.5.16）：可变 Tag 一律不进竞速（3.7、T43 锁死），竞速只对不可变 Digest 开放；这条约束只约束 A。
 - B 层（3.5.17）：在显式可信副本映射 + 版本一致性得到证明后，可变 Tag 才允许跨站竞速（B.3、B.6、B03）。
 - B 对可变 Tag 的放开**不得反推 A 放开**：A 的 T43 约束独立成立，不因 B 的能力而松动；两层的可变 Tag 标准各自冻结、互不作为对方的豁免依据。
+- **执行策略分层（硬约束）：** A 的策略是 `same-registry-digest-race`；B 有自己独立的 `cross-registry-digest-race` 与 `cross-registry-tag-race`，是 B 自己的 execution policy，不是 A 的 Tag Race 放宽版。
+- **共享与不共享边界：** A、B 共享底层执行机制——attempt 生命周期、Scheduler、Lease、Body 校验、Claim、Cache commit；**不共享「什么请求有资格竞速」的策略判断（eligibility policy）**。
+- **禁止绕过：** B 不得调用 `A.Race()` 后偷偷把可变 Tag 塞进 A 的竞速入口；B 的 Tag 竞速必须走 B 自己的 `cross-registry-tag-race` policy，并在进入前完成 B.3 资源身份验证与 Tag 一致性证明。
 
 ## 10. 已定与待冻结
 
