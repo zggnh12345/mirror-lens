@@ -39,6 +39,7 @@ v1.6 相对 v1.5 的核心修正：
 16. 3.5.11 的“单事务”只覆盖运行时数据库写入；Token Cache 采用 generation 版本化失效，Schema 迁移是离线迁移 + 原子发布，二者都不纳入单事务承诺。
 17. 运行时多表写入统一 `BEGIN IMMEDIATE` 单事务；`SetCapsLive` / `CommitHostProbe` 属于 3.5.14a，不混进 3.5.11；迁移工具仍保持“离线迁移 + 原子发布”，不改造成大事务。
 18. 补充 3.5.11a 实施基线：当前代码基线是 `b4b0b22`，分支从当前 `HEAD` 开；11a 请求路径补 `headOnce` / `rangeReq` / `openUpstream` / resume / `watch.go`；Probe 的 `Realms` 换 resolver 但 `CredentialSnapshot` 不动；Token Cache 容量、fail closed 语义和 D1–D8 一并写入。
+19. （2026-11-18）`3.5.16` 章节整体重写为唯一权威实施方案：Host `star_race` 总开关 + Source 星标竞速资格（人工策略，与探测表分离、按 Host 能力生效）、Manifest HEAD 强制顺序执行与 FlightKey 隔离、竞速候选只取合格镜像 Source（官方源不补位）、链级 Hedge（有 fallback 时 main 仍可做 A）、完整性/新鲜度分离、缓存提交窗口专项验证、指标区分三类并发机制；H.1～H.4 剥离为独立批次，不作 3.5.16 交付门槛。设计基线通过，待冻结。
 
 ### 1.1 2026-11-16 修订
 
@@ -66,7 +67,7 @@ v1.6 相对 v1.5 的核心修正：
 1. 3.5.15 上一版不能直接冻结。P0-1～P0-7 全部接受：官方 `CredGen` 恒为 0、私有内容进入共享缓存、`SourceID` 零值身份、重定向认证头、Basic 范围矛盾、文件/DB 非原子、版本号冲突。
 2. 3.5.15 以“唯一权威设计”重写，保留 15-A/15-B/15-C/15-D 结构，新增威胁模型、决策记录、最终复核裁定、凭据一致性状态机、私有缓存隔离、身份与重定向安全、Probe/Gateway 职责边界、回滚降级和完整验收矩阵。
 3. 五项决策已定（正文见 3.5.15 决策记录 D-15-1～D-15-5）：Registry 直接 Basic 纳入；私有 Host 使用明确 allowlist；私有认证开启时强制 Gateway Access Token；私有/认证响应绕过共享缓存；官方 Realm 本版只支持同 Host 和已有内置 Realm。
-4. `3.5.16` 保持“公开 Manifest 竞速”，`3.5.17` 保持“Blob 竞速可行性评估”；认证运维能力不占用这两个版本号，后续单独排期。
+4. `3.5.16` 定位为 A：同 Registry 星标 Source Manifest 竞速；`3.5.17` 定位为 B：跨 Registry 可信 Manifest 竞速与顺序回退，最终形成 A+B。Blob 竞速移出，作为独立后续评估，不占用这两个版本号；认证运维能力另排期。
 5. 本版不进入代码实施；先完成最终设计复核，再按 15-A → 15-B → 15-C → 15-D 顺序开工。
 6. 2026-11-17 最终复核追加裁定：真实账号保持 `BLOCKED_EXTERNAL_SOURCE`；fixture 固定隔离容器 + 443 + allowlist 域名 + 测试 CA；epoch 由 Gateway 缓存管理模块清理；公共内容失去共享缓存接受；不增加 `CredDigest`；`PrivateAuthEnabled ⇒ GatewayAccessTokenRequired`；`OfficialOnly` 全生命周期；epoch 持久化与回滚闭合。
 
@@ -129,7 +130,7 @@ v1.6 相对 v1.5 的核心修正：
 
 没有公共 Source 不等于程序不支持该 Host；有 Source 配置也不等于已完成加速验收。
 
-> **2026-11-16 生产实测修正：** 上表是 3.5.9 的历史验收记录，不是当前生产库存。实测生产库 91 条 Source 中，`docker.io` 34 条（`registry_cap=-1`）、`ghcr.io` 2 条（`registry_cap=1 native`），8 个 foreign Host 的 Source 数均为 **0**。因此 3.5.12 的真实回源验收必须先完成 12-S（Source 就绪），不能把历史覆盖表当成现成测试对象。
+> **2026-11-16 生产实测修正：** 上表是 3.5.9 的历史验收记录，不是当前生产库存。实测生产库中 `docker.io` 占多数（`registry_cap=-1`）、`ghcr.io` 少数（`registry_cap=1 native`），8 个 foreign Host 的 Source 数均为 **0**。因此 3.5.12 的真实回源验收必须先完成 12-S（Source 就绪），不能把历史覆盖表当成现成测试对象。
 
 ### 2.3 当前模型不变量
 
@@ -143,7 +144,7 @@ v1.6 相对 v1.5 的核心修正：
 
 ### 3.1 问题定义
 
-公共镜像站经常用同一个 base URL 同时代理多个 Registry Host。春川 `https://gp.suwa.eu.org` 是首个实测样本：
+公共镜像站经常用同一个 base URL 同时代理多个 Registry Host。某公共镜像站 `https://mirror.example.org` 是首个实测样本：
 
 - Docker Hub
 - GHCR
@@ -153,7 +154,7 @@ v1.6 相对 v1.5 的核心修正：
 实测：
 
 ```text
-GET https://gp.suwa.eu.org/v2/registry.k8s.io/pause/manifests/3.9
+GET https://mirror.example.org/v2/registry.k8s.io/pause/manifests/3.9
 → 200
 → sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097
 ```
@@ -162,7 +163,7 @@ GET https://gp.suwa.eu.org/v2/registry.k8s.io/pause/manifests/3.9
 
 ### 3.2 为什么首页没有 K8S
 
-生产库中的春川 Source 当前是：
+生产库中的该实测镜像站 Source 当前是：
 
 ```text
 repo_host             = docker.io
@@ -171,11 +172,11 @@ registry_path_mode    = ''
 registry_probe_at     = 0
 ```
 
-`registry_host_recovery` 和 `source_health_scope` 中也没有春川的 K8S 记录。
+`registry_host_recovery` 和 `source_health_scope` 中也没有该实测镜像站的 K8S 记录。
 
 因此这不是 UI 漏读，而是：
 
-- 春川只被登记为 Docker 主源
+- 该实测镜像站只被登记为 Docker 主源
 - 没有 K8S 的 Host 归属
 - 没有 K8S 的探测结果
 - 当前 Schema 不支持一条 Source 多 Host
@@ -201,10 +202,10 @@ registry_probe_at     = 0
 | 3.5.14c | 删除旧 Registry 能力字段、旧投影和 `repo_host` 业务依赖 | 3.5.14b | Schema S14c；Source × Host 管理 |
 | 3.5.15 | CredStore 业务接入 + 官方私有 Registry 认证 + 凭据安全边界闭环 | 3.5.14c | 私有认证默认关闭；Access Token 必需；缓存绕过；Hub/GHCR 暂缓 |
 | 3.5.15a | GitLab PAT / Deploy Token 专项 | 3.5.15 | 单独验收 |
-| 3.5.16 | 公开 Manifest 竞速 | 3.5.11 + 3.5.14c | 默认关闭 |
-| 3.5.17 | Blob 竞速可行性评估 | 3.5.16 | 仅评估 |
+| 3.5.16 | A：同 Registry 星标 Source Manifest 竞速 | 3.5.11 + 3.5.14c | 默认关闭 |
+| 3.5.17 | B：跨 Registry 可信 Manifest 竞速与顺序回退 | 3.5.16（A） | 默认关闭；仅可信候选可跨站 |
 
-> 3.5.15a 不阻塞 3.5.16 的公开 Manifest 竞速；私有 Manifest 竞速依赖 3.5.15（以及 3.5.15a，如果使用 GitLab 专用凭据）。
+> 3.5.15a 不阻塞 3.5.16（A）的公开 Manifest 竞速；私有 Manifest 竞速依赖 3.5.15（以及 3.5.15a，如果使用 GitLab 专用凭据）。3.5.17（B）依赖 3.5.16（A）全部验收通过。
 >
 > 本链中明确改 Schema 的是 **3.5.11**（`source_realm_policy`）、**3.5.14a**（`source_host_caps`）和 **3.5.14c**（删除旧 Registry 字段）。3.5.14b 只改读路径，不改 Schema。
 >
@@ -818,7 +819,7 @@ D6 的四段顺序必须完整复刻：
 
 #### 3.5.12-F 12-S：Source 就绪（12a/12b 前置门禁）
 
-生产实测：8 个目标 Host 当前 Source 数均为 0。`docker.io` 的 `registry_cap=-1` 不得解释为 foreign Host 能力；3.5.14 之前一个 Source 只能绑定一个 `repo_host`，不能用春川（Source ID 638）替代独立源行。
+生产实测：8 个目标 Host 当前 Source 数均为 0。`docker.io` 的 `registry_cap=-1` 不得解释为 foreign Host 能力；3.5.14 之前一个 Source 只能绑定一个 `repo_host`，不能用该实测镜像站（某 Source ID）替代独立源行。
 
 **生产灰度顺序：先收窄白名单，再建源。** 生产 `config.yaml` 未显式配置 `multi_origin_hosts`，默认 8 个 Host 全开；先建源再验收不构成灰度。
 
@@ -1005,7 +1006,7 @@ Docker / GHCR 的 `effective_status` 映射必须显式实现，不能只写 `do
 - 两个已知值冲突且无法按上述优先级消解：fail closed，输出 `source_id` / `host` / 两个值，人工处理，不自动猜
 - 不能静默选一个值继续迁移
 
-六个双用途 Source（54、69、71、86、88、638）必须同时补 `(source_id, ghcr.io)` 的 `source_realm_policy`；不能安全生成时进入 `policy_gaps`，并把该 caps 行 `enabled=0`，同时在 14b 验收中记录预期差异。
+六个双用途 Source（示例 ID 已脱敏）必须同时补 `(source_id, ghcr.io)` 的 `source_realm_policy`；不能安全生成时进入 `policy_gaps`，并把该 caps 行 `enabled=0`，同时在 14b 验收中记录预期差异。
 
 生产只读盘点的预期行数为 194（4 Foreign + 95 Docker + 95 GHCR，无重叠）；实际行数不一致必须解释。明细见 `docs/3.5.14-freeze.md` 4.2。
 
@@ -1301,7 +1302,7 @@ JOIN sources src ON src.repo_host = g.host
 - 旧单 Host Source 行为不变
 - 回滚演练通过
 - Source × Host 管理 API/UI 通过：新增、启停、删除（14b 禁止删原 `repo_host`）、重置 verdict
-- 春川多 Host 验收通过；关闭 K8S 不影响 Docker/GHCR
+- 该实测镜像站多 Host 验收通过；关闭 K8S 不影响 Docker/GHCR
 - 性能退化不超过 `docs/3.5.14-freeze.md` 11.4 的阈值
 
 迁移测试必须包含：
@@ -1320,12 +1321,12 @@ JOIN sources src ON src.repo_host = g.host
 - `backfillHostCaps` 前后行数和冲突校验
 - 逐 Host old/new 候选对比；旧 Host 无非预期差异，新增 Host 显式列出
 
-#### 3.5.14b-F 春川样本验收
+#### 3.5.14b-F 该实测镜像站样本验收
 
-- 春川可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
+- 该实测镜像站可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
 - 首页只显示实际探测通过的标签
-- K8S 请求实际命中春川，而不是只显示标签
-- 关闭春川 K8S 能力不影响 Docker / GHCR
+- K8S 请求实际命中该实测镜像站，而不是只显示标签
+- 关闭该实测镜像站 K8S 能力不影响 Docker / GHCR
 - Docker / GHCR / K8S / GCR 的健康、冷却、失败互不污染
 
 #### 3.5.14b-G Source × Host 管理与只读矩阵
@@ -1336,7 +1337,7 @@ JOIN sources src ON src.repo_host = g.host
 - `AddSourceHost` 必须同时写 caps、policy、health/recovery 和审计
 - `SetSourceHostEnabled` 必须同步旧投影（`enabled ? cap : 0`）、审计和调度缓存失效
 - 14b 期间禁止删除 `host == repo_host`；原主 Host 的移除留到 14c 或走 `SetRepoHost` 迁移
-- 用于运维核对春川这类多 Host Source；14b-F 的 K8S 关闭必须走这个 API，不能靠改配置文件
+- 用于运维核对该实测镜像站这类多 Host Source；14b-F 的 K8S 关闭必须走这个 API，不能靠改配置文件
 
 #### 3.5.14b-H 单轨与回滚
 
@@ -1455,7 +1456,7 @@ RPO=0 只承诺到开放生产流量之前。开放后若要求 RPO=0，必须�
 - Docker Hub 私有仓库、GHCR 用户名/PAT 不纳入首批；`credentialHost` 继续拒绝 `docker.io` / `ghcr.io`。
 - GitLab PAT / Deploy Token 留在 3.5.15a；GCP ADC / OAuth、AWS ECR IAM、OIDC / 工作负载身份不纳入。
 - 不做 per-client、per-repository 授权；本版只建立 Host 级凭据能力，权限边界见 15-D。
-- 不新增 Registry 类型，不改 `3.5.16`（公开 Manifest 竞速）和 `3.5.17`（Blob 竞速可行性评估）的版本目标。
+- 不新增 Registry 类型，不改 `3.5.16`（A：同 Registry 星标 Source 竞速）和 `3.5.17`（B：跨 Registry 可信竞速与顺序回退）的版本目标。
 
 **Schema 边界：** 凭据管理、审计、状态机使用现有 `registry_creds.enc`、`registry_host_gen`、`audit` 和 `meta`，不改变 Schema 迁移基线。后续若要增加 official realm 配置、per-client 授权或 per-tenant 缓存身份，属于新的 Schema/配置变更，必须单独定版，不能塞进本版。
 
@@ -1779,7 +1780,7 @@ Host 是否在私有认证 allowlist？
 - 私有认证默认关闭；未同时满足 allowlist、Access Token、身份门禁、缓存绕过、历史缓存隔离时，不得开启。
 - 没有真实私有 Host 证据时，只能写“机制通过受控 fixture”；真实 fixture 失败时必须缩小 3.5.15 的支持声明（Host 或认证方式），不得用模拟测试替代。`PENDING_REAL_FIXTURE` 不能写成 `REAL_PASS`。
 - 验收状态只允许 `REAL_PASS` / `SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` / `NOT_EXECUTED`；公共仓库回源成功不能写成私有 `REAL_PASS`。
-- `3.5.16` / `3.5.17` 保持原规划；认证运维能力另排版本，不占用这两个号。
+- `3.5.16`（A）/ `3.5.17`（B）按两阶段路线推进；认证运维能力另排版本，不占用这两个号。
 
 #### 3.5.15 验收矩阵
 
@@ -1883,7 +1884,7 @@ Host 是否在私有认证 allowlist？
 | D-15-3 | 私有认证与 Access Token | 私有认证默认关闭；开启必须 `auth.require_token=true`，否则拒绝启动 |
 | D-15-4 | 认证/私有响应缓存 | 私有认证 Host 的请求在缓存查询前绕过共享缓存；认证失败不回退缓存 |
 | D-15-5 | 官方 Realm | 本版只支持同 Host 和已有内置 Realm；外部 Realm 留后续版本 |
-| D-15-6 | 版本号 | `3.5.16` 公开 Manifest 竞速、`3.5.17` Blob 竞速评估保持不变 |
+| D-15-6 | 版本号 | `3.5.16` = A 同 Registry 星标 Source 竞速、`3.5.17` = B 跨 Registry 可信竞速与顺序回退；Blob 评估移出 |
 | D-15-7 | `*.pkg.dev` | 本版不支持凭据；`credentialHost` 排除，公共匿名拉取不变 |
 | D-15-8 | 客户端授权 | 不做 per-client / per-repository 授权；明确 Host 级 blast radius |
 | D-15-9 | 审计 | 凭据变更审计与 gen 更新同事务或同步写；不接受队列满静默丢失 |
@@ -1930,38 +1931,671 @@ Host 是否在私有认证 allowlist？
 - 权限不足时返回准确状态，不降级成匿名成功
 - 第三方 Source 不能获得 GitLab 用户凭据
 
-### 3.5.16 公开 Manifest 竞速
+### 3.5.16 同一 Registry 内的星标 Source Manifest 竞速（A）
 
-**目标：** 同一 Host 已有多个稳定候选后，提供显式、可控的 Manifest 首包加速策略。
+> **设计状态：** 基线通过，待冻结。本节是 3.5.16 唯一权威实施方案；代码实施前不得扩大范围。
+> **版本定位：** A：同一 Registry Host 内的星标 Source Manifest 竞速。依托 3.5.11 + 3.5.14c，不改变 3.5.15 已完成的认证、身份隔离与缓存安全边界。跨 Registry（B）由 3.5.17 实现，本版本只保留扩展边界，不提前实现跨站能力。
+> **核心原则：** 不重构现有 Scheduler、Hedge、fetchRace 和 Blob 并行机制，只增加 Registry Manifest 专属竞速准入与执行控制；不把「同一逻辑资源」假设固化成无法替换的常量。
 
-依赖：
+**1. 版本目标**
 
-- 公开竞速：3.5.11 + 3.5.14c
-- 私有竞速：额外依赖 3.5.15；使用 GitLab 专用凭据时再依赖 3.5.15a
+**1.1 建设目标**
 
-范围：
+在现有多源调度、健康探测、熔断、并发限制、响应头 Hedge、内容完整性校验和缓存提交机制之上，增加公开 Registry Manifest 的受控多源竞速能力。
 
-- `star_race` 是 Host 级查询策略，默认关闭
-- 只允许同一 Host 下显式 `registry_race=true` 且健康的 Source
-- 最多两个候选参与
-- 其他候选仍按顺序回退
-- winner 必须完成 Manifest 正文校验
-- loser body / 连接 / goroutine 正确清理
-- 只作用于 Manifest，不作用于 Blob
-- 不跨 Host 竞速
+当同一个 Registry Host 配置了多个可用 Source，且该 Host 的总开关开启、Source 已星标、且该 Source 在此 Host 的能力与状态探测合格时，系统可以并行请求最多两个候选 Source，优先采用先返回有效响应的候选，减少 Manifest 获取延迟。
 
-验收：
+星标在本版本中的产品语义明确为「星标 = 具备竞速资格」。星标是人工策略，不由探测置位、不派生自 `source_host_caps`；但星标只是竞速资格的必要条件，Source 还必须在目标 Host 上通过能力、健康、熔断和调度检查才能实际参与竞速，以实现 Host 级隔离。
 
-- 默认关闭时严格 sequential
-- 开关只影响指定 Host
-- 只有显式合格候选参与，最多两个
-- winner 响应完整可读
-- loser 资源正确清理
-- 有固定环境、基线、重复次数和 P50/P95 阈值的对照测速
+本版本只处理公开 Registry Manifest，不扩展 Blob、私有凭据竞速、Token 请求或 Registry 上传流程。
 
-#### 3.5.16-H 认证运维硬化（附加工作块）
+**1.2 核心原则**
 
-> 本工作块是 3.5.15 验收遗留项的后续承载，不替代 3.5.16 的公开 Manifest 竞速目标；若排期冲突，Manifest 竞速优先，本工作块顺延。
+- Registry Race 默认关闭，不改变现有生产行为。
+- Registry Race 必须由 Host 总开关（安全启停闸）与 Source 星标资格共同授权；星标是人工策略，与 `source_host_caps` 探测能力表分离，探测成功不自动获得竞速资格。
+- 仅 Manifest GET 允许进入新竞速。
+- Manifest HEAD 必须保持顺序回源，不得间接加入 GET 的竞速 Flight。
+- Blob 保持现有执行路径，不改造 fillStream 并行机制。
+- 既有通用 Hedge、Scheduler、健康熔断、并发限制和 fetchRace 不进行架构重写。
+- 正文完整性校验通过不等于可变 Tag 与官方当前状态一致。
+- 不改变现有 CacheKey、Manifest 缓存身份及 Blob 缓存语义。
+- 竞速失败必须能够回退到现有顺序请求路径。
+- 所有竞速请求必须遵守现有 Source 并发限制和资源释放规则。
+
+**1.3 交付边界**
+
+本版本交付：
+
+- Host 级 Registry Race 总开关（默认关闭）。
+- Source 星标竞速资格（Source 级人工策略；实际生效按 Host 能力与状态 AND 判断）。
+- Manifest GET 专属竞速执行。
+- Manifest HEAD 顺序执行隔离。
+- Singleflight 策略隔离。
+- 竞速结果完整性校验与失败回退。
+- 指标、审计、日志和管理界面。
+- 并发、缓存、流式回归和性能验收。
+
+本版本不交付：
+
+- Registry Blob 竞速。
+- Registry Token 竞速。
+- Registry 上传请求竞速。
+- 私有 Manifest 竞速。
+- GitLab PAT 扩展。
+- 新的 Registry 协议实现。
+- Scheduler 或通用 Hedge 的整体重构。
+- H.1～H.4 为独立后续批次，不作为本版本核心交付门槛（见本节末「附」）。
+
+**2. 现有代码路径与实施边界**
+
+**2.1 Manifest 调用链**
+
+现有 Manifest GET/HEAD 共用回源路径：
+
+```
+serveManifest → fetchOnce → fetch → fetchSeq → pickUpstream
+```
+
+当前 `serveManifest` 没有区分客户端 GET 和 HEAD 的回源执行策略。Manifest HEAD 实际仍然通过上游 GET 获取完整 Manifest，完成校验和缓存处理，最终只在 `writeManifest` 阶段省略响应 Body。
+
+因此，本版本必须保留以下既有语义：
+
+- 客户端 HEAD 仍然通过上游 GET 获取 Manifest。
+- 保留现有长度、Digest 和缓存处理。
+- 客户端 HEAD 不启动任何新 Registry Race。
+- 客户端 HEAD 不加入 GET 的竞速 Flight。
+- 不得为了实现顺序执行而改成真正的上游 HEAD。
+
+**2.2 Blob 调用链**
+
+Blob 不进入现有 `fetchSeq` / `pickUpstream` Hedge 路径：
+
+| Blob 场景 | 现有路径 | 3.5.16 处理 |
+|---|---|---|
+| 缓存命中 | `writeBlobFile` | 不改 |
+| HEAD | `headBlob → headOnce` | 不改 |
+| Range | `passThrough` | 不改 |
+| MISS | `fillStream → tryTrusted/tryOfficialParallel/tryParallel` | 不改 |
+
+不得把 Blob 的现有并行逻辑并入 Manifest Race。
+
+**2.3 现有通用 Hedge**
+
+当前通用 Hedge 默认开启，不能把 `Hedge.Enabled` 当成 Registry Race 开关。现有 Hedge 必须保持 Git 和其他非 Registry 请求的行为。对 Registry Manifest：
+
+- Race 关闭时，不得由旧 Hedge 绕过新开关。
+- Race 开启时，只能由 Registry 专属资格检查决定是否允许竞速。
+- HEAD 必须始终禁止竞速。
+- 非 Manifest Registry 请求不得因为进入通用 `fetchSeq` 自动获得竞速资格。
+- `fetchSeq` 是执行层最后一道准入检查，但不能在这里读取客户端 HTTP Method——当前 `plan.Method` 被写死为 GET，不能代表客户端原始请求方法。
+
+实施注意：现有 `pickUpstream` 的快速失败补位是 `if started < n { launch(started) }`，直接按 `targets` 索引取下一个候选、不做任何资格过滤，必然会把官方源拉进来。因此 Registry Race **不得复用该补位逻辑**；候选必须先过滤成「合格镜像源集合」再交给执行层（见 3.4）。
+
+**2.3.1 链级 Hedge 语义（fallback 与 A 共存）**
+
+现状代码 `fetchSeq` 的 Hedge 准入含 `len(plan.Fallbacks) == 0`：一旦存在 GHCR fallback，`fetch()` 走 `fetchRace` 把请求拆成 main 与 fb 两条链，两条链内部都不启动 Hedge。这样能防四路竞速，但会让 A 在所有带 fallback 的请求上失效——而裸名镜像恰恰大多带 GHCR fallback，A 将大面积不生效。
+
+本版本裁定采用**链级 Hedge 判断**，而非全局关闭：
+
+- main 链：允许同 Host 星标 Source 的 A 竞速（`hedged=true` 的条件按链判定，不再用 `len(plan.Fallbacks)==0` 一刀切）。
+- fb 链：不因 main 链开启 A 而叠加内部 Hedge；fb 链仍按原有主备语义执行。
+- 不得形成「每链两路 × 多链」的无界并发；A 的每 Host 最多两个候选与全局并发预算在两条链上统一生效。
+- 实施前必须核对 `fetchRace` 传给两条 `fetchSeq` 的 `plan` 副本与 targets 上下文，确保只有 main 链满足链级 Hedge 条件；不得简单删除 `len(plan.Fallbacks) == 0` 了事。这不是简单调整一个条件，而是需要明确 Hedge 的作用域、请求上下文和资源所有权。
+
+必须证明（纳入 A07）：
+
+1. main 链存在 fallback 时仍能执行同 Host 星标 Source 竞速。
+2. fb 链不会再额外启动一组同层 Hedge。
+3. 不会形成无意的 2×2 四路并发。
+4. main 失败后 fb 仍能正常接管。
+5. main 的胜出不会导致 fb 的 Body、连接或 goroutine 泄漏。
+6. 取消 main 的某个竞速尝试，不会误取消整个请求或其他仍在竞争的尝试。
+
+该项为 3.5.16 必做实现约束与正确性门禁（A07），不得降为「已知限制」或普通性能优化，不得让 A 在带 fallback 时静默失效。
+
+**2.4 既有 fetchRace**
+
+当前裸格式 Docker Hub Repository 可以通过 `addGhcrFallback` 增加 GHCR 备用链。在 `prev == nil && len(plan.Fallbacks) > 0` 时，`fetch()` 可能进入 `fetchRace`，而不是直接使用 `fetchSeq` 的 Hedge 分支。
+
+这属于既有主站/备用站点并行机制，不属于 3.5.16 同 Host 多 Source 竞速。必须保持：
+
+- 原有触发条件不变。
+- 原有主备链执行行为不变。
+- 原有取消和缓存提交保护不变。
+- 不受 Host `star_race` 开关控制，也不受 Source 星标资格影响（既有主备并行与本版本竞速是两种机制）。
+- 不因 3.5.16 开启而叠加第二层 Registry Race。
+- 不因 3.5.16 默认关闭而意外禁用。
+- 两种机制的指标和验收结果必须能够区分（见 6、8.2）。
+
+**3. 功能设计**
+
+**3.1 Host 级总开关**
+
+新增 Host 级配置 `star_race` 作为安全启停总闸（当前代码无此字段，属 3.5.16 新增）：
+
+- 语义：控制指定 Registry Host 是否允许参与公开 Manifest 多源竞速。
+- 默认 false；每个 Host 独立设置；未配置时按关闭处理。
+- Host 禁用、归档或删除时不得继续参与竞速。
+- Host 能力不满足要求时不得参与竞速。
+- 不得因为某 Source 被星标而自动开启任何 Host 的总开关。
+- Host 总开关是必要条件，不是充分条件。一个 Host 的开关不影响其他 Host。
+
+**3.2 星标竞速资格（Source 级人工策略）**
+
+竞速资格由 Source 星标（`Preferred`）表达，不新增任何第二套竞速资格字段，避免两套配置同时控制同一件事。当前代码中并无 `star_race` / `registry_race` 字段，二者均为 3.5.16 新增（Host 总开关为新增配置，非沿用既有字段）；不得在迁移中引入独立竞速资格列，也不得存在任何旧字段残留影响资格。资格判定涉及三个不同层次，必须分开，不得互相替代：人工策略（Source 星标）、技术能力（Host 能力探测 `source_host_caps`）、数据模型（Source 与 Host 分列管理，见 2.3）。
+
+最终资格公式为：
+
+```
+RaceEligible = Starred ∧ HostEnabled ∧ HostCapable ∧ Healthy
+```
+
+各条件的来源与职责：
+
+| 条件 | 作用 | 来源 | 层次 |
+|---|---|---|---|
+| Source 星标 | 人工授予竞速资格 | `Preferred`（人工策略） | 人工策略 |
+| Host `star_race` | 控制该 Host 是否启用竞速 | Host 配置 | 人工策略 |
+| Host 能力探测 | 判断该 Source 是否适用于该 Host | `source_host_caps` | 技术能力 |
+| 健康状态 | 判断当前是否适合参与请求 | 现有健康机制 | 技术能力 |
+
+- 语义：星标 = 该 Source 具备参与公开 Manifest 竞速的资格。星标是人工策略，复用现有 Source 级 `Preferred` 字段，不由探测置位、不得写入或派生自 `source_host_caps`、不因探测成功自动获得。
+- **字段作用域消歧（不新增字段）：** `Preferred` 在现有代码中已承担四种用途——调度排序优先（scheduler/api）、Blob 分片时「星标源优先单流、持续慢才降级」（parallel）、首字节后换源的唯一候选集（watch）、以及本版本的竞速资格。它们是同一颗星的四种用途，不是四套授权；竞速含义仅在目标 Host 的 `star_race` 开启时激活，其余三种用途保持既有语义不变。竞速不修改 `Preferred` 的既有行为，也不因竞速赋予它新的自动置位规则。
+- **星标是人工竞速资格的必要条件，不代表该 Source 对所有 Registry Host 自动具备竞速能力。** 实际参与竞速必须同时满足目标 Host 的启用状态、能力探测有效性及健康准入条件。能力探测只决定技术可用性，不授予或撤销人工竞速资格。
+- 典型判定：Source A 已星标且 Docker Hub 能力探测通过 → 可参与 Docker Hub 竞速；Source A 已星标但 GHCR 能力探测失败 → 不能参与 GHCR 竞速；Source A 已星标但 Host 探测状态过期 → 不能直接认定合格；Source A 未星标即使 Host 能力完全通过 → 仍不能竞速，但保留顺序回源资格。
+- 探测成功不能自动给 Source 加星；探测失败不能自动取消人工星标；星标保留但在不合格期间暂时不能参与竞速。人工策略与自动探测结果必须解耦。
+- Source 禁用、归档或删除时自动失去资格。
+- Source 在某 Host 的能力不合格、健康/熔断不通过、探测状态过期或与 Host 的绑定失效时，在该 Host 失去竞速资格，但在其他合格 Host 上的星标资格不受影响——以此实现 Host 级隔离（A03）。
+- 非星标 Source 保留原有顺序回源资格，不参与并行竞速，但仍是 fallback 链的一部分。
+- 不得绕过现有 Source 并发限制。
+
+**3.3 最终准入条件**
+
+只有同时满足以下条件，才允许执行 Registry Race：
+
+1. 请求属于 Registry。
+2. `ResourceKind` 为 `ResourceManifest`。
+3. 客户端请求是 Manifest GET。
+4. Host 的 `star_race=true`。
+5. 对应 Source 已星标（`Preferred=true`，人工策略）。
+6. 该 Source 在此 Host 的 `source_host_caps` 能力合格、状态 Supported 且探测结果在有效期内，并满足既有健康、熔断和调度条件。「在有效期内」必须判定为可断言表达式：`recovery.state=ok` 且 `now - last_success_at ≤ ttl`（按 `(source_id,family,scope)`，与 3.5.14c 恢复状态一致）；`source_host_caps` 本身无时间列，不得把它解读为该表内有时间字段。
+7. Source 对应 Host 的能力和路径策略满足要求。
+8. 请求没有被显式标记为禁止竞速。
+9. 当前请求不是缓存重验证、OfficialOnly 或其他已有保护路径。
+10. 现有并发预算允许启动竞速。
+
+竞速资格不等于必须竞速。没有足够的合格候选时，必须退回原有顺序执行路径。星标资格与探测能力的分离是安全底线：探测只回答「能不能」，星标才回答「准不准」；探测既不能授予也不能撤销人工竞速资格，二者不可互相推导。
+
+**准入查询热路径约束：** 3.4 第 1–4 步每次 Manifest GET 都要查 caps/星标/健康，必须避免每次请求全量 Snapshot。沿用 3.5.15「热路径不得全量 Snapshot」约束：按 Host 加载内存快照，以 `registry_host_gen` 等版本号失效，命中快照时不重复读库。
+
+**3.4 竞速候选数量（官方源不得成为竞速候选）**
+
+每个逻辑 Manifest 请求最多启动两个竞速候选 Source。含 fallback 时最坏并发为 A 2 路 + fb 1 路 = 3 路上游请求，必须写入 12.3 的额外请求口径，性能对照按此口径统计，不得按 2 路计算额外请求。
+
+**Registry Race 必须建立独立的合格镜像候选集合，不能直接使用 `targets[0:2]`。** 现有 `targets()` 排列是 `head`（镜像候选）→ `out`（官方源）→ `fbs`（备用源），旧 Hedge 直接取前两个 Target；当只有一个合格镜像源时，第二个 Target 就是官方源，不符合竞速定义。
+
+正确执行流程：
+
+1. 获取现有 Scheduler 候选。
+2. 按 Host 级 `star_race` 过滤。
+3. 按 Source 星标资格（`Preferred=true`）过滤。
+4. 排除禁用、归档、不健康、熔断、能力不匹配、在该 Host 状态非 Supported 的 Source。
+5. 按现有 Scheduler 排序。
+6. 从合格镜像 Source 中最多选择两个。
+7. 官方源 `out` 不进入竞速候选集合。
+8. 不足两个合格镜像 Source 时，执行原有顺序回源，不以官方源补足第二个竞速位置。
+
+| 合格镜像 Source 数量 | Registry Race 行为 |
+|---|---|
+| 0 | 原有顺序回源 |
+| 1 | 原有顺序回源，不与官方源竞速 |
+| 2 | 两个合格镜像 Source 竞速 |
+| 3 个及以上 | 按 Scheduler 排序取前两个 |
+
+官方源仍然保留原有回退职责，不改变原有 fallback 顺序。
+
+其他要求：
+
+- 第一候选按现有 Scheduler 排序从合格集合中选取。
+- 第二候选必须满足完整 Registry Race 准入条件。
+- 不得把未星标或未通过 Host 能力/状态门禁的 Source 作为第二候选。
+- 不得把官方源、备用站点和同 Host 多 Source 混淆为同一种竞速资格。
+- 不得因为候选不足而重复请求同一个 Source。
+- 不得产生三路或四路叠加竞速。
+
+**3.5 竞速启动策略**
+
+复用现有响应头 Hedge 的启动思想，不重写其基础机制：
+
+- 第一候选立即发起请求。
+- 第一候选超过配置的启动延迟仍未返回有效响应头时，启动第二候选。
+- 第一候选快速失败时，可以提前启动第二候选。
+- 最多两个候选。
+- 先获得符合响应头接受条件的候选进入正文读取和校验阶段。
+- 响应头先到不等于内容最终通过验收。
+- 不得在正文完整性校验通过之前提交缓存。
+- 竞速延迟和 Grace 等参数应复用已有可配置机制或采用明确的 Registry 专属配置，不得改变现有通用 Hedge 参数的含义。
+
+**3.6 Manifest 内容校验**
+
+复用现有 `saveBody` 及相关完整性校验逻辑，不重复实现一套校验系统。必须保留：
+
+- HTTP 状态判断。
+- Content-Length 校验。
+- 上游声明 Digest 的校验。
+- 请求指定 Digest 时的匹配校验。
+- 正文完整读取。
+- 缓存提交前校验。
+
+任何长度错误、Digest 不一致、正文截断或读取失败，都不能提交缓存。
+
+**3.7 完整性与新鲜度分离**
+
+必须区分两个概念：
+
+- **完整性**：正文与声明的长度和 Digest 相符，说明取得的内容符合其完整性声明。
+- **新鲜度**：可变 Tag 当前指向的内容是否与官方源当前状态一致。
+
+Digest 正确不能证明可变 Tag 是最新版本。首期公开竞速不承诺所有可变 Tag 与官方源实时一致，不得把镜像源返回的有效 Digest 描述成官方最新状态保证。
+
+- 对于请求指定不可变 Digest 的 Manifest，可以根据 Digest 校验确认内容身份。
+- 对于可变 Tag，必须遵循现有缓存 TTL、重验证和信任策略，不得因为竞速成功而延长缓存新鲜度或跳过已有重验证。
+- **竞速适用收紧：** 首期 A 的竞速只对请求指定不可变 Digest 的 Manifest 开放；可变 Tag 请求不进入竞速，按既有顺序回源与 TTL/重验证策略执行。理由：竞速按先到取胜，第三方镜像站的缓存命中易把可变 Tag 钉在旧版本，而 A 缺乏 B 的跨站 Digest 三方校验，两级标准不一致。若后续要开放可变 Tag 竞速，必须先增加「赢家与权威站 Digest 软比对」门禁并单独验收，不得在 3.5.16 默认开启。
+
+**3.8 Winner 正文失败后的回退**
+
+竞速阶段的响应头胜者不代表最终成功。如果胜者在正文读取、长度校验或 Digest 校验阶段失败：
+
+- 判定本次竞速结果失败。
+- 不提交该响应正文。
+- 已取消的输家不恢复、不复用。
+- 释放失败 attempt 的资源和并发 Lease。
+- 按现有顺序 fallback 重新请求下一个候选；已取消的输家 Source 计入本次请求的 `tried` 集合，顺序回退时跳过它，避免「复用输家」与「不重复请求同一 Source」两条规则冲突。
+- 只有完整校验通过的正文才允许进入缓存。
+
+该设计允许在正文失败场景中产生额外一次上游请求。这是明确接受的失败成本，不通过保留输家 Body 或 Lease 来换取复杂的资源生命周期。
+
+**3.9 缓存与重验证**
+
+保持现有缓存行为：
+
+- Cache Hit 不进入 Registry Race。
+- `prev != nil` 时保持现有官方源重验证路径。
+- OfficialOnly 不进入 Registry Race。
+- 调度器关闭时不进入 Registry Race。
+- 不修改 CacheKey、Manifest 缓存身份、Blob 缓存身份。
+- 不允许未校验正文进入缓存。
+- 不改变现有负缓存和 404/410 语义。
+
+**4. HEAD 分流与执行策略传递**
+
+**4.1 分流位置**
+
+必须在 `serveManifest` 识别客户端原始 HTTP Method。不能在 `fetchSeq` 中通过 `plan.Method` 判断 HEAD，因为当前 Registry Manifest Plan.Method 恒为 GET。
+
+**4.2 强制顺序执行**
+
+HEAD 必须进入强制禁止竞速的回源执行路径。可通过以下任一实现方式完成：
+
+- 增加明确的 Plan 级禁止竞速标志。
+- 提供具有明确 no-race 语义的 fetch 变体。
+
+最终实现必须满足：
+
+- HEAD 的禁止竞速状态从 `serveManifest` 传递至实际执行层。
+- `fetchSeq` 的 Hedge 准入检查遵守该状态。
+- 所有新增 Registry Race 入口也遵守该状态。
+- 不能依靠 `Plan.Method` 伪装或判断客户端方法。
+- 不得改变 HEAD 原有上游 GET、正文校验和缓存行为。
+
+**4.3 非 Registry 兼容**
+
+非 Registry 请求不得受到 HEAD 分流改造的意外影响：
+
+- Git 请求继续使用原有通用 Hedge。
+- 其他 HTTP 请求继续使用原有执行逻辑。
+- 不得为了禁止 Registry Manifest HEAD 而全局禁用 HEAD 请求的 Hedge。
+
+**5. Singleflight 隔离**
+
+**5.1 问题**
+
+当前 `fetchOnce` 使用 `plan.CacheKey` 作为 singleflight 键，而 Manifest CacheKey 不包含客户端 Method，也不包含竞速属性，因此 GET 和 HEAD 共用同一个 Flight。这会产生双向策略污染：
+
+- HEAD 加入 GET 竞速 Flight，间接获得竞速结果。
+- GET 加入 HEAD 顺序 Flight，导致竞速失效。
+
+仅在 `serveManifest` 分流或 `fetchSeq` 禁止竞速不能解决这个问题。
+
+**5.2 CacheKey 与 FlightKey 分离**
+
+必须明确区分：
+
+| 键 | 作用 | 是否包含执行策略 |
+|---|---|---|
+| CacheKey | 缓存内容身份 | 否 |
+| FlightKey | 请求合并身份 | 是 |
+
+- CacheKey 保持原有结构，不得增加 Method 或竞速策略字段。
+- FlightKey 必须区分不同执行策略，逻辑示例：`FlightKey = CacheKey + execution_policy`。该命名空间**仅在该 Host 的 `star_race` 实际启用时生效**；关闭时仍以 `plan.CacheKey` 为 FlightKey（见阶段 D），此处约束只针对启用态。
+- `execution_policy` 定义为**可扩展枚举**，A 阶段至少落三档：`registry-race`、`registry-no-race`、原有默认执行策略；预留 `cross-registry-*` 命名空间供 3.5.17 的跨站竞速/顺序使用，不与站内档复用。
+- 具体字段和编码方式由实现确定，但必须保证不同策略不会加入同一个 Flight；新增档位不得改变已冻结的站内三档语义。
+
+**5.3 Singleflight 行为要求**
+
+- 同策略 GET 可以合并；同策略 HEAD 可以合并。
+- GET 竞速 Flight 与 HEAD 顺序 Flight 不得合并。
+- HEAD 顺序 Flight 与其他竞速策略 Flight 不得合并。
+- 不得通过改变 CacheKey 实现隔离，不得因此产生重复缓存身份。
+- 同一 CacheKey 被不同 Flight 并发提交时必须保持缓存完整性。
+
+**5.4 并发缓存安全（提交窗口验证）**
+
+已知现有机制：`CreateTemp()` 使用独立临时文件；`LockBlob(sum)` 保护 Blob 提交；`cache.Commit(tmpName, sum)` 完成内容寻址提交；`CachePut` 使用 `INSERT ... ON CONFLICT DO UPDATE` 更新索引。
+
+因此这里**不是**一个需要预先重构的缓存提交问题。需要验证的是：不同 FlightKey 并发执行、最终使用同一 CacheKey 时，**Blob 提交与索引 upsert 之间的窗口**是否安全。重点是整个「文件提交 + 索引更新」的组合行为，而不是 SQL upsert 本身是否原子。
+
+D 阶段必须验证以下场景：
+
+| 验证场景 | 必须证明 |
+|---|---|
+| 两个 Flight 写入不同 Digest | 两个 Blob 独立、索引不混淆 |
+| 两个 Flight 写入相同 Digest | Blob 锁和提交行为正确 |
+| Blob 已提交、CachePut 尚未完成 | 其他请求不会读到不完整缓存状态 |
+| 一个 Flight 成功、另一个失败 | 失败结果不覆盖成功缓存 |
+| 两个 Flight 同时更新同一 CacheKey | 最终索引与实际 Blob 一致 |
+| Janitor 同时运行 | 不会删除正在提交或已被正确引用的 Blob |
+| 进程在提交窗口异常退出 | 恢复后不产生不可读缓存或永久错误索引 |
+| 默认策略（prev 非空重验证）Flight 与 race Flight 同 CacheKey | 重验证走 CacheRefresh、竞速走 CachePut，二者不混淆索引状态 |
+| CachePut 静默降级 | 降级后最终缓存态可验证、不产生半写入 |
+
+注意：`CachePut` 写索引失败当前是静默降级（只记日志、仍返回成功），因此「失败不覆盖成功缓存」的断言不能只看函数返回值，必须直接检查 `cache_entries` 表与 blob 文件的最终状态。
+
+如果测试发现窗口存在问题，才实施最小范围修复；不预先重构内容寻址和缓存提交机制。
+
+**6. 既有 fetchRace 边界**
+
+fetchRace 的主站/备用站点并行是现有能力，不属于本版本新增的 Registry Race。必须保证：
+
+- 不受 Host 级 `star_race` 控制。
+- 不受 Source 星标资格影响。
+- 不改变既有主备站点识别和并行行为。
+- 不在 fetchRace 内叠加新的 Registry Race。
+- 保留 `fetchSeq` 对已有 fallback 的防重复 Hedge 保护。
+- 保留现有单一缓存提交保护和 attempt 取消机制。
+
+验收时必须单独识别既有 fetchRace 请求，不得把它们计入 3.5.16 新增的 Registry Race 请求。
+
+**7. 并发与资源安全**
+
+**7.1 并发控制**
+
+每个逻辑请求最多两个竞速候选，不代表全局额外请求成本只有一倍。必须继续使用现有 Source 并发限制和调度器资源控制：
+
+- 不绕过 `sched.Acquire` 或现有 Lease。
+- 不绕过 Source 并发上限。
+- 不因竞速额外占用无限并发。
+- 竞速第二候选启动前必须取得对应资源许可。
+- 取得失败时按 7.1 预算不足语义处理（见下）。
+- 客户端取消后停止所有相关 attempt。
+- 请求结束后释放所有 Lease。
+- 如果现有调度机制无法表达竞速额外并发预算，应增加最小必要的 Host/Source 竞速预算控制，不得重构整个 Scheduler。
+
+**第二候选预算不足语义（阶段 E 明确实现）：**
+
+- 第二候选预算检查必须发生在第二路请求启动之前。
+- 预算不足时，不启动第二候选。
+- 已启动的第一候选继续执行，不取消、不重新请求（避免重复请求与破坏已取得的首路进展）。
+- 该请求记为预算不足、未形成双路竞速，不计入有效竞速样本。
+- 测试断言（限定第一候选成功的分支）第一候选请求次数为 1、第二候选请求次数为 0；若第一候选随后失败并触发顺序回退，第二候选会被补位请求，次数 ≥1 属预期，不计入无效竞速样本。该断言仅在「第一候选成功」分支成立，须与 7.1 的回退语义一致，验证 Lease、Context 和 Body 生命周期正常。
+
+**7.2 Context 与 Body 生命周期**
+
+每个 attempt 必须拥有独立 Context：
+
+- 不能让一个候选的取消操作误取消另一个候选的 Body 读取。
+- 胜者确定后取消未选中的 attempt。
+- 及时关闭输家 Response.Body。
+- 失败正文必须关闭。
+- 客户端断开时清理全部 attempt。
+- 超时、错误、取消路径均释放资源。
+- 不允许遗留后台请求或并发 Lease。
+
+**7.3 身份和认证隔离**
+
+首期只支持公开 Manifest 竞速：
+
+- 不得因为复用现有请求头而将某个 Source 的认证身份错误传递给另一个 Source。
+- 私有 Manifest、Token Realm 和私有凭据竞速不属于本版本范围。
+- 现有 Registry 身份、Host 归属、Realm 和重定向安全策略必须保持不变。
+
+**8. 指标、日志与审计**
+
+**8.1 现有指标复用**
+
+现有 `hedge_triggered_total`、`hedge_extra_requests_total`、`hedge_wins_total{rank}` 是不带 mechanism 标签的聚合 counter，被现有无标签 dashboard 查询依赖。为不破坏这些查询，不改变 `hedge_*` 的标签与语义；Registry Race 采用**新增独立指标**（如 `registry_race_*` 系列，带候选/结果与 `layer` 维度）区分通用 Hedge、Registry Race 与既有 fetchRace，而不是给 `hedge_*` 拆 label。不得重复创建语义完全相同的指标。`layer` 为固定枚举常量，A 阶段取 `same_host`；B 阶段取 `cross_registry` / `same_host`，A 阶段即预留该 label，避免上线后加维度打破已冻结口径与抬高基数。
+
+**8.2 Registry Race 观测维度**
+
+需要能够观察：
+
+- Registry Race 启动次数。
+- 额外上游请求数。
+- 第一候选与第二候选胜出分布。
+- 胜出 Source。
+- 竞速取消次数。
+- 候选启动失败次数。
+- 正文校验失败次数。
+- 失败后顺序 fallback 次数。
+- 因并发预算不足而退回顺序执行的次数。
+- Host 级开关状态与 Source 星标资格状态。
+
+Host 和 Source 标签必须使用规范化、受控标识，避免任意输入造成 Prometheus 高基数。
+
+**8.3 Method 统计**
+
+`Plan.Method` 恒为 GET，不能用它区分客户端 GET 和 HEAD。如果需要按客户端 Method 统计，必须从 `serveManifest` 获取原始 Method，并通过明确的统计事件或上下文传递。不得修改 `Plan.Method` 来承担客户端 Method 的含义，也不得让 HEAD 被错误统计为客户端 GET。
+
+**8.4 日志和审计**
+
+关键事件至少记录：Host 竞速开关变化、Source 星标资格变化、**跨站参选勾选变化（3.5.17）**、竞速开始、候选 Source、胜出 Source、输家取消、正文校验失败、顺序 fallback、竞速被拒绝及原因。不得记录 Authorization、Token 或其他敏感凭据。
+
+**9. 配置与管理界面**
+
+**9.1 默认配置**
+
+所有新配置默认关闭。升级已有配置时：
+
+- 不自动开启任何 Host 的竞速。
+- 不自动给任何 Source 授予竞速资格。
+- 不改变现有通用 Hedge 默认配置。
+- 不改变既有 Source 排序和健康状态。
+- 不改变现有 Registry Host 能力状态。
+
+**9.2 API**
+
+提供 Host 级总开关与 Source 星标资格的读取、修改接口。必须验证：Host 是否存在、Source 是否存在、Source 与 Host 是否具备有效绑定、Source 在该 Host 的能力与状态是否合格、Source 当前是否允许启用、禁用/归档/删除状态是否正确处理、未授权修改是否拒绝、修改结果是否能够持久化并正确恢复。API 与 UI 必须把「星标（人工资格）」「Host 开关」「能力状态（探测结果）」显示为三个不同概念，不得混为一谈。星标的写入是人工决策接口，不得由探测流程调用：探测成功不自动加星，探测失败不自动取消人工星标。
+
+**9.3 UI**
+
+管理界面应能明确展示三个分离的概念：Host 总开关（人工启停）、Source 星标（人工竞速资格）、该 Source 对该 Host 的能力状态（探测结果），以及当前是否具备竞速条件与未满足条件的原因、禁用/归档/能力不匹配状态。不能把「探测成功」直接显示成「已授权竞速」，也不能把「星标」显示成「对所有 Host 都可竞速」；星标保留但能力不合格期间应显示星标仍在、暂不可参与竞速。
+
+**10. 实施步骤**
+
+- **阶段 A：现状冻结与执行路径基线** — 修改代码前固定当前行为：确认 serveManifest GET/HEAD 入口、fetchOnce singleflight 键、fetchSeq 通用 Hedge 准入、fetchRace 主备边界、Blob 四路径不进旧 Hedge、saveBody 校验与提交；固定 Git Hedge / Manifest HEAD / Blob / GHCR fallback 测试基线。验收要求有调用链证据、已有测试通过，不修改生产配置与数据库。
+- **阶段 B：数据模型和配置** — 建立独立、默认关闭的授权体系：Host 级 `star_race` 总开关、Source 星标竞速资格、配置读写持久化恢复、禁用/归档/删除/能力失配资格失效、API 与审计、UI 展示。**Host 总开关载体（已定）：** 存于现有 `settings` 表，以 Host 名为键（如 `docker.io → 关闭`），不新建 `hosts` 表；默认所有 Host 关闭，与 3.5.14c 零残留约束对齐（无设置项时行为与基线一致）。当前代码无 `star_race` / `registry_race` 字段，二者均为 3.5.16 新增，迁移时不引入任何旧字段、也不存在需删除的旧竞速判断。**存储约束（开工第一件事）：** 星标（人工策略）与 `source_host_caps`（探测能力权威表）必须彻底分离。`source_host_caps` 只记录探测能力、探测结果、有效期与状态，不再承载竞速授权；不新增第二套竞速资格字段，避免双轨模型。Source 在某 Host 的实际竞速生效 = 星标 AND Host 开关 AND 该 Host 的 `source_host_caps` 能力/状态/有效期合格 AND 健康准入，以此实现 Host 级隔离。验收：旧配置升级后竞速全关、无自动授权、旧字段不再参与判断、Host 开关独立、星标与探测能力表相互独立、状态可持久化、无效组合无法启用、一个 Host 的星标与开关不影响其他 Host。
+- **阶段 C：执行策略与 HEAD 隔离** — 解决客户端方法在执行层丢失：serveManifest 识别原始 Method；GET 用正常策略、HEAD 用强制 no-race 策略；通过 Plan 标志或独立 fetch 变体传递；fetchSeq 增加最终准入；保持非 Registry 原有 Hedge。验收：HEAD 即使 Hedge 开启也不产生并发上游请求；GET 竞速完全由资格决定；Git 不变；不依赖 Plan.Method；HEAD 仍上游 GET、完整校验、原缓存行为。
+- **阶段 D：Singleflight 隔离** — FlightKey 加执行策略命名空间**仅在 `star_race` 实际生效的 Host 上启用**；关闭竞速的 Host 仍以 `plan.CacheKey` 为 FlightKey，保持现状（HEAD 继续蹭 GET flight），不得因本版本引入默认配置下的额外上游请求与 CachePut。保持 CacheKey 语义不变；同策略可合并；检查并验证 5.4 全部并发提交场景，必要时最小范围修复。验收：默认关闭时 HEAD 与 GET 共用 flight、上游请求与 CachePut 无放大；开启竞速后 GET 竞速 Flight 不接收 HEAD follower、HEAD 顺序 Flight 不接收 GET follower、同策略可合并、无重复 CacheKey、并发提交不损坏缓存。
+- **阶段 E：Manifest Race 执行** — 从 Scheduler 获取候选并按 3.4 过滤出合格镜像集合；最多两个竞速者；官方源不参与竞速；复用响应头 Hedge 基础机制；每个 attempt 独立 Context；遵守 Source 并发与 Lease；完整读取胜者正文并复用 saveBody 校验；校验通过才提交；正文失败清理并按顺序 fallback；第二候选预算不足按 7.1 语义处理。不修改 Blob 和 fetchRace。验收：默认关闭无新增竞速、只有合格 Source 参与、最多两个候选、校验通过才提交、失败可回退、无资源泄漏与缓存污染、主备并行不变。
+- **阶段 F：指标与回归测试** — 复用 Hedge 指标、增加可区分维度、区分三类并发机制、增加资格变更审计日志、执行完整测试矩阵及 `go test ./...`、`go vet ./...`、竞态检测。验收：指标口径清晰无重复、标签基数可控、日志不泄露凭据、全部新增与回归测试通过。
+- **阶段 G：性能验收与发布** — 按第 12 节固定环境、基线与候选对照、至少 5 轮、统计 P50/P95/P99 等、预确定阈值、覆盖必测场景、灰度后决定范围。验收：P95 达阈值、错误率在容忍范围、无吞吐退化、额外请求成本可量化、高并发不突破并发限制、结果可复现。
+
+**11. 测试与验收矩阵**
+
+**11.1 开关和资格**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T01 | 全新配置 | Host 总开关关闭，且无 Source 被星标 |
+| T02 | 旧配置升级 | 不自动启用竞速 |
+| T03 | Host 关闭、Source 授权 | 不竞速 |
+| T04 | Host 开启、Source 未授权 | 不竞速 |
+| T05 | Host 开启、Source 授权且健康 | 满足其他条件时允许竞速 |
+| T06 | Source 禁用或归档 | 自动失去资格 |
+| T07 | Host 禁用或归档 | 自动失去资格 |
+| T08 | Host 能力不匹配 | 不允许竞速 |
+| T09 | Source 与 Host 绑定失效 | 不允许竞速 |
+
+**11.2 请求方法和旧 Hedge 隔离**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T10 | Manifest GET，Registry Race 关闭，通用 Hedge 开启 | 不产生新增 Registry Race |
+| T11 | Manifest GET，Host 开启且 Source 星标并在该 Host 能力合格 | 允许竞速 |
+| T12 | Manifest HEAD，所有开关开启 | 始终顺序执行 |
+| T13 | Manifest HEAD，通用 Hedge 开启 | 仍然顺序执行 |
+| T14 | Manifest HEAD，Registry Race 开启 | 仍然顺序执行 |
+| T15 | Git 请求，通用 Hedge 开启 | 保持原有 Hedge 行为 |
+| T16 | 非 Manifest Registry 请求 | 不进入 Manifest Race |
+
+**11.3 Singleflight**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T17 | 启用态：GET 竞速进行中，HEAD 到达 | HEAD 不加入 GET Flight |
+| T18 | 启用态：HEAD 顺序执行中，GET 到达 | GET 不加入 HEAD Flight |
+| T19 | 两个同策略 GET | 正常合并 |
+| T20 | 两个同策略 HEAD | 正常合并 |
+| T21 | GET/HEAD 不同 Flight 同时写同一 CacheKey | 缓存完整且一致 |
+| T22 | 一条 Flight 失败，另一条成功 | 失败结果不得覆盖成功缓存 |
+
+**11.4 竞速执行与回退**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T23 | 两个候选均有效 | 正常选择胜者 |
+| T24 | 第一候选快速失败 | 第二候选按策略启动 |
+| T25 | 第一候选延迟 | 按竞速延迟启动第二候选 |
+| T26 | 第一候选响应头成功、正文截断 | 不提交缓存，顺序 fallback |
+| T27 | 第一候选 Digest 不匹配 | 不提交缓存，顺序 fallback |
+| T28 | Content-Length 不匹配 | 不提交缓存，顺序 fallback |
+| T29 | 两个候选均失败 | 返回既有错误处理结果 |
+| T30 | 客户端中途断开 | 清理所有 attempt 和 Lease |
+| T31 | 第二候选并发预算不足 | 不绕过限制，第一候选继续、不启第二路、不计入有效竞速样本；断言仅在第一候选成功分支为「第二路 0 次」，失败回退时第二候选补位不计入竞速样本 |
+| T32 | 候选数量超过两个 | 实际启动不超过两个竞速候选 |
+| T23a | 0 个合格镜像 Source + 官方源 | 原有顺序回源，不竞速 |
+| T23b | 1 个合格镜像 Source + 官方源 | 顺序回源，不与官方源竞速 |
+| T23c | 2 个合格镜像 Source + 官方源 | 只竞速两个镜像 Source，官方源不参与 |
+| T23d | 3 个合格镜像 Source | 只选择排序靠前的两个 |
+| T23e | 第二候选失去资格 | 不用官方源补位 |
+| T23f | 所有镜像候选失去资格 | 回到原有顺序路径 |
+
+**11.5 缓存与既有功能回归**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T33 | Cache Hit | 不进入 Registry Race |
+| T34 | `prev != nil` | 保持官方源重验证 |
+| T35 | OfficialOnly | 不竞速 |
+| T36 | Scheduler 关闭 | 不竞速 |
+| T37 | Blob 缓存命中 | 行为不变 |
+| T38 | Blob MISS | 保持 fillStream 原有并行 |
+| T39 | Blob HEAD | 保持 headOnce |
+| T40 | Blob Range | 保持 passThrough |
+| T41 | GHCR 主备 fetchRace | 原有并行行为不变 |
+| T42 | GHCR fallback 内部请求 | 不叠加 Registry Race 或形成四路请求 |
+| T43 | Manifest 可变 Tag | 不进入竞速、按既有顺序回源与 TTL 重验证；不把 Digest 完整性错误解释为官方实时新鲜度 |
+| T44 | Manifest 不可变 Digest | 正文 Digest 校验正确 |
+
+**11.6 指标和审计**
+
+| 编号 | 场景 | 预期结果 |
+|---|---|---|
+| T45 | 通用 Hedge | 保持原指标语义 |
+| T46 | Registry Race | 能独立识别启动、额外请求和胜者 |
+| T47 | fetchRace | 不计入新增 Registry Race 统计 |
+| T48 | HEAD 请求统计 | 使用客户端原始 Method，不依赖 Plan.Method |
+| T49 | 资格变更 | 有审计记录 |
+| T50 | 认证失败或日志输出 | 不泄露 Token、Authorization |
+
+**11.7 星标竞速与目标边界补充验收（A01–A10）**
+
+> 这组验收针对本版本的两项关键裁定：星标=竞速资格且按 Host 生效；A 与 fallback/跨站扩展边界不冲突。
+
+| 编号 | 验收项 | 必须证明 |
+|---|---|---|
+| A01 | 星标资格 | 星标且在该 Host 能力合格的 Source 参与竞速；非星标 Source 不参与任何并行竞速 |
+| A02 | 顺序回退 | 星标候选失败后，其他合格 Source（含非星标）仍按原规则顺序补位，请求不因竞速失败而终止 |
+| A03 | Host 隔离 | 一个 Host 的 `star_race` 开关与 Source 星标不会改变其他 Host 的候选资格与实际并发行为；Source 只在 `source_host_caps` 判定合格的 Host 参与竞速 |
+| A04 | 同资源保证 | 同一 Host 的竞速候选代理的是同一逻辑 Registry 资源，不会造成不同 Registry 内容混入同一次竞速 |
+| A05 | Claim | 令牌作用域为请求级、覆盖同一请求所有竞速 attempt（见 AB-1）；一次请求只有一个有效候选能取得提交权并写缓存，失败候选不占用令牌 |
+| A06 | 缓存身份 | A 层同 Host 内 `RegistryCacheKey` 保持现有 origin 维度、竞速前后语义不变（见 AB-2）；不禁止 B 新增逻辑身份键类型 |
+| A07 | fallback 联动（必过门禁） | 2.3.1 六条证明点全部通过：main 可做 A、fb 不叠加 Hedge、无四路并发、main 失败后 fb 接管、胜出不泄漏 fb 资源、取消单一 attempt 不误取消整个请求或其他尝试 |
+| A08 | 资源清理 | 输家 Body、连接、goroutine 和 context 正确释放；客户端断开后无残留 attempt 与 Lease |
+| A09 | 流式回归 | G0 流式内容一致性回归全通过，竞速不破坏正文完整性与提交窗口 |
+| A10 | 性能 | 对照顺序模式报告 P50/P95/P99、吞吐、错误率与额外上游请求数；必须覆盖「一星标源慢/失败/返回无效 Manifest」的非理想场景，不得只测两源都正常的理想情况 |
+
+补充断言：`CachePut` 写索引失败为静默降级，T22 等「失败不覆盖成功缓存」场景必须直接检查 `cache_entries` 与 blob 文件最终状态，不能只看函数返回值。
+
+**12. 性能验收标准**
+
+沿用路线图 P01，不另立测速口径。
+
+**12.1 环境固定** — 固定 NAS 硬件与系统负载、网络出口与链路、Registry Host、Repository、Manifest 内容与大小、Accept 等影响响应表示的请求头、Source 集合及资格、缓存状态、并发客户端数量、测试时间段与统计方式。
+
+**12.2 对照组** — 基线为 Registry Race 关闭，候选为 Registry Race 开启，两组使用相同环境、请求集合和负载。
+
+**12.3 重复与统计** — 同环境至少重复 5 次；报告 P50、P95、P99、吞吐、错误率、额外上游请求数、候选 Source 胜出分布、并发资源占用；P95 改善阈值必须在测试开始前确定，不得事后修改。
+
+**12.4 必测场景** — 第一候选正常/第二候选较慢；第一候选延迟/第二候选较快；第一候选快速失败；两个候选都慢；第一候选响应头成功但正文失败；多客户端同时请求同一 Manifest；多客户端请求不同 Repository；Source 并发上限接近饱和；缓存命中与 TTL 重验证；**Manifest HEAD 对照（竞速开/关两态）**：量化 FlightKey 策略命名空间对 HEAD 上游请求数与 CachePut 次数的放大，竞速关闭态必须与基线一致。性能验收不能只看单次最快或绝对下载速度。
+
+**12.5 流量口径一致** — 基线组与候选组的官方源流量必须口径一致。按 3.4，官方源不参与竞速；若基线因候选不足而走官方源、候选组也遵循相同回退规则，则两组对照才能准确反映多源竞速本身的收益，不得因实现缺陷让候选组额外打到官方源。
+
+**13. 发布与回滚**
+
+**13.1 发布前检查** — 所有新增配置默认关闭；数据结构和配置迁移通过测试；API/UI 状态一致；GET/HEAD singleflight 隔离通过；同 CacheKey 并发提交安全性通过；Blob 和 fetchRace 回归通过；全量测试、vet 和竞态检测通过；性能验收通过；指标和日志可用于生产诊断。
+
+**13.2 灰度启用** — 升级版本并保持所有 Host 竞速关闭；检查生产指标和日志；选择单个公开 Registry Host 进入灰度。
+
+灰度授权硬性要求：
+
+- 每个参与 Registry Race 灰度的 Host，**至少有两个符合全部准入条件的星标镜像 Source**（在该 Host 能力合格）。
+- 两个 Source 均须通过启用状态、健康状态、熔断状态、能力匹配及星标资格检查；星标为人工策略，不由探测自动获得。
+- 只有一个合格 Source 时，该 Host 实际执行顺序回源，不计入竞速灰度样本。
+- 灰度观测必须确认实际发生了两个合格镜像 Source 的竞速，不能仅凭配置已授权就认定灰度生效。
+- 性能对照和关闭回滚验证只统计实际进入 Registry Race 的请求。
+
+灰度流程：开启该 Host 的 `star_race`；观察竞速启动、胜出、失败、取消、额外请求和错误率；确认缓存、Blob、Git 和主备 fallback 无回归；验收通过后再逐步扩大范围。
+
+**13.3 回滚** — 关闭 Host 级 `star_race` 即可停止该 Host 的新增 Registry Race。回滚必须保证：不删除现有缓存、不改变 CacheKey、不改变 Source 健康状态、不改变通用 Hedge 配置、不影响既有 fetchRace、不要求清空 Manifest 或 Blob 缓存、未完成的竞速请求按现有取消和资源释放规则结束。
+
+**14. 最终交付判定**
+
+3.5.16 必须同时满足以下条件才能标记完成：
+
+- Host 级总开关和 Source 星标资格均已实现，默认关闭；星标与探测能力表分离。
+- Manifest GET 只在明确授权时进入新竞速。
+- Manifest HEAD 始终顺序执行，且不与 GET 共享竞速 Flight。
+- CacheKey 不变，FlightKey 实现执行策略隔离。
+- 不同 Flight 并发提交同一缓存身份时安全。
+- 旧通用 Hedge 对非 Registry 请求保持兼容。
+- Blob 既有执行路径完全不变。
+- 既有 fetchRace 主备并行机制完全不变。
+- 只从合格镜像 Source 中选择最多两个竞速者，官方源不作为竞速候选。
+- 正文完整性校验通过后才允许缓存提交。
+- 正文失败能够顺序 fallback，且没有资源泄漏。
+- 可变 Tag 的完整性与新鲜度边界明确。
+- 指标能够区分 Registry Race、通用 Hedge 和 fetchRace。
+- 全部功能、并发、缓存和回归测试通过。
+- 性能测试达到预先确定的验收阈值。
+- 灰度启用和关闭回滚均验证通过，且以实际双路竞速为有效样本。
+
+**版本定位：** 公开 Registry Manifest 受控竞速。
+**架构定位：** 复用现有调度与执行能力，只增加 Registry 专属准入（Host 总开关 + Source 星标资格）、策略隔离和竞速控制，不重构现有代理、缓存、Scheduler、Hedge、Blob 或主备并行架构。
+
+#### 附：认证运维硬化独立批次（H 系列）
+
+> H.1～H.4 是 3.5.15 验收遗留项的后续承载，**独立于 3.5.16 核心交付**，单独排期与验收，**不作为 3.5.16 发布门槛**。不得因 H 系列未完成而阻塞公开 Manifest 竞速，也不得因竞速通过而误认为 H 系列已完成。
 
 **H.1 私有凭据 Host 范围扩展（P03 产品级）**
 
@@ -1978,31 +2612,238 @@ Host 是否在私有认证 allowlist？
 - 要求：失败后不得出现假 Ready；不得匿名命中旧私有缓存；审计记录恢复结果；故障注入点只能存在于测试构建，不进入生产路径。
 - 验收：每个场景有可重复脚本、真实退出码/日志、恢复前后状态对照；无法自动化的场景必须写明人工步骤和判定标准。
 
-**3.5.15 延期项映射**
-
-| 3.5.15 验收项 | 延期到 | 延期原因 |
-|---|---|---|
-| C03 多进程写同一 Host | 3.5.16-H.2 | 3.5.15 只有单进程并发测试；需真实两进程 + `flock` + DB 事务演练 |
-| C05 COMMIT 后崩溃 | 3.5.16-H.2 | 需在 COMMIT 后精确 `kill -9`，当前只有幂等等价证明 |
-| R05 磁盘满/fsync 失败 | 3.5.16-H.2 | 需故障注入点与文件系统级演练，不能靠单元测试代替 |
-| S21 真实 Pending 窗口崩溃 | 3.5.16-H.2 | 后台 `retryPendingCreds` 已实现并有调度测试；真实进程在 Pending 窗口内崩溃仍需 H.2 演练 |
-| P03 50 Host 产品级 | 3.5.16-H.1 | 产品 allowlist 仍为 `quay.io`/`gcr.io`；扩 Host 属 H.1，不能用存储层 fixture 冒充 |
-
-F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生命周期已通过。
-
 **H.3 公网 CDN 302 验收**
 
 - 3.5.15 已完成本地 TLS 302 fixture；本节补一个可控公网 302 端点，验证 CDN 跳转不带 `Authorization`/`Cookie`、保留签名 query、拒绝 HTTPS 降级和 POST。
 - 若没有可控公网端点，保持 `SIMULATED_PASS`，不能写成 `REAL_PASS`。
 
-### 3.5.17 Blob 竞速可行性评估
+**H.4 凭据管理面板 UI 验收（F09）**
 
-只做评估，不作为版本承诺：
+- 目标：在面板完成凭据的新增、修改、删除，验证 API 与 UI 两条路径均成功、状态一致，且重启后仍有效、不留半状态。
+- 3.5.15 已通过部分：API 生命周期（`TestCredentialsAPILifecycle`、`TestCredentialsAPIAllowlist`）。
+- 验收：UI 新增凭据后 API 可见；UI 修改后新请求使用新凭据（gen 更新）；UI 删除后不再使用旧凭据；每一步操作后重启仍有效；文件与 SQLite 状态一致。
+- 失败判定：UI 操作成功但 API 状态未落盘，或重启后凭据丢失、只改一侧、留下半状态。
 
-- Blob 仍使用标准代理与内容寻址缓存
-- 不并行拼接多个上游 Blob
-- 只有 Body 所有权、取消边界、首字节后接管、Range/断点、`.part` 生命周期都有可验证方案后，才单独立项
-- 未通过评估前不进入实现
+**3.5.15 延期项映射**（均为独立批次，不阻塞 3.5.16）
+
+| 3.5.15 验收项 | 延期到 | 延期原因 |
+|---|---|---|
+| C03 多进程写同一 Host | H.2（独立批次） | 3.5.15 只有单进程并发测试；需真实两进程 + `flock` + DB 事务演练 |
+| C05 COMMIT 后崩溃 | H.2（独立批次） | 需在 COMMIT 后精确 `kill -9`，当前只有幂等等价证明 |
+| R05 磁盘满/fsync 失败 | H.2（独立批次） | 需故障注入点与文件系统级演练，不能靠单元测试代替 |
+| S21 真实 Pending 窗口崩溃 | H.2（独立批次） | 后台 `retryPendingCreds` 已实现并有调度测试；真实进程在 Pending 窗口内崩溃仍需 H.2 演练 |
+| P03 50 Host 产品级 | H.1（独立批次） | 产品 allowlist 仍为 `quay.io`/`gcr.io`；扩 Host 属 H.1，不能用存储层 fixture 冒充 |
+| F09 凭据新增/修改/删除 UI | H.4（独立批次） | 3.5.15 API 生命周期已通过；面板 UI 按用户指示由 H.4 独立批次补做浏览器验收，不纳入 3.5.16 核心交付 |
+
+F09 面板 UI：3.5.15 按用户指示忽略（API 生命周期已通过，`TestCredentialsAPILifecycle` / `TestCredentialsAPIAllowlist`）；作为 H.4 独立批次补做面板 UI 浏览器验收，不属于 3.5.16 核心交付，也不作为其发布门槛。
+
+### 3.5.17 跨 Registry 可信 Manifest 竞速与顺序回退（B）
+
+> **设计状态：** 方向冻结，实施前需先完成身份验证设计门禁。本节是 3.5.17 唯一权威定位。
+> **版本定位：** B：在 3.5.16（A：同 Registry 星标 Source 竞速）已完成的基础上，增加跨 Registry 的可信候选发现与竞争能力，最终形成 A+B。Blob 竞速已从本版本移出，作为独立后续评估事项，不与 B 混在同一版本。
+> **依赖：** 3.5.16（A）全部验收通过；3.5.11 + 3.5.14c 身份与 Source×Host 能力模型；3.5.15 认证、身份隔离与缓存安全边界。
+> **模型不变量：** 本版本不修改 2.3 定义的模型不变量。跨 Registry 候选必须通过独立的资源身份验证，才能参与同一逻辑请求的竞速与提交；未证明等价的候选不得共享 Claim、缓存身份或响应结果，也不得通过修改 2.3 不变量绕过原有缓存身份约束。
+
+**B.1 目标**
+
+当用户请求没有显式 Registry 前缀的镜像（如 `fnsys/dockhand:latest`）时，Mirror Lens 可根据配置与可信映射，发现多个可能提供同一镜像内容的 Registry 候选。候选通过资源身份验证后，可采用两种执行策略：
+
+- 竞速模式：多个可信 Registry 在并发预算内并行请求 Manifest，优先使用最先返回的有效响应。
+- 顺序模式：按候选优先级逐个请求，前一个失败、超时或返回无效结果时回退到下一个候选。
+
+**默认模式为顺序回退。** 竞速模式为显式开启、默认关闭（与 A 的 Host 总开关默认关闭一致）。顺序回退按 2693 的固定 Host 优先级列表逐个尝试（无前缀从 docker.io 起，有前缀从前缀站起）；网络/明确响应类失败按 B.4 失败分类表决定是否重试与回退。位于回退链 ≠ 成为可信副本候选：任何 Host 要进入竞速、Claim 或共享缓存仍必须通过 B.3 身份验证（见 2693 分层说明）。模式为全局一档，不按 Host 区分（与 A 的 Host 级开关属不同层次）。
+
+竞速失败后必须继续对尚未尝试的合格候选顺序补位，不得因一次竞速失败就终止请求。B 不取代 A：每个 Registry 内部仍使用 A 的星标 Source 竞速能力，B 负责跨 Registry 层，A 负责每站内部层，统一执行层负责调度与提交。
+
+**B.2 候选发现（三层，禁止猜测）**
+
+| 层次 | 职责 |
+|---|---|
+| 权威 Registry | 裸镜像名原本解析到的 Registry，作为默认权威来源 |
+| 显式可信副本映射 | 管理员配置或受控机制确认的跨 Registry 副本关系 |
+| 运行时候选 | 对已建立映射的 Host 各调用一次调度器，取「调度器已选中 ∩ 星标 ∩ 跨站参选勾选」的 Source，再经能力与健康过滤生成实际候选（见 B.4） |
+
+**显式可信副本映射数据模型（P0 门禁的输入，必须先定义）：** 必须给出表结构或配置格式、录入 API 与生效范围，至少包含：权威仓库标识（namespace/repository）、可信副本 Registry Host 列表、每个副本的映射关系来源（管理员配置或受控机制）、是否可变 Tag 的可信副本、有效期与版本一致性依据。未建立该映射前，B.3 / B.9 / B01 均不可评审，B 只能停留在方向冻结。映射为白名单，禁止运行时凭同名仓库或 404 自动生成候选。
+
+禁止：
+
+- 遍历公开 Registry 随机搜索同名仓库。
+- 因某 Registry 返回 404 就猜测其他 Registry 存在同名仓库。
+- 把 `rememberHost()` 之类的运行时 Host 记忆当成可信副本映射。
+- 把现有 GHCR fallback 当成通用跨 Registry 发现能力。
+
+B 的核心不是多找几个 Host，而是确定哪些 Host 有资格代表同一份资源。`rememberHost()` 继续只承担「跳过一次已知失败等待」的优化职责，不升级为身份权威。
+
+**B.3 资源身份验证（P0 设计门禁）**
+
+HTTP 200 只能证明请求成功，不能单独证明资源身份一致。必须分三层验证，未通过身份的候选不得进入竞速集合，也不得因前一个候选失败而自动补位：
+
+1. 仓库身份：确认不同 Registry 的仓库确实存在可信副本关系，不只比较 owner/repository 字符串，必须来自配置或受控映射。
+2. Manifest 身份：Digest 请求验证候选返回 Manifest 的 Digest 与请求期望一致（内容寻址，天然可验证）。**Digest 一致性不能只比较响应正文中的字段**，必须校验三者一致：请求期望的 Digest、响应 `Docker-Content-Digest` 等头部声明、实际 Manifest 正文计算结果；并正确处理不同 Manifest media type、Accept 协商与多架构索引（manifest list / OCI index）的语义，不得把不同表示形式下的 Digest 直接混为一谈。Tag 是可变引用，必须有可信副本映射或明确权威关系，才能确认不同 Registry 的同名 Tag 是同一逻辑版本。跨站竞速时对 Digest 一致性采用**宽限窗口投票**：从首个候选响应起算，在宽限窗口（初始默认值 200ms，可配置，上线后按实测标定并走变更流程）内返回的候选纳入一致性投票；每个纳入投票的候选须通过三方校验，且**最少 2 个候选彼此一致**才确认同一份内容（单候选窗口内返回不足以证明跨站一致）。仅 1 个候选在窗口内返回时，改与该候选所属 Registry 的权威站 Digest 软比对，比对通过才确认身份，否则不参与竞速并回退权威站。窗口外返回或超时的候选不参与投票、按未通过身份处理并丢弃，不等待最慢者。所有纳入投票的候选均不一致时判定不同步，不比速度，回退到权威 Registry。该窗口必须配合 B.9 的超时裁剪与总并发预算，确保竞速不退化为「等最慢者」。
+3. 响应有效性：状态有效、Content-Type 与 Manifest 格式符合预期、正文完整、Digest/长度与验证器符合要求、认证/重定向/Source 安全策略未被绕过。
+
+候选 Registry 的**资源身份可信**不等于该 Registry 的**认证身份可信**，两者分别验证。B 继承 3.5.15 全部安全约束：私有认证遵守 OfficialOnly 生命周期；不把某 Registry 凭据发给另一 Registry；跨站 fallback 不绕过 Host allowlist、Realm policy 与凭据门禁；重定向目标重新做安全检查；认证失败不回退匿名缓存。
+
+**P0 阻塞门禁：** B.3（资源身份验证）与 B.6（Claim / CacheKey 接口）为 3.5.17 的 P0 设计门禁。身份一致性未证明之前，不允许跨 Registry 竞速提交；未通过身份的候选不得进入共享竞速、Claim 或缓存提交流程。
+
+**B.4 执行策略与顺序回退**
+
+竞速与顺序是同一候选调度过程的两种策略，不是两套独立系统。统一候选调度：
+
+**回退顺序（默认固定 + 动态重排）：** 顺序回退按 Host 优先级逐个尝试。默认采用按全世界使用量与调用频率排序的固定列表，为可配置默认值、不写死为不可变常量；列表成员须为当前代码已支持回源的合法 Host（`registryhost.Check` 通过），不是凭空枚举。该列表回答「回退尝试哪些 Host、按什么顺序」（尝试层）；哪些 Host 能进竞速/Claim/共享缓存由 B.2 映射 + B.3 身份校验决定（身份层），位于回退链不等于可信副本候选。默认顺序（当前配置基线）：
+
+1. `docker.io`（Docker Hub，默认首选，用量最多）
+2. `ghcr.io`（GitHub 容器镜像）
+3. `quay.io`（红帽，CoreOS/Cilium/Prometheus 等）
+4. `gcr.io`（Google 旧仓库，存量镜像极多）
+5. `registry.k8s.io`（K8s 官方，替代旧 `k8s.gcr.io`）
+6. `public.ecr.aws`（AWS 公共 ECR）
+7. `*.pkg.dev`（含 `us-docker.pkg.dev`，Google Artifact Registry，gcr.io 新版）
+8. `registry.gitlab.com`（GitLab 内置仓库）
+9. `mcr.microsoft.com`（微软容器仓库）
+10. `cgr.dev`（Chainguard）
+
+> 说明：`nvcr.io` 当前版本未入回源白名单（`registryhost.Check` 拒绝、`registryhost_test.go` 明确断言「未入白名单的 Host 应被拒绝」），不是合法回源 Host，不列入默认顺序；`azurecr.io` / `k8s.gcr.io` 同样未配置或已被 `registry.k8s.io` 替代，不列入。docker.io / ghcr.io 走独立开关、不在 `MultiOriginHosts` 切片内，此处按逻辑 Host 一并列入。该列表是可配置默认值，可按实际环境与全球使用量调整。
+
+**动态重排：** 当累计回退次数超过 20 次后，改为按**实际调用/命中顺序**动态排序——把实际成功命中率高的 Host 前移、长期不命中的后移，使回退顺序贴合真实使用分布，而非固定默认值。触发条件与阈值（20 次）可配置；切换后保留一份固定顺序作为回退兜底。
+
+- 每个跨站候选 = 可信身份 ∩ 调度器已选中的 Source ∩ 星标集合 ∩ 跨站参选勾选子集（每站内部仍可跑 A）。即：调度器选中是前置条件，星标与参选勾选只是在已被选中节点里再筛竞速用途；调度器未选中的节点即使有星标、被勾选，也不参与本次跨站竞速。
+- **跨站参选勾选是星标这一人工授权在跨站用途上的子集过滤器，不是第二套竞速资格**：人工授权仍只有星标一处；勾选不给非星标节点授权，不产生「勾选说有资格、星标说没有」的双轨分叉。该勾选存于 settings 表（与 A 的 Host 开关同一载体，不新建 store）。
+- 竞速模式：在并发预算内并行请求；部分候选失败则继续等待其他竞速候选。
+- 顺序模式：按优先级逐个请求下一个 Registry。
+- 竞速全部失败：对剩余合格候选顺序补位；全部失败后按权威 Registry 原有错误语义返回。
+- 有效胜者：通过 Manifest 身份、响应有效性与缓存身份检查后才取得提交权。
+
+顺序回退必须覆盖超时、无效 Manifest、身份验证失败、429/5xx 等。失败分类表（本节定义，B06 据此验收）：
+
+回退与否取决于**失败原因**，不是「失败了没有」；网络类与明确响应类走两条不同恢复路径，但最终都会回退到下一个合格站。带前缀与无前缀请求用同一套规则，唯一区别是第一站是谁（有前缀=前缀站，无前缀=默认站）。
+
+| 失败类别 | 恢复动作 | 是否回退下一站 | 说明 |
+|---|---|---|---|
+| 超时 / 连接失败 / 不通 / 没回应 | **本站立刻重试一次**；重试仍失败再回退 | 是（重试后） | 网络层故障，镜像可能就在该站，先原地重试一次 |
+| HTTP 404 / manifest unknown | 不重试 | 是 | 该站明确没有此镜像，直接换站；但候选必须来自 B.2 可信映射，禁止靠 404 猜测新候选 |
+| 401 / 403 | 不重试 | 是 | 公开请求的权限/认证失败，回退下一站按公开方式请求 |
+| 429 / 5xx | 不重试 | 是（带退避） | 明确响应类，受统一并发预算与限流退避约束，不向易限流站追加并发 |
+| 无效 Manifest / Digest 校验不一致 | 不重试 | 是 | 该站返回正文无效，回退下一站（下一站可能有正确内容）；该候选不进入投票与提交 |
+| 身份验证失败（B.3 未通过） | 不重试 | 否 | 资源身份未证明，不得因前一个失败自动获得尝试资格 |
+| 私有认证 / 安全策略拒绝 / Host allowlist 拒绝 | fail closed | 否 | 3.5.15 私有 Host 边界，不得当作普通网络故障绕过 |
+
+**404 回退口径（与代码一致）：** 当前调度器把 404/410 记为 `OutcomeMiss`（中性结果）——换下一个**已配置的**候选，但不建立粘性、不进冷却、不按 404 凭空猜测新 Host（gateway.go `isMiss`/`ReportOutcome`、`neutral_outcome_test.go` 已证）。因此「404 → 回退=是」指回退到已存在候选；历史设计记录中「404 不回退」一句的语境是「不靠 404 生成跨站新候选」，二者是不同层，不构成行为冲突。全部候选均 404 时按既有语义返回 404。
+
+**私有凭据边界：** 回退到下一个站时不携带上一站的私有凭据，下一站按公开方式请求；若下一站同样需要私有权限则按公开请求失败并继续回退，绝不跨站传递凭据。
+
+B 的顺序回退只针对通过可信候选发现与安全准入的 Registry；未证明资源等价的候选不因前一个失败就自动获得尝试资格。
+
+**B.5 A+B 组合关系（正式架构原则）**
+
+- B 负责跨 Registry 候选发现与可信身份验证。
+- A 负责每个 Registry 内部的星标 Source 竞速。
+- 统一执行层负责并发预算、有效响应、取消、胜者提交与顺序补位。
+- 缓存层根据已验证的逻辑资源身份决定缓存归属。
+
+```
+用户请求（无前缀）
+  → 跨 Registry 可信候选发现（B）
+      → Docker Hub  ── 星标 Source 竞速（A）
+      → GHCR        ── 星标 Source 竞速（A）
+      → 其他可信 Registry ── 星标 Source 竞速（A）
+  → 跨 Registry 竞速 / 顺序回退（B）
+  → 身份验证 + 有效响应确认
+  → 唯一胜者提交
+  → 正确的缓存身份与缓存写入
+```
+
+不要求所有 Registry 和 Source 永远同时启动。候选数量、星标资格、健康状态与全局并发预算共同约束实际请求数，防止「每站 A 两路 × 多站」的并发爆炸。
+
+**私有认证 Host 例外（与 3.5.15 对齐）：** 3.5.15 规定私有认证 Host 在缓存查询之前分流、不读不写共享缓存。跨站胜者若为私有 Host，则不得进入共享缓存提交，B10/B11/B12 的缓存断言对该例外不成立；私有 Host 不参与跨站竞速候选集合，除非其身份与缓存隔离路径已被单独证明。B.5 的「唯一胜者提交缓存」仅适用于公开 Manifest。**私有权威站衔接：** 若无前缀请求的默认权威站（docker.io）或带前缀请求的前缀站本身是私有认证 Host，则按 3.5.15 在缓存前分流、不进跨站候选与共享缓存，B 的「权威站回退/默认首选」对其不适用，直接走私有请求路径；B19 须覆盖此情形。
+
+**B.6 Claim 与 CacheKey（A→B 接口，P0 门禁）**
+
+Claim：现有 `atomic.Bool` 只保证唯一提交权，不证明内容正确。B 必须保证候选进入跨站竞速前已满足可信资源身份；不得因某 Registry 先返回 HTTP 200 就取得最终提交权；胜者必须先过 Manifest 身份与正文有效性检查；失败候选不永久占用 Claim；竞速失败后顺序补位仍可提交；同一请求最终只有一个有效候选提交缓存。不废弃现有 Claim，只重新明确其提交条件。
+
+CacheKey：A 阶段继续按现有 origin 维度，不做跨站归一。B 阶段：不同 Registry 的 Tag 默认不共用缓存键；Digest 相同且验证通过的内容可考虑内容寻址复用；可变 Tag 仅在可信副本关系与版本一致性得到证明后才允许共享逻辑身份；缓存写入保留可追溯实际来源与验证依据的信息；身份验证失败的候选不得写入权威资源缓存。不得为了让 B 复用缓存而直接删除 CacheKey 的 origin 维度。
+
+**无前缀请求的缓存键结构（B10/B11 据此写确定性测试）：** 竞速胜者的缓存按「验证过的逻辑资源身份」归属，而非按胜者 origin 直接写键；键结构必须能表达：权威仓库标识 + 请求引用（Digest 或 Tag）+ 已验证的内容身份（Digest）。Digest 请求用内容寻址键，与胜者 origin 无关；可变 Tag 在可信副本映射与版本一致性证明前不共享逻辑键，按权威 origin 键写入。下次同一无前缀请求必须能定位到竞速赢家写入的缓存条目，否则「按已验证的逻辑资源身份决定缓存归属」（B.5）与「不同 Registry 的 Tag 默认不共用缓存键」（本条）自相矛盾；该键结构在 B 冻结前必须定稿。
+
+**B.7 非目标**
+
+- Blob 并行竞速（独立后续评估，见本节末）。
+- 不可信 Registry 的自动发现与随机搜索。
+- 仅凭同名仓库或 Tag 自动认定副本关系。
+- 自动把任意 Registry 内容写入 Docker Hub 缓存命名空间。
+- 跨 Registry 凭据共享；重写现有通用代理协议。
+- 为 B 重建整个 Gateway / Scheduler / 缓存系统。
+- 无界并发与所有 Source 全量同时请求。
+- 改变 2.3 当前模型不变量：B 在 Registry 层组织候选，每个 Registry 内部各用自己的 Source，不要求一条 Source 同时服务多个 Host。
+
+**B.7.1 工程骨架（冻结前必须补齐，否则不可排期/不可验收）**
+
+3.5.17 目前只有方向原则与验收意图，冻结实施前必须补齐以下工程要素，缺一不可：
+
+- **Schema / 迁移：** 显式可信副本映射表结构（字段、约束、索引）、迁移与回滚、与 3.5.14c 零残留约束对齐。
+- **配置键名与持久化：** B 模式开关、宽限窗口值、跨站候选上限、每站 A 上限、全局并发上限，以及**跨站参选勾选列表**（settings 键名，如 `cross_registry_selected_sources`，存于 settings 表、与 A 的 Host 开关同一载体、不新建 store），逐项给出键名、默认值、读写 API 与持久化位置。**跨站参选勾选默认值 = 空列表**（空即无跨站候选、退化为顺序回退，与 B.1 一致）；不变量：参选勾选 ⊆ 星标集合，读时过滤陈旧的已取消星标条目，星标撤销时同事务清理或读时过滤，陈旧条目永不授予候选资格；升级迁移默认空、无旧字段、与 3.5.14c 零残留对齐。
+- **阶段划分：** 按「映射模型 → 候选发现 → 身份验证 → 执行与顺序补位 → 缓存键与提交 → 指标与回归」拆阶段，每阶段有独立验收门。
+- **T 级测试矩阵：** 对应 B01–B19 的 T 级用例（含 Digest/Tag 一致性、宽限窗口边界、失败分类表各分支、私有 Host 例外、A/B 四组合），测试口径与断言写入文档。
+- **并发预算公式：** 见 B.9，须给出 `B = min(...)` 与裁剪顺序，B13 据此验收。
+
+**B.8 验收标准（B01–B20）**
+
+| 编号 | 验收项 | 必须证明 |
+|---|---|---|
+| B01 | 候选映射 | 只有可信配置或验证关系能生成跨站候选；随机同名、404 猜测、`rememberHost` 均不生成候选 |
+| B02 | Digest 一致 | 校验请求期望 Digest、响应 `Docker-Content-Digest`、正文计算结果三者一致，并正确处理 media type / Accept / 多架构索引；不一致时拒绝竞速胜出、回退权威站 |
+| B03 | Tag 一致 | 可变 Tag 有可信副本关系且版本一致确认后才参与；不一致时回退 |
+| B04 | 竞速模式 | 多个可信 Registry 在预算内可竞争 Manifest |
+| B05 | 顺序模式 | 关闭竞速时严格按候选优先级回源 |
+| B06 | 失败回退 | 超时、无效响应与允许回退的上游错误能补位；认证/策略拒绝 fail closed 不回退 |
+| B07 | 竞速后补位 | 所有竞速候选失败后，剩余候选能顺序尝试 |
+| B08 | A+B 组合 | 每个 Registry 内部可使用 A 的星标 Source 竞速，跨站由 B 调度 |
+| B09 | Claim | 未验证身份的候选不能抢占提交权；失败候选不占用 Claim |
+| B10 | CacheKey | 不同 Registry 的不同内容不发生缓存污染 |
+| B11 | 缓存复用 | 仅符合身份规则的 Digest 内容允许跨站复用 |
+| B12 | 认证隔离 | 凭据不跨 Host 泄漏，OfficialOnly 不被绕过；资源身份与认证身份分别验证 |
+| B13 | 并发预算 | 有明确总并发上限、取消与资源清理；A+B 组合不超预算 |
+| B14 | 故障恢复 | 竞速失败后能继续顺序回退，不遗留占用状态 |
+| B15 | 性能 | 原有、A、B、A+B 在相同环境对照测试，报告 P50/P95/P99、吞吐、错误率，重复测试取统计结果，不用单次最快认定改善 |
+| B16 | 默认模式与回退规则 | 默认（未选竞速）时按固定 Host 顺序回退，该列表是尝试层、每站仍受 B.3 身份门禁；网络类失败先本站重试一次再回退、明确响应类直接回退；累计回退超 20 次切换为按实际调用顺序动态排序并保留固定顺序兜底 |
+| B17 | 模式切换 UI | 分段按钮两档、默认顺序、与首页调度方式同款样式，模式变更即时生效且不改变 A 的 Host 开关与星标资格 |
+| B18 | 宽限窗口与投票 | 宽限窗口（默认 200ms）内≥2 候选一致才确认身份；单候选改与权威站软比对；窗口外/超时丢弃、不等最慢者；边界可测试 |
+| B19 | 私有认证例外 | 私有 Host 不进跨站候选、不写共享缓存；默认/前缀站为私有站时走缓存前分流；B10/B11/B12 缓存断言对该例外不成立 |
+| B20 | 跨站参选勾选 | 勾选 ⊆ 星标；未勾选的星标节点不进跨站候选；勾选但调度器未选中的节点不进；星标撤销后条目失效、不留幽灵资格；空列表退化为顺序回退；默认值与审计记录可验证 |
+
+**B.9 配置与界面（模式切换、默认与分类）**
+
+B 层面向用户的能力以「模式切换 + 候选分类展示」呈现，与 A 的「Host 开关 / Source 星标 / 能力状态」属不同层次，界面上必须分开，不得混为一谈。
+
+**默认与模式档位：** 全局默认顺序回退，竞速默认关闭（见 B.1）。模式为全局一档，不按 Host 区分。竞速失败后仍顺序补位（B07），因此「竞速」并不取消回退链，只改变首轮候选的并行方式。
+
+**按钮与样式：** 在镜像加速区块放置两档分段控件 `[顺序回退 | 跨站竞速]`（沿用首页「调度方式」同款 `sseg` 样式），标注「仅作用于 /v2/ 清单获取，raw/git 多源不受影响」。该档位命名与 A 的「星标」有层级区别但资格有依赖：B 的竞速是跨 Registry 层能力，其候选必须来自 A 的星标节点中勾选的子集，且须被调度器选中才参与（见 B.4）；没有星标节点或调度器未选中时，跨站竞速档无候选可用、退化为顺序回退。
+
+| 档位 | 含义 | 说明文案 |
+|---|---|---|
+| 顺序回退（默认） | 按候选优先级逐个请求，前一个 404/超时/无效才问下一个 | 省请求，首次可能多几十毫秒；适合大部分只在单一 Registry 存在的镜像 |
+| 跨站竞速 | 具备资格的可信候选在并发预算内并行请求，谁先返回有效 Manifest 用谁 | 站点多或常超时/限流时更快成功或失败；须先通过 B.3 身份校验，未通过身份的候选不参与 |
+
+选项命名沿用既定口径：用「顺序回退」（含义最准），不用「接力」（易误读为断点续传）、不用「串行」（实现词、用户看不出区别）。
+
+**候选分类展示：** 界面按 B.2 三层分类显示——权威 Registry（默认来源）、显式可信副本映射（管理员配置/受控关系）、运行时候选（实际参与请求者，含其星标资格与能力/健康状态）。未通过 B.3 身份验证的候选显示为「不可参与竞速」并给出原因，不得显示成可竞速。模式切换不得改变 A 的 Host 开关、Source 星标或 `source_host_caps` 探测结果（人工策略与技术能力解耦）。
+
+**作用域与验收：** 模式只作用于无显式前缀请求的跨 Registry Manifest 回源；带显式前缀的请求按前缀直连，不受模式影响。验收 B16（默认顺序、竞速默认关）与 B17（按钮两档、样式一致、切换即时生效、不扰动 A 的三概念）必须通过。
+
+**并发预算公式与裁剪顺序（B13 据此验收）：** 单次请求的并发预算 `B = min(全局并发上限, (B 跨站候选上限 × 每站 A 上限) + fb 链上限)`，且恒有硬上限。fb 项对应 A 侧「A 2 路 + fb 1 路 = 3 路」中的 fb 预留；2 个跨站候选各跑站内 A 2 路再加 fb 时最坏可达 2×2 + 2×1 = 6 路，必须计入上限，防止 A+B 组合爆炸（B13）。超限裁剪顺序：权威 Registry 优先保留 → 已验证身份的候选优先 → 星标 Source 优先（站内层 A）→ 其余按优先级剔除。竞速失败后顺序补位仍受同一预算约束，不得因补位突破上限。
+
+**A/B 两级开关组合矩阵（四种组合的请求形态）：**
+
+| A（Host 级） | B（全局） | 预期请求形态 |
+|---|---|---|
+| 关 | 关 | 权威站单路顺序回源，无竞速 |
+| 关 | 开 | 跨站竞速/顺序（B 层），每站内部无 A 竞速 |
+| 开 | 关 | 仅单个 Host 内星标 Source 竞速（A 层），无跨站 |
+| 开 | 开 | 跨站候选身份验证后竞速，每站内部仍可 A 竞速，总并发受统一预算约束 |
+
+**Blob 竞速：独立后续评估事项（不占用 3.5.17）**
+
+Blob 仍使用标准代理与内容寻址缓存，不并行拼接多个上游 Blob。只有 Body 所有权、取消边界、首字节后接管、Range/断点、`.part` 生命周期都有可验证方案后才单独立项。Blob 与 Manifest 的 Body 所有权、Range、断点续传和缓存生命周期不同，不得因 Manifest 已支持 A+B 就推导 Blob 可直接复用。未通过评估前不进入实现，且不占用 3.5.16/3.5.17 版本号。
 
 ## 6. 新旧路线映射
 
@@ -2010,8 +2851,9 @@ F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生�
 |---|---|---|
 | 3.5.4 A：Host 凭据、Realm、Gateway 凭据、独立开关 | 3.5.11 + 3.5.15 | 公开 Realm 先做，私有 CredStore 后做 |
 | 3.5.4 B：多 Registry 正式启用 | 3.5.12（含原 3.5.13） | 合并验收：补验证集缺口 + 完成第一批 |
-| 3.5.4 C：Manifest star_race | 3.5.16 | 默认关闭，独立开关 |
-| 3.5.4 D：Blob 竞速 | 3.5.17 | 只评估，单独立项 |
+| 3.5.4 C：Manifest star_race | 3.5.16 | A：同 Registry 星标 Source 竞速，默认关闭 |
+| 3.5.4 D：Blob 竞速 | 后续单独立项 | 不纳入 3.5.17，Body/Range/断点与 Manifest 生命周期不同 |
+| 新增：跨 Registry 可信 Manifest 竞速 | 3.5.17 | B：跨站身份验证、竞速、顺序回退与 A+B 组合 |
 | 3.5.4 架构债：一源多 Host | 3.5.14a + 3.5.14b + 3.5.14c | 先回填投影，再切换权威读路径，最后删除旧字段 |
 | 3.5.10 Source Realm Draft | 3.5.11 | 3.5.10 已被标签修复占用 |
 
@@ -2030,8 +2872,8 @@ F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生�
 11. 3.5.15 私有认证默认关闭；未同时满足 `registry.private_auth_enabled=true`、Host 在 `registry.private_auth_hosts`、`auth.require_token=true`、缓存绕过和历史缓存隔离时，不得开启。
 12. 3.5.15 的 S13～S24、C01～C08、R01～R06 未通过前不得发布；`go test -race` 不能替代 SQLite 多连接并发与崩溃恢复验收。
 13. 3.5.15a 完成前，不宣称支持私有 GitLab。
-14. 3.5.16 默认关闭，不能用全局 Hedge 隐式开启。
-15. 3.5.17 不是交付承诺，未评估通过不排期。
+14. 3.5.16（A）默认关闭，不能用全局 Hedge 隐式开启；星标与探测表分离，有 fallback 时 main 仍可做 A（链级 Hedge），验收 A01–A10 全通过。
+15. 3.5.17（B）的跨 Registry 身份验证（B.3）与 Claim/CacheKey 接口（B.6）是 P0 阻塞门禁，身份一致性未证明前不得跨 registry 竞速提交；B.3 设计门禁未通过前不得启动跨站竞速；顺序回退（B05/B06/B07）必须独立验收，不因竞速成功视为完成；跨站缓存身份规则未通过前不允许跨站共享缓存；A+B 组合必须验证总并发预算；Blob 竞速不得作为 3.5.17 交付内容；3.5.16 全部验收通过后才进入 3.5.17。
 16. 3.5.15 未完成 epoch 持久化、历史缓存清理和回滚验证前，不开放私有认证流量。
 17. 3.5.15 的 `REAL_PASS` 只能由真实私有 Registry 账号产生；`SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` 不得写成 `REAL_PASS`。
 
@@ -2066,11 +2908,43 @@ F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生�
 - 无前缀跨 Registry 自动搜索或猜测仓库归属
 - 自动发现第三方镜像站
 - GCR legacy 区域子域的自动支持或自动映射
-- 不同 Registry Host 之间互相 fallback 或竞速
-- Blob 竞速
+- 3.5.16 不实现不同 Registry Host 之间的通用 fallback 或竞速；该能力由 3.5.17 实现，且仅允许资源身份验证通过的跨 Registry 候选参与竞速或顺序回退
+- Blob 竞速（独立后续评估，不占用 3.5.16/3.5.17）
 - 为 Registry 功能重写通用代理协议、Scheduler 主架构或已有缓存系统
 - 在当前一源一 Host 模型下提前建设通用站点映射表
-- 在本轮新增 Azure ACR、NVIDIA NGC、AWS Private ECR 或其他 Host
+- 在本轮新增 Azure ACR、AWS Private ECR 或其他当前代码未配置的 Host（`nvcr.io` / `registry.gitlab.com` / `mcr.microsoft.com` 等已在代码配置中，不作为本轮新增）
+
+## 9.5 A→B 接口预留（3.5.16 必须为 3.5.17 留出的边界）
+
+3.5.16 只实现 A（同 Host 星标 Source 竞速），但必须为 B（跨 Registry 竞速与顺序回退）预留四个接口。本节只写约束、不写实现；A 实施时若固化了相反假设，3.5.17 必然返工。
+
+**AB-1 Claim 作用域（请求级，可复用）**
+
+- 现有代码中的提交令牌是请求级 `atomic.Bool`，只在 `fetchRace` 内构造，经 `plan.Claim` 传给两条链；`fetchSeq` 内部没有令牌。
+- 令牌的构造逻辑必须从 `fetchRace` 抽成可复用件，`fetchRace` 反向复用它，不得把令牌写死在 `fetchRace` 的局部。仅当 A 退化为单次 `fetchSeq` 时准则上无需令牌，但按本版本 2.3.1 的链级模型 A 是 main/fb 两链并发（预算段自述「A 2 路 + fb 1 路 = 3 路」），**A 必须使用请求级令牌**，不得因「单提交点」的直觉省略令牌。
+- B 的跨站竞速是多次 `fetchSeq` 调用，必须使用**请求级令牌**，覆盖同一请求内所有跨站与站内 attempt。因此令牌的创建条件不得依赖「是否有 fallback」等 A 特有前提。
+- A05 相应补：竞速令牌作用域为请求级，覆盖同一次请求的所有竞速 attempt；一次请求只有一个有效候选能取得提交权并写缓存，失败候选不占用令牌。
+
+**AB-2 CacheKey 适用层（限定 A 层，B 为新增键类型）**
+
+- 1961「不改变现有 CacheKey、Manifest 缓存身份」与 A06「竞速前后缓存键语义不变」限定为**仅约束 A 层同 Host 内**：A 不改 `RegistryCacheKey` 的 origin 维度与既有字段。
+- B 的「按已验证逻辑资源身份归属」是**新增键类型**，不改 `RegistryCacheKey` 既有字段；两者不构成互斥。A 阶段不得把「缓存键永久不可新增类型」写成绝对不变量。
+
+**AB-3 FlightKey 策略枚举（可扩展）**
+
+- `execution_policy` 必须是可扩展枚举（见 5.2）：A 落站内三档，预留 `cross-registry-*` 命名空间供 B 的跨站竞速/顺序使用；新增档位不得改变站内三档语义。
+- 跨站候选内部再跑站内 A 时的嵌套 Flight 关系由 B 定义，A 不得在 FlightKey 里固化「一次请求只有一层策略」。
+
+**AB-4 术语区分（官方直连 Source ≠ 权威 Registry）**
+
+- `out`（官方直连 Source，3.4 中不得进入竞速候选集合）与 B.2 的「权威 Registry」（裸镜像名默认解析到的 Host）是**两个不同对象**：前者是一条 Source，后者是一个 Host。
+- B 的候选过滤链必须与此区分，不得把权威 Registry 当成 `out` 一起排掉；A 的 3.4 过滤链在 B 层仍按 Source 语义执行，B 的候选按 Host 语义组织。
+
+**AB-5 可变 Tag 分层不互推**
+
+- A 层（3.5.16）：可变 Tag 一律不进竞速（3.7、T43 锁死），竞速只对不可变 Digest 开放；这条约束只约束 A。
+- B 层（3.5.17）：在显式可信副本映射 + 版本一致性得到证明后，可变 Tag 才允许跨站竞速（B.3、B.6、B03）。
+- B 对可变 Tag 的放开**不得反推 A 放开**：A 的 T43 约束独立成立，不因 B 的能力而松动；两层的可变 Tag 标准各自冻结、互不作为对方的豁免依据。
 
 ## 10. 已定与待冻结
 
@@ -2103,7 +2977,7 @@ F09 面板 UI 按用户指示忽略，不纳入 3.5.15 延期项；其 API 生�
 25. 3.5.15 文件与 SQLite 不承诺原子提交；使用 `Ready/Pending/Quarantined/Error` 状态机、按 Host `ReconcileHost`、后台重试和单 Host 隔离；启动对账失败不得把整个 CredStore 置空。
 26. 3.5.15 凭据变更审计与 `registry_host_gen` 更新同事务或同步写；备份单元为 DB + `secret.key` + `registry_creds.enc`。
 27. 3.5.15 官方 Realm 本版只支持同 Host 和已有内置 Realm；外部 Realm 留后续版本。
-28. 3.5.16 保持公开 Manifest 竞速，3.5.17 保持 Blob 竞速可行性评估；认证运维能力不占用这两个版本号。
+28. 3.5.16 = A：同 Registry 星标 Source Manifest 竞速（星标=竞速资格，人工策略与探测表分离，按 Host 能力生效，链级 Hedge）；3.5.17 = B：跨 Registry 可信 Manifest 竞速与顺序回退，最终 A+B；Blob 竞速移出独立后续评估；认证运维能力不占用这两个版本号。
 29. 生产目录没有 `registry_creds.enc` 只作为部署基线记录，不作为代码安全验收通过的证据；必须先通过 15-C 的授权门禁和缓存隔离，再开放凭据管理 API/UI。
 30. 真实私有账号未实测前，相关验收保持 `BLOCKED_EXTERNAL_SOURCE`；`REAL_PASS` / `SIMULATED_PASS` / `BLOCKED_EXTERNAL_SOURCE` 三态不得互相替代，公共仓库回源成功不能写成私有 `REAL_PASS`。
 31. Basic/Bearer fixture 固定采用隔离容器 + 443 + allowlist 域名 + 测试 CA；测试 CA 只注入测试环境，不改变生产信任根，不关闭 TLS 校验，测试域名固定解析到隔离环境。
