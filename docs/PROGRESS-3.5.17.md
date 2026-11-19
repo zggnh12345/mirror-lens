@@ -241,3 +241,49 @@
   - 新增 11.8 投票窗口计时起点（首个**正文已校验**候选起算）与三层分账
     （Identity Claim 各逻辑 Registry 各自 / RequestScope 唯一提交权 / CacheKey 验证后归属）。
   - 11.4 由「尚未完成设计」改为「已全部冻结，正文见 11.6–11.8」；11.5 标题标注 17b 已落地。
+
+### 阶段 B/C：权威站边界、FlightKey、AfterFunc 回收、B03/B17/B19/B20
+
+代码事实与修改（提交见下一条）：
+
+1. **权威站不进首轮 C / 不占 M**（`internal/gateway/replica.go`）
+   - 旧：`targets[0]`（权威官方）也被塞进 `cands`，`FirstRound=2` 时首轮 = [权威, 副本1]。
+   - 新：`cands` 只由 `targets[1:]` 构造（副本），`Authority` 仍是记忆化的 `run(0)`；
+     新增冻结常量 `crossReplicaM=4` / `crossReplicaC=2`，M 只数副本。
+   - 胜者下标 `out.Winner` 是副本下标，落槽位时 `+1` 映射回 `targets`。
+   - 测试：`TestReplicaAuthorityNotInFirstRound`（两副本一致时官方 0 派发）、
+     `TestReplicaAuthorityNotCountedInM`（5 条映射只出 4 个副本）、
+     `TestReplicaCandidatesShareSingleClaim`（同一请求仅 1 条 Claim Dispatch、身份是权威逻辑 Registry）。
+2. **Claim 身份注释**（`replica.go` 文件头）：改为「共享权威 Identity 的同一份提交权」，
+   并明确不合并不同 Registry 的 Claim；逻辑见 1.6 §11.8。
+3. **投票窗口计时起点**（`internal/unified/crossrace.go`）
+   - `firstValid` 只在正文已校验后关闭；失败候选只触发安全网 `anyDone`（一个窗口内
+     仍等有效候选，最多 2 个窗口），不再让失败候选提前关闭窗口。
+   - 测试：`TestCrossRaceWindowStartsAtFirstValidCandidate`、`TestManifestVoteOfferAfterCloseIgnored`
+     （窗口关闭后 Offer 被拒、Votes/Agreed 不变）。
+4. **FlightKey 按执行策略命名空间**（`replica.go::crossFlightKey`）
+   - `replica|CacheKey` → `cross-registry-<race|sequential>|CacheKey`，不改 CacheKey。
+   - 测试：`TestCrossFlightKeyNamespaced`（两档互异、与 A 的 `\x00policy=registry-race` 互异）。
+5. **AfterFunc 回收**（`internal/unified/scope.go::RegisterCleanup` + `gateway.go`）
+   - `withScopeCancel` 与 `openUpstreamAs` 的 stop 全部登记到 Scope，派发结束即注销、
+     Scope 关闭统一回收；`CleanupCount()` 供断言。
+   - 测试：`TestScopeCancelCleanupReleased`、`TestScopeCancelFiresOnExhaust`。
+6. **B03 可变 Tag 版本一致性**：`mutableTagRef` 判定；race 模式下副本胜者若是可变 Tag，
+   必须与唯一一次 AuthorityAttempt 的 Digest 一致才提交，否则交回顺序路径。
+   测试：`TestReplicaTagRequiresAuthorityAgreement`、`TestReplicaDigestSkipsAuthority`。
+7. **B17 两档模式**：settings `cross_registry_mode`（sequential 默认 / race / off），
+   UI 设置优先于部署期 `registry.replica_mode`，10s 快照 + API 主动失效。
+   `GET|PUT /api/cross-registry`，面板 `#crossSec` 两档 `sseg` + 参选勾选列表。
+   测试：`TestCrossRegistryAPIMode`、`TestReplicaModeDefaultsAndLiveSwitch`。
+8. **B19 私有 Host 隔离**：权威站或副本站是私有认证 Host 时直接不产生跨站候选。
+   测试：`TestReplicaExcludesPrivateAuthority`。
+9. **B20 参选勾选**：`cross_registry_selected_sources`（settings 单键、默认空、读时
+   与星标求交），写入要求目标已星标，设置与审计同事务。
+   测试：`TestCrossRegistryAPISelection`、`TestReplicaEmptySelectionDegrades`、
+   `TestReplicaRequiresSelection`、`TestCrossSelectedStaleEntryFiltered`。
+
+**未判定为缺陷的行为**：Authority 失败后回到 `fetchOnce`（原有顺序路径）会再发一次
+官方 Attempt。这不是第二个 AuthorityAttempt（`run(0)` 由 `sync.Once` 记忆化），
+而是 B.4「全部候选失败后按权威 Registry 原有错误语义返回」，其用量仍受 R 约束。
+
+B17 的 UI 只做了静态接线与 API 验证，没有浏览器点击验收 → 记 `SIMULATED_PASS`。

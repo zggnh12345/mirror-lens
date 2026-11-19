@@ -67,6 +67,8 @@ type Scope struct {
 	preflight *preflightCache
 	bodies    map[uint64]func()
 	bodySeq   uint64
+	cleanups  map[uint64]func()
+	cleanSeq  uint64
 	done      chan struct{}
 	closeOnce sync.Once
 
@@ -310,7 +312,17 @@ func (s *Scope) Close() {
 		for _, c := range s.chains {
 			chains = append(chains, c)
 		}
+		// 统一回收派发级回调：withScopeCancel 每次派发注册的 AfterFunc
+		// stop 都在这里释放，不依赖每个调用方记得调用 cancel。
+		cleanups := make([]func(), 0, len(s.cleanups))
+		for _, fn := range s.cleanups {
+			cleanups = append(cleanups, fn)
+		}
+		s.cleanups = nil
 		s.mu.Unlock()
+		for _, fn := range cleanups {
+			fn()
+		}
 		for _, c := range chains {
 			c.Close()
 		}
@@ -346,6 +358,46 @@ func (s *Scope) TrackBody(closeFn func()) (func(), bool) {
 		delete(s.bodies, id)
 		s.mu.Unlock()
 	}, true
+}
+
+// RegisterCleanup 登记一个随 Scope 关闭统一释放的收尾函数（如 AfterFunc 的
+// stop）。返回注销函数，用于派发自己结束时提前摘除，避免长 Scope 上按派发
+// 次数累积回调。Scope 已关闭时立即执行并返回空注销函数。
+func (s *Scope) RegisterCleanup(fn func()) func() {
+	if s == nil || fn == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		fn()
+		return func() {}
+	}
+	s.cleanSeq++
+	id := s.cleanSeq
+	if s.cleanups == nil {
+		s.cleanups = map[uint64]func(){}
+	}
+	s.cleanups[id] = fn
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			delete(s.cleanups, id)
+			s.mu.Unlock()
+		})
+	}
+}
+
+// CleanupCount 返回当前登记的收尾函数数（诊断/验收用）。
+func (s *Scope) CleanupCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.cleanups)
 }
 
 // Done 返回 Scope 关闭信号。

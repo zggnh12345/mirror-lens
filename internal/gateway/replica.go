@@ -28,12 +28,28 @@ import (
 //   - 映射只授权尝试，不证明内容一致，最终仍以正文 Digest 为准。
 //
 // 两种模式（registry.replica_mode）：
-//   - sequential：按 priority 固定顺序逐站尝试，首个可信正文交付；
-//   - race：首轮 C=2 并发、200ms 投票窗口；两路一致直接交付；不一致先顺序
-//     补位，仍不能解决才用唯一一次 Authority；Authority 正文可作最终交付。
+//   - sequential：按 priority 固定顺序逐站尝试，首个可信正文交付（权威站先执行，
+//     失败后按顺序访问 M 个可信副本——11.1 乙案对默认顺序模式的冻结口径）；
+//   - race：首轮 C=2 个**副本**并发、200ms 投票窗口；两路一致直接交付；不一致先
+//     顺序补位剩余副本，仍不能解决才用唯一一次 Authority。Authority 正文可作最终交付。
 //
-// 本文件不改缓存身份、Claims 身份与认证边界：所有候选共享权威 Identity，
-// 缓存键仍是权威 plan 的 CacheKey，Auth 策略按候选自己的逻辑 Registry 解析。
+// 权威站与副本的角色必须分开（11.1 乙案）：权威 Registry 不属于可信副本集合，
+// 不占 M 名额、不进入首轮 C、不占补位名额。它的 AuthorityAttempt 每请求每
+// Identity 最多一次真实派发，软比对与最终兜底复用同一次结果。
+//
+// 本文件不改缓存身份与认证边界：副本候选共享权威 Identity 的**同一份提交权**
+// （一个请求只有一个胜者、只写一个 CacheKey），其 Attempt 以权威仓库登记 Claim
+// 身份，因此同一请求内只有一条 Claim Dispatched；但这不是「把不同 Registry 的
+// Claim 合并成一条」——每个逻辑 Registry 仍有自己的 Identity Claim，见 1.6 §11.8。
+// Auth 策略按候选自己的逻辑 Registry 解析。
+
+// 冻结常量（1.6 §11.1）：口径来自设计冻结，不在调用方覆盖。
+const (
+	// crossReplicaM 是可信副本候选总数上限（权威站不占 M 名额）。
+	crossReplicaM = 4
+	// crossReplicaC 是跨站竞速首轮并发候选数，含于 M。
+	crossReplicaC = 2
+)
 
 // replicaArtifact 是一次已完整读取并校验过的候选正文（临时文件）。
 type replicaArtifact struct {
@@ -54,14 +70,69 @@ type replicaTarget struct {
 	name     string
 }
 
+// replicaModeTTL 是 UI 模式快照的保鲜期；切换由 API 立即失效，不靠 TTL。
+const replicaModeTTL = 10 * time.Second
+
+type replicaModeSnapshot struct {
+	mode string
+	at   time.Time
+}
+
+// replicaMode 解析当前生效的跨站模式：
+//   - UI 设置（settings.cross_registry_mode）优先；
+//   - 否则用部署期配置 registry.replica_mode；
+//   - 两者都缺省时按 B17「默认顺序回退」（sequential）。空勾选使它在默认
+//     安装上依然没有候选，因此不会改变既有行为。
 func (g *Gateway) replicaMode() string {
+	if g == nil {
+		return ""
+	}
+	if v := g.replicaModeLive(); v != "" {
+		if v == "off" {
+			return "" // UI 显式关闭优先于部署期配置
+		}
+		return v
+	}
 	switch strings.ToLower(strings.TrimSpace(g.replica)) {
 	case "race":
 		return "race"
-	case "sequential":
+	case "sequential", "":
 		return "sequential"
 	}
-	return ""
+	return "" // "off" 或无法识别 → 关闭
+}
+
+// replicaModeLive 读 UI 设置（带 10s 快照，避免每个 Manifest 请求查库）。
+func (g *Gateway) replicaModeLive() string {
+	if g == nil || g.st == nil {
+		return ""
+	}
+	if v := g.replicaCfg.Load(); v != nil {
+		if sn, ok := v.(*replicaModeSnapshot); ok && sn != nil && sn.mode != "" && g.now().Sub(sn.at) < replicaModeTTL {
+			return sn.mode
+		}
+	}
+	m := g.st.CrossRegistryMode()
+	if m == "off" {
+		// off 是显式关闭，不能当成「未设置」再落回配置默认值。
+		g.replicaCfg.Store(&replicaModeSnapshot{mode: m, at: g.now()})
+		return m
+	}
+	g.replicaCfg.Store(&replicaModeSnapshot{mode: m, at: g.now()})
+	return m
+}
+
+// InvalidateReplicaMode 让模式切换即时生效（下一请求重新读设置）。
+func (g *Gateway) InvalidateReplicaMode() {
+	if g == nil {
+		return
+	}
+	g.replicaCfg.Store((*replicaModeSnapshot)(nil))
+}
+
+// EffectiveReplicaMode 返回当前真正生效的跨站模式，供面板展示（只读）。
+func (g *Gateway) EffectiveReplicaMode() string {
+	return g.replicaMode()
 }
 
 // replicaEligible 判断本次 Manifest 请求是否进入跨 Registry 副本路径。
@@ -85,6 +156,17 @@ func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTa
 	if authority == "" || plan.Repo == "" || plan.Ref == "" {
 		return nil, 0, nil
 	}
+	// B19（3.5.15 对齐）：私有认证 Host 不进跨站候选，也不写共享缓存。
+	// 私有站按缓存前分流走 OfficialOnly 路径，这里再挡一次，避免任何入口绕开。
+	if g.privateRegistryHost(authority) {
+		return nil, 0, nil
+	}
+	// B20：跨站参选勾选是星标在跨站用途上的子集过滤器。默认空列表 =
+	// 没有跨站候选（退化为顺序回退），不是「全部参选」。
+	selected := g.st.EffectiveCrossSelected()
+	if len(selected) == 0 {
+		return nil, 0, nil
+	}
 	reps, err := g.st.ActiveRegistryReplicas(authority, plan.Repo, now)
 	if err != nil {
 		return nil, 0, err
@@ -98,9 +180,16 @@ func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTa
 		return nil, 0, err
 	}
 	out := []replicaTarget{{u: plan.Upstream, registry: authority, sourceID: 0, name: "official"}}
+	// M 只数副本：权威站在下标 0，不占 M 名额。
+	replicas := 0
 	for _, rep := range reps {
-		if len(out) >= unified.RMax {
+		if replicas >= crossReplicaM {
 			break
+		}
+		// B19：副本侧若是私有认证 Host，既不进候选也不写共享缓存
+		// （凭据只发给明确授权的官方 Registry/Realm）。
+		if g.privateRegistryHost(rep.ReplicaRegistry) {
+			continue
 		}
 		base := &url.URL{
 			Scheme: "https",
@@ -128,6 +217,11 @@ func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTa
 			if !allowed[c.ID] {
 				continue
 			}
+			// 星标是唯一的人工授权；勾选只是它在跨站用途上的子集，
+			// 两个条件都满足才进入候选（未勾选的星标节点不进跨站候选）。
+			if !c.Preferred || !selected[c.ID] {
+				continue
+			}
 			cc := c
 			u, ok := g.sched.Rewrite("registry:"+rep.ReplicaRegistry, base, cc)
 			if !ok || u == nil {
@@ -139,9 +233,7 @@ func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTa
 		// 避免同一副本在投票里贡献两票（投票层仍按 source_id 去重）。
 		if len(picked) > 0 {
 			out = append(out, picked[0])
-		}
-		if len(out) >= unified.RMax {
-			break
+			replicas++
 		}
 	}
 	return out, gen, nil
@@ -276,6 +368,34 @@ func (g *Gateway) commitReplicaArtifact(ctx context.Context, plan *adapter.Plan,
 	return e, nil
 }
 
+// mutableTagRef 判断这次 Manifest 引用是可变 Tag（不是内容寻址 Digest）。
+// 可变 Tag 在没有版本一致性证明前不能共享逻辑身份（B.3/B.6），也不能把副本
+// 正文直接写进权威 Tag 的缓存键。
+func mutableTagRef(plan *adapter.Plan) bool {
+	if plan == nil {
+		return false
+	}
+	if plan.ExpectSHA != "" {
+		return false
+	}
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(plan.Ref)), "sha256:")
+}
+
+// crossFlightKey 把副本执行模式并进 singleflight 键。
+//
+// A 的 registry-race、B 的顺序与竞速是三个互不复用的执行态（与 FlightPolicy
+// 命名空间同理）：共用同一个 Flight 会让不同策略的结果串味（顺序模式的结果
+// 被竞速请求复用，反之亦然）。CacheKey 本身不改，缓存身份仍由权威 plan 决定。
+func crossFlightKey(mode string, plan *adapter.Plan) string {
+	if plan == nil {
+		return ""
+	}
+	if mode != "race" && mode != "sequential" {
+		mode = "off"
+	}
+	return "cross-registry-" + mode + "|" + plan.CacheKey
+}
+
 // fetchWithReplicas 是 serveManifest 的唯一入口：副本路径没有形成结论时
 // 无条件回到 fetchOnce，保证旧行为不被削弱。
 // replicaFlight 让同一 CacheKey 的并发请求共享一次跨 Registry 竞速。
@@ -294,7 +414,7 @@ func (g *Gateway) fetchWithReplicas(ctx context.Context, plan *adapter.Plan, pre
 	// 副本路径与它的顺序回退必须落在同一条 B 链：竞速阶段一旦派发过，
 	// F19 的 Claim 就是 dispatched，换链顺序回退会被直接抑制（502）。
 	ctx = withUnifiedChain(ctx, unified.ChainB)
-	key := "replica|" + plan.CacheKey
+	key := crossFlightKey(g.replicaMode(), plan)
 	nf := &replicaFlight{done: make(chan struct{})}
 	actual, loaded := g.replicaFlights.LoadOrStore(key, nf)
 	f := actual.(*replicaFlight)
@@ -422,20 +542,25 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		}
 	}
 
-	cands := make([]unified.CrossCandidate, 0, len(targets))
-	for i := range targets {
-		i := i
+	cands := make([]unified.CrossCandidate, 0, len(targets)-1)
+	// 只有副本进首轮 C 与补位：权威站独立于 M，不占 M 名额、不进 C、
+	// 不占补位名额（11.1 乙案）。targets[0] 是权威站，副本从下标 1 开始。
+	for j := 1; j < len(targets); j++ {
+		slotIdx := j
 		cands = append(cands, unified.CrossCandidate{
-			Registry: targets[i].registry,
-			SourceID: targets[i].sourceID,
+			Registry: targets[j].registry,
+			SourceID: targets[j].sourceID,
 			Run: func(rc context.Context) (string, error) {
-				return run(i)
+				return run(slotIdx)
 			},
 			Abort: func() {},
 		})
 	}
-	// Authority 唯一一次真实派发：候选 0 就是权威官方，复用它的下载产物。
+	// Authority 唯一一次真实派发：复用权威站的槽位（run 由 sync.Once 记忆化，
+	// 同一请求最多一次 Dispatched；软比对与最终兜底共用这次结果）。
 	cfg := unified.CrossRaceConfig{
+		MaxCandidates: crossReplicaM,
+		FirstRound:    crossReplicaC,
 		Authority: func(rc context.Context) (string, error) {
 			return run(0)
 		},
@@ -452,12 +577,28 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		}
 	}
 	if out.Winner >= 0 {
-		art := slots[out.Winner].art
-		consumed[out.Winner] = true
-		if targets[out.Winner].sourceID > 0 {
-			plan.Source = targets[out.Winner].name
+		// out.Winner 是副本下标（cands 不含权威站），槽位要 +1 映射回去。
+		wi := out.Winner + 1
+		if wi >= len(slots) {
+			dropAll(-1)
+			return nil, false, nil
 		}
-		dropAll(out.Winner)
+		// B03：可变 Tag 没有内容寻址身份，必须取得版本一致性才能把副本正文
+		// 写进权威 Tag 的缓存键。一致性由本请求唯一一次 AuthorityAttempt
+		// 对照（run(0) 已记忆化，不会二次派发）；不一致就交回顺序路径。
+		if mutableTagRef(plan) {
+			ad, aerr := run(0)
+			if aerr != nil || ad == "" || !strings.EqualFold(ad, slots[wi].sha) {
+				dropAll(-1)
+				return nil, false, nil
+			}
+		}
+		art := slots[wi].art
+		consumed[wi] = true
+		if targets[wi].sourceID > 0 {
+			plan.Source = targets[wi].name
+		}
+		dropAll(wi)
 		e, cerr := g.commitReplicaArtifact(ctx, plan, art)
 		if cerr != nil {
 			return nil, true, cerr

@@ -339,3 +339,56 @@ func TestCrossRaceWindowStartsAtFirstVote(t *testing.T) {
 		t.Fatal("两票一致时不应问权威")
 	}
 }
+
+// ---- 第四轮：窗口关闭与计时起点 ----
+
+// 窗口关闭后 Offer 不得改变结论：Votes 不增、Agreed 不变、状态不回退。
+func TestManifestVoteOfferAfterCloseIgnored(t *testing.T) {
+	v := NewManifestVote(30 * time.Millisecond)
+	if st, ok := v.Offer(VoteCandidate{Registry: "quay.io", SourceID: 1, Digest: digA, Verified: true, Complete: true}); !ok || st != VoteCollecting {
+		t.Fatalf("首票应被接受: st=%v ok=%v", st, ok)
+	}
+	state := v.CloseWindow()
+	if state != VoteAuthorityCompare {
+		t.Fatalf("单票窗口关闭应为 authority_compare，实际 %v", state)
+	}
+	votes, agreed := v.Votes(), v.Agreed()
+	if st, ok := v.Offer(VoteCandidate{Registry: "ghcr.io", SourceID: 2, Digest: digA, Verified: true, Complete: true}); ok || st != state {
+		t.Fatalf("窗口关闭后不得再收票: st=%v ok=%v", st, ok)
+	}
+	if v.Votes() != votes || v.Agreed() != agreed {
+		t.Fatalf("窗口关闭后结论被改变: votes=%d agreed=%q", v.Votes(), v.Agreed())
+	}
+}
+
+// 失败候选既不投票也不阻塞有效候选：胜者只能是正文已校验的那个，
+// 且只软比对一次权威（窗口起点由首个有效候选决定，不由失败候选决定）。
+func TestCrossRaceWindowStartsAtFirstValidCandidate(t *testing.T) {
+	bad := &fakeCand{digest: "", delay: time.Millisecond}         // 失败候选：先返回
+	good := &fakeCand{digest: digA, delay: 40 * time.Millisecond} // 有效候选：晚于失败
+	var authorityCalls atomic.Int32
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Window:     60 * time.Millisecond,
+		FirstRound: 2,
+		Authority: func(context.Context) (string, error) {
+			authorityCalls.Add(1)
+			return digA, nil
+		},
+	}, []CrossCandidate{
+		bad.candidate("quay.io", 1),
+		good.candidate("ghcr.io", 2),
+	})
+	if err != nil {
+		t.Fatalf("应形成结论: %v", err)
+	}
+	// 胜者必须是那个「有效」候选（下标 1），不是先返回的失败候选。
+	if out.Winner != 1 || out.Digest != digA {
+		t.Fatalf("winner=%d digest=%q", out.Winner, out.Digest)
+	}
+	if authorityCalls.Load() != 1 {
+		t.Fatalf("单有效票必须软比对一次权威，实际 %d", authorityCalls.Load())
+	}
+	if bad.aborts.Load() != 1 {
+		t.Fatalf("落败候选应被 Abort 一次，实际 %d", bad.aborts.Load())
+	}
+}

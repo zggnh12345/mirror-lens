@@ -142,9 +142,19 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 	firstRes := make([]crossResult, first)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	// 窗口从「首个候选返回」起算（冻结语义），不是从竞速开始。
-	var firstOnce sync.Once
-	firstArrived := make(chan struct{})
+	// 窗口从「首个正文已完整读取且 Digest 已校验的有效候选」起算（1.6 §11.8），
+	// 不是从竞速开始，也不是从第一个响应头/第一个完成起算。
+	var firstOnce, anyOnce sync.Once
+	firstValid := make(chan struct{})
+	anyDone := make(chan struct{})
+	waited := make(chan struct{})
+	waitWindow := func() {
+		select {
+		case <-waited:
+		case <-time.After(cfg.Window):
+		case <-ctx.Done():
+		}
+	}
 	for i := 0; i < first; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -153,10 +163,12 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			mu.Lock()
 			firstRes[i] = crossResult{idx: i, digest: d, err: err}
 			mu.Unlock()
-			firstOnce.Do(func() { close(firstArrived) })
+			anyOnce.Do(func() { close(anyDone) })
 			if err != nil || d == "" {
+				// 失败候选不投票、也不启动计时：只有正文已校验的结果才算票。
 				return
 			}
+			firstOnce.Do(func() { close(firstValid) })
 			// Run 的契约是「正文已读完且 Digest 已校验」，因此这里投票
 			// 可以直接标记 Verified/Complete；只报响应头的候选不许投票。
 			vote.Offer(VoteCandidate{
@@ -168,14 +180,19 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			})
 		}(i)
 	}
-	waited := make(chan struct{})
 	go func() { wg.Wait(); close(waited) }()
 	select {
 	case <-waited:
-	case <-firstArrived:
-		// 首票到达后才开始计宽限窗口：慢候选只允许拖 Window，不允许拖死请求。
+	case <-firstValid:
+		// 首票（正文已校验）到达后才开始计宽限窗口：慢候选只允许拖 Window。
+		waitWindow()
+	case <-anyDone:
+		// 首个完成是失败候选：不启动投票窗口，但也不能被另一个挂住的候选
+		// 拖死。有效候选在安全网内到达时，仍按「有效候选 + 一个窗口」计。
 		select {
 		case <-waited:
+		case <-firstValid:
+			waitWindow()
 		case <-time.After(cfg.Window):
 		case <-ctx.Done():
 		}

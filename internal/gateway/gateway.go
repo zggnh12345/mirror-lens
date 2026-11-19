@@ -95,7 +95,8 @@ type Gateway struct {
 	scopePool     *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
 	scopeCfg      unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
 	unifiedOff    bool                                       // 3.5.17 部署期全局回退（T62）
-	replica       string                                     // 3.5.17 跨 Registry 副本模式：""/off/sequential/race
+	replica       string                                     // 3.5.17 跨 Registry 副本模式：""/off/sequential/race（部署期基线）
+	replicaCfg    atomic.Value                               // *replicaModeSnapshot（UI 跨站模式快照，10s TTL）
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
@@ -1495,13 +1496,24 @@ func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 
 // withScopeCancel 让一次上游派发随 Scope 耗尽被取消（blob 主流、分片、换源
 // 都从 r.Context() 派生，不在 Scope 自己的 ctx 之下）。
+//
+// 回调所有权归 Scope：每次派发注册的 AfterFunc stop 都登记在 Scope 上，
+// 派发结束时经 unregister 摘除，Scope 关闭时统一回收。旧的实现丢弃了
+// AfterFunc 的返回值，长 Scope（大文件分片、多种换源）会按派发次数累积
+// 回调，直到 Scope 关闭才释放。
 func withScopeCancel(ctx context.Context) context.Context {
 	sc := unified.FromContext(ctx)
 	if sc == nil || sc.Exhausted() {
 		return ctx
 	}
 	nctx, cancel := context.WithCancel(ctx)
-	context.AfterFunc(sc.Context(), cancel)
+	stop := context.AfterFunc(sc.Context(), cancel)
+	unreg := sc.RegisterCleanup(func() {
+		stop()
+		cancel()
+	})
+	// 派发自己结束时（读完/失败/取消）立刻摘除登记，Scope 不必等关闭。
+	context.AfterFunc(nctx, func() { unreg() })
 	return nctx
 }
 
@@ -1522,10 +1534,18 @@ func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *
 	}
 	uctx, cancel := context.WithCancel(ctx)
 	if sc := unified.FromContext(ctx); sc != nil {
-		// Scope 耗尽时取消该次尝试（含认证重发/Token 请求）。
-		stop := context.AfterFunc(sc.Context(), cancel)
-		prev := cancel
-		cancel = func() { stop(); prev() }
+		// Scope 耗尽时取消该次尝试（含认证重发/Token 请求）。stop 的所有权
+		// 记在 Scope 上：派发结束由 cancel 释放，漏调时由 Scope 关闭兜底。
+		base := cancel
+		stop := context.AfterFunc(sc.Context(), base)
+		unreg := sc.RegisterCleanup(func() {
+			stop()
+			base()
+		})
+		cancel = func() {
+			unreg()
+			base()
+		}
 	}
 	req, err := http.NewRequestWithContext(uctx, http.MethodGet, u.String(), nil)
 	if err != nil {

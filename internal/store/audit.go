@@ -151,3 +151,10 @@ func (s *Store) ListAudit(limit int) ([]AuditEvent, error) {
 	}
 	return out, rows.Err()
 }
+
+// CountAuditByAction 统计某 action 的审计行数（验收断言用，读耐久表）。
+func (s *Store) CountAuditByAction(action string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM audit WHERE action=?`, action).Scan(&n)
+	return n, err
+}
