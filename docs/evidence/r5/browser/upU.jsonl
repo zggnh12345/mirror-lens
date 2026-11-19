@@ -1,0 +1,5 @@
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795129929.6334624, "port": 19203, "inst": "U"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129929.6345358, "port": 19203, "inst": "U"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129929.6356685, "port": 19203, "inst": "U"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795129929.6375334, "port": 19203, "inst": "U"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795129929.6383402, "port": 19203, "inst": "U"}

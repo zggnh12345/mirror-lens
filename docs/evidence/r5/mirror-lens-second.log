@@ -1,0 +1,26 @@
+time=2026-11-20T06:31:34.365+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="已补 2 个源的站点名"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=3 禁用Host=0）"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg=私有分片内存窗口 并发文件=2 worker=4 段大小MB=4 最坏MB=32
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T06:31:34.379+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r5/run1/data/backup（保留 7 份）"
+time=2026-11-20T06:31:34.380+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T06:31:34.380+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T06:31:34.381+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18080"
+time=2026-11-20T06:31:34.565+08:00 level=INFO msg=面板请求 request_id=59922e25930f743e method=GET path=/api/me status=401 duration_ms=0
+time=2026-11-20T06:31:34.569+08:00 level=INFO msg=面板请求 request_id=12686560eb13a848 method=GET path=/api/me status=401 duration_ms=0
+time=2026-11-20T06:31:34.641+08:00 level=INFO msg=面板请求 request_id=37e0f646ec6d02ab method=POST path=/api/login status=200 duration_ms=70
+time=2026-11-20T06:31:34.642+08:00 level=INFO msg=面板请求 request_id=7b76fe63eaf0c58c method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T06:31:34.642+08:00 level=INFO msg=面板请求 request_id=39848dddf9e0c3cb method=GET path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T06:31:34.643+08:00 level=INFO msg=面板请求 request_id=86b8521752917c47 method=GET path=/api/registry-replicas status=200 duration_ms=0
+time=2026-11-20T06:31:34.643+08:00 level=INFO msg=面板请求 request_id=b09d269553395359 method=GET path=/api/registry-replica-audit status=200 duration_ms=0
+time=2026-11-20T06:31:34.644+08:00 level=INFO msg=面板请求 request_id=4af89752f08460dd method=GET path=/api/trusted-mappings status=200 duration_ms=0
+time=2026-11-20T06:31:34.644+08:00 level=INFO msg=面板请求 request_id=fd5b8e2c1d74fc5c method=GET path=/api/trusted-mapping-audit status=200 duration_ms=0
+time=2026-11-20T06:31:34.645+08:00 level=INFO msg=面板请求 request_id=5d36b21d5bb5aef6 method=PUT path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T06:31:36.598+08:00 level=INFO msg=面板请求 request_id=87f89880a58bda1d method=PUT path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T06:31:36.658+08:00 level=INFO msg=面板请求 request_id=dfddd27c2a1d3eb8 method=PUT path=/api/cross-registry status=200 duration_ms=1
+time=2026-11-20T06:31:37.666+08:00 level=INFO msg=面板请求 request_id=7007b0539a071a00 method=GET path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T06:31:37.669+08:00 level=INFO msg=已退出

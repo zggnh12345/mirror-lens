@@ -1,0 +1,11 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128934.1075227, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795128934.1093545, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128934.1557171, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795128934.2048564, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795128934.929966, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128934.9311213, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128934.9322739, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795128934.933398, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795128934.9340901, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/badres/blobs/sha256:01794906a65752af41f6f30b3dbbdab4fdbed2909b6f1ba09a9d79a9ecb5d217", "status": 206, "bytes": 300000, "range": "bytes=0-0", "repo": "badres", "kind": "blob", "mode": "cut_then_bad206", "total": 300000, "wrong_total": 300097, "ts": 1795128935.2791133, "port": 19108, "inst": "A"}
+{"method": "GET", "path": "/v2/badres/blobs/sha256:01794906a65752af41f6f30b3dbbdab4fdbed2909b6f1ba09a9d79a9ecb5d217", "status": 200, "bytes": 150000, "range": null, "repo": "badres", "kind": "blob", "mode": "cut_then_bad206", "aborted": true, "total": 300000, "ts": 1795128935.2941911, "port": 19108, "inst": "A"}

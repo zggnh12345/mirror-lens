@@ -1,0 +1,255 @@
+{
+  "steps": [],
+  "network": [
+    {
+      "m": "GET",
+      "u": "/api/me",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sources",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/metrics",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/alerts",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/groups",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sched-order",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/star-race",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/cross-registry",
+      "body": ""
+    },
+    {
+      "m": "PUT",
+      "u": "/api/cross-registry",
+      "body": "{\"mode\":\"race\"}"
+    },
+    {
+      "m": "GET",
+      "u": "/api/cross-registry",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/accel/active",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/me",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sources",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/metrics",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/alerts",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/groups",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sched-order",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/star-race",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/cross-registry",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/me",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sources",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/metrics",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/alerts",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/groups",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/sched-order",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/star-race",
+      "body": ""
+    },
+    {
+      "m": "GET",
+      "u": "/api/cross-registry",
+      "body": ""
+    },
+    {
+      "m": "PUT",
+      "u": "/api/cross-registry",
+      "body": "{\"mode\":\"sequential\"}"
+    },
+    {
+      "m": "GET",
+      "u": "/api/cross-registry",
+      "body": ""
+    }
+  ],
+  "console": [],
+  "assertions": {
+    "api_login": {
+      "ok": true,
+      "detail": 200
+    },
+    "1_default_sequential": {
+      "ok": true,
+      "detail": {
+        "seqPressed": "true",
+        "desc0": "省请求，前一个 404/超时/无效才问下一个"
+      }
+    },
+    "2_switch_race_persisted": {
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "racePressed": "true",
+        "configured": "race",
+        "desc": "具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁"
+      }
+    },
+    "3_reload_restore": {
+      "ok": true,
+      "detail": {
+        "racePressed2": "true",
+        "desc2": "具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁"
+      }
+    },
+    "5_unstarred_rejected": {
+      "ok": true,
+      "detail": {
+        "status": 400,
+        "body": {
+          "error": "source 3 未加星标，不能进入跨站参选集合"
+        },
+        "checkboxCount": 2,
+        "checkboxIds": [
+          1,
+          2
+        ]
+      }
+    },
+    "4a_selected_cleared": {
+      "ok": true,
+      "detail": 200
+    },
+    "6_unstar_hides_from_ui": {
+      "ok": true,
+      "detail": {
+        "targetId": 2,
+        "before": [
+          1,
+          2
+        ],
+        "after": [
+          1,
+          2
+        ],
+        "starred": [
+          1
+        ],
+        "boxesBefore": 2,
+        "boxesAfter": 1,
+        "idsAfter": [
+          1
+        ]
+      }
+    },
+    "7_b_mode_isolated_from_a": {
+      "ok": true,
+      "detail": {
+        "hostsSame": true,
+        "starOthersSame": true,
+        "before": [
+          [
+            1,
+            true
+          ],
+          [
+            2,
+            true
+          ],
+          [
+            3,
+            false
+          ]
+        ],
+        "after": [
+          [
+            1,
+            true
+          ],
+          [
+            3,
+            false
+          ],
+          [
+            2,
+            false
+          ]
+        ]
+      }
+    }
+  }
+}

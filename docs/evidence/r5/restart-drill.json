@@ -1,0 +1,1099 @@
+{
+  "run": "r5-restart",
+  "config": "addr: \"127.0.0.1:18080\"\ndata: \"/opt/data/cache/scratch/r5/run1/data\"\nno_seed: true\nregistry:\n  enabled: true\n  docker_enabled: true\n  ghcr_enabled: true\n  upstream: \"registry-1.docker.io\"\n  multi_origin_hosts:\n    - gcr.io\n    - quay.io\n    - registry.k8s.io\n  max_file_mb: 64\n  tag_ttl: 5m\nsources:\n  enabled: true\nprobe:\n  allow_private: true\n  interval_sec: 30\n  concurrency: 2\n  timeout_sec: 10\nlogging:\n  level: debug\n",
+  "api": [
+    {
+      "call": "GET /api/me (anon)",
+      "status": 200,
+      "body": {
+        "csrf": "",
+        "must_change": true,
+        "user": "admin",
+        "version": "3.5.16"
+      }
+    },
+    {
+      "call": "POST /api/setup",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/login",
+      "status": 200,
+      "body": {
+        "must_change": false,
+        "ok": true
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "status": 200,
+      "body": {
+        "csrf": "743f5d884ecf3cdb8874404dabbb89f5906f3361e778f3baab3f2b521e0f510d",
+        "must_change": false,
+        "user": "r5admin",
+        "version": "3.5.16"
+      }
+    },
+    {
+      "call": "POST /api/sources quay-mirror",
+      "status": 200,
+      "body": {
+        "id": 1,
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/sources k8s-mirror",
+      "status": 200,
+      "body": {
+        "id": 2,
+        "ok": true
+      }
+    },
+    {
+      "call": "PATCH /api/sources/1 preferred",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "call": "PATCH /api/sources/2 preferred",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/registry-replicas quay.io",
+      "status": 200,
+      "body": {
+        "generation": 1,
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/registry-replicas registry.k8s.io",
+      "status": 200,
+      "body": {
+        "generation": 2,
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/trusted-mappings quay.io",
+      "status": 200,
+      "body": {
+        "generation": 2,
+        "ok": true
+      }
+    },
+    {
+      "call": "POST /api/trusted-mappings registry.k8s.io",
+      "status": 200,
+      "body": {
+        "generation": 2,
+        "ok": true
+      }
+    },
+    {
+      "call": "PUT /api/cross-registry mode=race",
+      "status": 200,
+      "body": {
+        "mode": "race",
+        "ok": true,
+        "selected": null
+      }
+    },
+    {
+      "call": "PUT /api/cross-registry selected=[1, 2]",
+      "status": 200,
+      "body": {
+        "mode": "race",
+        "ok": true,
+        "selected": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "call": "GET /api/cross-registry (before restart)",
+      "status": 200,
+      "body": {
+        "configured": "race",
+        "mode": "race",
+        "selected": [
+          1,
+          2
+        ],
+        "starred": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "call": "GET /api/me (after restart, anon)",
+      "status": 401,
+      "body": {
+        "error": "未登录"
+      }
+    },
+    {
+      "call": "POST /api/login (after restart)",
+      "status": 200,
+      "body": {
+        "must_change": false,
+        "ok": true
+      }
+    },
+    {
+      "call": "GET /api/cross-registry (after restart)",
+      "status": 200,
+      "body": {
+        "configured": "race",
+        "mode": "race",
+        "selected": [
+          1,
+          2
+        ],
+        "starred": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "call": "PUT /api/cross-registry mode=sequential",
+      "status": 200,
+      "body": {
+        "mode": "sequential",
+        "ok": true,
+        "selected": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "call": "PUT /api/cross-registry mode=race",
+      "status": 200,
+      "body": {
+        "mode": "race",
+        "ok": true,
+        "selected": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "call": "PUT /api/cross-registry mode=sequential",
+      "status": 200,
+      "body": {
+        "mode": "sequential",
+        "ok": true,
+        "selected": [
+          1,
+          2
+        ]
+      }
+    }
+  ],
+  "db": {
+    "caps_after_probe": [
+      {
+        "source_id": 1,
+        "host": "docker.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": 0,
+        "diagnostics": ""
+      },
+      {
+        "source_id": 1,
+        "host": "ghcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": 0,
+        "diagnostics": ""
+      },
+      {
+        "source_id": 1,
+        "host": "quay.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": 0,
+        "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:567dbd3791792e1b084762261dff1c0d4662a2da499ea8025d360275b8542802\",\"digest_ok\":-1,\"latency_ms\":43,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      {
+        "source_id": 2,
+        "host": "docker.io",
+        "enabled": 1,
+        "last_verdict": "Inconclusive",
+        "effective_status": "Unknown",
+        "registry_path_mode": "",
+        "registry_prefix": 0,
+        "diagnostics": ""
+      },
+      {
+        "source_id": 2,
+        "host": "ghcr.io",
+        "enabled": 1,
+        "last_verdict": "Inconclusive",
+        "effective_status": "Unknown",
+        "registry_path_mode": "",
+        "registry_prefix": 0,
+        "diagnostics": ""
+      },
+      {
+        "source_id": 2,
+        "host": "registry.k8s.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": 0,
+        "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":50,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:ee4128b9b36b2c56b27d9cccdd1ac63362f87f1ce76258f862678ce414af4181\",\"digest_ok\":-1,\"latency_ms\":48,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      }
+    ],
+    "before_restart": {
+      "schema_meta": [
+        {
+          "id": 1,
+          "schema_version": "3.5.17",
+          "schema_hash": "bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae",
+          "baseline_version": "fresh",
+          "applied_at": 1795127484
+        }
+      ],
+      "sources": [
+        {
+          "id": 1,
+          "name": "quay-mirror",
+          "base_url": "http://127.0.0.1:19001",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        },
+        {
+          "id": 2,
+          "name": "k8s-mirror",
+          "base_url": "http://127.0.0.1:19002",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        }
+      ],
+      "host_caps": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "quay.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:567dbd3791792e1b084762261dff1c0d4662a2da499ea8025d360275b8542802\",\"digest_ok\":-1,\"latency_ms\":43,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        },
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "registry.k8s.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":50,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:ee4128b9b36b2c56b27d9cccdd1ac63362f87f1ce76258f862678ce414af4181\",\"digest_ok\":-1,\"latency_ms\":48,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        }
+      ],
+      "recovery": [
+        {
+          "source_id": 1,
+          "family": "registry",
+          "scope": "quay.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        },
+        {
+          "source_id": 2,
+          "family": "registry",
+          "scope": "registry.k8s.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        }
+      ],
+      "replicas": [
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "replica_gen": [
+        {
+          "authority_registry": "gcr.io",
+          "generation": 2
+        }
+      ],
+      "replica_audit": {
+        "error": "no such column: replica_repository"
+      },
+      "mappings": [
+        {
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "mapping_gen": [
+        {
+          "registry_host": "quay.io",
+          "generation": 2
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "generation": 2
+        }
+      ],
+      "settings": [
+        {
+          "key": "cross_registry_mode",
+          "value": "race"
+        },
+        {
+          "key": "cross_registry_selected_sources",
+          "value": "[1,2]"
+        }
+      ],
+      "cache_entries": [
+        {
+          "n": 0
+        }
+      ]
+    },
+    "after_restart": {
+      "schema_meta": [
+        {
+          "id": 1,
+          "schema_version": "3.5.17",
+          "schema_hash": "bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae",
+          "baseline_version": "fresh",
+          "applied_at": 1795127484
+        }
+      ],
+      "sources": [
+        {
+          "id": 1,
+          "name": "quay-mirror",
+          "base_url": "http://127.0.0.1:19001",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        },
+        {
+          "id": 2,
+          "name": "k8s-mirror",
+          "base_url": "http://127.0.0.1:19002",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        }
+      ],
+      "host_caps": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "quay.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:567dbd3791792e1b084762261dff1c0d4662a2da499ea8025d360275b8542802\",\"digest_ok\":-1,\"latency_ms\":43,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        },
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "registry.k8s.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":50,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:ee4128b9b36b2c56b27d9cccdd1ac63362f87f1ce76258f862678ce414af4181\",\"digest_ok\":-1,\"latency_ms\":48,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        }
+      ],
+      "recovery": [
+        {
+          "source_id": 1,
+          "family": "registry",
+          "scope": "quay.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        },
+        {
+          "source_id": 2,
+          "family": "registry",
+          "scope": "registry.k8s.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        }
+      ],
+      "replicas": [
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "replica_gen": [
+        {
+          "authority_registry": "gcr.io",
+          "generation": 2
+        }
+      ],
+      "replica_audit": {
+        "error": "no such column: replica_repository"
+      },
+      "mappings": [
+        {
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "mapping_gen": [
+        {
+          "registry_host": "quay.io",
+          "generation": 2
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "generation": 2
+        }
+      ],
+      "settings": [
+        {
+          "key": "cross_registry_mode",
+          "value": "race"
+        },
+        {
+          "key": "cross_registry_selected_sources",
+          "value": "[1,2]"
+        }
+      ],
+      "cache_entries": [
+        {
+          "n": 0
+        }
+      ]
+    },
+    "after_requests": {
+      "schema_meta": [
+        {
+          "id": 1,
+          "schema_version": "3.5.17",
+          "schema_hash": "bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae",
+          "baseline_version": "fresh",
+          "applied_at": 1795127484
+        }
+      ],
+      "sources": [
+        {
+          "id": 1,
+          "name": "quay-mirror",
+          "base_url": "http://127.0.0.1:19001",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        },
+        {
+          "id": 2,
+          "name": "k8s-mirror",
+          "base_url": "http://127.0.0.1:19002",
+          "status": "usable",
+          "enabled": 1,
+          "preferred": 1,
+          "github_cap": 0
+        }
+      ],
+      "host_caps": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 1,
+          "host": "quay.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:567dbd3791792e1b084762261dff1c0d4662a2da499ea8025d360275b8542802\",\"digest_ok\":-1,\"latency_ms\":43,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        },
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": ""
+        },
+        {
+          "source_id": 2,
+          "host": "registry.k8s.io",
+          "enabled": 1,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": 0,
+          "diagnostics": "{\"version\":2,\"repo\":\"team/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0\",\"digest_ok\":-1,\"latency_ms\":50,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/team/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:ee4128b9b36b2c56b27d9cccdd1ac63362f87f1ce76258f862678ce414af4181\",\"digest_ok\":-1,\"latency_ms\":48,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+        }
+      ],
+      "recovery": [
+        {
+          "source_id": 1,
+          "family": "registry",
+          "scope": "quay.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        },
+        {
+          "source_id": 2,
+          "family": "registry",
+          "scope": "registry.k8s.io",
+          "state": "ok",
+          "gen": 0,
+          "last_success_at": 1795127490,
+          "next_probe_at": 1795213890,
+          "last_error": ""
+        }
+      ],
+      "replicas": [
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "replica_gen": [
+        {
+          "authority_registry": "gcr.io",
+          "generation": 2
+        }
+      ],
+      "replica_audit": {
+        "error": "no such column: replica_repository"
+      },
+      "mappings": [
+        {
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": 1
+        }
+      ],
+      "mapping_gen": [
+        {
+          "registry_host": "quay.io",
+          "generation": 2
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "generation": 2
+        }
+      ],
+      "settings": [
+        {
+          "key": "cross_registry_mode",
+          "value": "sequential"
+        },
+        {
+          "key": "cross_registry_selected_sources",
+          "value": "[1,2]"
+        }
+      ],
+      "cache_entries": [
+        {
+          "n": 3
+        }
+      ]
+    }
+  },
+  "requests": [
+    {
+      "note": "sequential 模式 tag（副本交付）",
+      "tag": "latest",
+      "status": 200,
+      "ms": 1951,
+      "X-ML-Source": "quay-mirror",
+      "X-ML-Cache": "MISS",
+      "len": 396,
+      "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "content_type": "application/vnd.oci.image.manifest.v1+json"
+    },
+    {
+      "note": "race 模式 digest（两副本投票一致）",
+      "tag": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "status": 200,
+      "ms": 53,
+      "X-ML-Source": "quay-mirror",
+      "X-ML-Cache": "MISS",
+      "len": 396,
+      "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "content_type": "application/vnd.oci.image.manifest.v1+json"
+    },
+    {
+      "note": "同 Digest 第二次（应缓存 HIT）",
+      "tag": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "status": 200,
+      "ms": 2,
+      "X-ML-Source": null,
+      "X-ML-Cache": "HIT",
+      "len": 396,
+      "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "content_type": "application/vnd.oci.image.manifest.v1+json"
+    },
+    {
+      "note": "sequential 模式（验证运行时切换）",
+      "tag": "v3",
+      "status": 200,
+      "ms": 1005,
+      "X-ML-Source": "quay-mirror",
+      "X-ML-Cache": "MISS",
+      "len": 396,
+      "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+      "content_type": "application/vnd.oci.image.manifest.v1+json"
+    }
+  ],
+  "source_usable_wait_s": 2.0,
+  "source_usable_natural": true,
+  "fixture_used_for_source_status": false,
+  "settings_before": {
+    "status": 200,
+    "body": {
+      "configured": "race",
+      "mode": "race",
+      "selected": [
+        1,
+        2
+      ],
+      "starred": [
+        1,
+        2
+      ]
+    }
+  },
+  "replicas_before": {
+    "status": 200,
+    "body": {
+      "generation": 2,
+      "items": [
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        },
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        }
+      ]
+    }
+  },
+  "mappings_before": {
+    "status": 200,
+    "body": {
+      "generations": {
+        "quay.io": 2,
+        "registry.k8s.io": 2
+      },
+      "items": [
+        {
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        }
+      ]
+    }
+  },
+  "exit_first": 0,
+  "settings_after": {
+    "status": 200,
+    "body": {
+      "configured": "race",
+      "mode": "race",
+      "selected": [
+        1,
+        2
+      ],
+      "starred": [
+        1,
+        2
+      ]
+    }
+  },
+  "replicas_after": {
+    "status": 200,
+    "body": {
+      "generation": 2,
+      "items": [
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        },
+        {
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "replica_repository": "team/app",
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        }
+      ]
+    }
+  },
+  "replica_audit_after": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "id": 2,
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "registry.k8s.io",
+          "operation": "create",
+          "old_snapshot": "",
+          "new_snapshot": "{\"authority_registry\":\"gcr.io\",\"authority_repository\":\"team/app\",\"replica_registry\":\"registry.k8s.io\",\"replica_repository\":\"team/app\",\"priority\":100,\"valid_from\":0,\"valid_until\":0,\"enabled\":true}",
+          "actor": "r5admin",
+          "created_at": 1795127493
+        },
+        {
+          "id": 1,
+          "authority_registry": "gcr.io",
+          "authority_repository": "team/app",
+          "replica_registry": "quay.io",
+          "operation": "create",
+          "old_snapshot": "",
+          "new_snapshot": "{\"authority_registry\":\"gcr.io\",\"authority_repository\":\"team/app\",\"replica_registry\":\"quay.io\",\"replica_repository\":\"team/app\",\"priority\":100,\"valid_from\":0,\"valid_until\":0,\"enabled\":true}",
+          "actor": "r5admin",
+          "created_at": 1795127493
+        }
+      ]
+    }
+  },
+  "mappings_after": {
+    "status": 200,
+    "body": {
+      "generations": {
+        "quay.io": 2,
+        "registry.k8s.io": 2
+      },
+      "items": [
+        {
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        },
+        {
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "priority": 100,
+          "valid_from": 0,
+          "valid_until": 0,
+          "enabled": true
+        }
+      ]
+    }
+  },
+  "mapping_audit_after": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "id": 2,
+          "registry_host": "registry.k8s.io",
+          "source_id": 2,
+          "operation": "create",
+          "old_snapshot": "",
+          "new_snapshot": "{\"registry_host\":\"registry.k8s.io\",\"source_id\":2,\"priority\":100,\"valid_from\":0,\"valid_until\":0,\"enabled\":true}",
+          "actor": "r5admin",
+          "created_at": 1795127493
+        },
+        {
+          "id": 1,
+          "registry_host": "quay.io",
+          "source_id": 1,
+          "operation": "create",
+          "old_snapshot": "",
+          "new_snapshot": "{\"registry_host\":\"quay.io\",\"source_id\":1,\"priority\":100,\"valid_from\":0,\"valid_until\":0,\"enabled\":true}",
+          "actor": "r5admin",
+          "created_at": 1795127493
+        }
+      ]
+    }
+  },
+  "settings_final": {
+    "status": 200,
+    "body": {
+      "configured": "sequential",
+      "mode": "sequential",
+      "selected": [
+        1,
+        2
+      ],
+      "starred": [
+        1,
+        2
+      ]
+    }
+  }
+}

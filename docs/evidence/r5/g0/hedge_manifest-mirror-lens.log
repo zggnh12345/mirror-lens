@@ -1,0 +1,31 @@
+time=2026-11-20T06:58:50.415+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=1 禁用Host=0）"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="Registry 缓存 epoch 已切换到 1（历史条目不可达）"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg=私有分片内存窗口 并发文件=2 worker=4 段大小MB=1 最坏MB=8
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T06:58:50.532+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T06:58:50.533+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r5/run3/hedge_manifest/data/backup（保留 7 份）"
+time=2026-11-20T06:58:50.533+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T06:58:50.533+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T06:58:50.534+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18209"
+time=2026-11-20T06:58:50.559+08:00 level=INFO msg=面板请求 request_id=bbc9513003ca51ac method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T06:58:50.619+08:00 level=INFO msg="初始账号已设置: user=r***(7)"
+time=2026-11-20T06:58:50.619+08:00 level=INFO msg=面板请求 request_id=ef766824c2d7c45a method=POST path=/api/setup status=200 duration_ms=58
+time=2026-11-20T06:58:50.675+08:00 level=INFO msg=面板请求 request_id=747d3bbeaa0e17ca method=POST path=/api/login status=200 duration_ms=55
+time=2026-11-20T06:58:50.675+08:00 level=INFO msg=面板请求 request_id=4cec3337c195b90c method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T06:58:50.676+08:00 level=INFO msg=面板请求 request_id=59df54c435f74107 method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T06:58:50.677+08:00 level=INFO msg=面板请求 request_id=13cf1cb837fe821a method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T06:58:50.678+08:00 level=INFO msg=面板请求 request_id=0b96421f1f39d42b method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T06:58:50.678+08:00 level=INFO msg=面板请求 request_id=367cf6b5db0b7fc7 method=PATCH path=/api/sources/2 status=200 duration_ms=0
+time=2026-11-20T06:58:55.676+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T06:58:55.680+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T06:58:56.346+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19118 → docker=true ghcr=true github=false"
+time=2026-11-20T06:58:56.470+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19119 → docker=true ghcr=true github=false"
+time=2026-11-20T06:58:56.933+08:00 level=INFO msg="并行填充：127.0.0.1:19118 不参与分片（HTTP 200，Content-Range=\"\"）"
+time=2026-11-20T06:58:56.975+08:00 level=INFO msg="并行填充：127.0.0.1:19119 不参与分片（HTTP 200，Content-Range=\"\"）"
+time=2026-11-20T06:58:59.138+08:00 level=INFO msg="并行填充：gcr.io 不参与分片（HTTP 401，Content-Range=\"\"）"
+time=2026-11-20T06:58:59.138+08:00 level=INFO msg="并行填充：退回单流（3 台源里只有 0 台支持分片）"
+time=2026-11-20T06:58:59.159+08:00 level=INFO msg=已退出

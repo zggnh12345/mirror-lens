@@ -1,0 +1,12 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129296.6314826, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795129296.6336262, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129296.675706, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795129296.7200284, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129297.8521404, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129297.853021, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795129297.854718, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795129297.854929, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795129297.8563006, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/warm0/blobs/sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b", "status": 200, "bytes": 20000000, "range": null, "repo": "warm0", "kind": "blob", "mode": "ok", "total": 20000000, "wrong_content": false, "ts": 1795129301.2294998, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/warm1/blobs/sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c", "status": 200, "bytes": 20000000, "range": null, "repo": "warm1", "kind": "blob", "mode": "ok", "total": 20000000, "wrong_content": false, "ts": 1795129301.8363404, "port": 19115, "inst": "B"}
+{"method": "GET", "path": "/v2/warm2/blobs/sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3", "status": 200, "bytes": 20000000, "range": null, "repo": "warm2", "kind": "blob", "mode": "ok", "total": 20000000, "wrong_content": false, "ts": 1795129302.456349, "port": 19115, "inst": "B"}

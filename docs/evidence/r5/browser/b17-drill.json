@@ -1,0 +1,138 @@
+{
+  "steps": {
+    "login": 200,
+    "source_A": {
+      "status": 200,
+      "body": {
+        "id": 1,
+        "ok": true
+      }
+    },
+    "source_B": {
+      "status": 200,
+      "body": {
+        "id": 2,
+        "ok": true
+      }
+    },
+    "source_U": {
+      "status": 200,
+      "body": {
+        "id": 3,
+        "ok": true
+      }
+    },
+    "mapping_A": {
+      "status": 200,
+      "body": {
+        "generation": 2,
+        "ok": true
+      }
+    },
+    "mapping_B": {
+      "status": 200,
+      "body": {
+        "generation": 2,
+        "ok": true
+      }
+    },
+    "replica": {
+      "status": 200,
+      "body": {
+        "generation": 1,
+        "ok": true
+      }
+    },
+    "fixture_recovery_rows": true,
+    "caps_ready": 3
+  },
+  "ids": {
+    "A": 1,
+    "B": 2,
+    "U": 3
+  },
+  "browser": {
+    "exit": 0,
+    "stdout": "[assert] api_login => OK 200\n[assert] 1_default_sequential => OK {\"seqPressed\":\"true\",\"desc0\":\"省请求，前一个 404/超时/无效才问下一个\"}\n[assert] 2_switch_race_persisted => OK {\"status\":200,\"racePressed\":\"true\",\"configured\":\"race\",\"desc\":\"具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁\"}\n[assert] 3_reload_restore => OK {\"racePressed2\":\"true\",\"desc2\":\"具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁\"}\n[assert] 5_unstarred_rejected => OK {\"status\":400,\"body\":{\"error\":\"source 3 未加星标，不能进入跨站参选集合\"},\"checkboxCount\":2,\"checkboxIds\":[1,2]}\n[assert] 4a_selected_cleared => OK 200\n[assert] 6_unstar_hides_from_ui => OK {\"targetId\":2,\"before\":[1,2],\"after\":[1,2],\"starred\":[1],\"boxesBefore\":2,\"boxesAfter\":1,\"idsAfter\":[1]}\n[assert] 7_b_mode_isolated_from_a => OK {\"hostsSame\":true,\"starOthersSame\":true,\"before\":[[1,true],[2,true],[3,false]],\"after\":[[1,true],[3,false],[2,false]]}\nFAILED=[]\n",
+    "stderr": ""
+  },
+  "behaviour": {
+    "seq": {
+      "result": {
+        "status": 401,
+        "body": "401 回源失败: 上游返回 401\n"
+      },
+      "upstream_delta": 0
+    },
+    "race": {
+      "result": {
+        "status": 401,
+        "body": "401 回源失败: 上游返回 401\n"
+      },
+      "upstream_delta": 0,
+      "put_selected": [
+        200,
+        {
+          "mode": "race",
+          "ok": true,
+          "selected": [
+            2
+          ]
+        }
+      ]
+    },
+    "after_unstar": {
+      "result": {
+        "status": 401,
+        "body": "401 回源失败: 上游返回 401\n"
+      },
+      "upstream_delta": 0,
+      "put_rejected": [
+        400,
+        {
+          "error": "source 2 未加星标，不能进入跨站参选集合"
+        }
+      ],
+      "cross_state": {
+        "configured": "race",
+        "mode": "race",
+        "selected": [
+          2
+        ],
+        "starred": [
+          1
+        ]
+      }
+    }
+  },
+  "assertions": {
+    "seq_single_upstream": {
+      "ok": false,
+      "detail": 0
+    },
+    "race_parallel_upstream": {
+      "ok": false,
+      "detail": 0
+    },
+    "race_200": {
+      "ok": false,
+      "detail": {
+        "status": 401,
+        "body": "401 回源失败: 上游返回 401\n"
+      }
+    },
+    "unstar_not_participating": {
+      "ok": false,
+      "detail": 0
+    },
+    "unstar_select_rejected": {
+      "ok": true,
+      "detail": [
+        400,
+        {
+          "error": "source 2 未加星标，不能进入跨站参选集合"
+        }
+      ]
+    }
+  }
+}

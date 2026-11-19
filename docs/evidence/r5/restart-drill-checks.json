@@ -1,0 +1,17 @@
+{
+  "settings_mode_persisted": true,
+  "settings_selected_persisted": true,
+  "replicas_items_identical": true,
+  "replicas_generation_identical": true,
+  "mappings_items_identical": true,
+  "mappings_generations_identical": true,
+  "audit_present_after": true,
+  "mode_switch_after_restart_effective": true,
+  "request_digest_ok": true,
+  "db_keys": [
+    "caps_after_probe",
+    "before_restart",
+    "after_restart",
+    "after_requests"
+  ]
+}

@@ -313,3 +313,78 @@ B17 的 UI 只做了静态接线与 API 验证，没有浏览器点击验收 →
   候选发现成本的量级参考，不作端到端时延结论。
 - 详细复核表、未关闭风险与判断依据：`docs/3.5.17-17b-r4-review.md`。
 - 状态：**READY_FOR_FINAL_REVIEW**。
+
+## 第五轮（最终证据闭环）：真实进程 / 浏览器 / G0 流式
+
+本轮只做取证，不改产品语义。所有演练在隔离临时库
+（`/opt/data/cache/scratch/r5/run1|run3|run4`）与本地构建二进制上完成，未触碰生产库与容器。
+
+### 1) 真实进程重启演练 — REAL_PASS
+
+- 证据：`docs/evidence/r5/restart-drill.json`、`restart-drill-checks.json`、
+  `mirror-lens-first.log`、`mirror-lens-second.log`、`upA.jsonl`、`upB.jsonl`。
+- 内容：真实二进制起两次（同 DB），HTTP API 建跨站设置/副本/可信映射，
+  SIGTERM 停、同 DB 重启。核验结果（脚本比对，非目测）：设置 mode=race 与
+  selected=[1,2] 保持、副本 `generation=2` 与条目逐字段一致、映射 `generation=2`
+  与条目一致、审计在重启后可读、`schema_meta` 三次快照均为
+  `3.5.17 / bfc7f2f9…`。重启后仍改 mode 并生效（sequential）。
+- 请求层：sequential tag 与 race digest 两次均 200，`X-ML-Source=quay-mirror`，
+  正文 SHA-256 与 digest 一致。
+
+### 2) 浏览器 B17 点击验收 — REAL_PASS（chromium 131 headless）
+
+- 证据：`docs/evidence/r5/browser/`（4 张截图、`b17-result.json`、`b17-drill.json`、
+  控制台与 29 条 API 网络记录、进程与上游日志）。
+- 8 项断言全绿：默认顺序回退、切竞速并落库（PUT 200 + `configured=race`）、
+  刷新恢复、未星标 id 被 400 拒绝且 UI 不提供该勾选项、撤星后勾选项数量减一且
+  id 不在 starred、B 模式变化不改 A 的 `multi_origin_hosts` 与其它源星标。
+- 未完成：**参选为空退化 / 竞速真的并行**未能在本夹具取证——进程日志为
+  「并行填充：退回单流（只有官方源可用）」，即受控源没被选进候选，
+  上游命中数为 0。属夹具限制，不是产品结论。
+
+### 3) G0 真实流式演练 — PARTIAL
+
+- 证据：`docs/evidence/r5/g0-stream-drill.json`、`docs/evidence/r5/g0/`（每场景
+  一份 mirror-lens 日志与上游 JSONL）。
+- 已真实覆盖：慢响应头（1500ms 延迟仍 200 且摘要正确）、慢 Body（400KB 分段 100ms）、
+  多路 Body 并发（3 个不同仓库同时开流，均摘要正确）、200 前缀坏字节
+  （日志「内容校验失败，不入缓存」，缓存无条目）、断流（半途截断，客户端拿到
+  短正文，`cache_entries` 无条目、无残留 `.part`）。
+- 未覆盖：中途换源与 206 长度不符。原因：`trySwitch` 只换到「最近样本 ≥
+  switch_min_mbps」的源，而速度样本要求单次 ≥16MB（`minProxySpeedBytes`），
+  本夹具预热后 `proxy_speed` 仍为空行，日志固定输出「没有可换的星标源」；
+  206 续传在源被计一次失败后即退出候选（`source_health_scope.fails=1`），
+  第二次请求落到官方 401。
+- P 耗尽时仍有 Hedge/Midfill 在跑：真实进程无法凑出 P（8192 为进程级，
+  夹具不可达），仅代码测试覆盖。
+
+### 4) B19 私有认证矩阵 — TEST_PASS
+
+- `internal/gateway/b19_private_matrix_test.go`：权威 Host 私有不入跨站候选、
+  副本 Host 私有不入候选、Authority 凭据不问副本、副本凭据不问 Authority、
+  私有请求不写共享缓存、显式私有前缀两次都走 BYPASS。
+- `go test ./internal/gateway/ -run TestB19 -count=1 -v`：3 个用例全 PASS。
+
+### 5) G 公式与限流关闭边界 — TEST_PASS
+
+- `TestGlobalCapacityFormula`（200/4→1004、200/16→3404）、
+  `TestGlobalCapacityBoundaries`（200/2→804、W=1 回填 4、C 收敛 2）全 PASS。
+- `internal/gateway/scope_capacity_limits_off_test.go`：`limits.enabled=false` 时
+  Scope 仍以 G 为硬准入上限（并发派发数 ≤ G，超出的排队而非放行）——PASS。
+
+### 6) 交付信息
+
+- HEAD 与提交链、变更文件 `--stat` 见本轮报告；未推送、未打 tag、未建 Release。
+
+### 7) 独立复核
+
+- `go build ./...`、`go vet ./...` 通过；`go test ./... -count=1` → 33 包 ok，EXIT=0
+  （`docs/evidence/r5/full-test.log`）；`go test -race ./internal/gateway ./internal/unified
+  -count=1` → ok（`docs/evidence/r5/race.log`）。
+- 结论按证据层分账，未用单测代替真实进程，也未用真实进程覆盖不可达项。
+
+### 状态：BLOCKED
+
+缺口仅第 3 项的两条：中途换源、206 长度不符（其余子场景已真实通过），
+以及「P 耗尽仍有 hedge/midfill」只能代码级覆盖。复现路径：
+`R5_CASES=switch_ab,switch_lenmismatch python3 /opt/data/cache/scratch/r5/drill3b.py`。

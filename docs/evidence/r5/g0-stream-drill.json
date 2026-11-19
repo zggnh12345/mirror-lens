@@ -1,0 +1,1154 @@
+{
+  "cases": [
+    {
+      "case": "switch_ab",
+      "ports": {
+        "A": 19114,
+        "B": 19115
+      },
+      "ids": [
+        1,
+        2
+      ],
+      "caps": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 1,
+          "host": "gcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "gcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        }
+      ],
+      "sources": [
+        {
+          "id": 1,
+          "name": "switch_ab-A",
+          "status": "usable"
+        },
+        {
+          "id": 2,
+          "name": "switch_ab-B",
+          "status": "usable"
+        }
+      ],
+      "requests": [
+        {
+          "repo": "sw",
+          "digest": "sha256:8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+          "range": null,
+          "status": 200,
+          "headers": {
+            "content-length": "2000000",
+            "x-ml-cache": "MISS",
+            "x-ml-source": "switch_ab-A"
+          },
+          "read_error": null,
+          "ms": 8426,
+          "bytes": 2000000,
+          "sha256": "8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+          "digest_ok": true
+        }
+      ],
+      "before": {
+        "cache_entries": [
+          {
+            "key": "docker:b:1:sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          }
+        ],
+        "health": [
+          {
+            "source_id": 2,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129296
+          },
+          {
+            "source_id": 1,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129296
+          }
+        ]
+      },
+      "digest": "sha256:8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+      "part_after_first": [],
+      "part_files": [],
+      "after": {
+        "cache_entries": [
+          {
+            "key": "docker:b:1:sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+            "sha256": "8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+            "size": 2000000
+          },
+          {
+            "key": "docker:b:1:sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          }
+        ],
+        "blobs": [
+          {
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          },
+          {
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "sha256": "8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+            "size": 2000000
+          }
+        ],
+        "integrity": [],
+        "health": [
+          {
+            "source_id": 2,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129296
+          },
+          {
+            "source_id": 1,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129306
+          }
+        ]
+      },
+      "fails_delta": {
+        "2/gcr.io": 0,
+        "1/gcr.io": 0
+      },
+      "health_probe": {
+        "repo": "probe/app",
+        "digest": "sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+        "range": null,
+        "status": 200,
+        "headers": {
+          "content-length": "2048",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "switch_ab-A"
+        },
+        "read_error": null,
+        "ms": 897,
+        "bytes": 2048,
+        "sha256": "9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+        "digest_ok": true
+      },
+      "exit": 0,
+      "log_switch": [
+        "time=2026-11-20T07:01:45.223+08:00 level=INFO msg=单流判慢：没有可换的星标源",
+        "time=2026-11-20T07:01:45.223+08:00 level=INFO msg=\"中途并行跳过：分片未启用 workers=4 chunk=1048576\"",
+        "time=2026-11-20T07:01:45.223+08:00 level=INFO msg=中途并行没接上，继续当前连接"
+      ],
+      "log_errors": [],
+      "upA": [
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129296.6313431,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129296.633816,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129296.6796596,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129296.7279348,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129297.7588198,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129297.7596097,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129297.7603178,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129297.7630157,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129297.7626944,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129302.667363,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129302.6681798,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129302.6699378,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129302.6701186,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129302.6714473,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129306.630495,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129306.6326125,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129306.6799254,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129306.7241602,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sw/blobs/sha256:8c10942fd3085a66835a4e14635440624566364c1dacf7c868d1fed2927f3ef7",
+          "status": 200,
+          "bytes": 2000000,
+          "range": null,
+          "repo": "sw",
+          "kind": "blob",
+          "mode": "slowbody",
+          "total": 2000000,
+          "ts": 1795129313.8261101,
+          "port": 19114,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/blobs/sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+          "status": 200,
+          "bytes": 2048,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 2048,
+          "wrong_content": false,
+          "ts": 1795129313.827583,
+          "port": 19114,
+          "inst": "A"
+        }
+      ],
+      "upB": [
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129296.6314826,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129296.6336262,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129296.675706,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129296.7200284,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129297.8521404,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129297.853021,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129297.854718,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129297.854929,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129297.8563006,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm0/blobs/sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm0",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129301.2294998,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm1/blobs/sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm1",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129301.8363404,
+          "port": 19115,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm2/blobs/sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm2",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129302.456349,
+          "port": 19115,
+          "inst": "B"
+        }
+      ]
+    },
+    {
+      "case": "switch_lenmismatch",
+      "ports": {
+        "A": 19116,
+        "B": 19117
+      },
+      "ids": [
+        1,
+        2
+      ],
+      "caps": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 1,
+          "host": "gcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "gcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "effective_status": "Supported",
+          "registry_path_mode": "native"
+        }
+      ],
+      "sources": [
+        {
+          "id": 1,
+          "name": "switch_lenmismatch-A",
+          "status": "usable"
+        },
+        {
+          "id": 2,
+          "name": "switch_lenmismatch-B",
+          "status": "usable"
+        }
+      ],
+      "requests": [
+        {
+          "repo": "swm",
+          "digest": "sha256:d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+          "range": null,
+          "status": 200,
+          "headers": {
+            "content-length": "2000000",
+            "x-ml-cache": "MISS",
+            "x-ml-source": "switch_lenmismatch-A"
+          },
+          "read_error": null,
+          "ms": 8430,
+          "bytes": 2000000,
+          "sha256": "d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+          "digest_ok": true
+        }
+      ],
+      "before": {
+        "cache_entries": [
+          {
+            "key": "docker:b:1:sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          }
+        ],
+        "health": [
+          {
+            "source_id": 2,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129319
+          },
+          {
+            "source_id": 1,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129319
+          }
+        ]
+      },
+      "digest": "sha256:d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+      "part_after_first": [],
+      "part_files": [],
+      "after": {
+        "cache_entries": [
+          {
+            "key": "docker:b:1:sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          },
+          {
+            "key": "docker:b:1:sha256:d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+            "sha256": "d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+            "size": 2000000
+          }
+        ],
+        "blobs": [
+          {
+            "sha256": "b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+            "size": 20000000
+          },
+          {
+            "sha256": "200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+            "size": 20000000
+          },
+          {
+            "sha256": "95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+            "size": 20000000
+          },
+          {
+            "sha256": "d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+            "size": 2000000
+          }
+        ],
+        "integrity": [],
+        "health": [
+          {
+            "source_id": 2,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129319
+          },
+          {
+            "source_id": 1,
+            "family": "registry",
+            "scope": "gcr.io",
+            "fails": 0,
+            "ok_at": 1795129329
+          }
+        ]
+      },
+      "fails_delta": {
+        "2/gcr.io": 0,
+        "1/gcr.io": 0
+      },
+      "health_probe": {
+        "repo": "probe/app",
+        "digest": "sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+        "range": null,
+        "status": 200,
+        "headers": {
+          "content-length": "2048",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "switch_lenmismatch-A"
+        },
+        "read_error": null,
+        "ms": 897,
+        "bytes": 2048,
+        "sha256": "9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+        "digest_ok": true
+      },
+      "exit": 0,
+      "log_switch": [
+        "time=2026-11-20T07:02:08.345+08:00 level=INFO msg=单流判慢：没有可换的星标源",
+        "time=2026-11-20T07:02:08.345+08:00 level=INFO msg=\"中途并行跳过：分片未启用 workers=4 chunk=1048576\"",
+        "time=2026-11-20T07:02:08.345+08:00 level=INFO msg=中途并行没接上，继续当前连接"
+      ],
+      "log_errors": [],
+      "upA": [
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129319.6275826,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129319.6288722,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129319.6716735,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129319.715966,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129320.9683366,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129320.9697628,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129320.970723,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129320.970928,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129320.97277,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129325.6002629,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129325.6012464,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129325.6020958,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129325.6038792,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129325.6040602,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129329.6284413,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129329.6301324,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129329.6721485,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129329.720428,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/swm/blobs/sha256:d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55",
+          "status": 200,
+          "bytes": 2000000,
+          "range": null,
+          "repo": "swm",
+          "kind": "blob",
+          "mode": "slowbody",
+          "total": 2000000,
+          "ts": 1795129336.752046,
+          "port": 19116,
+          "inst": "A"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/blobs/sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd",
+          "status": 200,
+          "bytes": 2048,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 2048,
+          "wrong_content": false,
+          "ts": 1795129336.753412,
+          "port": 19116,
+          "inst": "A"
+        }
+      ],
+      "upB": [
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129319.627409,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "probe/app",
+          "kind": "manifest",
+          "ts": 1795129319.6286123,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129319.6757247,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/gcr.io/probe/app/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "gcr.io/probe/app",
+          "kind": "manifest",
+          "ts": 1795129319.7198827,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129320.4581835,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/",
+          "status": 200,
+          "bytes": 2,
+          "range": null,
+          "ts": 1795129320.4590657,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README",
+          "status": 404,
+          "bytes": 0,
+          "range": null,
+          "ts": 1795129320.460071,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/sagernet/sing-box/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "sagernet/sing-box",
+          "kind": "manifest",
+          "ts": 1795129320.4608567,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/library/alpine/manifests/latest",
+          "status": 200,
+          "bytes": 396,
+          "range": null,
+          "repo": "library/alpine",
+          "kind": "manifest",
+          "ts": 1795129320.4624808,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm0/blobs/sha256:b4494e93bf4cac61ab2113a0b47a0ea13d37c707888a516138e1d8536d64612b",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm0",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129324.1861272,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm1/blobs/sha256:200d107235e05e19acb51a78ad7f6996b8225513b69db7322cfbfa2e76246e5c",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm1",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129324.794687,
+          "port": 19117,
+          "inst": "B"
+        },
+        {
+          "method": "GET",
+          "path": "/v2/warm2/blobs/sha256:95728b7894f9b449e629fcba83a55902e1d9d0e58dd95b994c00769cbef410c3",
+          "status": 200,
+          "bytes": 20000000,
+          "range": null,
+          "repo": "warm2",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 20000000,
+          "wrong_content": false,
+          "ts": 1795129325.3887482,
+          "port": 19117,
+          "inst": "B"
+        }
+      ]
+    }
+  ]
+}

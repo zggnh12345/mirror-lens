@@ -1,0 +1,11 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128815.2033927, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795128815.205434, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128815.247693, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795128815.2922125, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795128816.7485013, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128816.7497275, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128816.751035, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795128816.751716, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795128816.7530556, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/hd/blobs/sha256:9f4e01ccddcdb2281f68e6148e41c77178715f3f1dea255bc055dc80d5d5f587", "status": 200, "bytes": 300000, "range": "bytes=0-0", "repo": "hd", "kind": "blob", "mode": "ok", "total": 300000, "wrong_content": false, "ts": 1795128818.366251, "port": 19117, "inst": "B"}
+{"method": "GET", "path": "/v2/probe/app/blobs/sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd", "status": 200, "bytes": 2048, "range": "bytes=0-0", "repo": "probe/app", "kind": "blob", "mode": "ok", "total": 2048, "wrong_content": false, "ts": 1795128823.3435593, "port": 19117, "inst": "B"}

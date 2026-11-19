@@ -1,0 +1,11 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129135.5382142, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795129135.5405025, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129135.5878272, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795129135.6361666, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129136.290076, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795129136.2912583, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795129136.2930925, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129136.292821, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795129136.2947628, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/blobs/sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd", "status": 200, "bytes": 2048, "range": "bytes=0-0", "repo": "probe/app", "kind": "blob", "mode": "ok", "total": 2048, "wrong_content": false, "ts": 1795129136.9335077, "port": 19118, "inst": "A"}
+{"method": "GET", "path": "/v2/hdm/manifests/latest", "status": 200, "bytes": 398, "range": null, "repo": "hdm", "kind": "manifest", "ts": 1795129138.2069757, "port": 19118, "inst": "A"}

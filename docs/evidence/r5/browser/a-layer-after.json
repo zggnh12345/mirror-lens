@@ -1,0 +1,17 @@
+{
+  "star": [
+    [
+      1,
+      true
+    ],
+    [
+      3,
+      false
+    ],
+    [
+      2,
+      false
+    ]
+  ],
+  "csrf": "25cccc9f3ed530abbde49d7f529df5f899a88d54ede6d4acfca5e8d61a5e6b1c"
+}

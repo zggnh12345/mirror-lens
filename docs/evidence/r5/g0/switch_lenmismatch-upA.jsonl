@@ -1,0 +1,20 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129319.6275826, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795129319.6288722, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129319.6716735, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795129319.715966, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129320.9683366, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129320.9697628, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795129320.970723, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795129320.970928, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795129320.97277, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795129325.6002629, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129325.6012464, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129325.6020958, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795129325.6038792, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795129325.6040602, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129329.6284413, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795129329.6301324, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795129329.6721485, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795129329.720428, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/swm/blobs/sha256:d3dbe625789a1aa94c24275a76803e9c6566a99a0fdc69ffba684bdd40eb5b55", "status": 200, "bytes": 2000000, "range": null, "repo": "swm", "kind": "blob", "mode": "slowbody", "total": 2000000, "ts": 1795129336.752046, "port": 19116, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/blobs/sha256:9803d595d30d160afa405011f24f9fa102537615d5428499d950aeebe5fa60fd", "status": 200, "bytes": 2048, "range": null, "repo": "probe/app", "kind": "blob", "mode": "ok", "total": 2048, "wrong_content": false, "ts": 1795129336.753412, "port": 19116, "inst": "A"}

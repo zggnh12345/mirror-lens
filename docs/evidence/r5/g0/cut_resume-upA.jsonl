@@ -1,0 +1,11 @@
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128923.3339021, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "probe/app", "kind": "manifest", "ts": 1795128923.3359833, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128923.379739, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/gcr.io/probe/app/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "gcr.io/probe/app", "kind": "manifest", "ts": 1795128923.4241598, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README", "status": 404, "bytes": 0, "range": null, "ts": 1795128924.1401718, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128924.1404228, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/", "status": 200, "bytes": 2, "range": null, "ts": 1795128924.1406748, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/library/alpine/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "library/alpine", "kind": "manifest", "ts": 1795128924.1411278, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/sagernet/sing-box/manifests/latest", "status": 200, "bytes": 396, "range": null, "repo": "sagernet/sing-box", "kind": "manifest", "ts": 1795128924.1411583, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/cutres/blobs/sha256:5e7fc99c6654a4c90e3985c2dce02397378d49803632f8845dd3a2f567fb8b7e", "status": 206, "bytes": 300000, "range": "bytes=0-0", "repo": "cutres", "kind": "blob", "mode": "cutonce", "total": 300000, "ts": 1795128924.5235136, "port": 19106, "inst": "A"}
+{"method": "GET", "path": "/v2/cutres/blobs/sha256:5e7fc99c6654a4c90e3985c2dce02397378d49803632f8845dd3a2f567fb8b7e", "status": 200, "bytes": 150000, "range": null, "repo": "cutres", "kind": "blob", "mode": "cutonce", "aborted": true, "total": 300000, "ts": 1795128924.5421023, "port": 19106, "inst": "A"}
