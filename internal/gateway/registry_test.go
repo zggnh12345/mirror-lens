@@ -123,6 +123,12 @@ type regFixture struct {
 
 func newRegFixture(t *testing.T, challenge bool) *regFixture {
 	t.Helper()
+	return newRegFixtureWith(t, challenge, nil)
+}
+
+// newRegFixtureWith 允许用例注入 Options（如 3.5.17 的 P 计量点与 ScopeConfig）。
+func newRegFixtureWith(t *testing.T, challenge bool, mutate func(*Options)) *regFixture {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "t.db"))
 	if err != nil {
@@ -141,7 +147,7 @@ func newRegFixture(t *testing.T, challenge bool) *regFixture {
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
 
-	gw := New(st, Options{
+	opts := Options{
 		Policies: testGatewayPolicy,
 		Cache:    cs,
 		MaxBytes: 256 << 20,
@@ -149,7 +155,11 @@ func newRegFixture(t *testing.T, challenge bool) *regFixture {
 		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
 		// 这组用例测的是 401 挑战与 Token 校验，必须显式要求认证
 		RequireToken: true,
-	})
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	gw := New(st, opts)
 	plain, _, err := st.CreateToken("docker")
 	if err != nil {
 		t.Fatalf("建 Token: %v", err)

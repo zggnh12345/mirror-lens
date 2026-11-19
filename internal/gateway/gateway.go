@@ -38,6 +38,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 	"github.com/zggnh12345/mirror-lens/internal/version"
 )
@@ -90,6 +91,8 @@ type Gateway struct {
 	dockerOff     bool                                       // /v2/ 的 Docker Hub 通道关闭
 	ghcrOff       bool                                       // /v2/ 的 GHCR 通道关闭
 	disabledHosts map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
+	scopePool     *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
+	scopeCfg      unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
@@ -193,6 +196,15 @@ type Options struct {
 	PrivateAuth PrivateAuthOptions
 	CDN         CDNOptions
 	Private     PrivateOptions
+	// Pool 是 3.5.17 RequestScope 全局容量池（G）。nil 时按 N=200、W=4 建默认池；
+	// 生产装配用 GlobalCapacity(cfg.Limits.GlobalConcurrency, workers, 2, 2)。
+	Pool *unified.Pool
+	// ScopeConfig 仅供测试夹具注入（如缩小 PMax 做确定性预算耗尽）；
+	// 生产必须留零值，零值即冻结默认 R=16 / P=8192。
+	ScopeConfig unified.ScopeConfig
+	// PTransport 仅供测试注入；nil 时 New 自动把底层 Transport 包成计量点。
+	PTransport *unified.PTransport
+
 	// 三类加速的独立开关（默认全开，零值即开启）。
 	// Off 而不是 On：老调用方不传这几个字段时行为不变。
 	DockerOff bool
@@ -225,16 +237,28 @@ func New(st *store.Store, o Options) *Gateway {
 		// 绝不能退回 11a 的按 Host 查表 fallback。
 		policies = v2auth.OfficialPolicy{}
 	}
+	if o.Pool == nil {
+		o.Pool = unified.NewPool(unified.GlobalCapacity(0, 0, 2, 2))
+	}
 	cli := guard.Client()
 	var privNeg *negCache
 	if o.Registry != nil {
 		privNeg = newNegCache()
+		// 3.5.17：P 计量点必须包裹 t.base（底层 Transport 之上、认证重试层之下），
+		// 这样 Token 获取/刷新、401 重发、重定向全部计入 P，而 Transport 内部
+		// 自动重试不会被多算。没有 RequestScope 的请求（Git/Raw）原样透传。
+		meter := o.PTransport
+		if meter == nil {
+			meter = &unified.PTransport{Base: cli.Transport}
+		} else if meter.Base == nil {
+			meter.Base = cli.Transport
+		}
 		// 401 + Bearer 挑战时自动换 token 重发；私有认证在同一处执行
 		// 「匿名优先 → 401 后凭据」，不存在第二条认证路径。
 		baseCheck := cli.CheckRedirect
 		cli = &http.Client{
 			Transport: &registryAuthTransport{
-				base:     cli.Transport,
+				base:     meter,
 				tokens:   newTokenCache(o.TokenCacheMax),
 				priv:     o.PrivateAuth,
 				neg:      privNeg,
@@ -266,6 +290,8 @@ func New(st *store.Store, o Options) *Gateway {
 		dockerOff:     o.DockerOff,
 		ghcrOff:       o.GHCROff,
 		disabledHosts: disabledHosts,
+		scopePool:     o.Pool,
+		scopeCfg:      o.ScopeConfig,
 		githubOff:     o.GitHubOff,
 		locks:         keymutex.New(),
 		st:            st,
@@ -462,6 +488,11 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 			g.serveCached(w, r, plan, entry, "MISS", false)
 			return
 		default:
+			// 预算耗尽不是上游故障：503 + no-store，不回退、不冷却源。
+			if unified.IsBudgetExhausted(err) {
+				unified.WriteBudgetExhausted(w)
+				return
+			}
 			var ue *upstreamError
 			if errors.As(err, &ue) && (ue.Code == http.StatusNotFound || ue.Code == http.StatusGone) {
 				// 上游说文件没了：不要拿旧缓存糊弄人
@@ -504,6 +535,10 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, ad adapter.Adapt
 	}
 	entry, _, err := g.fetchOnce(r.Context(), plan, nil)
 	if err != nil {
+		if unified.IsBudgetExhausted(err) {
+			unified.WriteBudgetExhausted(w)
+			return
+		}
 		var tl *tooLargeError
 		if errors.As(err, &tl) {
 			g.fillStream(w, r, plan)
@@ -734,6 +769,18 @@ func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, so
 
 // targets 决定回源顺序。prev != nil（TTL 到期重验证）只回官方源：
 // 镜像可能把旧内容当「没变」，让它验证等于固化过期数据。
+// newRequestScope 为 /v2/ Manifest/Blob 请求创建统一 RequestScope 并挂到
+// Context。返回的 done 必须 defer 调用：它关闭 Scope 并归还 G 名额，
+// 不等待在途 Attempt（Body 关闭由各执行路径负责）。
+func (g *Gateway) newRequestScope(r *http.Request) (*http.Request, func(), error) {
+	sc, err := unified.NewScope(r.Context(), g.scopeCfg, g.scopePool)
+	if err != nil {
+		return r, nil, err
+	}
+	ctx := unified.WithScope(r.Context(), sc)
+	return r.WithContext(ctx), func() { sc.Close() }, nil
+}
+
 func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
 	fbs := g.fallbackTargets(plan, prev)
@@ -1877,6 +1924,9 @@ func markPolicyMissing(w http.ResponseWriter, err error) {
 }
 
 func statusFor(err error) int {
+	if unified.IsBudgetExhausted(err) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, v2auth.ErrPolicyMissing) {
 		return http.StatusServiceUnavailable
 	}

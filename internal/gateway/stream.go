@@ -22,6 +22,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
@@ -124,6 +125,12 @@ func (g *Gateway) endFill(key string, ch chan struct{}) {
 
 // fillStream 边下边发；中途断了留下 .part，下次带 If-Range 续。
 func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
+	// 预算已在进入流式路径前耗尽时直接 503：此时还没写响应头，
+	// 不能等到底层 RoundTrip 被拒才回一个笼统的 502。
+	if sc := unified.FromContext(r.Context()); sc != nil && sc.Exhausted() {
+		unified.WriteBudgetExhausted(w)
+		return
+	}
 	// 租约持有者随请求走：midFill 同源接管时用它做 Transfer。
 	r = r.WithContext(mustHolder(r.Context()))
 	prev, _ := g.st.CacheGet(plan.CacheKey)
@@ -984,6 +991,10 @@ func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, pe
 // passThrough 原样转发 Range/条件请求。401/403 直接回给客户端、不换源
 // （换源等于替客户端猜权限）；404/410 换源但不冷却，429/5xx 同理。
 func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adapter.Plan) {
+	if sc := unified.FromContext(r.Context()); sc != nil && sc.Exhausted() {
+		unified.WriteBudgetExhausted(w)
+		return
+	}
 	// 直通也要挑源：Range 常是大文件续传，绕过镜像等于把
 	// 最费流量的请求丢回官方源。
 	targets := g.targets(plan, nil)

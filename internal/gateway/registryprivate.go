@@ -13,6 +13,7 @@ import (
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
@@ -235,6 +236,12 @@ func (t *registryAuthTransport) RoundTrip(req *http.Request) (*http.Response, er
 		tok, terr := t.tokens.get(req.Context(), t.base, key, ch, scope, nil)
 		if terr != nil {
 			metrics.TokenRefreshError()
+			// 预算耗尽不是「拿不到 Token」：它是独立最高优先级通道，
+			// 必须冒泡成 503，不能吞掉后退回 401。
+			if unified.IsBudgetExhausted(terr) {
+				drainClose(resp)
+				return nil, terr
+			}
 			return resp, nil
 		}
 		drainClose(resp)
@@ -275,6 +282,9 @@ func (t *registryAuthTransport) RoundTrip(req *http.Request) (*http.Response, er
 		tok, terr := t.tokens.get(req.Context(), t.base, key, ch, scope, creds)
 		if terr != nil {
 			drainClose(resp)
+			if unified.IsBudgetExhausted(terr) {
+				return nil, terr
+			}
 			t.neg.fail(negKey)
 			metrics.AuthFailed()
 			return authErrorResponse(req, tokenStatusFor(terr), tokenCodeFor(terr)), nil

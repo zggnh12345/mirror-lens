@@ -17,6 +17,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
@@ -70,6 +71,18 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, "{}")
 		return
+	}
+
+	// 3.5.17：Manifest/Blob 请求各建一个 RequestScope（G 准入 + P 账本）。
+	// ping/write/referrers 不执行上游派发，不占 Scope。
+	if parsed.Kind == registryadapter.KindManifest || parsed.Kind == registryadapter.KindBlob {
+		nr, done, serr := g.newRequestScope(r)
+		if serr != nil {
+			unified.WriteScopeCapacity(w)
+			return
+		}
+		defer done()
+		r = nr
 	}
 
 	// Host 准入必须在 referrers、缓存和回源之前：禁用 Host 不能靠已有
@@ -148,6 +161,10 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 	if !fromCache {
 		ne, notMod, ferr := g.fetchOnce(r.Context(), plan, e)
 		if ferr != nil {
+			if unified.IsBudgetExhausted(ferr) {
+				unified.WriteBudgetExhausted(w)
+				return
+			}
 			code := statusFor(ferr)
 			noStore(w.Header())
 			markPolicyMissing(w, ferr)
