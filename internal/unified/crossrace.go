@@ -137,6 +137,8 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 		first = len(cands)
 	}
 	// 首轮并发。每个结果都投票；投票关闭后不再改变结论。
+	// 等待受 Window 约束：窗口外仍未产出「已校验正文」的候选直接丢弃，
+	// 不能让一个挂住的副本决定整条请求的尾延迟。
 	firstRes := make([]crossResult, first)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -162,7 +164,13 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			})
 		}(i)
 	}
-	wg.Wait()
+	waited := make(chan struct{})
+	go func() { wg.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-time.After(cfg.Window):
+		// 超时候选：它的投票在 CloseWindow 之后不会再进账，视为丢弃。
+	}
 	state := vote.CloseWindow()
 
 	// 零有效票：没有任何可对照的正文，不打扰官方权威，直接交给顺序回退。
@@ -178,7 +186,9 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 		// 选出第一个与共识 Digest 一致的候选（确定性顺序，不按完成时间）。
 		// 复用首轮结果：同一候选不得因为胜负判定被请求两次。
 		for i := 0; i < first; i++ {
+			mu.Lock()
 			res := firstRes[i]
+			mu.Unlock()
 			if res.err == nil && res.digest == agreed {
 				out.State = VoteConfirmed
 				out.Winner = i
@@ -196,7 +206,10 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 		// 补位形成「不同 Registry + 不同 Source」的多数一致即可确认，不能
 		// 在这里提前动用 Authority。补位仍不能解决才用唯一一次 Authority。
 		obs := make([]crossObservation, 0, len(firstRes))
-		for i, res := range firstRes {
+		mu.Lock()
+		snapshot := append([]crossResult(nil), firstRes...)
+		mu.Unlock()
+		for i, res := range snapshot {
 			if res.err == nil && res.digest != "" {
 				obs = append(obs, crossObservation{idx: i, digest: res.digest, registry: cands[i].Registry, sourceID: cands[i].SourceID})
 			}
@@ -254,7 +267,10 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 		}
 		out.AuthorityUsed = true
 		for i := 0; i < first; i++ {
-			if res := firstRes[i]; res.err == nil && res.digest == ad {
+			mu.Lock()
+			res := firstRes[i]
+			mu.Unlock()
+			if res.err == nil && res.digest == ad {
 				out.State = VoteAuthorityCompare
 				out.Winner = i
 				out.Digest = ad

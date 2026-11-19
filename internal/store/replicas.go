@@ -226,12 +226,9 @@ func (s *Store) ReplicaGeneration(authority string) (uint64, error) {
 }
 
 func bumpReplicaGeneration(tx *sql.Tx, authority string) (int64, error) {
+	// 首次写入从 1 开始，之后每次 +1：一次配置变更恰好递增一个代次。
 	if _, err := tx.Exec(`INSERT INTO trusted_replica_generation(authority_registry, generation)
-		VALUES(?, 1) ON CONFLICT(authority_registry) DO NOTHING`, authority); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(`UPDATE trusted_replica_generation SET generation = generation + 1
-		WHERE authority_registry = ?`, authority); err != nil {
+		VALUES(?, 1) ON CONFLICT(authority_registry) DO UPDATE SET generation = generation + 1`, authority); err != nil {
 		return 0, err
 	}
 	var g int64
@@ -299,6 +296,10 @@ func (s *Store) PutRegistryReplica(r RegistryReplica, actor string, createOnly b
 	}
 	if old != nil && createOnly {
 		return 0, ErrReplicaExists
+	}
+	if old == nil && !createOnly {
+		// PUT 只修改已存在映射：不隐式新建，避免把「写错主键」当成功。
+		return 0, ErrReplicaMissing
 	}
 	enabled := 0
 	if r.Enabled {

@@ -214,6 +214,17 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 		return replicaArtifact{}, 0, err
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
+	// 内容寻址请求（/manifests/sha256:…）必须逐字节等于客户端指定的摘要。
+	// 副本只被授权「尝试」，绝不因为来自可信副本就跳过 Digest 校验；
+	// 这条一旦漏掉，错误映射会被 Immutable 缓存永久命中。
+	if plan.ExpectSHA != "" && !strings.EqualFold(sum, plan.ExpectSHA) {
+		removeFile(name)
+		g.cache.ForgetTemp(name)
+		err := fmt.Errorf("内容与请求摘要不符：期望 %s 实得 %s (%s)", plan.ExpectSHA, sum, t.u)
+		g.verifyFail.Add(1)
+		up.finishAttempt(0, err)
+		return replicaArtifact{}, 0, err
+	}
 	if checked, ok := checkDigest(resp.Header, sum); checked && !ok {
 		removeFile(name)
 		g.cache.ForgetTemp(name)
@@ -267,11 +278,46 @@ func (g *Gateway) commitReplicaArtifact(ctx context.Context, plan *adapter.Plan,
 
 // fetchWithReplicas 是 serveManifest 的唯一入口：副本路径没有形成结论时
 // 无条件回到 fetchOnce，保证旧行为不被削弱。
+// replicaFlight 让同一 CacheKey 的并发请求共享一次跨 Registry 竞速。
+// 没有它，冷 tag 被 K 个客户端同时拉会放大成 K 轮竞速（每轮 2~M 次回源）。
+type replicaFlight struct {
+	done   chan struct{}
+	entry  *store.CacheEntry
+	notMod bool
+	err    error
+}
+
 func (g *Gateway) fetchWithReplicas(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry) (*store.CacheEntry, bool, error) {
+	if !g.replicaEligible(plan, prev) {
+		return g.fetchOnce(ctx, plan, prev)
+	}
+	key := "replica|" + plan.CacheKey
+	nf := &replicaFlight{done: make(chan struct{})}
+	actual, loaded := g.replicaFlights.LoadOrStore(key, nf)
+	f := actual.(*replicaFlight)
+	if loaded {
+		select {
+		case <-f.done:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+		if f.err != nil {
+			// 领跑者的失败（含客户端取消）不能传染给其他请求：各自走旧路径。
+			return g.fetchOnce(ctx, plan, prev)
+		}
+		return f.entry, f.notMod, nil
+	}
+	defer func() {
+		g.replicaFlights.Delete(key)
+		close(f.done)
+	}()
 	if e, handled, err := g.crossRegistryManifest(ctx, plan, prev); handled {
+		f.entry, f.err = e, err
 		return e, false, err
 	}
-	return g.fetchOnce(ctx, plan, prev)
+	e, notMod, err := g.fetchOnce(ctx, plan, prev)
+	f.entry, f.notMod, f.err = e, notMod, err
+	return e, notMod, err
 }
 
 // crossRegistryManifest 执行跨 Registry 副本路径。
@@ -312,11 +358,12 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 
 	// race 模式：每个候选只下载一次，产物保留到结论确定。
 	type slot struct {
-		once sync.Once
-		done chan struct{}
-		art  replicaArtifact
-		sha  string
-		err  error
+		once      sync.Once
+		done      chan struct{}
+		art       replicaArtifact
+		sha       string
+		err       error
+		abandoned bool
 	}
 	slots := make([]*slot, len(targets))
 	for i := range slots {
@@ -333,7 +380,13 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 				slots[i].sha = art.sha
 			}
 			slots[i].err = err
+			late := slots[i].abandoned
 			mu.Unlock()
+			if late && art.tmp != "" {
+				// 竞速已在窗口外放弃该候选：迟到产物自己清理，不留孤儿文件。
+				removeFile(art.tmp)
+				g.cache.ForgetTemp(art.tmp)
+			}
 			close(slots[i].done)
 		})
 		<-slots[i].done
@@ -347,12 +400,19 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 			if i == keep {
 				continue
 			}
-			art := slots[i].art
-			if art.tmp == "" {
-				continue
+			select {
+			case <-slots[i].done:
+				// 已完成的候选：产物稳定，直接清理。
+				if art := slots[i].art; art.tmp != "" {
+					removeFile(art.tmp)
+					g.cache.ForgetTemp(art.tmp)
+				}
+			default:
+				// 还在跑的候选（窗口外丢弃）：标记后由它自己清理。
+				mu.Lock()
+				slots[i].abandoned = true
+				mu.Unlock()
 			}
-			removeFile(art.tmp)
-			g.cache.ForgetTemp(art.tmp)
 		}
 	}
 
@@ -375,6 +435,16 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		},
 	}
 	out, rerr := unified.RunCrossRace(ctx, cfg, cands)
+	// 窗口外仍未完成的候选：标记放弃，让它带着自己的产物退出。
+	for i := range slots {
+		select {
+		case <-slots[i].done:
+		default:
+			mu.Lock()
+			slots[i].abandoned = true
+			mu.Unlock()
+		}
+	}
 	if out.Winner >= 0 {
 		art := slots[out.Winner].art
 		consumed[out.Winner] = true
@@ -389,6 +459,11 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		return e, true, nil
 	}
 	// 不一致/无结论：权威正文若已校验，可以作最终交付（design §4.4）。
+	select {
+	case <-slots[0].done:
+	default:
+		// 权威那条还没回：没有可用于兜底的已验证正文。
+	}
 	if slots[0].art.tmp != "" && slots[0].sha != "" {
 		art := slots[0].art
 		consumed[0] = true

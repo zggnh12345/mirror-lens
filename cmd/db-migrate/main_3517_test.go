@@ -141,6 +141,16 @@ func TestMigrate3514To3517AndRollback(t *testing.T) {
 	if err := dst.QueryRow(`SELECT count(*) FROM trusted_mapping_audit`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("审计迁移后应为空: n=%d err=%v", n, err)
 	}
+	// 3.5.17 副本三张表：即使源库有 host caps，也不得推断出任何仓库→仓库映射。
+	for _, q := range []string{
+		`SELECT count(*) FROM trusted_registry_replicas`,
+		`SELECT count(*) FROM trusted_replica_generation`,
+		`SELECT count(*) FROM trusted_replica_audit`,
+	} {
+		if err := dst.QueryRow(q).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%s 迁移后必须为空（不做事后推断）: n=%d err=%v", q, n, err)
+		}
+	}
 
 	// 回滚演练：源库仍是 3.5.14 结构，新二进制对它会 fail closed（版本不匹配），
 	// 但数据可读、结构指纹未变——这就是「继续用旧库」的回滚路径。

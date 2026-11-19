@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,6 +67,7 @@ func TestStreamExhaustMidBodyDropsPartialAndCache(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v2/quay.io/x/blobs/sha256:aa", nil)
 	req = req.WithContext(unified.WithScope(req.Context(), sc))
 
+	partPath, partMeta := cs.PartialPaths(plan.CacheKey)
 	wrote := make(chan struct{})
 	go func() {
 		_, _ = pw.Write(make([]byte, 32))
@@ -72,6 +75,17 @@ func TestStreamExhaustMidBodyDropsPartialAndCache(t *testing.T) {
 	}()
 	go func() {
 		<-wrote
+		// 先证明半成品真的落了一半：否则「没有 .part」是空断言。
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if st, err := os.Stat(partPath); err == nil && st.Size() == 32 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if st, err := os.Stat(partPath); err != nil || st.Size() != 32 {
+			t.Errorf("耗尽前应有 32 字节的 .part，实际 %v/%v", st, err)
+		}
 		// 正文已经输出了一部分：此刻耗尽 P。
 		sc.Exhaust("P")
 	}()
@@ -88,9 +102,10 @@ func TestStreamExhaustMidBodyDropsPartialAndCache(t *testing.T) {
 	if e, _ := st.CacheGet(plan.CacheKey); e != nil {
 		t.Fatalf("耗尽后不得提交缓存索引: %+v", e)
 	}
-	partPath, _ := cs.PartialPaths(plan.CacheKey)
-	if _, err := os.Stat(partPath); err == nil {
-		t.Fatalf(".part 未清理: %s", partPath)
+	for _, p := range []string{partPath, partMeta} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("半成品未清理: %s", p)
+		}
 	}
 	var n int
 	if err := st.DB().QueryRow(`SELECT count(*) FROM checks WHERE source_id=?`, srcID).Scan(&n); err != nil {
@@ -117,9 +132,22 @@ func TestExhaustBlocksRangePreflightHedge(t *testing.T) {
 	if hedgeAllowed(ctx) {
 		t.Fatal("耗尽后不得新增 Hedge")
 	}
-	g := &Gateway{}
-	if srcs, total := g.parPreflightShared(ctx, racePlan("quay.io", "a/b", "latest"), nil, time.Second); srcs != nil || total != -1 {
+	// 用真实夹具证明「零上游请求」：只断言返回值无法区分「被阻断」和「没依赖」。
+	g, _, _, body, _, mirror, _, ms := parFixture(t, 1<<20)
+	plan, cand := parPlan(t, ms, body)
+	mu, err := url.Parse(ms.URL + "/v2/library/x/blobs/sha256:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := []fetchTarget{{u: mu, c: cand}}
+	if srcs, total := g.parPreflightShared(ctx, plan, targets, time.Second); srcs != nil || total != -1 {
 		t.Fatalf("耗尽后不得新增 Preflight，实得 %d/%d", len(srcs), total)
+	}
+	if h := atomic.LoadInt32(&mirror.hits); h != 0 {
+		t.Fatalf("耗尽后不得再打上游，Preflight 命中 %d", h)
+	}
+	if n := sc.PreflightRuns(); n != 0 {
+		t.Fatalf("耗尽后不应启动 Preflight，实得 %d", n)
 	}
 }
 
@@ -127,18 +155,24 @@ func TestExhaustBlocksRangePreflightHedge(t *testing.T) {
 // 每 Range 最多 4 个目标，Segment 上限 256，总量 1024。
 func TestRangeLedgerIsScopeLifetime(t *testing.T) {
 	sc, ctx := testScope(t)
-	keep, ok := rangeAdmit(ctx, 9, 256)
+	keep, ok := rangeAdmit(ctx, 9, 10)
 	if !ok || keep != unified.MaxRangeTargets {
 		t.Fatalf("每 Range 必须截到 %d 个目标，实得 %d/%v", unified.MaxRangeTargets, keep, ok)
 	}
-	if got := sc.Ranges().Used(); got != unified.RangeWorkCap {
-		t.Fatalf("首轮应占满 RangeWorkCap，实得 %d", got)
+	if got := sc.Ranges().Used(); got != 40 {
+		t.Fatalf("首轮应记 4 目标 × 10 段 = 40，实得 %d", got)
 	}
-	// 第二阶段（midFill）不得重置预算。
+	// 第二阶段（midFill）结转而不是重置。
+	if _, ok := rangeAdmit(ctx, 4, 246); !ok {
+		t.Fatal("剩余额度内应允许 midFill 分片")
+	}
+	if got := sc.Ranges().Used(); got != unified.RangeWorkCap {
+		t.Fatalf("跨阶段应累计到上限：Used=%d", got)
+	}
 	if _, ok := rangeAdmit(ctx, 4, 1); ok {
-		t.Fatal("tryParallel→midFill 不得重置 Range 预算")
+		t.Fatal("超出 1024 后不得再准入")
 	}
 	if got := sc.Ranges().Used(); got != unified.RangeWorkCap {
-		t.Fatalf("预算泄漏/重置：Used=%d", got)
+		t.Fatalf("超额准入不得写账：Used=%d", got)
 	}
 }

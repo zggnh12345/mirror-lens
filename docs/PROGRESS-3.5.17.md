@@ -152,3 +152,43 @@
   `gateway/stream_exhaust_test.go`（中途耗尽不伪造 503、CachePut=0、.part 清理、
   零 checks 失败样本、耗尽阻断 Range/Preflight/Hedge、RangeWork 生命周期级不重置）。
 - P=8192、Reserve/Commit 与计量点位置未改动。
+
+## 17b 第三轮 · 阶段 10：独立复核与缺陷收口
+
+独立复核（不复用实施者自评）对 `2217c6c..HEAD` 全量 diff 逐条核对冻结规则，结论为
+「1 个 P0 + 5 个 P1」，已全部修复并补测试：
+
+- **P0：副本路径漏 `ExpectSHA` 校验**（`internal/gateway/replica.go`）。内容寻址请求
+  （`/manifests/sha256:…`）经副本取回时只校验上游自报 Digest，不比对客户端给的摘要；
+  配合 `Immutable` 缓存会被永久命中。已按官方路径同一把闸修复，并加
+  `TestReplicaSequentialRejectsWrongDigest`。
+- **P1：整份落盘路径把预算耗尽记成上游失败**（`settleTarget`）。已加
+  `IsBudgetExhausted` 早退，不记失败/不进冷却/不喂 AIMD。
+- **P1：200ms 投票窗口不约束等待**（`crossrace.go`）。改为窗口内 `select` 等待，
+  超时候选丢弃；迟到产物由 `slot.abandoned` 自行清理。新增
+  `TestCrossRaceWindowBoundsSlowCandidate`。
+- **P1：B 入口绕过 flight 合并**。新增 `replicaFlights`，同 CacheKey 并发只跑一轮
+  竞速；领跑者失败不传染，跟随者各自回落 `fetchOnce`。新增并发合并用例。
+- **P1：耗尽收尾顺序与覆盖面**。`markExhausted` 改为「先 cancel 再关 Body」；
+  `doUpstream` / `rangeReq` 也挂 `withScopeCancel`，分片与 blob 主流随 Scope 取消；
+  `streamBody` 换源后重新登记 Body。
+- **P1（测试有效性）**：收紧断言——赢家固定为下标 0（不按完成先后）、补位复用首轮
+  候选、同 Registry/同 Source 不计票、全分歧不猜交付、`.part` 先证存在再证清理、
+  耗尽后 Preflight 真实零上游命中、迁移副本三表必须为空、代次一次变更只 +1、
+  审计行数/操作者/快照、PUT 修改与 404、旧句柄不能释放新持有者的 Claim。
+- **顺带修正**：`PUT /api/registry-replicas` 不再隐式新建（不存在返回 404）；
+  `ReserveP` 只对真正的额度耗尽触发收尾；`classifyOutcome` 非 2xx 不再一律记 OK。
+
+已知且已记录的边界（不阻塞本版）：`NormalizeAccept` 的 q 值语义在生产路径上被
+`registryadapter.UpstreamAccept` 先截断，因此「q 值保序」目前只在 unified 单元层
+成立；副本 Generation 只做观测快照，不参与内容身份（与 F19 身份定义一致）。
+
+## 迁移来源核验（阶段 6）
+
+- 未访问、未修改生产库（权限边界）；生产实际版本/指纹记为 **NOT_EXECUTED**。
+- 隔离证据：`inputSchemaFingerprints["3.5.14"] = 7e5d71a7…` 与
+  `docs/3.5.14-implementation-status.md` 记录的最终 Canonical Hash（生产副本
+  `prod-14c2.db` 实测）逐字节一致；3.5.15/3.5.16 未改 Schema，生产 3.5.16 的
+  Schema 仍是 3.5.14，因此 3.5.14→3.5.17 就是生产升级路径。
+- `TestMigrate3514To3517AndRollback` 实测通过：升级后 `schema_hash` 匹配 3.5.17，
+  副本三表为空，回滚库指纹保持 `7e5d71a7…`，新二进制对 3.5.14 库 fail closed。

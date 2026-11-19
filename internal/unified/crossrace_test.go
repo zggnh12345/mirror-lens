@@ -3,6 +3,7 @@ package unified
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -66,8 +67,9 @@ func TestCrossRaceConfirmedWithoutAuthority(t *testing.T) {
 	if authorityCalls.Load() != 0 {
 		t.Fatal("两路一致时不应请求官方权威")
 	}
-	if out.Winner < 0 || out.Winner > 1 {
-		t.Fatalf("赢家必须来自首轮，实得 %d", out.Winner)
+	if out.Winner != 0 {
+		// 确定性：不按完成先后，首轮内按固定顺序取第一个一致者。
+		t.Fatalf("赢家必须是下标 0，实得 %d", out.Winner)
 	}
 	if c.runs.Load() != 0 {
 		t.Fatal("确认后不应再请求第三候选")
@@ -109,8 +111,8 @@ func TestCrossRaceMismatchFillQuorumBeforeAuthority(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("补位已形成多数时不允许问 Authority，实际 %d", calls.Load())
 	}
-	if out.Digest != digB || (out.Winner != 1 && out.Winner != 2) {
-		t.Fatalf("应选中补位后的多数 Digest（复用首轮已下载的候选）: %+v", out)
+	if out.Digest != digB || out.Winner != 1 {
+		t.Fatalf("应复用首轮已下载的多数候选（下标 1）: %+v", out)
 	}
 	if fill1.runs.Load() != 1 || fill2.runs.Load() != 0 {
 		t.Fatalf("补位应逐个尝试并在多数成立时停止: fill1=%d fill2=%d",
@@ -243,4 +245,71 @@ func TestCrossRaceConcurrentRuns(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// 投票窗口是等待上界：慢候选不得把整条请求拖到它超时。
+func TestCrossRaceWindowBoundsSlowCandidate(t *testing.T) {
+	fast := &fakeCand{digest: digA}
+	slow := &fakeCand{digest: digA, delay: 2 * time.Second}
+	start := time.Now()
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Window: 50 * time.Millisecond,
+		Authority: func(context.Context) (string, error) {
+			return digA, nil
+		},
+	}, []CrossCandidate{fast.candidate("quay.io", 1), slow.candidate("ghcr.io", 2)})
+	if err != nil {
+		t.Fatalf("单票 + 权威一致应交付: %v", err)
+	}
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("窗口外候选必须被丢弃，实际等待 %v", el)
+	}
+	if out.Winner != 0 || out.Digest != digA {
+		t.Fatalf("应交付已完成的候选: %+v", out)
+	}
+}
+
+// 同 Registry 或同 Source 的观察不构成独立多数。
+func TestQuorumRequiresDistinctRegistryAndSource(t *testing.T) {
+	a, b, c := &fakeCand{digest: digA}, &fakeCand{digest: digA}, &fakeCand{digest: digB}
+	var authority atomic.Int32
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Authority: func(context.Context) (string, error) {
+			authority.Add(1)
+			return digB, nil
+		},
+	}, []CrossCandidate{
+		a.candidate("quay.io", 7),
+		b.candidate("quay.io", 7), // 同 Registry + 同 Source：不独立
+		c.candidate("ghcr.io", 8),
+	})
+	if err != nil {
+		t.Fatalf("权威对照一致应交付: %v", err)
+	}
+	if authority.Load() != 1 {
+		t.Fatalf("非独立多数不能当确认，必须问一次权威，实际 %d", authority.Load())
+	}
+	if out.State != VoteAuthorityCompare || out.Digest != digB || out.Winner != 2 {
+		t.Fatalf("应选与权威一致的候选: %+v", out)
+	}
+}
+
+// 全部分歧且权威也不匹配：不猜一个交付。
+func TestCrossRaceNoCandidateWhenAuthorityDisagreesWithAll(t *testing.T) {
+	var cands []CrossCandidate
+	for i, d := range []string{digA, digB, digC, digD} {
+		f := &fakeCand{digest: d}
+		cands = append(cands, f.candidate([]string{"quay.io", "ghcr.io", "docker.io", "registry.k8s.io"}[i], int64(i+1)))
+	}
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Authority: func(context.Context) (string, error) {
+			return "sha256:" + strings.Repeat("e", 64), nil
+		},
+	}, cands)
+	if !errors.Is(err, ErrCrossRaceNoCandidate) {
+		t.Fatalf("应按无结论返回: %v", err)
+	}
+	if out.Winner != -1 || out.Digest != "" {
+		t.Fatalf("没有可信结论时不得指定赢家: %+v", out)
+	}
 }

@@ -82,6 +82,9 @@ func (s *Server) registryReplicas(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrReplicaExists):
 			writeJSON(w, 409, map[string]string{"error": "副本映射已存在"})
 			return
+		case errors.Is(err, store.ErrReplicaMissing):
+			writeJSON(w, 404, map[string]string{"error": "副本映射不存在"})
+			return
 		case err != nil:
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return

@@ -204,7 +204,10 @@ func (s *Scope) ReserveP() (*PReservation, error) {
 	}
 	res, err := s.p.ReserveP(s.ctx)
 	if err != nil {
-		s.markExhausted("P")
+		// 只有真正的额度耗尽才终止 Scope；普通取消/关闭不能伪装成耗尽。
+		if IsBudgetExhausted(err) {
+			s.markExhausted("P")
+		}
 		return nil, err
 	}
 	return res, nil
@@ -230,11 +233,12 @@ func (s *Scope) markExhausted(kind string) {
 	}
 	s.bodies = map[uint64]func(){}
 	s.mu.Unlock()
+	// 先取消、再关 Body：net/http 的 Body.Close 会等持锁的 Read 返回，
+	// 卡住的上游只有先取消才能立刻解开，否则收尾会挂到上游超时。
+	s.cancel()
 	for _, fn := range closers {
 		fn()
 	}
-	// 取消 Scope 派生的所有 Attempt（通过 context.AfterFunc 挂在 sc.ctx 上）。
-	s.cancel()
 }
 
 // Exhaust 显式触发预算耗尽收尾（供 PTransport 与测试使用）。

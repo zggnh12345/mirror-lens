@@ -43,8 +43,8 @@ func TestRegistryReplicaLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("新建: %v", err)
 	}
-	if g1 <= int64(g0) {
-		t.Fatalf("新建必须递增代次：%d → %d", g0, g1)
+	if g1 != int64(g0)+1 {
+		t.Fatalf("新建只允许递增 1：%d → %d", g0, g1)
 	}
 	if _, err := st.PutRegistryReplica(rep, "admin", true); !errors.Is(err, ErrReplicaExists) {
 		t.Fatalf("POST 重复必须返回 ErrReplicaExists，实得 %v", err)
@@ -64,6 +64,26 @@ func TestRegistryReplicaLifecycle(t *testing.T) {
 	if g3 != g2+1 {
 		t.Fatalf("删除应只递增 1：%d → %d", g2, g3)
 	}
+	// Enabled=false 的行不参与调度（ActiveAt 的第一个条件）。
+	repOff := replicaFixture("kube-apiserver", "mirror/off", 5)
+	repOff.ReplicaRegistry = "gcr.io"
+	repOff.Enabled = false
+	if _, err := st.PutRegistryReplica(repOff, "admin", true); err != nil {
+		t.Fatalf("写入停用映射: %v", err)
+	}
+	now := time.Now()
+	active, err := st.ActiveRegistryReplicas(auth, "kube-apiserver", now)
+	if err != nil {
+		t.Fatalf("查询活动映射: %v", err)
+	}
+	for _, a := range active {
+		if a.ReplicaRegistry == "gcr.io" {
+			t.Fatal("停用的副本映射不应进入候选")
+		}
+	}
+	if _, err := st.DeleteRegistryReplica(auth, repOff.AuthorityRepository, repOff.ReplicaRegistry, "admin"); err != nil {
+		t.Fatalf("清理停用映射: %v", err)
+	}
 	if _, err := st.DeleteRegistryReplica(auth, rep.AuthorityRepository, rep.ReplicaRegistry, "admin"); !errors.Is(err, ErrReplicaMissing) {
 		t.Fatalf("重复删除应返回 ErrReplicaMissing，实得 %v", err)
 	}
@@ -71,14 +91,14 @@ func TestRegistryReplicaLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("审计: %v", err)
 	}
-	if len(audit) != 3 {
-		t.Fatalf("审计行数 = %d，期望 3（create/update/delete）", len(audit))
+	if len(audit) != 5 {
+		t.Fatalf("审计行数 = %d，期望 5（含停用映射的 create/delete）", len(audit))
 	}
 	if audit[0].Operation != "delete" || audit[0].OldSnapshot == "" {
 		t.Fatalf("删除审计必须带删除前快照: %+v", audit[0])
 	}
-	if audit[2].Operation != "create" || audit[2].NewSnapshot == "" {
-		t.Fatalf("新建审计必须带新快照: %+v", audit[2])
+	if audit[len(audit)-1].Operation != "create" || audit[len(audit)-1].NewSnapshot == "" {
+		t.Fatalf("最早的 create 审计必须带新快照: %+v", audit[len(audit)-1])
 	}
 }
 
@@ -154,10 +174,12 @@ func TestRegistryReplicaConcurrentWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	regs := []string{"quay.io", "gcr.io", "mcr.microsoft.com", "public.ecr.aws"}
 	errs := make(chan error, len(regs))
+	start := make(chan struct{})
 	for i, reg := range regs {
 		wg.Add(1)
 		go func(i int, reg string) {
 			defer wg.Done()
+			<-start
 			r := replicaFixture("kube-apiserver", "mirror/api", 10+i)
 			r.ReplicaRegistry = reg
 			if _, err := st.PutRegistryReplica(r, "admin", true); err != nil {
@@ -165,6 +187,7 @@ func TestRegistryReplicaConcurrentWrites(t *testing.T) {
 			}
 		}(i, reg)
 	}
+	close(start)
 	wg.Wait()
 	close(errs)
 	for err := range errs {
@@ -181,7 +204,19 @@ func TestRegistryReplicaConcurrentWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("代次: %v", err)
 	}
-	if g < uint64(len(regs)) {
-		t.Fatalf("代次 = %d，期望至少 %d", g, len(regs))
+	if g != uint64(len(regs)) {
+		t.Fatalf("四次新建应恰好递增 4 个代次，实得 %d", g)
+	}
+	audit, err := st.ListRegistryReplicaAudit("registry.k8s.io", 100)
+	if err != nil {
+		t.Fatalf("审计: %v", err)
+	}
+	if len(audit) != len(regs) {
+		t.Fatalf("每次写都要有审计行：%d 行，期望 %d", len(audit), len(regs))
+	}
+	for _, a := range audit {
+		if a.Operation != "create" || a.NewSnapshot == "" || a.Actor != "admin" {
+			t.Fatalf("审计行不完整: %+v", a)
+		}
 	}
 }

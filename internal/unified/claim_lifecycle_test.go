@@ -215,3 +215,40 @@ func TestClaimReleaseConcurrentWithAttemptFinish(t *testing.T) {
 		t.Fatalf("Dispatched 数 = %d，期望 0", got)
 	}
 }
+
+// 旧句柄不能把后来者预占的 Claim 打回 Released（重复释放/重复取得的最危回归面）。
+func TestStaleHandleCannotReleaseNewOwner(t *testing.T) {
+	s := newTestScope(t)
+	defer s.Close()
+	id := testIdentity()
+
+	a, err := s.NewChain("A", ChainA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.NewChain("B", ChainB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1 := mustClaim(t, s, a, id)
+	att := mustAttempt(t, a, h1)
+	att.Abort()
+	a.Close()
+	if st, _ := s.ClaimStateOf(id); st != ClaimReleased {
+		t.Fatalf("全 Prepared/Aborted 后应释放，实得 %v", st)
+	}
+	h2 := mustClaim(t, s, b, id)
+	if st, _ := s.ClaimStateOf(id); st != ClaimReserved {
+		t.Fatalf("B 预占失败: %v", st)
+	}
+	// A 的旧句柄此时释放必须失效，不能影响 B。
+	if err := h1.Release(); !errors.Is(err, ErrClaimReleased) && !errors.Is(err, ErrClaimDispatched) {
+		t.Fatalf("旧句柄释放应返回已释放类错误，实得 %v", err)
+	}
+	if st, _ := s.ClaimStateOf(id); st != ClaimReserved {
+		t.Fatalf("旧句柄把新持有者的 Claim 打回 %v", st)
+	}
+	if err := h2.Dispatch(); err != nil {
+		t.Fatalf("B 仍应能派发: %v", err)
+	}
+}

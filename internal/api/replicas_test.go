@@ -43,8 +43,8 @@ func TestRegistryReplicaAPI(t *testing.T) {
 		OK         bool  `json:"ok"`
 		Generation int64 `json:"generation"`
 	}
-	if err := json.Unmarshal(post.Body.Bytes(), &created); err != nil || !created.OK || created.Generation < 1 {
-		t.Fatalf("新建响应不对: %s", post.Body.String())
+	if err := json.Unmarshal(post.Body.Bytes(), &created); err != nil || !created.OK || created.Generation != 1 {
+		t.Fatalf("首次新建代次应为 1（一次变更一个代次）: %s", post.Body.String())
 	}
 
 	// 重复 POST → 409。
@@ -75,8 +75,43 @@ func TestRegistryReplicaAPI(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("解析: %v", err)
 	}
-	if len(list.Items) != 1 || list.Generation < 1 {
-		t.Fatalf("查询结果不对: %s", rec.Body.String())
+	if len(list.Items) != 1 || list.Generation != created.Generation {
+		t.Fatalf("GET 的代次必须等于写入响应: want %d got %d（%s）",
+			created.Generation, list.Generation, rec.Body.String())
+	}
+
+	// PUT 修改 priority：代次恰好 +1，且 GET 能看到新值。
+	put := putJSON(h, "/api/registry-replicas",
+		`{"authority_registry":"registry.k8s.io","authority_repository":"kube-apiserver",`+
+			`"replica_registry":"quay.io","replica_repository":"mirror/kube-apiserver","priority":20,"enabled":true}`, ck)
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT 应 200，实得 %d %s", put.Code, put.Body.String())
+	}
+	var updated struct {
+		Generation int64 `json:"generation"`
+	}
+	if err := json.Unmarshal(put.Body.Bytes(), &updated); err != nil || updated.Generation != created.Generation+1 {
+		t.Fatalf("修改应只递增 1：%d → %d (%s)", created.Generation, updated.Generation, put.Body.String())
+	}
+	// PUT 一个不存在的映射 → 404。
+	missPut := httptest.NewRequest(http.MethodPut, "/api/registry-replicas",
+		strings.NewReader(`{"authority_registry":"registry.k8s.io","authority_repository":"nope",`+
+			`"replica_registry":"quay.io","replica_repository":"mirror/nope","enabled":true}`))
+	missPut.Header.Set("Content-Type", "application/json")
+	missPut.Header.Set("X-CSRF-Token", testCSRF)
+	missPut.AddCookie(ck)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, missPut)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PUT 不存在应 404，实得 %d %s", rec.Code, rec.Body.String())
+	}
+	// 未登录写请求 → 401（不能只测读）。
+	anonPost := httptest.NewRequest(http.MethodPost, "/api/registry-replicas", strings.NewReader(body))
+	anonPost.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, anonPost)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录写应 401，实得 %d", rec.Code)
 	}
 
 	// 删除 → 200；重复删除 → 404。
@@ -108,10 +143,19 @@ func TestRegistryReplicaAPI(t *testing.T) {
 		t.Fatalf("审计应 200，实得 %d", rec.Code)
 	}
 	var au struct {
-		Items []map[string]any `json:"items"`
+		Items []struct {
+			Operation   string `json:"operation"`
+			OldSnapshot string `json:"old_snapshot"`
+			Actor       string `json:"actor"`
+		} `json:"items"`
 	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &au)
-	if len(au.Items) < 2 {
-		t.Fatalf("审计至少 create+delete 两行，实得 %d", len(au.Items))
+	if err := json.Unmarshal(rec.Body.Bytes(), &au); err != nil {
+		t.Fatalf("解析审计: %v", err)
+	}
+	if len(au.Items) != 3 {
+		t.Fatalf("审计应有 create/update/delete 三行，实得 %d", len(au.Items))
+	}
+	if au.Items[0].Operation != "delete" || au.Items[0].OldSnapshot == "" || au.Items[0].Actor == "" {
+		t.Fatalf("删除审计必须带操作者与前快照: %+v", au.Items[0])
 	}
 }

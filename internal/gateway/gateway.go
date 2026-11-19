@@ -60,25 +60,26 @@ type Gateway struct {
 	ghMeta   *ghapi.Client
 	maxSize  int64
 
-	cacheMaxBytes int64
-	cacheMinFree  int64 // 磁盘剩余低于此值暂停落盘，0 = 不设底线
-	diskLowFlag   atomic.Bool
-	quotaMu       sync.Mutex
-	gc            *gc.GC
-	now           func() time.Time
-	sched         *scheduler.Scheduler
-	flights       sync.Map      // cacheKey -> *flight（缓冲型适配器用）
-	locks         *keymutex.Map // cacheKey -> 锁（流式填充用，空闲即回收）
-	fillMu        sync.Mutex
-	fillFlights   map[string]chan struct{} // cacheKey -> 正在回源的流式填充
-	verifyFail    atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
-	bufs          sync.Pool                // 64KB 转发缓冲，避免每块重新分配
-	par           ParOptions
-	preSem        chan struct{}
-	gitSem        chan struct{}
-	relayLimit    int
-	semOnce       sync.Once
-	hedge         HedgeOptions
+	cacheMaxBytes  int64
+	cacheMinFree   int64 // 磁盘剩余低于此值暂停落盘，0 = 不设底线
+	diskLowFlag    atomic.Bool
+	quotaMu        sync.Mutex
+	gc             *gc.GC
+	now            func() time.Time
+	sched          *scheduler.Scheduler
+	flights        sync.Map      // cacheKey -> *flight（缓冲型适配器用）
+	replicaFlights sync.Map      // cacheKey -> *replicaFlight（跨 Registry 竞速合并）
+	locks          *keymutex.Map // cacheKey -> 锁（流式填充用，空闲即回收）
+	fillMu         sync.Mutex
+	fillFlights    map[string]chan struct{} // cacheKey -> 正在回源的流式填充
+	verifyFail     atomic.Int64             // 校验不过、因此没落盘的次数（进程内计数）
+	bufs           sync.Pool                // 64KB 转发缓冲，避免每块重新分配
+	par            ParOptions
+	preSem         chan struct{}
+	gitSem         chan struct{}
+	relayLimit     int
+	semOnce        sync.Once
+	hedge          HedgeOptions
 	// race 是 3.5.16 Registry Manifest 竞速的运行时参数；零值用 hedge.After。
 	race          RaceOptions
 	raceCfg       atomic.Value // *starRaceSnapshot（Host 级 star_race 开关快照）
@@ -1002,6 +1003,11 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 		// 同 Identity 已被另一条链占住：本链不发送，也不罚任何源。
 		return settleAbort, nil, false, err
 	}
+	if unified.IsBudgetExhausted(err) {
+		// 预算是本服务自己的终止条件：不是源故障，不记失败、不进冷却，
+		// 也不能让 AIMD 把它当丢包。请求由上层回 503。
+		return settleAbort, nil, false, err
+	}
 	if err == nil {
 		if t.c != nil {
 			// 成功也要记状态码：429 率的分母要含真实响应，
@@ -1485,6 +1491,18 @@ func (u *upstream) finishAttempt(code int, err error) {
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
 func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
 	return g.openUpstreamAs(ctx, plan, prev, u, sourceID, logicalHost, logicalHost)
+}
+
+// withScopeCancel 让一次上游派发随 Scope 耗尽被取消（blob 主流、分片、换源
+// 都从 r.Context() 派生，不在 Scope 自己的 ctx 之下）。
+func withScopeCancel(ctx context.Context) context.Context {
+	sc := unified.FromContext(ctx)
+	if sc == nil || sc.Exhausted() {
+		return ctx
+	}
+	nctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(sc.Context(), cancel)
+	return nctx
 }
 
 // openUpstreamAs 与 openUpstream 相同，但把「认证策略 Host」与「Claim 身份

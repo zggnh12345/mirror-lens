@@ -446,11 +446,13 @@ func (g *Gateway) noteLive(t *fetchTarget, kind string, w *streamWatch) {
 }
 
 func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, resp *http.Response, pm *cache.PartialMeta, tgt *fetchTarget, ttfb time.Duration) {
+	// 预算耗尽时由 Scope 主动关闭当前未完成 Body，中断传输。
+	// 换源后必须重新登记：旧 Body 已关闭，登记它等于没登记。
+	unregBody := func() {}
 	if sc := unified.FromContext(r.Context()); sc != nil {
-		// 预算耗尽时由 Scope 主动关闭这个未完成 Body，中断传输。
-		unreg, _ := sc.TrackBody(func() { resp.Body.Close() })
-		defer unreg()
+		unregBody, _ = sc.TrackBody(func() { resp.Body.Close() })
 	}
+	defer func() { unregBody() }()
 	defer func() { resp.Body.Close() }()
 	t0 := time.Now()
 	// exhausted 报告本 Scope 是否已耗尽：耗尽不是上游故障，不能记失败样本。
@@ -705,6 +707,10 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		g.noteLive(tgt, plan.Kind, sw)
 		resp.Body.Close()
 		resp = nresp
+		unregBody()
+		if sc := unified.FromContext(r.Context()); sc != nil {
+			unregBody, _ = sc.TrackBody(func() { resp.Body.Close() })
+		}
 		tgt = ntgt
 		if ntgt.c != nil {
 			// 续传元数据必须绑定真正在供数的源，不能停在初始地址。

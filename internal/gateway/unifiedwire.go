@@ -230,8 +230,15 @@ func classifyOutcome(code int, err error) unified.Outcome {
 		}
 		return unified.OutcomeFail
 	}
-	if code == http.StatusOK || code == http.StatusNotModified {
+	switch {
+	case code == http.StatusOK || code == http.StatusNotModified:
 		return unified.OutcomeOK
+	case isMiss(code):
+		return unified.OutcomeMiss
+	case isAuthDenied(code):
+		return unified.OutcomeAuth
+	case code >= 400:
+		return unified.OutcomeFail
 	}
 	return unified.OutcomeOK
 }

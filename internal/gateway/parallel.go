@@ -23,6 +23,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 )
 
 // 并行分片下载。唯一前提是「有可信的整份摘要」：分片来自不同源，
@@ -993,6 +994,10 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 // rangeReq 发一个带 Range 的上游请求。
 // 认证由 bearerTransport 使用 context 里的策略快照处理，不按 Host 重新查表。
 func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, from, to int64, sourceID int64, logicalHost string) (*http.Response, error) {
+	if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
+		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
+	}
+	ctx = withScopeCancel(ctx)
 	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err
