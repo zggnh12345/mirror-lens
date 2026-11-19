@@ -266,3 +266,80 @@ func TestUnifiedManifestLedgerOK(t *testing.T) {
 	}
 	_ = scheduler.OutcomeOK
 }
+
+// F19/身份：Claim 身份必须含内容协商语义；同 Ref 不同 Accept 是不同身份，
+// 等价规范化（大小写/空白/参数顺序/q=1 省略）仍是同一身份。
+func TestPlanIdentityIncludesAccept(t *testing.T) {
+	a := racePlan("ghcr.io", "owner/app", "sha256:aa")
+	a.Header = http.Header{"Accept": {"application/vnd.oci.image.index.v1+json"}}
+	b := racePlan("ghcr.io", "owner/app", "sha256:aa")
+	b.Header = http.Header{"Accept": {"application/vnd.docker.distribution.manifest.v2+json"}}
+	if planIdentity(a, "ghcr.io") == planIdentity(b, "ghcr.io") {
+		t.Fatal("同 Ref 不同 Accept 被当成同一身份")
+	}
+	c := racePlan("ghcr.io", "owner/app", "sha256:aa")
+	c.Header = http.Header{"Accept": {"APPLICATION/VND.OCI.IMAGE.INDEX.V1+JSON;q=1.0"}}
+	if planIdentity(a, "ghcr.io") != planIdentity(c, "ghcr.io") {
+		t.Fatalf("等价 Accept 规范化后应同一身份：%q vs %q",
+			planIdentity(a, "ghcr.io").Manifest.Accept, planIdentity(c, "ghcr.io").Manifest.Accept)
+	}
+
+	// 端到端：Accept 不同的两路必须能各自取得 Claim（不互相抑制）。
+	sc, ctx := testScope(t)
+	_ = sc
+	g := &Gateway{}
+	mctx := withUnifiedChain(ctx, unified.ChainMain)
+	fctx := withUnifiedChain(ctx, unified.ChainFallback)
+	a1, err := g.beginUnifiedAttempt(mctx, a, "ghcr.io", 31)
+	if err != nil {
+		t.Fatalf("Accept A 预占: %v", err)
+	}
+	if err := a1.dispatch(); err != nil {
+		t.Fatalf("Accept A dispatch: %v", err)
+	}
+	if _, err := g.beginUnifiedAttempt(fctx, b, "ghcr.io", 32); err != nil {
+		t.Fatalf("Accept B 应独立成 Claim，实际: %v", err)
+	}
+}
+
+// F19：A 竞速阶段结束不关闭链。同链在竞速之后继续顺序补位可注册 Attempt，
+// Claim 保持 Dispatched，且另一条链始终不能接管。
+func TestRacePhaseEndKeepsChainAndClaim(t *testing.T) {
+	sc, ctx := testScope(t)
+	actx := withUnifiedChain(ctx, unified.ChainA)
+	plan := racePlan("quay.io", "library/nginx", "sha256:aa")
+
+	g := &Gateway{}
+	first, err := g.beginUnifiedAttempt(actx, plan, "quay.io", 41)
+	if err != nil {
+		t.Fatalf("竞速 Attempt: %v", err)
+	}
+	if err := first.dispatch(); err != nil {
+		t.Fatalf("竞速 dispatch: %v", err)
+	}
+	first.finish(200, nil)
+
+	// 竞速阶段结束（胜者正文失败）：不关链，顺序补位继续。
+	second, err := g.beginUnifiedAttempt(actx, plan, "quay.io", 42)
+	if err != nil {
+		t.Fatalf("顺序补位注册失败: %v", err)
+	}
+	if err := second.dispatch(); err != nil {
+		t.Fatalf("顺序补位 dispatch 失败: %v", err)
+	}
+	second.finish(200, nil)
+
+	if got := sc.DispatchedClaims(); got != 1 {
+		t.Fatalf("同 Identity 只应有 1 个 Dispatched，实得 %d", got)
+	}
+	// 主链在这之后仍然不能取得同一身份。
+	mainCtx := withUnifiedChain(ctx, unified.ChainMain)
+	if _, err := g.beginUnifiedAttempt(mainCtx, plan, "quay.io", 43); err != errUnifiedSuppressed {
+		t.Fatalf("另一条链应被抑制，实得 %v", err)
+	}
+	// 链关闭（请求收尾）后 Claim 仍保持 Dispatched。
+	closeUnifiedChain(actx, unified.ChainA)
+	if st, _ := sc.ClaimStateOf(planIdentity(plan, "quay.io")); st != unified.ClaimDispatched {
+		t.Fatalf("链关闭后 Claim 状态 = %v，期望 dispatched", st)
+	}
+}

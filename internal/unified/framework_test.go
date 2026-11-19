@@ -19,7 +19,7 @@ func newTestScope(t *testing.T) *Scope {
 }
 
 func testIdentity() Identity {
-	return Identity{Registry: "ghcr.io", Repository: "acme/app", Manifest: "sha256:abc"}
+	return Identity{Registry: "ghcr.io", Repository: "acme/app", Manifest: ManifestIdentity{Ref: "sha256:abc"}}
 }
 
 // T50：同 Identity 跨链只允许一条链获得 Reserved→Dispatched，零重复。
@@ -119,33 +119,50 @@ func TestT51SameChainSharesClaim(t *testing.T) {
 	}
 }
 
-// T50/T51：同一 Source 同链重复拿到的 handle 必须是同一 epoch，
-// 换链在 Released 后可重新预占，旧 handle 不能继续提交。
+// T50/T51：已 Dispatched 的 Claim 不得释放；从未 Dispatched 的 Claim 释放后
+// 换链可重新预占，旧 handle 不能继续提交（F19 冻结口径）。
 func TestClaimEpochAfterRelease(t *testing.T) {
 	s := newTestScope(t)
 	defer s.Close()
-	h1, err := s.Claim("main", testIdentity())
+
+	main, err := s.NewChain("main", ChainMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1, err := s.Claim(main.ID(), testIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := h1.Dispatch(); err != nil {
 		t.Fatal(err)
 	}
-	if err := h1.Release(); err != nil {
+	if err := h1.Release(); !errors.Is(err, ErrClaimDispatched) {
+		t.Fatalf("已 Dispatched 的 Claim 必须拒绝释放，得到 %v", err)
+	}
+	if _, err := s.Claim("fb", testIdentity()); !errors.Is(err, ErrClaimConflict) {
+		t.Fatalf("已 Dispatched 的 Claim 被另一链取得：%v", err)
+	}
+
+	other := Identity{Registry: "ghcr.io", Repository: "acme/other", Manifest: ManifestIdentity{Ref: "v2"}}
+	h2, err := s.Claim(main.ID(), other)
+	if err != nil {
 		t.Fatal(err)
 	}
-	h2, err := s.Claim("fb", testIdentity())
+	if err := h2.Release(); err != nil {
+		t.Fatalf("从未 Dispatched 的 Claim 应可释放：%v", err)
+	}
+	h3, err := s.Claim("fb", other)
 	if err != nil {
 		t.Fatalf("释放后应可由另一链重新预占：%v", err)
 	}
-	if err := h1.Dispatch(); !errors.Is(err, ErrClaimReleased) {
+	if err := h2.Dispatch(); !errors.Is(err, ErrClaimReleased) {
 		t.Fatalf("旧句柄提交必须失败，得到 %v", err)
 	}
-	if err := h2.Dispatch(); err != nil {
+	if err := h3.Dispatch(); err != nil {
 		t.Fatalf("新句柄提交失败：%v", err)
 	}
-	if got := s.claims.dispatchedCount(); got != 1 {
-		t.Fatalf("Dispatched=%d，want 1", got)
+	if got := s.claims.dispatchedCount(); got != 2 {
+		t.Fatalf("Dispatched=%d，want 2", got)
 	}
 }
 
@@ -227,9 +244,14 @@ func TestAttemptPreparedCancelKeepsR(t *testing.T) {
 	if a.State() != AttemptAborted {
 		t.Fatalf("state=%v，want aborted", a.State())
 	}
-	// Claim 让出后，另一条链可以预占。
+	// Prepared 取消不越过提交边界；Claim 释放属于链级决策：链仍活跃时
+	// 不释放（F19），链关闭且无在途 Attempt 后才让给另一条链。
+	if _, err := s.Claim("fb", testIdentity()); !errors.Is(err, ErrClaimConflict) {
+		t.Fatalf("链仍活跃时不应让出 Claim，err=%v", err)
+	}
+	c.Close()
 	if _, err := s.Claim("fb", testIdentity()); err != nil {
-		t.Fatalf("Prepared 取消应让出 Claim：%v", err)
+		t.Fatalf("链关闭后 Prepared 取消应让出 Claim：%v", err)
 	}
 }
 

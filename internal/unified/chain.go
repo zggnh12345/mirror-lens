@@ -1,6 +1,7 @@
 package unified
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -56,6 +57,10 @@ func (s ChainState) String() string {
 }
 
 // Chain 是一条执行链。Closing 之后不得再注册 Attempt（T53）。
+//
+// 冻结（F19）：链关闭不等于 Claim 释放。只有「链已关闭 + ActiveAttempts==0 +
+// 从未有任何 Attempt Dispatched」三条同时成立，Claim 才允许释放；已 Dispatched
+// 的 Claim 永久保持，直到 RequestScope 关闭。
 type Chain struct {
 	id    string
 	kind  ChainKind
@@ -65,6 +70,7 @@ type Chain struct {
 	state  ChainState
 	atts   []*Attempt
 	claims []*ClaimHandle
+	active int // 尚未终止（Prepared/Dispatched）的 Attempt 数
 	closed chan struct{}
 }
 
@@ -186,6 +192,7 @@ func (c *Chain) RegisterAttempt(claim *ClaimHandle) (*Attempt, error) {
 		done:  make(chan struct{}),
 	}
 	c.atts = append(c.atts, a)
+	c.active++
 	if claim != nil && !c.hasClaimLocked(claim) {
 		c.claims = append(c.claims, claim)
 	}
@@ -195,6 +202,9 @@ func (c *Chain) RegisterAttempt(claim *ClaimHandle) (*Attempt, error) {
 
 // Close 把链推进到 Closing→Closed。它不等待在途 Attempt：调用方用
 // Scope.Wait 或 Attempt.Done 自行同步，避免在 Attempt goroutine 内死锁。
+//
+// Claim 释放必须同时满足「链关闭 + ActiveAttempts==0 + 从未 Dispatched」。
+// 关闭时仍有在途 Attempt，则释放延后到最后一个 Attempt 结束（attemptFinished）。
 func (c *Chain) Close() {
 	if c == nil {
 		return
@@ -206,11 +216,74 @@ func (c *Chain) Close() {
 	}
 	c.state = ChainClosing
 	c.state = ChainClosed
-	for _, h := range c.claims {
-		_ = h.Release()
-	}
-	c.claims = nil
 	close(c.closed)
+	if c.active == 0 {
+		c.releaseClaimsLocked()
+	}
+}
+
+// releaseClaimsLocked 释放可以释放的 Claim（调用方持锁）。
+// 已 Dispatched 的 Claim 一律保留：释放它会让另一条链重新取得同一身份，
+// 造成同 Identity 重复派发（F19）。未 Dispatched 的 Claim 释放后，
+// 后续链才可能接管。
+func (c *Chain) releaseClaimsLocked() {
+	kept := c.claims[:0]
+	for _, h := range c.claims {
+		if h == nil {
+			continue
+		}
+		if err := h.Release(); err != nil {
+			if errors.Is(err, ErrClaimDispatched) {
+				kept = append(kept, h)
+			}
+			continue
+		}
+	}
+	for i := len(kept); i < len(c.claims); i++ {
+		c.claims[i] = nil
+	}
+	c.claims = kept
+}
+
+// attemptFinished 在任意 Attempt 终止时调用：ActiveAttempts 归零且链已关闭时
+// 才做释放。它与 Close 的并发由 c.mu 串行化，不会重复释放或提前释放。
+func (c *Chain) attemptFinished() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.active > 0 {
+		c.active--
+	}
+	if c.state == ChainClosed && c.active == 0 && len(c.claims) > 0 {
+		c.releaseClaimsLocked()
+	}
+	c.mu.Unlock()
+}
+
+// ActiveAttempts 返回尚未终止的 Attempt 数（诊断/验收用）。
+func (c *Chain) ActiveAttempts() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.active
+}
+
+// Dispatched 报告本链是否已有 Attempt 越过发送提交边界。
+func (c *Chain) Dispatched() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, a := range c.atts {
+		if a.State() == AttemptDispatched || a.State() == AttemptCompleted {
+			return true
+		}
+	}
+	return false
 }
 
 // Done 返回链关闭的只读通道。
@@ -382,10 +455,8 @@ func (a *Attempt) Abort() {
 	if prev == AttemptPrepared && a.rres != nil {
 		a.rres.Release()
 	}
-	if a.claim != nil && prev == AttemptPrepared {
-		// Prepared 取消还没越过提交边界，可以让出 Claim 给同 Scope 的其他链。
-		_ = a.claim.Release()
-	}
+	// Prepared 取消不越过提交边界，但 Claim 的释放属于链级决策：
+	// 必须等链关闭且所有 Attempt 终止（F19），这里只登记 Attempt 结束。
 	a.finish(prev == AttemptDispatched)
 }
 
@@ -424,6 +495,9 @@ func (a *Attempt) finish(cancelled bool) {
 		close(a.done)
 		if a.scope != nil {
 			a.scope.inflight.Done()
+		}
+		if a.chain != nil {
+			a.chain.attemptFinished()
 		}
 	})
 	_ = cancelled

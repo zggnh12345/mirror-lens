@@ -86,3 +86,24 @@
 - P 耗尽在已发正文的流式路径仍只做入口检查；「取消剩余 Attempt + 清理部分文件」未实现。
 - 真实进程验收（专用 Registry 夹具 + 真实公共源）本轮未做：本环境无外网 Registry，
   阶段 4/5 结论仅为**代码测试**层；不得写成 REAL_PASS。
+
+## 17b 第三轮 · 阶段 7：F19 Claim 生命周期 + ManifestIdentity（P0）
+
+- `internal/unified/claim.go`：`Release` 只允许「从未 Dispatched」的 Claim 释放；
+  已 Dispatched 返回 `ErrClaimDispatched` 并保持状态。`Acquire` 对 Released 记录
+  统一换 epoch（含原持有者），旧句柄失效。
+- `internal/unified/chain.go`：新增 `active`（ActiveAttempts）、`attemptFinished`、
+  `releaseClaimsLocked`、`ActiveAttempts`、`Dispatched`。`Close` 仅在 active==0 时释放；
+  有在途 Attempt 时延后到最后一个 Attempt 结束。Prepared 取消不再直接释放 Claim，
+  释放统一由链级条件决定。
+- `internal/gateway/gateway.go`：删除 A 竞速结束时 `closeUnifiedChain(ChainA)`；
+  竞速阶段结束后顺序补位继续绑定同一条 A 链（Race → SequentialFallback → Closed）。
+- `internal/unified/manifestid.go`（新）：`ManifestIdentity{Ref, Accept}` + `NormalizeAccept`，
+  保留媒体类型、参数、q 与顺序；q=1 与省略等价，大小写/空白/参数顺序无语义差异。
+  `planIdentity` 从 `plan.Header["Accept"]` 取值，Claim 身份含内容协商。
+- 测试：`claim_lifecycle_test.go`（Dispatched 粘滞、Prepared 释放、关闭延后释放、
+  同链竞速→顺序补位、Closed 拒注册、并发收尾）、`manifestid_test.go`（q/顺序/等价）、
+  `gateway/unifiedwire_test.go`（planIdentity Accept、A 阶段结束不释放 Claim）。
+- 处置旧测试：`TestClaimEpochAfterRelease` 改为验证「Dispatched 拒释放 + 未派发换代」；
+  `TestAttemptPreparedCancelKeepsR` 改为「活跃链不让出、关闭后让出」。
+- 验证：`go vet ./...` 通过；`go test ./internal/gateway ./internal/unified -count=1` 全绿。

@@ -1135,13 +1135,9 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 							policyErr = lerr
 						}
 					}
-					// A 竞赛整场已结束（胜者正文失败）：关闭 A 链释放 Claim，
-					// 后面的顺序补位才有资格重新预占同一 Identity。
-					closeUnifiedChain(ctx, unified.ChainA)
 				} else {
 					// 竞速没能形成（预算不足/两路都失败）：回到原有顺序路径，
 					// 已确认失败的源不再重试。
-					closeUnifiedChain(ctx, unified.ChainA)
 					metrics.RegistryRaceFallback()
 					if errors.Is(rerr, v2auth.ErrPolicyMissing) && policyErr == nil {
 						policyErr = rerr
@@ -1151,6 +1147,13 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 					}
 				}
 			}
+		}
+		// A 竞速结束不等于 Chain 结束：同一 Chain 必须能
+		// Race → SequentialFallback → Closed，后续顺序补位继续在 A 链上
+		// 注册 Attempt（F19）。已 Dispatched 的 Claim 不因竞速阶段结束而释放，
+		// 换到别的链只会把同一 Identity 判成重复派发。
+		if raceFormed {
+			ctx = withUnifiedChain(ctx, unified.ChainA)
 		}
 	}
 

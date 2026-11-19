@@ -241,6 +241,21 @@ func (s *Scope) DispatchedClaims() int {
 	return s.claims.dispatchedCount()
 }
 
+// ClaimStateOf 返回某 Identity 在当前 Scope 内的 Claim 状态。
+// 第二返回值为 false 表示表里还没有该 Identity（从未预占）。
+func (s *Scope) ClaimStateOf(id Identity) (ClaimState, bool) {
+	if s == nil || s.claims == nil {
+		return ClaimReleased, false
+	}
+	s.claims.mu.Lock()
+	defer s.claims.mu.Unlock()
+	e := s.claims.m[id]
+	if e == nil {
+		return ClaimReleased, false
+	}
+	return e.state, true
+}
+
 // ChainCount 返回当前登记的执行链数（诊断/验收用）。
 func (s *Scope) ChainCount() int {
 	if s == nil {

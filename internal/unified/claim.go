@@ -7,16 +7,17 @@ import (
 )
 
 // Identity 是 Claim 的身份键：规范化逻辑 Registry + Repository + Manifest 身份。
-// 认证上下文不参与身份等价（design §2.2）。
+// 认证上下文不参与身份等价（design §2.2）；Manifest 内含 Ref 与内容协商，
+// 单看 Host/Repo/Ref 不足以判等价。
 type Identity struct {
 	Registry   string
 	Repository string
-	Manifest   string
+	Manifest   ManifestIdentity
 }
 
 // Empty 报告身份是否完整。不完整的身份不允许参与 Claim。
 func (i Identity) Empty() bool {
-	return i.Registry == "" || i.Repository == "" || i.Manifest == ""
+	return i.Registry == "" || i.Repository == "" || i.Manifest.Empty()
 }
 
 // ClaimState 是 Claim 三态。
@@ -93,7 +94,9 @@ func (s *claimStore) Acquire(chainID string, key Identity) (*ClaimHandle, error)
 		s.m[key] = e
 		return newClaimHandle(s, key, chainID, e.epoch, ClaimReserved), nil
 	}
-	if e.state == ClaimReleased && e.owner != chainID {
+	if e.state == ClaimReleased {
+		// 释放后的 Identity 可以由任何链（含原持有者）重新预占；
+		// 每次重新预占都换 epoch，旧句柄一律失效。
 		e.state = ClaimReserved
 		e.owner = chainID
 		e.epoch++
@@ -103,7 +106,7 @@ func (s *claimStore) Acquire(chainID string, key Identity) (*ClaimHandle, error)
 	if e.owner != chainID {
 		return nil, ErrClaimConflict
 	}
-	// 同 Chain：共享同一 epoch 与状态。
+	// 同 Chain：共享同一 epoch 与状态。多个 Attempt 可并发使用。
 	return newClaimHandle(s, key, chainID, e.epoch, e.state), nil
 }
 
@@ -163,7 +166,11 @@ func (h *ClaimHandle) Dispatch() error {
 	return nil
 }
 
-// Release 释放 Claim。只有当前 epoch 的持有者能释放；重复释放幂等。
+// Release 释放 Claim。
+//
+// 冻结（F19）：只有从未 Dispatched 的 Claim 允许释放；一旦有 Attempt 越过
+// 发送提交边界，Claim 必须永久保持 Dispatched（直到 Scope 关闭），不得被
+// 其他链重新取得，也不因「A 竞速阶段结束」而释放。重复释放幂等。
 func (h *ClaimHandle) Release() error {
 	if h == nil {
 		return nil
@@ -174,6 +181,14 @@ func (h *ClaimHandle) Release() error {
 	e := s.m[h.key]
 	if e == nil || e.epoch != h.epoch || e.owner != h.owner {
 		return ErrClaimReleased
+	}
+	switch e.state {
+	case ClaimDispatched:
+		// 已越过提交边界：拒绝释放，状态保持 Dispatched。
+		return ErrClaimDispatched
+	case ClaimReleased:
+		h.state.Store(int32(ClaimReleased))
+		return nil
 	}
 	e.state = ClaimReleased
 	e.at = s.now()

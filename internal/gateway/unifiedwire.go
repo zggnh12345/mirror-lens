@@ -43,6 +43,8 @@ func closeUnifiedChain(ctx context.Context, kind unified.ChainKind) {
 
 // planIdentity 计算 Claim 身份。Registry 用规范化逻辑 Host（不是镜像站
 // host），Repository/Ref 由适配器显式给出；任一为空就不参与 Claim。
+// Manifest 身份必须包含内容协商语义：同一 Ref 在不同 Accept 下是不同身份，
+// 不能只比 Host/Repo/Ref（3.5.17 §2.2）。
 func planIdentity(plan *adapter.Plan, logicalHost string) unified.Identity {
 	if plan == nil {
 		return unified.Identity{}
@@ -51,7 +53,15 @@ func planIdentity(plan *adapter.Plan, logicalHost string) unified.Identity {
 	if err != nil {
 		return unified.Identity{}
 	}
-	return unified.Identity{Registry: host, Repository: plan.Repo, Manifest: plan.Ref}
+	var accept []string
+	if plan.Header != nil {
+		accept = plan.Header.Values("Accept")
+	}
+	return unified.Identity{
+		Registry:   host,
+		Repository: plan.Repo,
+		Manifest:   unified.NormalizeManifestIdentity(plan.Ref, accept),
+	}
 }
 
 // unifiedManifest 判断这次回源是否属于「逻辑 Attempt」语义。

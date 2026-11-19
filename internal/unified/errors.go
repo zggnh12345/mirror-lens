@@ -21,6 +21,8 @@ var (
 	ErrClaimConflict = errors.New("unified: identity claim conflict")
 	// ErrClaimReleased 表示 Claim 已被释放（或已换代），旧持有者不能再提交。
 	ErrClaimReleased = errors.New("unified: identity claim released")
+	// ErrClaimDispatched 表示 Claim 已越过发送提交边界，不允许释放/被接管。
+	ErrClaimDispatched = errors.New("unified: identity claim already dispatched")
 	// ErrAttemptState 表示 Attempt 状态机不接受该迁移。
 	ErrAttemptState = errors.New("unified: invalid attempt state transition")
 	// ErrRetryTokenSpent 表示该 Registry 的重试令牌已耗尽。
