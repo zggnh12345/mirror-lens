@@ -133,3 +133,22 @@
   权威只派发一次、无 Source 映射不参与）。全部为受控夹具，记 SIMULATED_PASS。
 - 处置旧测试：`TestCrossRaceMismatchUsesAuthorityOnceThenFills` 按新冻结顺序拆成
   「补位多数先确认」与「补位仍不一致才问权威」两条。
+
+## 17b 第三轮 · 阶段 9：P 耗尽流式清理
+
+- `internal/unified/scope.go`：新增 `bodies` 登记与 `TrackBody`、导出 `Exhaust`；
+  首次耗尽时取消 Scope 派生 Context、关闭全部未完成 Body（幂等）；耗尽后
+  新 Body 立即关闭。
+- `internal/unified/ptransport.go`：`ReserveP` 失败即触发 `markExhausted("P")`，
+  不再只返回错误。
+- `internal/gateway/gateway.go`（openUpstreamAs/saveBody）：耗尽时不发起新派发；
+  每次尝试用 `context.AfterFunc(sc.Context())` 取消；saveBody 读中断或提交前
+  发现耗尽时清理临时文件并返回 `ExhaustedError`，绝不写缓存。
+- `internal/gateway/stream.go`（streamBody/passThrough/fillStream/fail）：
+  正文已输出后耗尽 → 中断传输、`DropPartial`、不提交缓存、不追加伪造 503；
+  不记上游失败（outcome 中性）；耗尽后禁止换源/中途并行。未发头时统一 503。
+- 准入：`hedgeAllowed`/`parPreflightShared`/`rangeAdmit` 全部先看 `Exhausted()`。
+- 测试：`unified/exhaust_test.go`（多 Body 同时打开、取消在途、幂等、耗尽后拒登记）、
+  `gateway/stream_exhaust_test.go`（中途耗尽不伪造 503、CachePut=0、.part 清理、
+  零 checks 失败样本、耗尽阻断 Range/Preflight/Hedge、RangeWork 生命周期级不重置）。
+- P=8192、Reserve/Commit 与计量点位置未改动。

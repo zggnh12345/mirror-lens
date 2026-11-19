@@ -169,6 +169,11 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 				unified.WriteBudgetExhausted(w)
 				return
 			}
+			if sc := unified.FromContext(r.Context()); sc != nil && sc.Exhausted() {
+				// 预算是本服务自己的终止条件：即使底层报的是取消，也回 503。
+				unified.WriteBudgetExhausted(w)
+				return
+			}
 			code := statusFor(ferr)
 			noStore(w.Header())
 			markPolicyMissing(w, ferr)

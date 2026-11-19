@@ -446,8 +446,18 @@ func (g *Gateway) noteLive(t *fetchTarget, kind string, w *streamWatch) {
 }
 
 func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, resp *http.Response, pm *cache.PartialMeta, tgt *fetchTarget, ttfb time.Duration) {
+	if sc := unified.FromContext(r.Context()); sc != nil {
+		// 预算耗尽时由 Scope 主动关闭这个未完成 Body，中断传输。
+		unreg, _ := sc.TrackBody(func() { resp.Body.Close() })
+		defer unreg()
+	}
 	defer func() { resp.Body.Close() }()
 	t0 := time.Now()
+	// exhausted 报告本 Scope 是否已耗尽：耗尽不是上游故障，不能记失败样本。
+	exhausted := func() bool {
+		sc := unified.FromContext(r.Context())
+		return sc != nil && sc.Exhausted()
+	}
 
 	outcome := outcomeNeutral
 	defer func() {
@@ -667,6 +677,10 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	var restartReader func()
 	// onSlow 处理一次判慢：先试换源，换不了再试中途并行。
 	onSlow := func() {
+		if exhausted() {
+			// 耗尽后禁止换源/中途并行：不再发起任何新派发。
+			return
+		}
 		nresp, ntgt, first, verified, serr := g.trySwitch(r.Context(), plan, tgt, resp.Header, sent, total, tried)
 		if serr != nil {
 			sw.setGiveUp()
@@ -821,6 +835,13 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 						break
 					}
 				}
+				if exhausted() {
+					// 已发正文后耗尽：中断现有传输、丢弃半成品，
+					// 不提交缓存、不记上游失败（由 Scope 关闭 Body 收尾）。
+					g.cache.DropPartial(plan.CacheKey)
+					outcome = outcomeNeutral
+					return
+				}
 				if !keep {
 					finished = true
 					break
@@ -830,6 +851,12 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 				if errors.Is(ck.err, io.EOF) {
 					finished = true
 					break
+				}
+				if exhausted() {
+					// 预算是我们自己的终止条件：不写失败样本、不留 .part。
+					g.cache.DropPartial(plan.CacheKey)
+					outcome = outcomeNeutral
+					return
 				}
 				// 客户端自己走了（取消）不算源的错；否则就是「头到了、身子断了」。
 				if r.Context().Err() == nil {
@@ -882,6 +909,13 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 		return
 	}
 
+	if exhausted() {
+		// 不完整/未验证的缓存一律不提交，并清掉 .part。
+		part.Close()
+		g.cache.DropPartial(plan.CacheKey)
+		outcome = outcomeNeutral
+		return
+	}
 	sha := hex.EncodeToString(hasher.Sum(nil))
 	if plan.ExpectSHA != "" && !strings.EqualFold(sha, plan.ExpectSHA) {
 		// 坏字节可能已经发给客户端（没法收回，它会自校验）；
@@ -1082,6 +1116,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 		http.Error(w, fmt.Sprintf("%d %v", code, err), code)
 		return
 	}
+	if sc := unified.FromContext(r.Context()); sc != nil {
+		unreg, _ := sc.TrackBody(func() { resp.Body.Close() })
+		defer unreg()
+	}
 	defer resp.Body.Close()
 
 	copyHeader(w.Header(), resp.Header, "Content-Type", "Content-Length", "Content-Range",
@@ -1131,6 +1169,10 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 	n, cerr := io.Copy(w, resp.Body)
 	g.st.RecordTraffic(store.TrafficBypass, store.KindOfKey(plan.CacheKey), n)
+	if sc := unified.FromContext(r.Context()); sc != nil && sc.Exhausted() {
+		// 预算耗尽中断了传输：这是本服务自己的终止条件，不能记成上游失败。
+		return
+	}
 	if chosen != nil {
 		g.reportPass(plan.Sched(), *chosen, chosenT, resp.StatusCode, retryAfterHeader(resp.Header), cerr == nil && passOK(resp.StatusCode))
 	}
@@ -1160,6 +1202,16 @@ func (g *Gateway) reportPass(kind string, t fetchTarget, start time.Time, code i
 }
 
 func (g *Gateway) fail(w http.ResponseWriter, r *http.Request, plan *adapter.Plan, prev *store.CacheEntry, err error) {
+	// 预算耗尽（含被 Scope 取消的在途 Attempt）必须走独立 503 通道，
+	// 不能折叠成 502/401；此刻还没写响应头，仍可安全返回。
+	if unified.IsBudgetExhausted(err) {
+		unified.WriteBudgetExhausted(w)
+		return
+	}
+	if sc := unified.FromContext(r.Context()); sc != nil && sc.Exhausted() {
+		unified.WriteBudgetExhausted(w)
+		return
+	}
 	var ue *upstreamError
 	if errors.As(err, &ue) && (ue.Code == http.StatusNotFound || ue.Code == http.StatusGone) {
 		g.st.CacheDelete(plan.CacheKey)

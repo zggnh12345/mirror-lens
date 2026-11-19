@@ -65,6 +65,8 @@ type Scope struct {
 	pooled  bool
 
 	preflight *preflightCache
+	bodies    map[uint64]func()
+	bodySeq   uint64
 	done      chan struct{}
 	closeOnce sync.Once
 
@@ -107,6 +109,7 @@ func NewScope(parent context.Context, cfg ScopeConfig, pool *Pool) (*Scope, erro
 		claims: newClaimStore(cfg.Now),
 		tokens: NewRetryTokens(1),
 		chains: map[string]*Chain{},
+		bodies: map[uint64]func(){},
 		pool:   pool,
 		pooled: pool != nil,
 		now:    cfg.Now,
@@ -207,14 +210,37 @@ func (s *Scope) ReserveP() (*PReservation, error) {
 	return res, nil
 }
 
-// markExhausted 幂等地记录首次耗尽事件。
+// markExhausted 幂等地记录首次耗尽事件，并执行冻结的收尾动作：
+// 取消剩余 Attempt、关闭所有未完成 Body。之后的返回路径必须自行保证
+// 不提交缓存、不保留 .part、不新增 Range/Hedge/Preflight/换源。
 func (s *Scope) markExhausted(kind string) {
 	if s == nil {
 		return
 	}
-	if s.exhausted.CompareAndSwap(0, 1) && s.cfg.OnExhaust != nil {
+	if !s.exhausted.CompareAndSwap(0, 1) {
+		return
+	}
+	if s.cfg.OnExhaust != nil {
 		s.cfg.OnExhaust(kind)
 	}
+	s.mu.Lock()
+	closers := make([]func(), 0, len(s.bodies))
+	for _, fn := range s.bodies {
+		closers = append(closers, fn)
+	}
+	s.bodies = map[uint64]func(){}
+	s.mu.Unlock()
+	for _, fn := range closers {
+		fn()
+	}
+	// 取消 Scope 派生的所有 Attempt（通过 context.AfterFunc 挂在 sc.ctx 上）。
+	s.cancel()
+}
+
+// Exhaust 显式触发预算耗尽收尾（供 PTransport 与测试使用）。
+// 幂等：只有第一次生效。
+func (s *Scope) Exhaust(kind string) {
+	s.markExhausted(kind)
 }
 
 // Exhausted 报告 Scope 是否发生过预算耗尽。
@@ -289,6 +315,33 @@ func (s *Scope) Close() {
 		}
 		close(s.done)
 	})
+}
+
+// TrackBody 登记一个未完成的上游 Body 关闭函数。预算耗尽时 Scope 会
+// 主动调用它，保证「已发正文后耗尽」能中断传输。返回的函数用于注销。
+// 已耗尽/已关闭时立即执行 closeFn 并返回 false。
+func (s *Scope) TrackBody(closeFn func()) (func(), bool) {
+	if s == nil || closeFn == nil {
+		return func() {}, false
+	}
+	s.mu.Lock()
+	if s.closed || s.exhausted.Load() != 0 {
+		s.mu.Unlock()
+		closeFn()
+		return func() {}, false
+	}
+	s.bodySeq++
+	id := s.bodySeq
+	if s.bodies == nil {
+		s.bodies = map[uint64]func(){}
+	}
+	s.bodies[id] = closeFn
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.bodies, id)
+		s.mu.Unlock()
+	}, true
 }
 
 // Done 返回 Scope 关闭信号。

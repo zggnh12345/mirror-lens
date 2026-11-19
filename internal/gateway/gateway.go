@@ -1494,11 +1494,21 @@ func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *
 	if isBlobPlan(plan) {
 		ctx = withCDNRedirect(ctx)
 	}
+	// 预算已耗尽：不再启动任何新派发（Range/Hedge/Preflight/换源也走这里）。
+	if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
+		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
+	}
 	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, policyHost, u.Scheme)
 	if err != nil {
 		return nil, err
 	}
 	uctx, cancel := context.WithCancel(ctx)
+	if sc := unified.FromContext(ctx); sc != nil {
+		// Scope 耗尽时取消该次尝试（含认证重发/Token 请求）。
+		stop := context.AfterFunc(sc.Context(), cancel)
+		prev := cancel
+		cancel = func() { stop(); prev() }
+	}
 	req, err := http.NewRequestWithContext(uctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		cancel()
@@ -1554,6 +1564,11 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 		resp.Body.Close()
 		up.cancel()
 	}()
+	if sc := unified.FromContext(ctx); sc != nil {
+		// 预算耗尽时 Scope 主动关闭未完成 Body，中断传输。
+		unreg, _ := sc.TrackBody(func() { resp.Body.Close() })
+		defer unreg()
+	}
 
 	if resp.StatusCode == http.StatusNotModified {
 		return prev, true, http.StatusNotModified, nil
@@ -1608,6 +1623,10 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 	n, err := io.Copy(io.MultiWriter(sink, h), io.LimitReader(resp.Body, g.maxSize+1))
 	if err != nil {
 		cleanup()
+		if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
+			// 预算是终止条件，不是上游故障：不记失败、不留临时文件。
+			return nil, false, 0, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
+		}
 		// io.Copy 只会停在第一个出错的 writer 上，所以要分开看是盘还是网。
 		if dw.err != nil {
 			return nil, false, 0, local(fmt.Errorf("写本地缓存失败: %w", dw.err))
@@ -1648,6 +1667,11 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 		removeFile(tmpName)
 		g.verifyFail.Add(1)
 		return nil, false, 0, fmt.Errorf("内容与上游声明的摘要不符：%s", plan.Upstream)
+	}
+	if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
+		// 不完整/未验证的缓存一律不提交。
+		cleanup()
+		return nil, false, 0, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
 	}
 	e := &store.CacheEntry{
 		Key:          plan.CacheKey,

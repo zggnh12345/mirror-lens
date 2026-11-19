@@ -48,8 +48,13 @@ func (t *PTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	res, err := sc.ReserveP()
 	if err != nil {
-		if t.OnExhaust != nil && IsBudgetExhausted(err) {
-			t.OnExhaust()
+		if IsBudgetExhausted(err) {
+			// 冻结：耗尽即终止本 Scope 的剩余派发（取消在途 Attempt、
+			// 关闭未完成 Body），不再启动任何新请求。
+			sc.markExhausted("P")
+			if t.OnExhaust != nil {
+				t.OnExhaust()
+			}
 		}
 		return nil, err
 	}

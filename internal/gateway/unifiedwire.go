@@ -321,6 +321,10 @@ func hedgeAllowed(ctx context.Context) bool {
 	if sc == nil {
 		return true
 	}
+	// 耗尽后禁止新增 Hedge：预算已终止本 Scope 的剩余派发。
+	if sc.Exhausted() {
+		return false
+	}
 	return sc.P().Remaining() > 0
 }
 
@@ -342,6 +346,10 @@ func (g *Gateway) parPreflightShared(ctx context.Context, plan *adapter.Plan, ta
 	sc := unified.FromContext(ctx)
 	if sc == nil {
 		return g.parPreflight(ctx, plan, targets, timeout)
+	}
+	// 耗尽后禁止新增 Preflight（探测也是 P 派发）。
+	if sc.Exhausted() {
+		return nil, -1
 	}
 	res, total, err := sc.Preflight(ctx, func(pctx context.Context) ([]unified.PreflightResult, int64, error) {
 		srcs, tot := g.parPreflight(pctx, plan, targets, timeout)
@@ -401,6 +409,10 @@ func rangeAdmit(ctx context.Context, targets int, segments int) (int, bool) {
 	sc := unified.FromContext(ctx)
 	if sc == nil {
 		return targets, true
+	}
+	// 耗尽后禁止新增 Range/并行/换源工作。
+	if sc.Exhausted() {
+		return 0, false
 	}
 	if segments <= 0 || targets <= 0 {
 		return targets, true
