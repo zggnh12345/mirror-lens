@@ -45,6 +45,11 @@
 - `go build ./...`：通过。
 - `go test ./... -count=1`：全部通过（含 `internal/gateway` 71.7s 全量）。
 - `go test ./internal/unified/ -count=1 -race`：通过。
+- `go test -race ./... -count=1`：全仓 33 个包 ok，无 FAIL、无 DATA RACE（gateway 115.8s、unified 1.1s）。
+- 环境说明：容器内原本没有 Go 工具链；本轮把 go1.27.4 解压到
+  `/opt/data/cache/scratch/toolchain/go`，构建时用
+  `export PATH=/opt/data/cache/scratch/toolchain/go/bin:$PATH GOCACHE=/opt/data/cache/scratch/gocache GOMODCACHE=/opt/data/cache/scratch/gomod`。
+  续跑直接复用，不要用 `/opt/data/cache/gocache`（root 所有，写不进去）。
 
 ## 明确未完成
 
