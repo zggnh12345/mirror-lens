@@ -209,3 +209,16 @@
 - `doUpstream` 补上 `Exhausted()` 前置检查与 `withScopeCancel`（上一轮声明未落地）。
 - 新增回归：两路 300ms 仍确认且 <1s、竞速无结论时同链回退不 502、
   两路慢速网关端到端无 502。
+
+### 最终门禁（17b 第三轮）
+
+- `gofmt -l .` 无输出；`go vet ./...`、`go build ./...` 通过。
+- `go test ./... -count=1`：33 个包全部 ok。
+- `go test -race ./... -count=1`：33 个包全部 ok，`EXIT=0`（日志 `race-final.log`）。
+- T50–T63 定向：`TestClaim*`/`TestChain*`/`TestClosedChain*`/`TestSameChain*`（T50/T51/T53）、
+  `TestCrossRace*`（T63/B 竞速）、`TestLedger*`/`TestB02*`/`TestB06*`（T52/T59/T60）、
+  `TestHedge*`（T54）、`TestMid*`/`TestChunkLease*`/`TestLeaseBody*`（T55/T56）、
+  `TestFallbackStaticSuppression`（T61）、`TestUnifiedOff*`（T62）、
+  `TestRangeLedgerIsScopeLifetime`/`TestExhaust*`（T60 的 P/Range）、`TestReplica*`（B 入口）全部通过。
+- 性能：无真实外部 Registry，按边界记 **EXTERNAL_BLOCKED**；未做同环境 ≥5 组配对，
+  不声称任何 P95 改善。`TEST_PASS` 与 `EXTERNAL_BLOCKED` 分开。
