@@ -161,7 +161,9 @@ func (g *Gateway) serveManifest(w http.ResponseWriter, r *http.Request, parsed r
 		g.evaluateRegistryRace(plan, r.Method, e != nil)
 	}
 	if !fromCache {
-		ne, notMod, ferr := g.fetchOnce(r.Context(), plan, e)
+		// 3.5.17 B：跨 Registry 副本（显式映射）优先；没有形成结论时
+		// handled=false，完全回到原有顺序路径。
+		ne, notMod, ferr := g.fetchWithReplicas(r.Context(), plan, e)
 		if ferr != nil {
 			if unified.IsBudgetExhausted(ferr) {
 				unified.WriteBudgetExhausted(w)

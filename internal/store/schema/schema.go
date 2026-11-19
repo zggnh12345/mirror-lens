@@ -22,7 +22,7 @@ const Version = "3.5.17"
 //
 // 注意：canonical.sql 文件自身的 SHA-256 是另一个值，不能用于数据库结构校验。
 // 运行时、离线迁移工具和测试都必须引用这一个常量，避免各自维护终态指纹。
-const CanonicalSchemaHash = "f040a8d2a8d7c503219cfa05876d4703a88a311a6ef2de22d74d6ea685e77f77"
+const CanonicalSchemaHash = "bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae"
 
 //go:embed canonical.sql
 var ddl string

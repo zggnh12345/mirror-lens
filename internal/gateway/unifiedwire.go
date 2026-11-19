@@ -118,6 +118,13 @@ type unifiedAttempt struct {
 // 身份不完整）；返回 errUnifiedSuppressed 表示同一 Identity 已被另一条链
 // 占住，本链不得发送（静态抑制/跨链去重）。
 func (g *Gateway) beginUnifiedAttempt(ctx context.Context, plan *adapter.Plan, logicalHost string, sourceID int64) (*unifiedAttempt, error) {
+	return g.beginUnifiedAttemptAs(ctx, plan, logicalHost, sourceID)
+}
+
+// beginUnifiedAttemptAs 允许 Claim 身份 Host 与认证策略 Host 分离：
+// 跨 Registry 副本的认证按副本 Registry 解析，但它是同一个权威逻辑资源的
+// 一次 Attempt，身份必须仍是权威仓库（否则重复派发不会被 Claim 拦住）。
+func (g *Gateway) beginUnifiedAttemptAs(ctx context.Context, plan *adapter.Plan, identityHost string, sourceID int64) (*unifiedAttempt, error) {
 	if !unifiedManifest(plan) {
 		return nil, nil
 	}
@@ -129,7 +136,7 @@ func (g *Gateway) beginUnifiedAttempt(ctx context.Context, plan *adapter.Plan, l
 	if ch == nil {
 		return nil, nil
 	}
-	id := planIdentity(plan, logicalHost)
+	id := planIdentity(plan, identityHost)
 	if id.Empty() {
 		// 身份不完整时不能假装自己占住了什么：跳过 Claim，但仍记 R，
 		// 让预算在异常路径上依然是硬上限。

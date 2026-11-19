@@ -94,6 +94,7 @@ type Gateway struct {
 	scopePool     *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
 	scopeCfg      unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
 	unifiedOff    bool                                       // 3.5.17 部署期全局回退（T62）
+	replica       string                                     // 3.5.17 跨 Registry 副本模式：""/off/sequential/race
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
@@ -209,6 +210,9 @@ type Options struct {
 	// 关闭后请求不建 RequestScope：Claim/预算/Range 全部回到旧执行链，
 	// 不会出现单请求混用新旧框架。
 	UnifiedOff bool
+	// ReplicaMode 是跨 Registry 副本模式："sequential" 按 priority 顺序尝试，
+	// "race" 首轮两路竞速 + 200ms Digest 投票；空/off 表示关闭（默认）。
+	ReplicaMode string
 
 	// 三类加速的独立开关（默认全开，零值即开启）。
 	// Off 而不是 On：老调用方不传这几个字段时行为不变。
@@ -298,6 +302,7 @@ func New(st *store.Store, o Options) *Gateway {
 		scopePool:     o.Pool,
 		scopeCfg:      o.ScopeConfig,
 		unifiedOff:    o.UnifiedOff,
+		replica:       strings.ToLower(strings.TrimSpace(o.ReplicaMode)),
 		githubOff:     o.GitHubOff,
 		locks:         keymutex.New(),
 		st:            st,
@@ -1479,10 +1484,17 @@ func (u *upstream) finishAttempt(code int, err error) {
 // openUpstream 只负责到响应头为止，不读 Body。
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
 func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
+	return g.openUpstreamAs(ctx, plan, prev, u, sourceID, logicalHost, logicalHost)
+}
+
+// openUpstreamAs 与 openUpstream 相同，但把「认证策略 Host」与「Claim 身份
+// Host」分开：跨 Registry 副本用权威仓库作为 Claim 身份（同一逻辑资源），
+// 认证仍按候选自己的逻辑 Registry 解析（B 层冻结边界）。
+func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, policyHost, identityHost string) (*upstream, error) {
 	if isBlobPlan(plan) {
 		ctx = withCDNRedirect(ctx)
 	}
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, policyHost, u.Scheme)
 	if err != nil {
 		return nil, err
 	}
@@ -1511,7 +1523,7 @@ func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	// 3.5.17：Manifest 请求在发送提交边界登记逻辑 Attempt。
 	// 每次逻辑 Attempt 只在这里 Claim Dispatch 一次；同链多 Source 共享
 	// 同一 Claim（A 站内竞速），跨链同 Identity 则被抑制。
-	att, aerr := g.beginUnifiedAttempt(ctx, plan, logicalHost, sourceID)
+	att, aerr := g.beginUnifiedAttemptAs(ctx, plan, identityHost, sourceID)
 	if aerr != nil {
 		cancel()
 		return nil, aerr

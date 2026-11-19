@@ -435,6 +435,7 @@ func main() {
 		Pool: unified.NewPool(unified.GlobalCapacity(cfg.Limits.GlobalConcurrency, cfg.Parallel.Workers, 2, 2)),
 		// 3.5.17 部署期全局回退（T62）：配置显式关掉时整条请求都不进新框架。
 		UnifiedOff:        cfg.Registry.UnifiedFramework != nil && !*cfg.Registry.UnifiedFramework,
+		ReplicaMode:       cfg.Registry.ReplicaMode,
 		Cache:             cstore,
 		MaxBytes:          cfg.Cache.MaxFileMB << 20,
 		GitTTL:            cfg.Git.TTL.Duration,

@@ -947,6 +947,11 @@ func allowedMissingSourceTable(baseline, table string) bool {
 	case "trusted_source_mappings", "trusted_mapping_generation", "trusted_mapping_audit":
 		return true
 	}
+	// 3.5.17 跨 Registry 副本：旧库没有，只能管理员显式录入，不做事后推断。
+	switch table {
+	case "trusted_registry_replicas", "trusted_replica_generation", "trusted_replica_audit":
+		return true
+	}
 	if baseline == "3.4.6" {
 		switch table {
 		case "breaker_state", "registry_host_gen", "registry_host_recovery",

@@ -191,9 +191,38 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 		abortExcept(-1)
 		return out, ErrCrossRaceNoCandidate
 
-	case VoteMismatch, VoteWindowClosed, VoteAuthorityCompare:
-		// 正文已经取到但结论不成立：先问一次权威，再用剩余候选顺序补位。
-		// 补位只接受与权威 Digest 一致的内容——「换个源再试」不能降低完整性。
+	case VoteMismatch:
+		// 冻结顺序：两候选不一致 → 放弃本轮确认，先用剩余可信副本顺序补位；
+		// 补位形成「不同 Registry + 不同 Source」的多数一致即可确认，不能
+		// 在这里提前动用 Authority。补位仍不能解决才用唯一一次 Authority。
+		obs := make([]crossObservation, 0, len(firstRes))
+		for i, res := range firstRes {
+			if res.err == nil && res.digest != "" {
+				obs = append(obs, crossObservation{idx: i, digest: res.digest, registry: cands[i].Registry, sourceID: cands[i].SourceID})
+			}
+		}
+		if idx, d, ok := quorumWinner(obs); ok {
+			out.State = VoteConfirmed
+			out.Winner = idx
+			out.Digest = d
+			abortExcept(idx)
+			return out, nil
+		}
+		for i := first; i < len(cands); i++ {
+			d, err := runCandidate(ctx, cands[i])
+			if err != nil || d == "" {
+				continue
+			}
+			obs = append(obs, crossObservation{idx: i, digest: d, registry: cands[i].Registry, sourceID: cands[i].SourceID})
+			if idx, dg, ok := quorumWinner(obs); ok {
+				out.State = VoteConfirmed
+				out.Winner = idx
+				out.Digest = dg
+				abortExcept(idx)
+				return out, nil
+			}
+		}
+		// 补位仍不一致：用唯一一次 Authority 对照，只接受与权威一致的内容。
 		ad, aerr := authorityDigest(ctx, cfg)
 		if aerr != nil || ad == "" {
 			out.State = state
@@ -201,7 +230,29 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			return out, ErrCrossRaceNoCandidate
 		}
 		out.AuthorityUsed = true
-		// 先看首轮已拿到的正文是否就与权威一致（不再重复请求）。
+		for _, o := range obs {
+			if o.digest == ad {
+				out.State = VoteAuthorityCompare
+				out.Winner = o.idx
+				out.Digest = ad
+				abortExcept(o.idx)
+				return out, nil
+			}
+		}
+		out.State = state
+		abortExcept(-1)
+		return out, ErrCrossRaceNoCandidate
+
+	case VoteWindowClosed, VoteAuthorityCompare:
+		// 只有一个有效候选：Authority 软比对一次；不一致时再用剩余副本顺序
+		// 补位，但补位只能接受与权威一致的内容（不降低完整性）。
+		ad, aerr := authorityDigest(ctx, cfg)
+		if aerr != nil || ad == "" {
+			out.State = state
+			abortExcept(-1)
+			return out, ErrCrossRaceNoCandidate
+		}
+		out.AuthorityUsed = true
 		for i := 0; i < first; i++ {
 			if res := firstRes[i]; res.err == nil && res.digest == ad {
 				out.State = VoteAuthorityCompare
@@ -211,7 +262,6 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 				return out, nil
 			}
 		}
-		// 顺序补位段：一次只跑一个，避免用并发掩盖不一致。
 		for i := first; i < len(cands); i++ {
 			if d, err := runCandidate(ctx, cands[i]); err == nil && d == ad {
 				out.State = VoteAuthorityCompare
@@ -229,6 +279,35 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 	out.State = state
 	abortExcept(-1)
 	return out, ErrCrossRaceNoCandidate
+}
+
+// crossObservation 是一次已校验正文的观察（只用于多数判定）。
+type crossObservation struct {
+	idx      int
+	digest   string
+	registry string
+	sourceID int64
+}
+
+// quorumWinner 在已观察结果里找「同一 Digest 且不同 Registry、不同 Source」
+// 的两个独立观察。返回较早出现的下标，保证结论不依赖完成先后。
+func quorumWinner(obs []crossObservation) (int, string, bool) {
+	for i := 0; i < len(obs); i++ {
+		for j := i + 1; j < len(obs); j++ {
+			if obs[i].digest != obs[j].digest {
+				continue
+			}
+			if obs[i].registry == obs[j].registry || obs[i].sourceID == obs[j].sourceID {
+				continue
+			}
+			first := obs[i].idx
+			if obs[j].idx < first {
+				first = obs[j].idx
+			}
+			return first, obs[i].digest, true
+		}
+	}
+	return -1, "", false
 }
 
 func runCandidate(ctx context.Context, c CrossCandidate) (string, error) {

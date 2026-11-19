@@ -244,6 +244,9 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	// 3.5.17 F08：显式可信映射（runtime 表 + 追加审计 + Generation）。
 	mux.HandleFunc("/api/trusted-mappings", guard(csrf(s.trustedMappings)))
 	mux.HandleFunc("/api/trusted-mapping-audit", guard(s.trustedMappingAudit))
+	// 3.5.17 跨 Registry 副本映射（与 Host→Source 映射分层）。
+	mux.HandleFunc("/api/registry-replicas", guard(csrf(s.registryReplicas)))
+	mux.HandleFunc("/api/registry-replica-audit", guard(s.registryReplicaAudit))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
 	mux.HandleFunc("/api/sched-order", guard(csrf(s.schedOrder)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))

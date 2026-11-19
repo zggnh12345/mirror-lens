@@ -128,6 +128,48 @@ CREATE TABLE trusted_mapping_audit (
 CREATE INDEX idx_trusted_mapping_audit_host
 ON trusted_mapping_audit(registry_host, created_at DESC);
 
+-- 3.5.17 跨 Registry 副本映射：显式声明「权威仓库的副本」，与
+-- trusted_source_mappings（Host→Source）分层。只允许精确配置：
+-- 不做同名隐式映射，v1 不支持 Repository 通配符。
+CREATE TABLE trusted_registry_replicas (
+  authority_registry TEXT NOT NULL,
+  authority_repository TEXT NOT NULL,
+  replica_registry TEXT NOT NULL,
+  replica_repository TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 100 CHECK(priority >= 0),
+  valid_from INTEGER NOT NULL DEFAULT 0,
+  valid_until INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  PRIMARY KEY(authority_registry, authority_repository, replica_registry),
+  CHECK(replica_registry <> authority_registry),
+  CHECK(valid_until = 0 OR valid_from = 0 OR valid_until > valid_from)
+);
+
+CREATE INDEX idx_trusted_registry_replicas_lookup
+ON trusted_registry_replicas(authority_registry, authority_repository, enabled, priority);
+
+-- 每个权威 Registry 独立代次；任何副本映射变更同事务递增。
+CREATE TABLE trusted_replica_generation (
+  authority_registry TEXT PRIMARY KEY,
+  generation INTEGER NOT NULL DEFAULT 1 CHECK(generation >= 1)
+);
+
+-- 追加式审计：删除前后快照都写这里。
+CREATE TABLE trusted_replica_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  authority_registry TEXT NOT NULL,
+  authority_repository TEXT NOT NULL,
+  replica_registry TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  old_snapshot TEXT,
+  new_snapshot TEXT,
+  actor TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_trusted_replica_audit_authority
+ON trusted_replica_audit(authority_registry, created_at DESC);
+
 CREATE TABLE checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

@@ -36,6 +36,12 @@ func build3514Fixture(t *testing.T, path string) {
 		`DROP TABLE trusted_mapping_audit`,
 		`DROP TABLE trusted_mapping_generation`,
 		`DROP TABLE trusted_source_mappings`,
+		// 3.5.17 的跨 Registry 副本三表同样是本轮新增，3.5.14 结构里没有。
+		`DROP INDEX idx_trusted_replica_audit_authority`,
+		`DROP INDEX idx_trusted_registry_replicas_lookup`,
+		`DROP TABLE trusted_replica_audit`,
+		`DROP TABLE trusted_replica_generation`,
+		`DROP TABLE trusted_registry_replicas`,
 		`UPDATE schema_meta SET schema_version='3.5.14', schema_hash=?,
 			baseline_version='test-3.5.14'`,
 	}

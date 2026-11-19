@@ -124,6 +124,13 @@ type Registry struct {
 	// 部署期全局开关。默认开启；关闭时请求完全不建 Scope，等价于回退到
 	// 旧执行链（T62：单请求不允许一半新一半旧，所以决策只在入口做一次）。
 	UnifiedFramework *bool `yaml:"unified_framework"`
+
+	// ReplicaMode 是 3.5.17 跨 Registry 可信副本模式：
+	//   ""/"off"    关闭（默认，行为与旧版本一致）；
+	//   "sequential" 按副本 priority 固定顺序逐站尝试；
+	//   "race"       首轮两路并发 + 200ms Digest 投票，不一致才用一次 Authority。
+	// 副本必须先在 trusted_registry_replicas 显式登记，本开关不创建任何映射。
+	ReplicaMode string `yaml:"replica_mode"`
 }
 
 // GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。

@@ -12,6 +12,7 @@ import (
 const digA = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const digB = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 const digC = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+const digD = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
 type fakeCand struct {
 	digest string
@@ -85,8 +86,9 @@ func TestCrossRaceConfirmedWithoutAuthority(t *testing.T) {
 	_ = aborts
 }
 
-// B.6：两路不一致时只问官方一次，然后按剩余候选顺序补位。
-func TestCrossRaceMismatchUsesAuthorityOnceThenFills(t *testing.T) {
+// B.6：两路不一致时先用剩余可信副本顺序补位；补位形成「不同 Registry +
+// 不同 Source」的多数一致即可确认，不得提前动用 Authority。
+func TestCrossRaceMismatchFillQuorumBeforeAuthority(t *testing.T) {
 	a, b := &fakeCand{digest: digA}, &fakeCand{digest: digB}
 	fill1, fill2 := &fakeCand{digest: digB}, &fakeCand{digest: digC}
 	var calls atomic.Int32
@@ -102,16 +104,44 @@ func TestCrossRaceMismatchUsesAuthorityOnceThenFills(t *testing.T) {
 		fill2.candidate("registry.k8s.io", 4),
 	})
 	if err != nil {
-		t.Fatalf("补位应成功: %v", err)
+		t.Fatalf("补位多数一致应确认: %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("补位已形成多数时不允许问 Authority，实际 %d", calls.Load())
+	}
+	if out.Digest != digB || (out.Winner != 1 && out.Winner != 2) {
+		t.Fatalf("应选中补位后的多数 Digest（复用首轮已下载的候选）: %+v", out)
+	}
+	if fill1.runs.Load() != 1 || fill2.runs.Load() != 0 {
+		t.Fatalf("补位应逐个尝试并在多数成立时停止: fill1=%d fill2=%d",
+			fill1.runs.Load(), fill2.runs.Load())
+	}
+}
+
+// 补位仍不一致：才动用唯一一次 Authority，并且只接受与权威一致的内容。
+func TestCrossRaceMismatchFillThenAuthorityOnce(t *testing.T) {
+	a, b := &fakeCand{digest: digA}, &fakeCand{digest: digB}
+	fill1, fill2 := &fakeCand{digest: digC}, &fakeCand{digest: digD}
+	var calls atomic.Int32
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Authority: func(context.Context) (string, error) {
+			calls.Add(1)
+			return digD, nil
+		},
+	}, []CrossCandidate{
+		a.candidate("quay.io", 1),
+		b.candidate("ghcr.io", 2),
+		fill1.candidate("docker.io", 3),
+		fill2.candidate("registry.k8s.io", 4),
+	})
+	if err != nil {
+		t.Fatalf("补位后与权威一致应交付: %v", err)
 	}
 	if calls.Load() != 1 {
-		t.Fatalf("官方权威只允许问一次，实际 %d", calls.Load())
+		t.Fatalf("Authority 只允许问一次，实际 %d", calls.Load())
 	}
-	if out.Digest != digC || out.Winner != 3 {
+	if out.Digest != digD || out.Winner != 3 || out.State != VoteAuthorityCompare {
 		t.Fatalf("应选中与权威一致的补位候选: %+v", out)
-	}
-	if fill1.runs.Load() != 1 || fill2.runs.Load() != 1 {
-		t.Fatal("补位应按顺序逐个别问")
 	}
 }
 

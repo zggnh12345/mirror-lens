@@ -107,3 +107,29 @@
 - 处置旧测试：`TestClaimEpochAfterRelease` 改为验证「Dispatched 拒释放 + 未派发换代」；
   `TestAttemptPreparedCancelKeepsR` 改为「活跃链不让出、关闭后让出」。
 - 验证：`go vet ./...` 通过；`go test ./internal/gateway ./internal/unified -count=1` 全绿。
+
+## 17b 第三轮 · 阶段 8：跨 Registry 副本映射 + B 网关入口
+
+- Schema：`canonical.sql` 新增 `trusted_registry_replicas`、`trusted_replica_generation`、
+  `trusted_replica_audit`；`Version` 仍 3.5.17，Canonical hash 重算为
+  `bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae`。
+- `internal/store/replicas.go`：精确匹配（无通配符、无同名隐式）、priority 固定排序、
+  有效期、事务写 + 代次递增 + 同事务审计；校验覆盖通配符/路径穿越/副本=权威/非法字符。
+- API：`GET/POST/PUT/DELETE /api/registry-replicas`、`GET /api/registry-replica-audit`，
+  沿用管理员会话 + CSRF；409/404/400 语义与 F08 一致。
+- 迁移：三张新表纳入 `allowedMissingSourceTable`（旧库空表补齐，不推断映射）；
+  3.5.14 fixture 构造同步删除新表，仍逐字节命中冻结指纹 `7e5d71a7…`。
+- `internal/gateway/replica.go`：跨 Registry 副本入口。先 `trusted_registry_replicas`
+  解析仓库→仓库，再 `trusted_source_mappings` 解析 Host→Source；候选共享权威
+  Claim 身份、缓存键仍是权威 CacheKey，认证按候选自己的逻辑 Registry 解析。
+  两模式：`sequential` 按 priority 顺序、`race` 首轮两路 + 200ms 投票 + 顺序补位 +
+  唯一一次 Authority（复用候选 0 的官方派发与其已校验正文）。
+- `internal/unified/crossrace.go`：不一致分支改为「先剩余副本顺序补位 → 多数一致即确认
+  （不同 Registry + 不同 Source）→ 仍不一致才用唯一一次 Authority」，禁止分歧时提前问权威。
+- 配置：`registry.replica_mode`（off/sequential/race，默认关闭）+ `main.go` 接线 +
+  `config.example.yaml` 说明；不创建映射、不改变旧行为。
+- 测试：`store/replicas_test.go`（生命周期/校验/精确+排序/并发）、`api/replicas_test.go`
+  （401/403/409/400/删除/审计）、`gateway/replica_test.go`（一致确认、分歧走权威且
+  权威只派发一次、无 Source 映射不参与）。全部为受控夹具，记 SIMULATED_PASS。
+- 处置旧测试：`TestCrossRaceMismatchUsesAuthorityOnceThenFills` 按新冻结顺序拆成
+  「补位多数先确认」与「补位仍不一致才问权威」两条。
