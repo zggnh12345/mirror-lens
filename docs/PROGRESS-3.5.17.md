@@ -299,3 +299,17 @@ B17 的 UI 只做了静态接线与 API 验证，没有浏览器点击验收 →
   时 N 仍回填 200，内部 G=1004，不存在「关闭外部限流 = 无上限」）。
 - `GlobalCapacity` 的 C 上限收敛到 2（与 A≤2 同口径）：此前只 clamp A，传入更大 C
   会按倍数放大 G。
+
+### 阶段 F/G：最终门禁与性能
+
+- `gofmt -l .` 无输出；`go vet ./...`、`go build ./...` 通过。
+- `go test ./... -count=1`：33 包 ok，`EXIT=0`。
+- `go test -race ./... -count=1`：33 包 ok，无 FAIL，`EXIT=0`。
+- T50–T63 定向与 `TestReplica*`（19 个）全部通过；Schema 升级/回滚演练
+  （`TestMigrate3514To3517AndRollback` + staging 失败清理 4 子项）通过。
+- 真实进程重启演练：**NOT_EXECUTED**（不改变代码基线）。
+- 性能：**EXTERNAL_BLOCKED**（无真实外部 Registry）。进程内配对 5 组：
+  B 关闭 6096 ns/op（中位），M=4 全配置 122811 ns/op（中位）——只作冷请求
+  候选发现成本的量级参考，不作端到端时延结论。
+- 详细复核表、未关闭风险与判断依据：`docs/3.5.17-17b-r4-review.md`。
+- 状态：**READY_FOR_FINAL_REVIEW**。
