@@ -222,3 +222,22 @@
   `TestRangeLedgerIsScopeLifetime`/`TestExhaust*`（T60 的 P/Range）、`TestReplica*`（B 入口）全部通过。
 - 性能：无真实外部 Registry，按边界记 **EXTERNAL_BLOCKED**；未做同环境 ≥5 组配对，
   不声称任何 P95 改善。`TEST_PASS` 与 `EXTERNAL_BLOCKED` 分开。
+
+## 第四轮（17b 最终复核前收敛）
+
+### 阶段 A：1.6 权威文档同步
+
+- 目标文件 `docs/registry-roadmap-v1.6.md`（唯一权威正文）。
+- 修改前 SHA-256：`a1c11472660b22915e63fa73e9bd4ee4945470ff81e1c0d8da9b710f3dab90a2`
+- 修改后 SHA-256：`1b38a071a7de36d5d47817f53e81859df54b155e6493339f99c9ab49d90e92bc`
+- 改动只做收敛与同步，不改已冻结语义：
+  - 第 3 行状态与 3.5.17 节状态：改为「3.5.17 实现已进入最终复核；全服务 G 与 F08 Schema
+    已冻结并入第 11 章」。
+  - 11.1 表的「实现状态」列：M/C/权威站/fb/B16/F18/F19 由「待 17a」改为已实现待复核；
+    R 与 F19 标注「已实现并有门禁用例」。
+  - 新增 11.6 预算与资源常量（D-01~D-06、AUD-04-1~7、R=16，RangeWorkCap=1024 /
+    每 Range≤4 / Segment≤256 明确为 RequestScope 生命周期级，不是每 Range 重算）。
+  - 新增 11.7 F08 三表与跨 Registry 三表、两类 Generation 互不替代、迁移与回滚边界。
+  - 新增 11.8 投票窗口计时起点（首个**正文已校验**候选起算）与三层分账
+    （Identity Claim 各逻辑 Registry 各自 / RequestScope 唯一提交权 / CacheKey 验证后归属）。
+  - 11.4 由「尚未完成设计」改为「已全部冻结，正文见 11.6–11.8」；11.5 标题标注 17b 已落地。
