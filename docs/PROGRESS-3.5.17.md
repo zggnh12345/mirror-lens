@@ -8,12 +8,12 @@
 
 | 阶段 | 内容 | 状态 | 提交 | 门禁测试 |
 | --- | --- | --- | --- | --- |
-| 1 基础设施 | RequestScope/R/P 两阶段门控/G 容量/P 耗尽 503/LeasePool/Preflight 共享 | **完成（框架+计量点接线）** | 见下 | T52/T57/T60 全绿 |
-| 2 核心状态机 | Claim 三态、Chain、Attempt 四态、Body 幂等关闭、Lease 释放 | **完成（框架包，未接入 A 竞速执行路径）** | 见下 | T50/T51/T53/T56 全绿 |
-| 3 跨站与身份 | Authority 唯一 Attempt、B Digest 投票、结果账本与全 Miss 仲裁 | **完成（框架包，未接入 Manifest 执行路径）** | 见下 | T63/B02/B06 全绿 |
-| 4 路径接入 | A/B/fb/Hedge/Midfill/RetryToken 接入现有执行链 | 未开始 | — | — |
-| 5 Schema 与迁移 | trusted_source_mappings 三表、Generation、API、迁移 | 未开始 | — | — |
-| 6 测试与验收 | 全量回归、独立复核、性能验收 | 部分（全量 build/vet/test 已跑） | — | — |
+| 1 基础设施 | RequestScope/R/P 两阶段门控/G 容量/P 耗尽 503/LeasePool/Preflight 共享 | **完成** | 307e3e0 | T52/T57/T60 全绿 |
+| 2 核心状态机 | Claim 三态、Chain、Attempt 四态、Body 幂等关闭、Lease 释放 | **完成（框架包）** | 307e3e0 | T50/T51/T53/T56 全绿 |
+| 3 跨站与身份 | Authority 唯一 Attempt、B Digest 投票、结果账本与全 Miss 仲裁 | **完成（框架包）** | 307e3e0 | T63/B02/B06 全绿 |
+| 4 路径接入 | A/fb/Hedge/Midfill/RetryToken 接入执行链；B 框架完成、网关入口未接 | **基本完成（B 网关入口未接）** | c4ec936 | T50/T51/T55/T61/T62 全绿 |
+| 5 Schema 与迁移 | F08 三表、Generation、管理 API、迁移/回滚演练 | **完成** | 46f44d7 | 生命周期/G 代次/并发/API/迁移演练全绿 |
+| 6 测试与验收 | 全量回归、独立复核、性能配对验收 | **部分** | — | build/vet/test 全绿；race 见下 |
 
 ## 阶段 1 变更
 
@@ -22,41 +22,67 @@
   每 Scope 一轮 Preflight）、`pool.go`（G 公式与全局池、LeasePool）、`ptransport.go`
   （P 计量点包裹底层 Transport、503+no-store+REQUEST_BUDGET_EXHAUSTED）。
 - `internal/gateway`：`/v2/` Manifest/Blob 请求建 RequestScope 并挂 Context；P 计量点接线
-  `registryAuthTransport.base` → `unified.PTransport` → 底层 Transport（Token 获取/认证重发/重定向都计入，
-  Transport 内部重试不多算）；Scope 容量满返回 503 REQUEST_SCOPE_CAPACITY；预算耗尽在未发响应头的路径
-  返回 503，且 `registryAuthTransport` 的 Token 分支不再把预算错误吞成 401。
+  `registryAuthTransport.base` → `unified.PTransport` → 底层 Transport（Token 获取/认证重发/重定向都计入）。
 - `main.go`：按 `G = N × max(W+1, C×A, 2) + 4` 建池，N 取 `limits.global_concurrency`、W 取 `parallel.workers`。
 
 ## 阶段 2/3 变更
 
-- `claim.go`：ClaimKey=(Scope,Identity)，三态 Reserved/Dispatched/Released，epoch 保证旧句柄失效；
-  同链多 Attempt 共享，跨链只允许一条获 Dispatched；Chain 关闭时统一释放。
-- `chain.go`：Chain 生命周期 Created→Active→Closing→Closed，Closing 后 RegisterAttempt 被拒；
-  Attempt 四态，Prepared 取消不消耗 R、Dispatched 取消阻止全 Miss；`CloseBody` 幂等。
-- `vote.go`：200ms 投票窗口、正文已校验才计票、不同逻辑 Registry + 不同 source_id、窗口外丢弃、
-  不一致转 Mismatch 继续补位、单候选转 Authority 比对；Authority 单次 Attempt + 结果复用。
-- `ledger.go`：统一结果账本（保留 Chain 归属），仲裁顺序 成功 > P 耗尽 > policyErr > 未完成 >
-  Auth > Cancelled > 全 Miss(404) > Fail；永不带负缓存。
+- `claim.go`：ClaimKey=(Scope,Identity)，三态 Reserved/Dispatched/Released，epoch 保证旧句柄失效。
+- `chain.go`：Chain Created→Active→Closing→Closed；Attempt 四态；`CloseBody` 幂等。
+- `vote.go`：200ms 窗口、正文已校验才计票、不同逻辑 Registry + 不同 source_id、不一致转 Mismatch。
+- `ledger.go`：统一账本与仲裁（成功 > P 耗尽 > policyErr > 未完成 > Auth > Cancelled > 全 Miss > Fail）。
+
+## 阶段 4 变更（c4ec936）
+
+- `adapter.Plan` 增 `Repo`/`Ref`；`registryadapter` 用 `name`/`ref` 填。Claim Identity =
+  规范化 `LogicalHost` + Repo + Ref；**CacheKey 不变**（设计 §2.2：身份只用于 Claim 仲裁）。
+- `gateway/unifiedwire.go`（新）：`planIdentity`、`errUnifiedSuppressed`、链绑定/查询、
+  `beginUnifiedAttempt`、`suppressFallbacks`、`takeRetryToken`、`hedgeAllowed`、`closeUnifiedChain`。
+- 发送提交边界登记 Attempt：`openUpstream` 在 `g.cli.Do` 之前 Dispatch；`upstream.finishAttempt`
+  在每次 `saveBody` 之后按 `(code, err)` 分类回写。同链多 Source 共享 Claim（A 站内竞速），
+  跨链同 Identity 由 `errUnifiedSuppressed` 抑制，且按中性事件处理（不罚源、不写失败）。
+- A 竞速：`raceManifest` 绑定 `ChainA`；竞速整场结束（胜者正文失败/未能成赛）时 `closeUnifiedChain`
+  释放 Claim，顺序补位才能重新预占。所有落选路径 `att.abort()`，避免 Scope 在途计数与 R 账本悬挂（T54）。
+- fb 静态抑制：`fetchSeq` 入口对 `suppressFallbacks` 拍快照，同 Identity 的备用目标整条剔除并计数（T61/F18/F19-14）。
+- Hedge：`hedge_triggered_total`（决策）/`hedge_extra_requests_total`（真的多发的请求）/
+  `hedge_wins_total{rank}` 三者拆分（D-03）；启动第二路前用 `hedgeAllowed` 检查 P 余额。
+- Midfill：`tryParallel` 与 `midFill` 改调 `parPreflightShared`，每 Scope 一轮 Preflight；
+  `rangeAdmit` 统一 RangeWork 准入（每 Range ≤4 目标、总 ≤1024、分段仍 ≤256）。
+- B16：`fetchURL` 遇到网络类失败且该 Registry 令牌未用时，重试一次并计数；明确响应（4xx/5xx/无效正文）不重试。
+- 部署期全局开关 `registry.unified_framework`（默认 true）：关闭时 `newRequestScope` 直接返回无 Scope，
+  整条请求回到旧链，不存在半新半旧（T62）。
+- B 跨站竞速：新增 `internal/unified/crossrace.go`（M≤4、首轮 C=2、票窗 200ms、
+  不一致时只问官方权威一次再顺序补位、落选 Abort），7 个用例覆盖确认/不一致/单候选/截断/全失败/并发。
+  **网关尚未接入**：缺「跨 Host 候选来源」的产品语义（F08 只表达「某 Host 的可信 Source」，
+  没有跨 Host 同镜像等价关系），不在本轮自行发明，留待 17b 续跑与设计确认。
+
+## 阶段 5 变更（46f44d7）
+
+- `canonical.sql` 新增 `trusted_source_mappings` / `trusted_mapping_generation` / `trusted_mapping_audit`；
+  `schema.Version` = 3.5.17，Canonical hash = `f040a8d2…`（DDL 追加后实测重算）。
+- `store/trustedmap.go`：映射 CRUD + Generation 递增 + 审计快照同事务；`valid_from=0` 立即生效、
+  `valid_until=0` 永久有效；Source 删除由外键级联，审计历史保留；代次行首次写入建立（=1）。
+- API：`GET/POST/PUT/DELETE /api/trusted-mappings`、`GET /api/trusted-mapping-audit`；
+  沿用管理员会话 + CSRF；409（已存在）/404（不存在）/400（校验失败）。
+- `db-migrate`：新增 3.5.14 输入指纹与「直接复制」路径；迁移只建 Generation 行、不猜映射；
+  3.5.14→3.5.17 迁移与回滚演练（隔离临时库，源库字节不变、旧库对新二进制 fail closed）通过。
 
 ## 验证（本阶段实际执行）
 
-- `gofmt -l`：无输出（internal/unified、internal/gateway、main.go）。
+- `gofmt -l internal cmd main.go`：无输出。
 - `go vet ./...`：通过。
 - `go build ./...`：通过。
-- `go test ./... -count=1`：全部通过（含 `internal/gateway` 71.7s 全量）。
-- `go test ./internal/unified/ -count=1 -race`：通过。
-- `go test -race ./... -count=1`：全仓 33 个包 ok，无 FAIL、无 DATA RACE（gateway 115.8s、unified 1.1s）。
-- 环境说明：容器内原本没有 Go 工具链；本轮把 go1.27.4 解压到
-  `/opt/data/cache/scratch/toolchain/go`，构建时用
+- `go test ./... -count=1`：全部包 ok（gateway 72.8s、api 15.9s、store 13.0s、db-migrate 19.1s）。
+- `go test -race ./... -count=1`：见下方「最终一轮」结果。
+- 环境：Go 在 `/opt/data/cache/scratch/toolchain/go`，构建前
   `export PATH=/opt/data/cache/scratch/toolchain/go/bin:$PATH GOCACHE=/opt/data/cache/scratch/gocache GOMODCACHE=/opt/data/cache/scratch/gomod`。
-  续跑直接复用，不要用 `/opt/data/cache/gocache`（root 所有，写不进去）。
 
 ## 明确未完成
 
-- 阶段 4 未开始：A 站内竞速共享 Claim、B 跨站竞速/顺序补位、fb 静态抑制、Hedge 三指标拆分并接 P、
-  Midfill 一轮 Preflight 共享（框架已提供 `Scope.Preflight`，但 `tryParallel`/`midFill` 尚未改用它）、
-  RegistryRetryToken 接入顺序重试。
-- 阶段 5 未开始：F08 三表、Generation、管理 API、迁移与回滚演练。
-- 阶段 6 未完成：`go test -race ./...` 全量、独立复核、性能配对验收（B15）。
-- 已知边界：P 耗尽在已发正文的流式路径只做入口检查（入口未耗尽、中途耗尽时由底层派发错误
-  反映），尚未实现「取消剩余 Attempt + 清理部分文件」的完整收尾（属阶段 4）。
+- **B 跨站竞速的网关入口**：框架与测试已就绪，但缺「跨 Host 候选发现」的权威语义（见阶段 4 说明）。
+  这是 3.5.17 唯一的 P0 未闭环项；不得当作已完成，也不得用 A 竞速或单元测试顶替。
+- 性能配对验收（B15）：未执行。没有真实外部 Registry 与生产同构负载，只能给出受控夹具结论，
+  需在下一轮用 `tools/baseline` 做配对采样。
+- P 耗尽在已发正文的流式路径仍只做入口检查；「取消剩余 Attempt + 清理部分文件」未实现。
+- 真实进程验收（专用 Registry 夹具 + 真实公共源）本轮未做：本环境无外网 Registry，
+  阶段 4/5 结论仅为**代码测试**层；不得写成 REAL_PASS。
