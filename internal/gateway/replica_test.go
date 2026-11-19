@@ -34,6 +34,9 @@ type replicaFixtureT struct {
 	replica      atomic.Int32
 	sc           *unified.Scope
 	srcID        int64
+	officialWait time.Duration
+	replicaWait  time.Duration
+	replicaCode  int
 	mu           sync.Mutex
 	officialPath string
 	replicaPath  string
@@ -57,7 +60,11 @@ func newReplicaFixture(t *testing.T, officialBody, replicaBody []byte) *replicaF
 		f.official.Add(1)
 		f.mu.Lock()
 		f.officialPath = r.URL.Path
+		wait := f.officialWait
 		f.mu.Unlock()
+		if wait > 0 {
+			time.Sleep(wait)
+		}
 		w.Header().Set("Content-Type", manifestsAccept)
 		w.Write(officialBody)
 	}))
@@ -66,7 +73,15 @@ func newReplicaFixture(t *testing.T, officialBody, replicaBody []byte) *replicaF
 		f.replica.Add(1)
 		f.mu.Lock()
 		f.replicaPath = r.URL.Path
+		wait, code := f.replicaWait, f.replicaCode
 		f.mu.Unlock()
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+		if code != 0 {
+			http.Error(w, "boom", code)
+			return
+		}
 		w.Header().Set("Content-Type", manifestsAccept)
 		w.Write(replicaBody)
 	}))
@@ -290,5 +305,53 @@ func TestReplicaRaceMergesConcurrentRequests(t *testing.T) {
 	}
 	if got := f.replica.Load(); got != 1 {
 		t.Fatalf("并发请求必须共享一轮竞速，副本实际 %d 次", got)
+	}
+}
+
+// 首轮两路都慢于窗口：窗口从首票起算，慢候选只允许拖 200ms，
+// 绝不能「窗口先关 → 零票 → 无结论 → 顺序回退被 dispatched Claim 抑制 → 502」。
+func TestReplicaRaceSlowCandidatesStillConfirm(t *testing.T) {
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
+	f := newReplicaFixture(t, body, body)
+	f.mu.Lock()
+	f.officialWait = 300 * time.Millisecond
+	f.replicaWait = 300 * time.Millisecond
+	f.mu.Unlock()
+
+	start := time.Now()
+	e, handled, err := f.gw.crossRegistryManifest(f.ctx(), f.plan, nil)
+	elapsed := time.Since(start)
+	if err != nil || !handled || e == nil {
+		t.Fatalf("两路同内容即使都慢也必须确认: handled=%v err=%v", handled, err)
+	}
+	if e.SHA256 != shaOf(body) {
+		t.Fatalf("内容不对: %s", e.SHA256)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("竞速尾延迟过高: %v", elapsed)
+	}
+	if f.official.Load() != 1 || f.replica.Load() != 1 {
+		t.Fatalf("每候选只允许一次：official=%d replica=%d", f.official.Load(), f.replica.Load())
+	}
+}
+
+// 竞速没有结论时，顺序回退必须落在同一条 B 链上，不能被 F19 的 dispatched
+// Claim 抑制（那会把「副本不可用」变成 502）。
+func TestReplicaNoConclusionFallsBackOnSameChain(t *testing.T) {
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
+	f := newReplicaFixture(t, body, body)
+	f.mu.Lock()
+	f.replicaCode = http.StatusInternalServerError
+	f.mu.Unlock()
+
+	e, notMod, err := f.gw.fetchWithReplicas(f.ctx(), f.plan, nil)
+	if err != nil || notMod || e == nil {
+		t.Fatalf("副本失败应回退权威而不是报错: notMod=%v err=%v", notMod, err)
+	}
+	if e.SHA256 != shaOf(body) {
+		t.Fatalf("回退内容不对: %s", e.SHA256)
+	}
+	if f.official.Load() == 0 {
+		t.Fatal("回退必须真的请求权威")
 	}
 }

@@ -313,3 +313,29 @@ func TestCrossRaceNoCandidateWhenAuthorityDisagreesWithAll(t *testing.T) {
 		t.Fatalf("没有可信结论时不得指定赢家: %+v", out)
 	}
 }
+
+// 首轮都慢于窗口：窗口必须从首票起算，否则零票会把正常竞速判成无结论。
+func TestCrossRaceWindowStartsAtFirstVote(t *testing.T) {
+	a := &fakeCand{digest: digA, delay: 300 * time.Millisecond}
+	b := &fakeCand{digest: digA, delay: 300 * time.Millisecond}
+	var authority atomic.Int32
+	start := time.Now()
+	out, err := RunCrossRace(context.Background(), CrossRaceConfig{
+		Authority: func(context.Context) (string, error) {
+			authority.Add(1)
+			return digA, nil
+		},
+	}, []CrossCandidate{a.candidate("quay.io", 1), b.candidate("ghcr.io", 2)})
+	if err != nil {
+		t.Fatalf("两路同内容应确认: %v", err)
+	}
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("等待过长: %v", el)
+	}
+	if out.State != VoteConfirmed || out.Winner != 0 || out.Digest != digA {
+		t.Fatalf("结论不对: %+v", out)
+	}
+	if authority.Load() != 0 {
+		t.Fatal("两票一致时不应问权威")
+	}
+}

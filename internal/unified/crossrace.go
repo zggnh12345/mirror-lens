@@ -142,6 +142,9 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 	firstRes := make([]crossResult, first)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	// 窗口从「首个候选返回」起算（冻结语义），不是从竞速开始。
+	var firstOnce sync.Once
+	firstArrived := make(chan struct{})
 	for i := 0; i < first; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -150,6 +153,7 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			mu.Lock()
 			firstRes[i] = crossResult{idx: i, digest: d, err: err}
 			mu.Unlock()
+			firstOnce.Do(func() { close(firstArrived) })
 			if err != nil || d == "" {
 				return
 			}
@@ -168,8 +172,14 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 	go func() { wg.Wait(); close(waited) }()
 	select {
 	case <-waited:
-	case <-time.After(cfg.Window):
-		// 超时候选：它的投票在 CloseWindow 之后不会再进账，视为丢弃。
+	case <-firstArrived:
+		// 首票到达后才开始计宽限窗口：慢候选只允许拖 Window，不允许拖死请求。
+		select {
+		case <-waited:
+		case <-time.After(cfg.Window):
+		case <-ctx.Done():
+		}
+	case <-ctx.Done():
 	}
 	state := vote.CloseWindow()
 

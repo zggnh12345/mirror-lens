@@ -347,6 +347,10 @@ func retryableFromMirror(code int) bool {
 }
 
 func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.PartialMeta, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*http.Response, error) {
+	if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
+		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
+	}
+	ctx = withScopeCancel(ctx)
 	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
 	if err != nil {
 		return nil, err

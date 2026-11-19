@@ -291,6 +291,9 @@ func (g *Gateway) fetchWithReplicas(ctx context.Context, plan *adapter.Plan, pre
 	if !g.replicaEligible(plan, prev) {
 		return g.fetchOnce(ctx, plan, prev)
 	}
+	// 副本路径与它的顺序回退必须落在同一条 B 链：竞速阶段一旦派发过，
+	// F19 的 Claim 就是 dispatched，换链顺序回退会被直接抑制（502）。
+	ctx = withUnifiedChain(ctx, unified.ChainB)
 	key := "replica|" + plan.CacheKey
 	nf := &replicaFlight{done: make(chan struct{})}
 	actual, loaded := g.replicaFlights.LoadOrStore(key, nf)
@@ -301,8 +304,8 @@ func (g *Gateway) fetchWithReplicas(ctx context.Context, plan *adapter.Plan, pre
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		}
-		if f.err != nil {
-			// 领跑者的失败（含客户端取消）不能传染给其他请求：各自走旧路径。
+		if f.err != nil || f.entry == nil {
+			// 领跑者的失败（含客户端取消/panic）不能传染给其他请求：各自走旧路径。
 			return g.fetchOnce(ctx, plan, prev)
 		}
 		return f.entry, f.notMod, nil
@@ -336,7 +339,6 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 	if len(targets) < 2 {
 		return nil, false, nil
 	}
-	ctx = withUnifiedChain(ctx, unified.ChainB)
 	_ = gen
 
 	if g.replicaMode() == "sequential" {
@@ -381,13 +383,15 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 			}
 			slots[i].err = err
 			late := slots[i].abandoned
+			// done 在锁内关闭：与 dropAll 的「取产物 / 标记放弃」二选一
+			// 在同一把锁下互斥，避免交接窗口里两头都不清理。
+			close(slots[i].done)
 			mu.Unlock()
 			if late && art.tmp != "" {
 				// 竞速已在窗口外放弃该候选：迟到产物自己清理，不留孤儿文件。
 				removeFile(art.tmp)
 				g.cache.ForgetTemp(art.tmp)
 			}
-			close(slots[i].done)
 		})
 		<-slots[i].done
 		if slots[i].err != nil {
@@ -400,16 +404,18 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 			if i == keep {
 				continue
 			}
+			mu.Lock()
 			select {
 			case <-slots[i].done:
-				// 已完成的候选：产物稳定，直接清理。
-				if art := slots[i].art; art.tmp != "" {
+				// 已完成的候选：产物稳定（close(done) 在锁内，建立 HB）。
+				art := slots[i].art
+				mu.Unlock()
+				if art.tmp != "" {
 					removeFile(art.tmp)
 					g.cache.ForgetTemp(art.tmp)
 				}
 			default:
 				// 还在跑的候选（窗口外丢弃）：标记后由它自己清理。
-				mu.Lock()
 				slots[i].abandoned = true
 				mu.Unlock()
 			}
@@ -459,13 +465,17 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		return e, true, nil
 	}
 	// 不一致/无结论：权威正文若已校验，可以作最终交付（design §4.4）。
+	mu.Lock()
+	var authArt replicaArtifact
 	select {
 	case <-slots[0].done:
+		authArt = slots[0].art
 	default:
 		// 权威那条还没回：没有可用于兜底的已验证正文。
 	}
-	if slots[0].art.tmp != "" && slots[0].sha != "" {
-		art := slots[0].art
+	mu.Unlock()
+	if authArt.tmp != "" && authArt.sha != "" {
+		art := authArt
 		consumed[0] = true
 		dropAll(0)
 		e, cerr := g.commitReplicaArtifact(ctx, plan, art)

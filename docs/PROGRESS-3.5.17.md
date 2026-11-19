@@ -192,3 +192,20 @@
   Schema 仍是 3.5.14，因此 3.5.14→3.5.17 就是生产升级路径。
 - `TestMigrate3514To3517AndRollback` 实测通过：升级后 `schema_hash` 匹配 3.5.17，
   副本三表为空，回滚库指纹保持 `7e5d71a7…`，新二进制对 3.5.14 库 fail closed。
+
+### 复核第二轮（针对修复提交）
+
+第二轮独立复核在 `5d7adca` 上复现出一个新 P0：竞速窗口从「竞速开始」计时，
+首轮两路都慢于 200ms 时窗口先关、零票 → 无结论，而竞速已派发的 Claim 是
+`dispatched`，顺序回退换到别的链被 F19 抑制 → 502。已修复：
+
+- `crossrace.go`：窗口从**首票**起算（`firstArrived`），超时只丢弃慢候选。
+- `gateway/replica.go`：副本路径与它的顺序回退统一绑定 `ChainB`（同链顺序补位），
+  并在无结论时真正使用同链 `fetchOnce`。
+- `dropAll`/`slot.abandoned` 的交接放进同一把锁（`close(done)` 在锁内），
+  消除「既没删也没标记」的永久临时文件窗口；`settleTarget` 之后的兜底读取
+  也改为持锁 + `done` 判据。
+- leader panic/空结果时 followers 回落 `fetchOnce`，不再返回 `(nil,false,nil)`。
+- `doUpstream` 补上 `Exhausted()` 前置检查与 `withScopeCancel`（上一轮声明未落地）。
+- 新增回归：两路 300ms 仍确认且 <1s、竞速无结论时同链回退不 502、
+  两路慢速网关端到端无 502。
