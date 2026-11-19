@@ -1,0 +1,48 @@
+time=2026-11-20T07:53:56.112+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=3 禁用Host=0）"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="Registry 缓存 epoch 已切换到 1（历史条目不可达）"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg=私有分片内存窗口 并发文件=2 worker=4 段大小MB=4 最坏MB=32
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r6/run/crossrace/data/backup（保留 7 份）"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T07:53:56.215+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T07:53:56.216+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18430"
+time=2026-11-20T07:53:56.271+08:00 level=INFO msg=面板请求 request_id=da67ca82c2759a84 method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T07:53:56.340+08:00 level=INFO msg="初始账号已设置: user=r***(7)"
+time=2026-11-20T07:53:56.340+08:00 level=INFO msg=面板请求 request_id=d47e2ab38e088989 method=POST path=/api/setup status=200 duration_ms=64
+time=2026-11-20T07:53:56.394+08:00 level=INFO msg=面板请求 request_id=06f4d20006761c66 method=POST path=/api/login status=200 duration_ms=53
+time=2026-11-20T07:53:56.394+08:00 level=INFO msg=面板请求 request_id=7fc7c64bb1d8ca7b method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T07:53:56.395+08:00 level=INFO msg=面板请求 request_id=be5de955ac3c3ba5 method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T07:53:56.396+08:00 level=INFO msg=面板请求 request_id=ce54f1e105f771f9 method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T07:53:56.397+08:00 level=INFO msg=面板请求 request_id=93cc36e9b067ba5e method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T07:53:56.397+08:00 level=INFO msg=面板请求 request_id=56cf0156661293aa method=PATCH path=/api/sources/2 status=200 duration_ms=0
+time=2026-11-20T07:53:56.399+08:00 level=INFO msg=面板请求 request_id=fe59c82acafab180 method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T07:53:56.399+08:00 level=INFO msg=面板请求 request_id=c7404a2f0c20e07e method=PATCH path=/api/sources/3 status=200 duration_ms=0
+time=2026-11-20T07:53:58.368+08:00 level=INFO msg="Host quay.io 验证通过（native）"
+time=2026-11-20T07:53:58.370+08:00 level=INFO msg="Host registry.k8s.io 验证通过（native）"
+time=2026-11-20T07:53:58.372+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T07:54:02.066+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19602 → docker=true ghcr=true github=false"
+time=2026-11-20T07:54:02.074+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19603 → docker=true ghcr=true github=false"
+time=2026-11-20T07:54:02.078+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19601 → docker=true ghcr=true github=false"
+time=2026-11-20T07:54:02.438+08:00 level=INFO msg=面板请求 request_id=03aedfad74056e0f method=POST path=/api/trusted-mappings status=200 duration_ms=0
+time=2026-11-20T07:54:02.439+08:00 level=INFO msg=面板请求 request_id=545456b0c0770e06 method=POST path=/api/trusted-mappings status=200 duration_ms=0
+time=2026-11-20T07:54:02.440+08:00 level=INFO msg=面板请求 request_id=097b86e777dfc687 method=POST path=/api/trusted-mappings status=200 duration_ms=0
+time=2026-11-20T07:54:02.440+08:00 level=INFO msg=面板请求 request_id=d2fb955f92318949 method=POST path=/api/registry-replicas status=200 duration_ms=0
+time=2026-11-20T07:54:02.441+08:00 level=INFO msg=面板请求 request_id=fdec8dfc0b39f425 method=POST path=/api/registry-replicas status=200 duration_ms=0
+time=2026-11-20T07:54:02.442+08:00 level=INFO msg=面板请求 request_id=c5365d5e819813c9 method=PUT path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T07:54:02.459+08:00 level=INFO msg=面板请求 request_id=4cfcded76e3ced07 method=PUT path=/api/cross-registry status=200 duration_ms=0
+time=2026-11-20T07:54:02.461+08:00 level=DEBUG msg=副本候选原始查询 request_id=54b520567f65471d kind=registry cache_key="docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=quay.io raw=1 sched=1 sched_enabled=true
+time=2026-11-20T07:54:02.461+08:00 level=DEBUG msg=副本候选诊断 request_id=54b520567f65471d kind=registry cache_key="docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=quay.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=""
+time=2026-11-20T07:54:02.461+08:00 level=DEBUG msg=副本候选原始查询 request_id=54b520567f65471d kind=registry cache_key="docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=registry.k8s.io raw=1 sched=1 sched_enabled=true
+time=2026-11-20T07:54:02.461+08:00 level=DEBUG msg=副本候选诊断 request_id=54b520567f65471d kind=registry cache_key="docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=registry.k8s.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=""
+time=2026-11-20T07:54:02.642+08:00 level=INFO msg=面板请求 request_id=aa601d4de36fbd6b method=POST path=/api/registry-replicas status=200 duration_ms=1
+time=2026-11-20T07:54:02.646+08:00 level=INFO msg=面板请求 request_id=bf972c8e527c63cc method=POST path=/api/registry-replicas status=200 duration_ms=2
+time=2026-11-20T07:54:02.651+08:00 level=DEBUG msg=副本候选原始查询 request_id=5411442838e07500 kind=registry cache_key="docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=quay.io raw=1 sched=1 sched_enabled=true
+time=2026-11-20T07:54:02.651+08:00 level=DEBUG msg=副本候选诊断 request_id=5411442838e07500 kind=registry cache_key="docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=quay.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=""
+time=2026-11-20T07:54:02.653+08:00 level=DEBUG msg=副本候选原始查询 request_id=5411442838e07500 kind=registry cache_key="docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=registry.k8s.io raw=1 sched=1 sched_enabled=true
+time=2026-11-20T07:54:02.653+08:00 level=DEBUG msg=副本候选诊断 request_id=5411442838e07500 kind=registry cache_key="docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" replica=registry.k8s.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=""
+time=2026-11-20T07:54:05.442+08:00 level=DEBUG msg="副本候选非 200" request_id=5411442838e07500 kind=registry cache_key="docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" target=official registry=gcr.io status=401

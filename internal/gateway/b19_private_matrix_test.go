@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,7 +73,7 @@ func TestB19PrivateAuthorityNoCandidatesAndHostScopedCreds(t *testing.T) {
 		Hosts: map[string]bool{"registry.k8s.io": true},
 		Creds: rc,
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestB19PrivateReplicaNoCandidatesAndHostScopedCreds(t *testing.T) {
 		Hosts: map[string]bool{"quay.io": true},
 		Creds: rc,
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}

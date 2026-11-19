@@ -151,7 +151,7 @@ func (g *Gateway) replicaEligible(plan *adapter.Plan, prev *store.CacheEntry) bo
 
 // replicaTargets 按「先副本映射、再 Source 映射」的顺序构造候选。
 // 返回的 targets 第一个固定是权威官方源。
-func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTarget, uint64, error) {
+func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now time.Time) ([]replicaTarget, uint64, error) {
 	authority := rangeHostOf(plan)
 	if authority == "" || plan.Repo == "" || plan.Ref == "" {
 		return nil, 0, nil
@@ -212,23 +212,43 @@ func (g *Gateway) replicaTargets(plan *adapter.Plan, now time.Time) ([]replicaTa
 		if g.sched != nil && g.sched.Enabled() {
 			cands = g.sched.Candidates("registry:" + rep.ReplicaRegistry)
 		}
+		rawN, rawErr := -1, error(nil)
+		if g.st != nil {
+			if raw, err := g.st.RegistryCandidatesRaw(rep.ReplicaRegistry); err != nil {
+				rawN, rawErr = -2, err
+			} else {
+				rawN = len(raw)
+			}
+		}
+		loggw(slog.LevelDebug, "副本候选原始查询", ctx, plan, "", rawErr,
+			"replica", rep.ReplicaRegistry, "raw", rawN, "sched", len(cands),
+			"sched_enabled", g.sched != nil && g.sched.Enabled())
 		var picked []replicaTarget
+		var skipped []string
 		for _, c := range cands {
 			if !allowed[c.ID] {
+				skipped = append(skipped, fmt.Sprintf("%d:no-mapping", c.ID))
 				continue
 			}
 			// 星标是唯一的人工授权；勾选只是它在跨站用途上的子集，
 			// 两个条件都满足才进入候选（未勾选的星标节点不进跨站候选）。
 			if !c.Preferred || !selected[c.ID] {
+				skipped = append(skipped, fmt.Sprintf("%d:not-selected(star=%v,sel=%v)", c.ID, c.Preferred, selected[c.ID]))
 				continue
 			}
 			cc := c
 			u, ok := g.sched.Rewrite("registry:"+rep.ReplicaRegistry, base, cc)
 			if !ok || u == nil {
+				skipped = append(skipped, fmt.Sprintf("%d:rewrite-failed(path=%q)", c.ID, cc.RegistryPath))
 				continue
 			}
 			picked = append(picked, replicaTarget{u: u, registry: rep.ReplicaRegistry, sourceID: cc.ID, name: cc.Name})
 		}
+		// 候选诊断：只在 debug 级别输出，逐副本给出每道门的结果。
+		// 它不改变任何选择结果，只把「为什么没进候选」变成可复核的事实。
+		loggw(slog.LevelDebug, "副本候选诊断", ctx, plan, "", nil,
+			"replica", rep.ReplicaRegistry, "mappings", len(maps), "sched_candidates", len(cands),
+			"preferred_selected", len(picked), "skipped", strings.Join(skipped, ","))
 		// 同一副本 Registry 可能有多个可信 Source；按候选顺序取第一个可用即可，
 		// 避免同一副本在投票里贡献两票（投票层仍按 source_id 去重）。
 		if len(picked) > 0 {
@@ -245,6 +265,11 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 	var art replicaArtifact
 	up, err := g.openUpstreamAs(ctx, plan, nil, t.u, t.sourceID, t.registry, identityHost)
 	if err != nil {
+		// 候选派发诊断（debug）：把「谁真的发了、结果是什么」写成可复核的行。
+		// 官方权威（sourceID=0）会以 target=official 出现，因此「同意组没有
+		// 派发官方」可以由日志逐请求验证，而不是靠推理。
+		loggw(slog.LevelDebug, "副本候选失败", ctx, plan, "", err,
+			"target", t.name, "registry", t.registry, "source_id", t.sourceID)
 		return art, 0, err
 	}
 	resp := up.resp
@@ -253,6 +278,8 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 		up.cancel()
 	}()
 	if resp.StatusCode != http.StatusOK {
+		loggw(slog.LevelDebug, "副本候选非 200", ctx, plan, "", nil,
+			"target", t.name, "registry", t.registry, "status", resp.StatusCode)
 		io.CopyN(io.Discard, resp.Body, 4096)
 		err := &upstreamError{
 			Code:       resp.StatusCode,
@@ -450,7 +477,7 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		return nil, false, nil
 	}
 	idHost := rangeHostOf(plan)
-	targets, gen, err := g.replicaTargets(plan, g.now())
+	targets, gen, err := g.replicaTargets(ctx, plan, g.now())
 	if err != nil {
 		// 配置读取失败不阻断主路径：副本是加速收益，不是可用性前提。
 		loggw(slog.LevelWarn, "副本候选解析失败，回到顺序路径", ctx, plan, logging.CacheCommitFailed, err)

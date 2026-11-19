@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -95,7 +96,7 @@ func BenchmarkReplicaTargetsNoSelection(b *testing.B) {
 	plan := benchReplicaPlan()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if ts, _, _ := gw.replicaTargets(plan, time.Now()); len(ts) != 0 {
+		if ts, _, _ := gw.replicaTargets(context.Background(), plan, time.Now()); len(ts) != 0 {
 			b.Fatalf("空勾选不应产生候选: %d", len(ts))
 		}
 	}
@@ -107,7 +108,7 @@ func BenchmarkReplicaTargetsFourReplicas(b *testing.B) {
 	plan := benchReplicaPlan()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ts, _, err := gw.replicaTargets(plan, time.Now())
+		ts, _, err := gw.replicaTargets(context.Background(), plan, time.Now())
 		if err != nil || len(ts) != 5 {
 			b.Fatalf("候选=%d err=%v", len(ts), err)
 		}

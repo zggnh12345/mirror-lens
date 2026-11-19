@@ -1,0 +1,717 @@
+{
+  "digest": "sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+  "seq_digest": "sha256:30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5",
+  "repo": "team/app",
+  "seq_repo": "seq/app",
+  "ids": {
+    "A": 1,
+    "B": 2,
+    "C": 3
+  },
+  "hosts": {
+    "A": "gcr.io",
+    "B": "quay.io",
+    "C": "registry.k8s.io"
+  },
+  "requests": {
+    "empty_selection_put": [
+      200,
+      {
+        "mode": "sequential",
+        "ok": true,
+        "selected": []
+      }
+    ],
+    "empty_selection": {
+      "result": {
+        "label": "empty-selection",
+        "status": 200,
+        "ms": 15,
+        "start": 1795132442.4426577,
+        "headers": {
+          "content-length": "396",
+          "content-type": "application/vnd.oci.image.manifest.v1+json",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "r6-A",
+          "x-request-id": "c60ea5b7acbfd4ab"
+        },
+        "bytes": 396,
+        "sha256": "30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5",
+        "digest_ok": true
+      },
+      "delta": {
+        "A": 1,
+        "B": 0,
+        "C": 0
+      }
+    },
+    "race_put": [
+      200,
+      {
+        "mode": "race",
+        "ok": true,
+        "selected": [
+          2,
+          3
+        ]
+      }
+    ],
+    "race": {
+      "result": {
+        "label": "race",
+        "status": 200,
+        "ms": 177,
+        "start": 1795132442.4599292,
+        "headers": {
+          "content-length": "396",
+          "content-type": "application/vnd.oci.image.manifest.v1+json",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "r6-B",
+          "x-request-id": "54b520567f65471d"
+        },
+        "bytes": 396,
+        "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+        "digest_ok": true
+      },
+      "delta": {
+        "A": 0,
+        "B": 1,
+        "C": 1
+      }
+    },
+    "mismatch_control": {
+      "result": {
+        "label": "mismatch-control",
+        "status": 200,
+        "ms": 2813,
+        "start": 1795132442.6474547,
+        "headers": {
+          "content-length": "396",
+          "content-type": "application/vnd.oci.image.manifest.v1+json",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "r6-A",
+          "x-request-id": "5411442838e07500"
+        },
+        "bytes": 396,
+        "sha256": "36753f169acc24de6dae32b5af733cc449f1fd8db03af7c1db8f498b61d3e8ae",
+        "digest_ok": true
+      }
+    },
+    "cache_repeat": {
+      "result": {
+        "label": "cache-hit",
+        "status": 200,
+        "ms": 2,
+        "start": 1795132445.4622586,
+        "headers": {
+          "content-length": "396",
+          "content-type": "application/vnd.oci.image.manifest.v1+json",
+          "x-ml-cache": "HIT",
+          "x-request-id": "18b8643eb8012d3b"
+        },
+        "bytes": 396,
+        "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+        "digest_ok": true
+      },
+      "delta": {
+        "A": 0,
+        "B": 0,
+        "C": 0
+      }
+    }
+  },
+  "assertions": {
+    "empty_selection_no_replica_dispatch": {
+      "ok": true,
+      "detail": {
+        "A": 1,
+        "B": 0,
+        "C": 0
+      }
+    },
+    "empty_selection_no_auto_starred": {
+      "ok": true,
+      "detail": {
+        "delta": {
+          "A": 1,
+          "B": 0,
+          "C": 0
+        },
+        "result": {
+          "label": "empty-selection",
+          "status": 200,
+          "ms": 15,
+          "start": 1795132442.4426577,
+          "headers": {
+            "content-length": "396",
+            "content-type": "application/vnd.oci.image.manifest.v1+json",
+            "x-ml-cache": "MISS",
+            "x-ml-source": "r6-A",
+            "x-request-id": "c60ea5b7acbfd4ab"
+          },
+          "bytes": 396,
+          "sha256": "30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5",
+          "digest_ok": true
+        }
+      }
+    },
+    "race_200_digest_ok": {
+      "ok": true,
+      "detail": {
+        "label": "race",
+        "status": 200,
+        "ms": 177,
+        "start": 1795132442.4599292,
+        "headers": {
+          "content-length": "396",
+          "content-type": "application/vnd.oci.image.manifest.v1+json",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "r6-B",
+          "x-request-id": "54b520567f65471d"
+        },
+        "bytes": 396,
+        "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+        "digest_ok": true
+      }
+    },
+    "race_two_upstreams": {
+      "ok": true,
+      "detail": {
+        "A": 0,
+        "B": 1,
+        "C": 1
+      }
+    },
+    "race_authority_not_dispatched": {
+      "ok": true,
+      "detail_ok_rule": "竞速请求无 target=official；控制组必有 target=official status=401 且耗时>1.5s",
+      "detail": {
+        "request_id": "54b520567f65471d",
+        "race_ms": 177,
+        "race_dispatch_lines": [
+          "副本候选原始查询 request_id=54b520567f65471d kind=registry cache_key=\"docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=quay.io raw=1 sched=1 sched_enabled=true",
+          "副本候选诊断 request_id=54b520567f65471d kind=registry cache_key=\"docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=quay.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=\"\"",
+          "副本候选原始查询 request_id=54b520567f65471d kind=registry cache_key=\"docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=registry.k8s.io raw=1 sched=1 sched_enabled=true",
+          "副本候选诊断 request_id=54b520567f65471d kind=registry cache_key=\"docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=registry.k8s.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=\"\""
+        ],
+        "control_ms": 2813,
+        "control_dispatch_lines": [
+          "副本候选原始查询 request_id=5411442838e07500 kind=registry cache_key=\"docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=quay.io raw=1 sched=1 sched_enabled=true",
+          "副本候选诊断 request_id=5411442838e07500 kind=registry cache_key=\"docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=quay.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=\"\"",
+          "副本候选原始查询 request_id=5411442838e07500 kind=registry cache_key=\"docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=registry.k8s.io raw=1 sched=1 sched_enabled=true",
+          "副本候选诊断 request_id=5411442838e07500 kind=registry cache_key=\"docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" replica=registry.k8s.io mappings=1 sched_candidates=1 preferred_selected=1 skipped=\"\"",
+          "\"副本候选非 200\" request_id=5411442838e07500 kind=registry cache_key=\"docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws\" target=official registry=gcr.io status=401"
+        ]
+      }
+    },
+    "race_parallel_overlap": {
+      "ok": true,
+      "detail": {
+        "b": {
+          "t0": 1795132442.4622908,
+          "t1": 1795132442.5025365,
+          "dur_ms": 40.2
+        },
+        "c": {
+          "t0": 1795132442.4623652,
+          "t1": 1795132442.6229293,
+          "dur_ms": 160.6
+        },
+        "c_started_before_b_finished": true,
+        "b_started_before_c_finished": true,
+        "start_skew_ms": 0.1,
+        "finish_gap_ms": 120.4
+      }
+    },
+    "race_winner_in_window": {
+      "ok": true,
+      "detail": 120.4
+    },
+    "race_source_header_is_winner": {
+      "ok": true,
+      "detail": {
+        "content-length": "396",
+        "content-type": "application/vnd.oci.image.manifest.v1+json",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "r6-B",
+        "x-request-id": "54b520567f65471d"
+      }
+    },
+    "cache_repeat_hit_no_dispatch": {
+      "ok": true,
+      "detail": {
+        "result": {
+          "label": "cache-hit",
+          "status": 200,
+          "ms": 2,
+          "start": 1795132445.4622586,
+          "headers": {
+            "content-length": "396",
+            "content-type": "application/vnd.oci.image.manifest.v1+json",
+            "x-ml-cache": "HIT",
+            "x-request-id": "18b8643eb8012d3b"
+          },
+          "bytes": 396,
+          "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+          "digest_ok": true
+        },
+        "delta": {
+          "A": 0,
+          "B": 0,
+          "C": 0
+        }
+      }
+    },
+    "no_leftover_partial": {
+      "ok": true,
+      "detail": []
+    },
+    "loser_body_closed": {
+      "ok": true,
+      "detail": []
+    },
+    "single_cache_entry_for_digest": {
+      "ok": true,
+      "detail": [
+        {
+          "key": "docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+          "sha256": "36753f169acc24de6dae32b5af733cc449f1fd8db03af7c1db8f498b61d3e8ae",
+          "size": 396,
+          "upstream": "http://127.0.0.1:19601/v2/mism/app/manifests/latest"
+        },
+        {
+          "key": "docker:m:1:gcr.io/seq/app:sha256:30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+          "sha256": "30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5",
+          "size": 396,
+          "upstream": "http://127.0.0.1:19601/v2/seq/app/manifests/sha256:30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5"
+        },
+        {
+          "key": "docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+          "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+          "size": 396,
+          "upstream": "http://127.0.0.1:19602/v2/team/app/manifests/sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0"
+        }
+      ]
+    }
+  },
+  "parallel": {
+    "b": {
+      "t0": 1795132442.4622908,
+      "t1": 1795132442.5025365,
+      "dur_ms": 40.2
+    },
+    "c": {
+      "t0": 1795132442.4623652,
+      "t1": 1795132442.6229293,
+      "dur_ms": 160.6
+    },
+    "c_started_before_b_finished": true,
+    "b_started_before_c_finished": true,
+    "start_skew_ms": 0.1,
+    "finish_gap_ms": 120.4
+  },
+  "metrics_before_race": {},
+  "metrics_after_race": {},
+  "candidates": [
+    {
+      "source": "A",
+      "source_id": 1,
+      "host": "gcr.io",
+      "caps": {
+        "source_id": 1,
+        "host": "gcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":46,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/gcr.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:8f80d20f23543657cbf01f6c538d13e90240a7516ef4f2aa15df659291279493\",\"digest_ok\":-1,\"latency_ms\":47,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      "recovery": {
+        "source_id": 1,
+        "family": "registry",
+        "scope": "gcr.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      },
+      "realm_policy": {
+        "source_id": 1,
+        "host": "gcr.io",
+        "primary_realm": "https://gcr.io",
+        "extra_realms": "[\"https://storage.googleapis.com\"]",
+        "policy_gen": 1
+      },
+      "health_scope": {
+        "source_id": 1,
+        "family": "registry",
+        "scope": "gcr.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      },
+      "source_status": "usable",
+      "preferred": 1,
+      "trusted_source_mapping": true,
+      "in_replica_mapping": false,
+      "effective_status_supported": true,
+      "path_mode_known": true,
+      "recovery_ok": true,
+      "health_fails": 0,
+      "dispatched_in_race": 0,
+      "conclusion": "未进入 crossRace targets（不是权威站，也没有副本映射）"
+    },
+    {
+      "source": "B",
+      "source_id": 2,
+      "host": "quay.io",
+      "caps": {
+        "source_id": 2,
+        "host": "quay.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":46,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:9e64643a905f51e38c6f377b3d2e5c8886b2ccbffda5bb48f5bb0a5cc989ee7b\",\"digest_ok\":-1,\"latency_ms\":44,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      "recovery": {
+        "source_id": 2,
+        "family": "registry",
+        "scope": "quay.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      },
+      "realm_policy": {
+        "source_id": 2,
+        "host": "quay.io",
+        "primary_realm": "https://quay.io",
+        "extra_realms": "null",
+        "policy_gen": 1
+      },
+      "health_scope": {
+        "source_id": 2,
+        "family": "registry",
+        "scope": "quay.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      },
+      "source_status": "usable",
+      "preferred": 1,
+      "trusted_source_mapping": true,
+      "in_replica_mapping": true,
+      "effective_status_supported": true,
+      "path_mode_known": true,
+      "recovery_ok": true,
+      "health_fails": 0,
+      "dispatched_in_race": 1,
+      "conclusion": "进入 crossRace targets 并真实派发"
+    },
+    {
+      "source": "C",
+      "source_id": 3,
+      "host": "registry.k8s.io",
+      "caps": {
+        "source_id": 3,
+        "host": "registry.k8s.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:28dd8762e63a4eec1c8e5b4c81e9ef6674438f206115dbcaf4045159f4702a43\",\"digest_ok\":-1,\"latency_ms\":44,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      "recovery": {
+        "source_id": 3,
+        "family": "registry",
+        "scope": "registry.k8s.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      },
+      "realm_policy": {
+        "source_id": 3,
+        "host": "registry.k8s.io",
+        "primary_realm": "https://registry.k8s.io",
+        "extra_realms": "null",
+        "policy_gen": 1
+      },
+      "health_scope": {
+        "source_id": 3,
+        "family": "registry",
+        "scope": "registry.k8s.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      },
+      "source_status": "usable",
+      "preferred": 1,
+      "trusted_source_mapping": true,
+      "in_replica_mapping": true,
+      "effective_status_supported": true,
+      "path_mode_known": true,
+      "recovery_ok": true,
+      "health_fails": 0,
+      "dispatched_in_race": 1,
+      "conclusion": "进入 crossRace targets 并真实派发"
+    }
+  ],
+  "snapshot_after": {
+    "caps": [
+      {
+        "source_id": 1,
+        "host": "docker.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 1,
+        "host": "gcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":46,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/gcr.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:8f80d20f23543657cbf01f6c538d13e90240a7516ef4f2aa15df659291279493\",\"digest_ok\":-1,\"latency_ms\":47,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      {
+        "source_id": 1,
+        "host": "ghcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 2,
+        "host": "docker.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 2,
+        "host": "ghcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 2,
+        "host": "quay.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":46,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/quay.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:9e64643a905f51e38c6f377b3d2e5c8886b2ccbffda5bb48f5bb0a5cc989ee7b\",\"digest_ok\":-1,\"latency_ms\":44,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      },
+      {
+        "source_id": 3,
+        "host": "docker.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 3,
+        "host": "ghcr.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": ""
+      },
+      {
+        "source_id": 3,
+        "host": "registry.k8s.io",
+        "enabled": 1,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "diagnostics": "{\"version\":2,\"repo\":\"probe/app\",\"tag\":\"latest\",\"native\":{\"mode\":\"native\",\"path\":\"/v2/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:b645e83e000a4df4fc12d5ba6e9c17c46fc82daff31bf7d997ac12a0cd1e1252\",\"digest_ok\":-1,\"latency_ms\":42,\"detail\":\"内容自洽，未与官方基准比对\"},\"host_prefix\":{\"mode\":\"host_prefix\",\"path\":\"/v2/registry.k8s.io/probe/app/manifests/latest\",\"verdict\":\"yes\",\"cap\":1,\"http_code\":200,\"media_type\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:28dd8762e63a4eec1c8e5b4c81e9ef6674438f206115dbcaf4045159f4702a43\",\"digest_ok\":-1,\"latency_ms\":44,\"detail\":\"内容自洽，未与官方基准比对\"},\"selected\":\"native\"}"
+      }
+    ],
+    "recovery": [
+      {
+        "source_id": 1,
+        "family": "registry",
+        "scope": "gcr.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      },
+      {
+        "source_id": 2,
+        "family": "registry",
+        "scope": "quay.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      },
+      {
+        "source_id": 3,
+        "family": "registry",
+        "scope": "registry.k8s.io",
+        "state": "ok",
+        "gen": 0,
+        "last_probe_at": 1795132438,
+        "last_success_at": 1795132438,
+        "next_probe_at": 1795218838,
+        "last_error": ""
+      }
+    ],
+    "settings": [
+      {
+        "key": "cross_registry_mode",
+        "value": "race"
+      },
+      {
+        "key": "cross_registry_selected_sources",
+        "value": "[2,3]"
+      }
+    ],
+    "cache_entries": [
+      {
+        "key": "docker:m:1:gcr.io/mism/app:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+        "sha256": "36753f169acc24de6dae32b5af733cc449f1fd8db03af7c1db8f498b61d3e8ae",
+        "size": 396,
+        "upstream": "http://127.0.0.1:19601/v2/mism/app/manifests/latest"
+      },
+      {
+        "key": "docker:m:1:gcr.io/seq/app:sha256:30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+        "sha256": "30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5",
+        "size": 396,
+        "upstream": "http://127.0.0.1:19601/v2/seq/app/manifests/sha256:30030f70e513828ba6701faacf540d2c1472224063dba92273995d224fa6eea5"
+      },
+      {
+        "key": "docker:m:1:gcr.io/team/app:sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws",
+        "sha256": "00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0",
+        "size": 396,
+        "upstream": "http://127.0.0.1:19602/v2/team/app/manifests/sha256:00e7112adf4466ea9bf2c51c4837362889ec030c26f8e24341e0fc8261b941e0"
+      }
+    ],
+    "mappings": [
+      {
+        "registry_host": "gcr.io",
+        "source_id": 1,
+        "priority": 100,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      },
+      {
+        "registry_host": "quay.io",
+        "source_id": 2,
+        "priority": 100,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      },
+      {
+        "registry_host": "registry.k8s.io",
+        "source_id": 3,
+        "priority": 100,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      }
+    ],
+    "replicas": [
+      {
+        "authority_registry": "gcr.io",
+        "authority_repository": "mism/app",
+        "replica_registry": "quay.io",
+        "replica_repository": "mism/app",
+        "priority": 100,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      },
+      {
+        "authority_registry": "gcr.io",
+        "authority_repository": "team/app",
+        "replica_registry": "quay.io",
+        "replica_repository": "team/app",
+        "priority": 100,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      },
+      {
+        "authority_registry": "gcr.io",
+        "authority_repository": "mism/app",
+        "replica_registry": "registry.k8s.io",
+        "replica_repository": "mism/app",
+        "priority": 200,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      },
+      {
+        "authority_registry": "gcr.io",
+        "authority_repository": "team/app",
+        "replica_registry": "registry.k8s.io",
+        "replica_repository": "team/app",
+        "priority": 200,
+        "valid_from": 0,
+        "valid_until": 0,
+        "enabled": 1
+      }
+    ],
+    "health_scope": [
+      {
+        "source_id": 1,
+        "family": "registry",
+        "scope": "gcr.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      },
+      {
+        "source_id": 2,
+        "family": "registry",
+        "scope": "quay.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      },
+      {
+        "source_id": 3,
+        "family": "registry",
+        "scope": "registry.k8s.io",
+        "gen": 0,
+        "fails": 0,
+        "ok_at": 1795132438,
+        "last_at": 1795132438
+      }
+    ]
+  }
+}

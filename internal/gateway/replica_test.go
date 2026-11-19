@@ -455,7 +455,7 @@ func TestReplicaAuthorityNotCountedInM(t *testing.T) {
 	for i, h := range []string{"gcr.io", "public.ecr.aws", "mcr.microsoft.com", "cgr.dev"} {
 		f.addReplica(t, h, fmt.Sprintf("mirror/kube-apiserver-%d", i), body)
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestReplicaEmptySelectionDegrades(t *testing.T) {
 	if err := f.st.SetCrossSelectedSources(nil, "admin", ""); err != nil {
 		t.Fatalf("清空勾选: %v", err)
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
@@ -608,7 +608,7 @@ func TestReplicaRequiresSelection(t *testing.T) {
 	if err := f.st.SetCrossSelectedSources([]int64{other}, "admin", ""); err != nil {
 		t.Fatalf("勾选: %v", err)
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
@@ -633,7 +633,7 @@ func TestCrossSelectedStaleEntryFiltered(t *testing.T) {
 	if got := f.st.EffectiveCrossSelected(); got[f.srcID] {
 		t.Fatal("撤星后陈旧勾选条目必须失效")
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestReplicaExcludesPrivateAuthority(t *testing.T) {
 		Hosts:        map[string]bool{"registry.k8s.io": true},
 		Creds:        &fakeCreds{host: "registry.k8s.io"},
 	}
-	ts, _, err := f.gw.replicaTargets(f.plan, time.Now())
+	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
