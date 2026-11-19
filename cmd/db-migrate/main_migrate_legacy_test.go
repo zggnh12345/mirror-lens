@@ -264,6 +264,24 @@ func compareLegacyTarget(t *testing.T, baseline, srcPath string, dst *sql.DB) {
 			}
 			continue
 		}
+		if name == "trusted_mapping_generation" {
+			// 3.5.17 新表的 Generation 行由 backfillTrustedMappings 建，
+			// 映射与审计仍必须为空（显式可信关系不能从旧结构推断）。
+			for _, t2 := range []string{"trusted_source_mappings", "trusted_mapping_audit"} {
+				if n, _ := tableFingerprint(t, dst, t2); n != 0 {
+					t.Fatalf("F08 映射/审计迁移后应为空，%s 实际 %d 行", t2, n)
+				}
+			}
+			var orphans int
+			if err := dst.QueryRow(`SELECT count(*) FROM trusted_mapping_generation g
+				WHERE g.registry_host NOT IN (SELECT host FROM source_host_caps)`).Scan(&orphans); err != nil {
+				t.Fatal(err)
+			}
+			if orphans != 0 {
+				t.Fatalf("Generation 有 %d 个不属于任何能力 Host 的行", orphans)
+			}
+			continue
+		}
 		if name == "source_host_caps" {
 			// 3.5.14a 新表由 backfillHostCaps 填充，不是旧库复制。
 			n, _ := tableFingerprint(t, dst, name)

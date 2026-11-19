@@ -241,6 +241,9 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/policy-audit", guard(s.policyAudit))
 	mux.HandleFunc("/api/trusted", guard(csrf(s.trusted)))
 	mux.HandleFunc("/api/trusted/", guard(csrf(s.trustedItem)))
+	// 3.5.17 F08：显式可信映射（runtime 表 + 追加审计 + Generation）。
+	mux.HandleFunc("/api/trusted-mappings", guard(csrf(s.trustedMappings)))
+	mux.HandleFunc("/api/trusted-mapping-audit", guard(s.trustedMappingAudit))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
 	mux.HandleFunc("/api/sched-order", guard(csrf(s.schedOrder)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))

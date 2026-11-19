@@ -29,8 +29,8 @@ func TestInputSchemaFingerprintsFrozen(t *testing.T) {
 			t.Errorf("baseline=%s 的输入指纹不是 64 位 sha256: %q", baseline, h)
 		}
 	}
-	if len(inputSchemaFingerprints) != 5 {
-		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11 五个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
+	if len(inputSchemaFingerprints) != 6 {
+		t.Fatalf("只允许冻结 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11/3.5.14 六个输入指纹，实际 %d 个", len(inputSchemaFingerprints))
 	}
 	want := map[string]string{
 		"3.4.6":  "972db548d1eac569aec7ae11d859cdfbcd9114a0ee2dd1217ca085ca5a4d835f",
@@ -38,6 +38,7 @@ func TestInputSchemaFingerprintsFrozen(t *testing.T) {
 		"3.5.5":  "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
 		"3.5.7":  "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
 		"3.5.11": "e39e119719633ea8565bfba60f03f34e525259aa177235f97145bca9569f2611",
+		"3.5.14": "7e5d71a711609eeb3d5e0cc883f1b5163268ff84e904a79370a2af93e0c1e28c",
 	}
 	for baseline, expected := range want {
 		if got := inputSchemaFingerprints[baseline]; got != expected {

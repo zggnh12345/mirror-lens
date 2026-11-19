@@ -76,13 +76,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `用法:
   db-migrate init       --out 新库 [--baseline fresh]
   db-migrate checkpoint --db 副本数据库
-  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5|3.5.7|3.5.11
+  db-migrate migrate    --in 旧库 --out 新库 --baseline 3.4.6|3.5.4|3.5.5|3.5.7|3.5.11|3.5.14
   db-migrate upgrade356 --in 3.5.6库 --out 新库
   db-migrate verify     --db 数据库
   db-migrate inspect    --db 数据库
 
 迁移前必须停服务，并确保旧库没有未合并的 -wal。工具会拒绝覆盖已存在的目标文件。
-migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11 Schema 指纹；--force-baseline 不再绕过结构校验。
+migrate 的输入库必须匹配已冻结的 3.4.6/3.5.4/3.5.5/3.5.7/3.5.11/3.5.14 Schema 指纹；--force-baseline 不再绕过结构校验。
 upgrade356 要求源库为 3.5.6 Canonical（结构 hash 已等于 3.5.7 Canonical），只改版本标签。`)
 	os.Exit(2)
 }
@@ -267,16 +267,24 @@ func runMigrate(args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "step: host-caps")
-	if err := backfillHostCaps(target, *baseline); err != nil {
-		return err
+	// 3.5.14 的 source_host_caps 与 source_realm_policy 已经是权威数据：
+	// 这两张表随 copy 原样搬过来，再回填会撞主键、也会污染既有策略。
+	if *baseline != "3.5.14" {
+		if err := backfillHostCaps(target, *baseline); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "step: policy")
+		if err := plan.backfillPolicies(target); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintln(os.Stderr, "step: policy")
-	if err := plan.backfillPolicies(target); err != nil {
+	fmt.Fprintln(os.Stderr, "step: trusted-mappings")
+	if err := backfillTrustedMappings(target); err != nil {
 		return err
 	}
 	// copyAll 的 Counts 是回填前的快照；这两张表在回填后行数会变，报告必须
 	// 反映最终库，否则会把 194 行误报成 40 行。
-	for _, t := range []string{"source_host_caps", "source_realm_policy"} {
+	for _, t := range []string{"source_host_caps", "source_realm_policy", "trusted_mapping_generation"} {
 		var n int64
 		if err := target.QueryRow(`SELECT count(*) FROM "` + t + `"`).Scan(&n); err != nil {
 			return fmt.Errorf("统计回填后 %s: %w", t, err)
@@ -768,6 +776,8 @@ type migrationPlan struct {
 	Skipped    []string
 	PolicyRows int
 	PolicyGaps []PolicyGap
+	// Baseline 是本次迁移的输入基线，validate 据此选择列要求。
+	Baseline string
 }
 
 // PolicyGap 是迁移时无法自动种子化的 Source×Host。它不阻断迁移，
@@ -790,6 +800,8 @@ var inputSchemaFingerprints = map[string]string{
 	"3.5.5":  "0842cd1efa4b7330cf53a7f9d98491597481cfcec80d1b5560bf8f9f0ef81170",
 	"3.5.7":  "7b984881e7875f712b9a71162cc9d3615690efe42a6f5db1185c1e5138e8f51e",
 	"3.5.11": "e39e119719633ea8565bfba60f03f34e525259aa177235f97145bca9569f2611",
+	// 3.5.14 是 3.5.17 的直接上游：只新增 F08 三张表，不改既有表语义。
+	"3.5.14": "7e5d71a711609eeb3d5e0cc883f1b5163268ff84e904a79370a2af93e0c1e28c",
 }
 
 func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) (*migrationPlan, error) {
@@ -801,7 +813,7 @@ func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) 
 	if err != nil {
 		return nil, err
 	}
-	p := &migrationPlan{Counts: map[string]int64{}}
+	p := &migrationPlan{Counts: map[string]int64{}, Baseline: baseline}
 	names := make([]string, 0, len(targetTables))
 	for name := range targetTables {
 		names = append(names, name)
@@ -896,6 +908,16 @@ func buildPlan(target, src *sql.DB, baseline string, hostMap map[string]string) 
 func (p *migrationPlan) validate() error {
 	for _, t := range p.Tables {
 		if t.Name == "sources" {
+			// 3.5.14 的 sources 已是 Canonical 形态（14c 已删旧能力列），
+			// 它需要的是「直接复制」而不是旧列映射，因此不要求 docker_cap。
+			if p.Baseline == "3.5.14" {
+				for _, c := range []string{"id", "base_url", "github_cap"} {
+					if !t.SourceCols[c] {
+						return fmt.Errorf("sources 缺少必要列 %s", c)
+					}
+				}
+				continue
+			}
 			for _, c := range []string{"id", "base_url", "docker_cap", "ghcr_cap", "github_cap"} {
 				if !t.SourceCols[c] {
 					return fmt.Errorf("sources 缺少必要列 %s；该旧版本需要单独的 V1 映射，不在本工具支持范围", c)
@@ -918,6 +940,11 @@ func allowedMissingSourceTable(baseline, table string) bool {
 	}
 	// 3.5.14a 新表：旧库没有，迁移后由 backfillHostCaps 填充。
 	if table == "source_host_caps" {
+		return true
+	}
+	// 3.5.17 F08 三张表：所有旧库都没有，迁移后由 backfillTrustedMappings 建 Generation 行。
+	switch table {
+	case "trusted_source_mappings", "trusted_mapping_generation", "trusted_mapping_audit":
 		return true
 	}
 	if baseline == "3.4.6" {
@@ -1074,6 +1101,45 @@ func copyAll(db *sql.DB, p *migrationPlan) error {
 }
 
 // backfillHostCaps 从旧 sources 能力列生成 source_host_caps。
+// 规则与 docs/3.5.14-freeze.md §3.2 一致：
+//   - 每个 Source 都生成 docker.io 和 ghcr.io 行；
+//   - 原 repo_host 是非 Hub Host 时生成一行 Foreign；
+//
+// backfillTrustedMappings 为「已配置过能力的每个 Registry Host」建一行
+// generation=1。映射本身不从旧结构推断：F08 是显式可信关系，只能管理员
+// 录入，迁移不能凭 repo_host 或 probes 猜出一份「看起来可信」的映射。
+func backfillTrustedMappings(db *sql.DB) error {
+	rows, err := db.Query(`SELECT DISTINCT host FROM source_host_caps WHERE host <> '' ORDER BY host`)
+	if err != nil {
+		return fmt.Errorf("读取候选 Host: %w", err)
+	}
+	var hosts []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			rows.Close()
+			return err
+		}
+		hosts = append(hosts, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, h := range hosts {
+		if _, err := tx.Exec(`INSERT INTO trusted_mapping_generation(registry_host, generation)
+			VALUES(?, 1) ON CONFLICT(registry_host) DO NOTHING`, h); err != nil {
+			return fmt.Errorf("建 %s 的 Generation 行: %w", h, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // 规则与 docs/3.5.14-freeze.md §3.2 一致：
 //   - 每个 Source 都生成 docker.io 和 ghcr.io 行；
 //   - 原 repo_host 是非 Hub Host 时生成一行 Foreign；

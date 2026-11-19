@@ -90,6 +90,44 @@ CREATE TABLE source_host_caps (
 CREATE INDEX idx_source_host_caps_host
 ON source_host_caps(host, effective_status, enabled);
 
+-- 3.5.17 F08：显式可信映射。运行时表只保存当前配置，历史全部进审计表。
+-- 一个 Host 可对应多个可信 Source；永久有效用 valid_until=0；
+-- 到期不删除记录，只不参与候选选择。
+CREATE TABLE trusted_source_mappings (
+  registry_host TEXT NOT NULL,
+  source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 100 CHECK(priority >= 0),
+  valid_from INTEGER NOT NULL DEFAULT 0,
+  valid_until INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  PRIMARY KEY(registry_host, source_id),
+  CHECK(valid_until = 0 OR valid_from = 0 OR valid_until > valid_from)
+);
+
+CREATE INDEX idx_trusted_source_mappings_lookup
+ON trusted_source_mappings(registry_host, enabled, priority, source_id);
+
+-- 每个规范化 Registry Host 独立代次；任何映射变更同事务递增。
+CREATE TABLE trusted_mapping_generation (
+  registry_host TEXT PRIMARY KEY,
+  generation INTEGER NOT NULL DEFAULT 1 CHECK(generation >= 1)
+);
+
+-- 追加式审计：删除前后快照都写这里；无外键，Source 级联删除后历史保留。
+CREATE TABLE trusted_mapping_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  registry_host TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  operation TEXT NOT NULL,
+  old_snapshot TEXT,
+  new_snapshot TEXT,
+  actor TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_trusted_mapping_audit_host
+ON trusted_mapping_audit(registry_host, created_at DESC);
+
 CREATE TABLE checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

@@ -97,6 +97,7 @@ var fieldDocs = map[string]string{
 	"hedge.enabled":                 "是否启用对冲请求（首选源慢时补发第二路）",
 	"hedge.after_ms":                "首选源多少毫秒没有响应头就补发第二路",
 	"hedge.grace_ms":                "第二路先到后，再给首选源多少毫秒的宽限",
+	"registry.unified_framework":    "统一执行框架总开关（默认 true）；关闭时整条请求回到旧执行链，不允许单请求混用新旧框架（T62）",
 	"registry.race_after_ms":        "同 Host 双路 Manifest 竞速的耐心预算；0 表示复用 hedge.after_ms，开关不在这里（默认全关）",
 	"relay":                         "信任中转的 IP 钉死与解析策略",
 	"relay.pin_grace_hours":         "首次解析失败后的迁移窗口（小时），到期停止未钉 IP 的拨号",
