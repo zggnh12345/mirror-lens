@@ -18,7 +18,8 @@ func GlobalCapacity(n, workers, c, a int) int {
 	if workers < 2 {
 		workers = 4
 	}
-	if c <= 0 {
+	if c <= 0 || c > 2 {
+		// C=2 是冻结值，不可通过配置任意扩大（1.6 §B.7.1）；与 A 的上限同口径。
 		c = 2
 	}
 	if a <= 0 || a > 2 {

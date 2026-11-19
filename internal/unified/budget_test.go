@@ -262,3 +262,50 @@ func TestGlobalCapacityFormula(t *testing.T) {
 		t.Fatalf("G 必须为正，得到 %d", got)
 	}
 }
+
+// G 边界（第四轮专项）：W=2 时段数由 C×A 决定（fx 不叠加），
+// fb 链已包含在 W+1 里，不另加项；limits 关闭时内部仍有有限硬上限。
+func TestGlobalCapacityBoundaries(t *testing.T) {
+	// W=2 → max(W+1=3, C×A=4, 2) = 4 → 200×4+4。
+	if got := GlobalCapacity(200, 2, 2, 2); got != 804 {
+		t.Fatalf("W=2 G=%d，want 804（段数由 C×A 决定）", got)
+	}
+	// W=1 按冻结前提回填 4（2~16），不得因为 W 小就放宽到更窄。
+	if got := GlobalCapacity(200, 1, 2, 2); got != 1004 {
+		t.Fatalf("W=1 应回填默认 4，G=%d", got)
+	}
+	// fb 的并发（每条链最多 1 路）由 W+1 覆盖：G 不随 fb 数量再涨。
+	// 同一 N/W/C/A 下重复计算必须稳定，且不因 fb 参战翻倍。
+	base := GlobalCapacity(200, 4, 2, 2)
+	if again := GlobalCapacity(200, 4, 2, 2); again != base {
+		t.Fatalf("G 公式不确定: %d vs %d", base, again)
+	}
+	// C 上限冻结 2：传更大的 C 也不放大（与 A 的 clamp 同口径）。
+	if got := GlobalCapacity(200, 4, 8, 2); got != 1004 {
+		t.Fatalf("C=8 必须被收敛到冻结值 2，实得 G=%d", got)
+	}
+	// limits.enabled=false：N 缺省仍回填 200 → 内部硬上限存在，不是无限大。
+	if got := GlobalCapacity(0, 4, 2, 2); got != 1004 {
+		t.Fatalf("limits 关闭时 N 缺省应回填 200，G=%d", got)
+	}
+}
+
+// Pool 在 capacity<=0 时也必须落到有限默认值（不能变成无界）。
+func TestPoolNeverUnbounded(t *testing.T) {
+	p := NewPool(0)
+	if p.Capacity() != 1004 {
+		t.Fatalf("默认池容量=%d，want 1004", p.Capacity())
+	}
+	if got := NewPool(-5).Capacity(); got != 1004 {
+		t.Fatalf("负容量应回填默认，得到 %d", got)
+	}
+	// 占满后 TryAcquire 必须失败，证明是真信号量而不是无界队列。
+	for i := 0; i < p.Capacity(); i++ {
+		if !p.TryAcquire() {
+			t.Fatalf("第 %d 个名额应可取得", i+1)
+		}
+	}
+	if p.TryAcquire() {
+		t.Fatal("容量用尽后不得再取到名额")
+	}
+}

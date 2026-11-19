@@ -79,3 +79,36 @@ func TestUnverifiedPartialDropped(t *testing.T) {
 		t.Fatalf("数据文件也应清掉，实际 %d 字节", fi.Size())
 	}
 }
+
+// G0：resume 来源必须与实际回源来源一致。绑定别的源的 .part 一律丢弃，
+// 否则会把上一个源的半截内容当成本源的续传基点。
+func TestPickPartialRejectsOtherSource(t *testing.T) {
+	g, cs, plan := newPartialFixture(t)
+	partPath, _ := cs.PartialPaths(plan.CacheKey)
+	f, err := os.Create(partPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 400)); err != nil {
+		t.Fatal(err)
+	}
+	resp := &http.Response{Header: hdr(
+		"ETag", `"v1"`,
+		"Content-Type", "application/octet-stream",
+	)}
+	g.keepPartial(plan, resp, 1000, 400, f)
+
+	if got := g.pickPartial(plan.CacheKey, plan.Upstream); got == nil {
+		t.Fatal("同源续传应被接受")
+	}
+	other, _ := url.Parse("http://other.example/v2/blob/sha256:abc")
+	if got := g.pickPartial(plan.CacheKey, other); got != nil {
+		t.Fatalf("跨源 .part 必须丢弃，实际 URL=%s", got.URL)
+	}
+	if _, ok := cs.ReadPartial(plan.CacheKey); ok {
+		t.Fatal("跨源 .part 元数据未清理")
+	}
+	if _, err := os.Stat(partPath); !os.IsNotExist(err) {
+		t.Fatalf("跨源 .part 数据文件未清理: %v", err)
+	}
+}

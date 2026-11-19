@@ -287,3 +287,15 @@
 而是 B.4「全部候选失败后按权威 Registry 原有错误语义返回」，其用量仍受 R 约束。
 
 B17 的 UI 只做了静态接线与 API 验证，没有浏览器点击验收 → 记 `SIMULATED_PASS`。
+
+### 阶段 D/E：G0 矩阵与 G 边界
+
+- 新增 `docs/3.5.17-g0-matrix.md`：8 项 G0 逐条映射到实际测试名（含反向核对：
+  文档引用的每个 `Test*` 都存在于测试树，差集为空）。第 7 项此前只有实现、没有
+  专用断言，本轮抽出 `pickPartial` 并补 `TestPickPartialRejectsOtherSource`。
+- G 边界：`TestGlobalCapacityBoundaries`（W=2 → 804，段数由 C×A 决定；W=1 回填 4；
+  C 传大值收敛到冻结 2；N 缺省 200）、`TestPoolNeverUnbounded`（容量 0/负数回填 1004、
+  真信号量占满即拒）、`TestDisabledStillKeepsInternalCapacity`（limits.enabled=false
+  时 N 仍回填 200，内部 G=1004，不存在「关闭外部限流 = 无上限」）。
+- `GlobalCapacity` 的 C 上限收敛到 2（与 A≤2 同口径）：此前只 clamp A，传入更大 C
+  会按倍数放大 G。

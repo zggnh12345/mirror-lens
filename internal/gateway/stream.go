@@ -136,13 +136,7 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 	prev, _ := g.st.CacheGet(plan.CacheKey)
 
 	var pm *cache.PartialMeta
-	if p, ok := g.cache.ReadPartial(plan.CacheKey); ok {
-		if p.URL == plan.Upstream.String() {
-			pm = p
-		} else {
-			g.cache.DropPartial(plan.CacheKey)
-		}
-	}
+	pm = g.pickPartial(plan.CacheKey, plan.Upstream)
 
 	// 冷对象只放一个请求回源：热门发布时 N 个客户端同时下同一个包，
 	// 不合并的话就是 N 份上游流量，而且互相抢带宽（实测 3 并发 12MB
@@ -991,6 +985,20 @@ func (g *Gateway) savePartialOrDrop(plan *adapter.Plan, resp *http.Response, tot
 		return
 	}
 	g.keepPartial(plan, resp, total, persisted, part)
+}
+
+// pickPartial 只接受绑定当前上游的 .part。来源变了就丢弃：把上一个源的半截
+// 内容当成本源续传基点会写入错误字节（G0：resume 来源与实际回源来源一致）。
+func (g *Gateway) pickPartial(key string, u *url.URL) *cache.PartialMeta {
+	p, ok := g.cache.ReadPartial(key)
+	if !ok {
+		return nil
+	}
+	if u != nil && p.URL == u.String() {
+		return p
+	}
+	g.cache.DropPartial(key)
+	return nil
 }
 
 func (g *Gateway) keepPartial(plan *adapter.Plan, resp *http.Response, total, persisted int64, part *os.File) {

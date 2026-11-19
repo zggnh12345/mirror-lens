@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 )
 
 func okHandler() http.Handler {
@@ -306,5 +308,20 @@ func TestRefundRestoresGlobalToken(t *testing.T) {
 	l.refund(now, "g:")
 	if !l.take("g:", 1, 1, now) {
 		t.Fatal("归还后应能再放行一次")
+	}
+}
+
+// limits.enabled=false 只关外部入口限流；内部的 Registry RequestScope 容量
+// 仍必须由有限 N 推出（G=1004），不能变成「无上限」。
+func TestDisabledStillKeepsInternalCapacity(t *testing.T) {
+	l := New(Config{Enabled: false})
+	if l.cfg.Enabled {
+		t.Fatal("显式关闭不能被 New 覆盖")
+	}
+	if l.cfg.GlobalConcurrency != 200 {
+		t.Fatalf("关闭外部限流时 N 仍应回填 200，实际 %d", l.cfg.GlobalConcurrency)
+	}
+	if got := unified.GlobalCapacity(l.cfg.GlobalConcurrency, 4, 2, 2); got != 1004 {
+		t.Fatalf("内部 G=%d，want 1004（硬上限必须存在）", got)
 	}
 }
