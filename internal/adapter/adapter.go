@@ -53,6 +53,11 @@ type Plan struct {
 	// LogicalHost 是 Registry 的逻辑仓库 Host（如 registry.k8s.io），
 	// 不是镜像站 Host。认证策略和 scope 都按它算，host_prefix 不能混用。
 	LogicalHost string
+	// Repo 与 Ref 是本次请求的仓库名与引用（tag 或 digest），与
+	// LogicalHost 一起构成 Claim 的 Identity。它们不是缓存身份：
+	// 缓存身份仍由 CacheKey 决定（3.5.17 design §2.2）。
+	Repo string
+	Ref  string
 	// Registry 为真表示这是 /v2/ 的 Registry plan。认证策略必须显式声明，
 	// 不能靠 LogicalHost 是否为空来猜；11a 之前这里只有 LogicalHost。
 	Registry bool

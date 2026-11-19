@@ -225,6 +225,32 @@ func (s *Scope) Exhausted() bool {
 // Ledger 返回结果账本。
 func (s *Scope) Ledger() *Ledger { return s.ledger }
 
+// Claims 返回 Claim 表快照（Identity→状态），供验收断言「零重复 Dispatched」。
+func (s *Scope) Claims() map[Identity]ClaimState {
+	if s == nil {
+		return nil
+	}
+	return s.claims.snapshot()
+}
+
+// DispatchedClaims 返回已越过发送提交边界的 Identity 数。
+func (s *Scope) DispatchedClaims() int {
+	if s == nil {
+		return 0
+	}
+	return s.claims.dispatchedCount()
+}
+
+// ChainCount 返回当前登记的执行链数（诊断/验收用）。
+func (s *Scope) ChainCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.chains)
+}
+
 // Close 关闭 Scope：拒绝新链、释放全局池名额。必须在所有 Body 关闭、
 // Lease 释放之后调用；它不等待在途 Attempt（Wait 负责）。可重复调用。
 func (s *Scope) Close() {

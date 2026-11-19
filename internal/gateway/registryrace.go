@@ -22,6 +22,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/store"
+	"github.com/zggnh12345/mirror-lens/internal/unified"
 )
 
 const (
@@ -268,6 +269,9 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 	if n < 2 {
 		return nil, -1, time.Time{}, errRaceNoCandidate
 	}
+	// 3.5.17：A 站内竞速的所有 Attempt 属于同一条 A 链，因此共享同一个
+	// Claim（同 Identity 多 Source 可并发，不重复 Dispatched）。
+	ctx = withUnifiedChain(ctx, unified.ChainA)
 	ch := make(chan raceResult, n)
 	done := make(chan struct{})
 	taken := make([]chan struct{}, n)
@@ -341,6 +345,9 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 				if up != nil {
 					up.resp.Body.Close()
 					up.cancel()
+					if up.att != nil {
+						up.att.abort()
+					}
 				}
 				ch <- raceResult{slot: slot, start: st, err: errHedgeCanceled}
 				return
@@ -356,6 +363,9 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 			case <-done:
 				up.resp.Body.Close()
 				up.cancel()
+				if up.att != nil {
+					up.att.abort()
+				}
 			}
 		}()
 		return true

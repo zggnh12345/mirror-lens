@@ -304,6 +304,8 @@ func TestHedgeMetrics(t *testing.T) {
 	setup(t)
 	HedgeTrigger()
 	HedgeTrigger()
+	// 触发与实际额外请求是两件事：第二路可能因为预算/名额没有发出（D-03）。
+	HedgeExtraRequest()
 	HedgeWin(1)
 	HedgeWin(2)
 	HedgeWin(2)
@@ -314,7 +316,7 @@ func TestHedgeMetrics(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"mirrorlens_hedge_triggered_total 2",
-		"mirrorlens_hedge_extra_requests_total 2",
+		"mirrorlens_hedge_extra_requests_total 1",
 		`mirrorlens_hedge_wins_total{rank="1"} 1`,
 		`mirrorlens_hedge_wins_total{rank="2"} 2`,
 	} {

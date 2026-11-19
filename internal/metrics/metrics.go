@@ -94,6 +94,9 @@ type Registry struct {
 	hedgeTrigger uint64
 	hedgeWins    [2]uint64
 	hedgeExtra   uint64
+	// 3.5.17：fb 静态抑制与 per-Registry 顺序重试。
+	fbSuppressed  uint64
+	registryRetry uint64
 	// 3.5.16 Registry Manifest 竞速：与通用 Hedge 分开计量，
 	// 否则两者混在一起既看不出竞速是否生效，也会污染既有 dashboard 查询。
 	raceStarted    map[string]uint64 // layer|host -> 次数
@@ -377,9 +380,8 @@ type srcMissKey struct {
 	code int
 }
 
-// SourceMiss 记一次源上没有该资源。镜像少一个文件不代表源站坏了，
-// 故不进健康分、不进避退，单独计数。
-// HedgeTrigger 记录一次对冲触发（也就是多打出了一个上游请求）。
+// HedgeTrigger 记录一次对冲触发（策略决策）。它不再同时增加「额外请求」：
+// 触发后第二路可能因预算/名额没发出去，两个指标必须能分开读（D-03）。
 func HedgeTrigger() {
 	r := current.Load()
 	if r == nil {
@@ -387,7 +389,42 @@ func HedgeTrigger() {
 	}
 	r.mu.Lock()
 	r.hedgeTrigger++
+	r.mu.Unlock()
+}
+
+// HedgeExtraRequest 记录一次真正多打出去的上游请求。
+func HedgeExtraRequest() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
 	r.hedgeExtra++
+	r.mu.Unlock()
+}
+
+// FallbackSuppressed 记录被静态抑制快照剔除的备用目标数。
+func FallbackSuppressed(n int) {
+	if n <= 0 {
+		return
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.fbSuppressed += uint64(n)
+	r.mu.Unlock()
+}
+
+// RegistryRetry 记录一次顺序路径上的 per-Registry 重试（B16）。
+func RegistryRetry() {
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.registryRetry++
 	r.mu.Unlock()
 }
 
@@ -495,6 +532,8 @@ func HedgeWin(rank int) {
 	r.mu.Unlock()
 }
 
+// SourceMiss 记一次源上没有该资源。镜像少一个文件不代表源站坏了，
+// 故不进健康分、不进避退，单独计数。
 func SourceMiss(kind string, code int) {
 	if code != http.StatusNotFound && code != http.StatusGone {
 		return
@@ -1085,6 +1124,16 @@ func (r *Registry) render() []byte {
 		b.WriteString("# TYPE " + prefix + "hedge_wins_total counter\n")
 		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"1\"} %d\n", prefix, r.hedgeWins[0])
 		fmt.Fprintf(&b, "%shedge_wins_total{rank=\"2\"} %d\n", prefix, r.hedgeWins[1])
+	}
+	if r.fbSuppressed > 0 {
+		b.WriteString("# HELP " + prefix + "fallback_suppressed_total 被静态抑制快照剔除的备用目标数\n")
+		b.WriteString("# TYPE " + prefix + "fallback_suppressed_total counter\n")
+		fmt.Fprintf(&b, "%sfallback_suppressed_total %d\n", prefix, r.fbSuppressed)
+	}
+	if r.registryRetry > 0 {
+		b.WriteString("# HELP " + prefix + "registry_retry_total 顺序路径 per-Registry 重试次数（B16）\n")
+		b.WriteString("# TYPE " + prefix + "registry_retry_total counter\n")
+		fmt.Fprintf(&b, "%sregistry_retry_total %d\n", prefix, r.registryRetry)
 	}
 	if len(r.raceStarted) > 0 {
 		b.WriteString("# HELP " + prefix + "registry_race_started_total 形成同 Host 双路竞速的次数\n")

@@ -93,6 +93,7 @@ type Gateway struct {
 	disabledHosts map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
 	scopePool     *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
 	scopeCfg      unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
+	unifiedOff    bool                                       // 3.5.17 部署期全局回退（T62）
 	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
 	priv          PrivateOptions                             // 私有请求的中转与回退策略
 	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
@@ -204,6 +205,10 @@ type Options struct {
 	ScopeConfig unified.ScopeConfig
 	// PTransport 仅供测试注入；nil 时 New 自动把底层 Transport 包成计量点。
 	PTransport *unified.PTransport
+	// UnifiedOff 关闭 3.5.17 统一执行框架（部署期全局回退，T62）。
+	// 关闭后请求不建 RequestScope：Claim/预算/Range 全部回到旧执行链，
+	// 不会出现单请求混用新旧框架。
+	UnifiedOff bool
 
 	// 三类加速的独立开关（默认全开，零值即开启）。
 	// Off 而不是 On：老调用方不传这几个字段时行为不变。
@@ -292,6 +297,7 @@ func New(st *store.Store, o Options) *Gateway {
 		disabledHosts: disabledHosts,
 		scopePool:     o.Pool,
 		scopeCfg:      o.ScopeConfig,
+		unifiedOff:    o.UnifiedOff,
 		githubOff:     o.GitHubOff,
 		locks:         keymutex.New(),
 		st:            st,
@@ -773,6 +779,10 @@ func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, so
 // Context。返回的 done 必须 defer 调用：它关闭 Scope 并归还 G 名额，
 // 不等待在途 Attempt（Body 关闭由各执行路径负责）。
 func (g *Gateway) newRequestScope(r *http.Request) (*http.Request, func(), error) {
+	if g.unifiedOff {
+		// 全局回退态：整条请求都不进统一框架，避免新旧混用（T62）。
+		return r, nil, nil
+	}
 	sc, err := unified.NewScope(r.Context(), g.scopeCfg, g.scopePool)
 	if err != nil {
 		return r, nil, err
@@ -913,7 +923,14 @@ func (g *Gateway) fetchRace(ctx context.Context, plan *adapter.Plan, main, fb []
 		if fallback {
 			pc.RaceReady = false
 		}
-		e, notMod, err := g.fetchSeq(ctx, &pc, nil, ts)
+		// 3.5.17：main 与 fb 各绑一条链。跨链同 Identity 由 Claim 仲裁，
+		// 不同 Identity（裸名 Docker Hub vs GHCR）互不影响。
+		kind := unified.ChainMain
+		if fallback {
+			kind = unified.ChainFallback
+		}
+		lctx := withUnifiedChain(ctx, kind)
+		e, notMod, err := g.fetchSeq(lctx, &pc, nil, ts)
 		ch <- result{e, notMod, pc.Source, err}
 	}
 	go run(main, false)
@@ -974,6 +991,10 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 	}
 	if errors.Is(err, errRaceLost) {
 		// 竞速输家：另一条链已经提交了同一份内容，本链直接收工。
+		return settleAbort, nil, false, err
+	}
+	if errors.Is(err, errUnifiedSuppressed) {
+		// 同 Identity 已被另一条链占住：本链不发送，也不罚任何源。
 		return settleAbort, nil, false, err
 	}
 	if err == nil {
@@ -1054,6 +1075,16 @@ func (g *Gateway) settleTarget(ctx context.Context, plan *adapter.Plan, t fetchT
 // 竞速替代同层的响应头对冲（不同时开两层），正文校验失败时按 §3.8 回到
 // 顺序回退，并把两个竞速参与源都计入已试集合，避免重复请求同一 Source。
 func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, targets []fetchTarget) (*store.CacheEntry, bool, error) {
+	// 3.5.17：没有显式绑定链时（顺序主路径），本次执行属于 main 链。
+	if chainFrom(ctx) == nil {
+		ctx = withUnifiedChain(ctx, unified.ChainMain)
+	}
+	// fb 静态抑制快照在请求开始时固定：被抑制的备用目标整条剔除，
+	// 不参与 Claim 竞争，也不消耗 R（F18/F19-14、T61）。
+	if filtered, n := suppressFallbacks(plan, targets); n > 0 {
+		metrics.FallbackSuppressed(n)
+		targets = filtered
+	}
 	var lastErr error
 	// policyErr 单独保存策略/身份缺失：换源链里后续的上游状态码
 	// 不能把配置错误盖成 401/404（v1.6 §B/§E）。
@@ -1083,6 +1114,7 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 					}
 					t := targets[winIdx]
 					e, notMod, code, berr := g.saveBody(ctx, plan, prev, up, t)
+					up.finishAttempt(code, berr)
 					act, entry, nm, lerr := g.settleTarget(ctx, plan, t, start, e, notMod, code, berr)
 					switch act {
 					case settleDone:
@@ -1103,9 +1135,13 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 							policyErr = lerr
 						}
 					}
+					// A 竞赛整场已结束（胜者正文失败）：关闭 A 链释放 Claim，
+					// 后面的顺序补位才有资格重新预占同一 Identity。
+					closeUnifiedChain(ctx, unified.ChainA)
 				} else {
 					// 竞速没能形成（预算不足/两路都失败）：回到原有顺序路径，
 					// 已确认失败的源不再重试。
+					closeUnifiedChain(ctx, unified.ChainA)
 					metrics.RegistryRaceFallback()
 					if errors.Is(rerr, v2auth.ErrPolicyMissing) && policyErr == nil {
 						policyErr = rerr
@@ -1166,6 +1202,7 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 			}
 			t = targets[idx]
 			e, notMod, code, err = g.saveBody(ctx, plan, prev, up, t)
+			up.finishAttempt(code, err)
 		} else {
 			e, notMod, code, err = g.fetchURL(ctx, plan, prev, t.u, t)
 		}
@@ -1212,12 +1249,17 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	launch := func(i int) {
 		started++
 		if i > 0 {
-			metrics.HedgeTrigger()
+			// 触发（策略决策）与实际额外请求分开计数：第二路可能因为
+			// 预算或名额拿不到而没有真正发出（T54 / D-03）。
+			noteHedgeTrigger(false)
 		}
 		ictx, icancel := context.WithCancel(ctx)
 		cancels[i] = icancel
 		go func() {
 			st := time.Now()
+			if i > 0 {
+				metrics.HedgeExtraRequest()
+			}
 			up, err := g.openUpstream(ictx, plan, prev, targets[i].u, sourceIDFor(targets[i]), logicalHostFor(targets[i], plan))
 			if ictx.Err() != nil {
 				if up != nil {
@@ -1235,7 +1277,7 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 	pending := 1
 
 	var hedgeC <-chan time.Time
-	if n > 1 {
+	if n > 1 && hedgeAllowed(ctx) {
 		tm := time.NewTimer(g.hedge.After)
 		defer tm.Stop()
 		hedgeC = tm.C
@@ -1263,6 +1305,11 @@ func (g *Gateway) pickUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 			// 直接断，不 Drain：大文件 Drain 等于白读一遍流量。
 			r.up.resp.Body.Close()
 			r.up.cancel()
+			// 落败分支的 Attempt 必须在取消后收口，否则 Scope 的
+			// 在途计数与 R 账本会一直挂着（T54）。
+			if r.up.att != nil {
+				r.up.att.abort()
+			}
 		}
 		if c := cancels[r.idx]; c != nil {
 			c()
@@ -1413,6 +1460,17 @@ type upstream struct {
 	resp   *http.Response
 	u      *url.URL
 	cancel context.CancelFunc
+	// att 是 3.5.17 统一框架里的 Manifest Attempt；非 Manifest 路径为 nil。
+	att *unifiedAttempt
+}
+
+// finishAttempt 把结果写回统一账本。必须在 saveBody 之后调用：saveBody 的
+// 返回值就是这次逻辑 Attempt 的分类依据。
+func (u *upstream) finishAttempt(code int, err error) {
+	if u == nil || u.att == nil {
+		return
+	}
+	u.att.finish(code, err)
 }
 
 // openUpstream 只负责到响应头为止，不读 Body。
@@ -1447,12 +1505,30 @@ func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *st
 		}
 	}
 
+	// 3.5.17：Manifest 请求在发送提交边界登记逻辑 Attempt。
+	// 每次逻辑 Attempt 只在这里 Claim Dispatch 一次；同链多 Source 共享
+	// 同一 Claim（A 站内竞速），跨链同 Identity 则被抑制。
+	att, aerr := g.beginUnifiedAttempt(ctx, plan, logicalHost, sourceID)
+	if aerr != nil {
+		cancel()
+		return nil, aerr
+	}
+	if att != nil {
+		if derr := att.dispatch(); derr != nil {
+			cancel()
+			return nil, derr
+		}
+	}
+
 	resp, err := g.cli.Do(req)
 	if err != nil {
+		if att != nil {
+			att.abort()
+		}
 		cancel()
 		return nil, err
 	}
-	return &upstream{resp: resp, u: u, cancel: cancel}, nil
+	return &upstream{resp: resp, u: u, cancel: cancel, att: att}, nil
 }
 
 // saveBody 接管胜者的响应体：状态判断、落盘、校验、提交。
@@ -1601,9 +1677,20 @@ func (g *Gateway) saveBody(ctx context.Context, plan *adapter.Plan, prev *store.
 func (g *Gateway) fetchURL(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, t fetchTarget) (*store.CacheEntry, bool, int, error) {
 	up, err := g.openUpstream(ctx, plan, prev, u, sourceIDFor(t), logicalHostFor(t, plan))
 	if err != nil {
-		return nil, false, 0, err
+		// B16：顺序路径遇到网络类失败（超时/连接失败/无回应）时，本站
+		// 立刻重试一次；每次重试必须持有该 Registry 的令牌，令牌耗尽就
+		// 不再重试。明确响应（4xx/5xx/无效正文）不重试，直接换下一站。
+		if isNetworkFault(err) && takeRetryToken(ctx, logicalHostFor(t, plan)) {
+			metrics.RegistryRetry()
+			up, err = g.openUpstream(ctx, plan, prev, u, sourceIDFor(t), logicalHostFor(t, plan))
+		}
+		if err != nil {
+			return nil, false, 0, err
+		}
 	}
-	return g.saveBody(ctx, plan, prev, up, t)
+	e, notMod, code, berr := g.saveBody(ctx, plan, prev, up, t)
+	up.finishAttempt(code, berr)
+	return e, notMod, code, berr
 }
 
 // fromCache=false 表示刚回源填充：字节已记 fill，再记 hit 会抬高命中率。

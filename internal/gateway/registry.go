@@ -81,7 +81,9 @@ func (g *Gateway) serveRegistry(w http.ResponseWriter, r *http.Request) {
 			unified.WriteScopeCapacity(w)
 			return
 		}
-		defer done()
+		if done != nil {
+			defer done()
+		}
 		r = nr
 	}
 

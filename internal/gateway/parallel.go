@@ -70,7 +70,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	}
 
 	ctx := r.Context()
-	srcs, total := g.parPreflight(ctx, plan, targets, 0)
+	srcs, total := g.parPreflightShared(ctx, plan, targets, 0)
 	// 官方源只用来确认总长，不参与供数：国内直连 ghcr.io / docker.io 常常
 	// 只有几十 KB/s、甚至间歇性不通，而第 0 段是直通客户端的。官方排在
 	// 第一位时整条流会卡死在开头（线上实测 22 KB/s、38 秒只走 1.2 MB）。
@@ -143,6 +143,17 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 	for n > 256 {
 		chunk *= 2
 		n = int((total + chunk - 1) / chunk)
+	}
+	// 3.5.17：RangeWork 准入与「每 Range 最多 4 个目标（含官方源）」。
+	// 超限时放弃并行、退回单流，不改分段语义。
+	keep, admitted := rangeAdmit(ctx, len(srcs), n)
+	if !admitted {
+		g.decline("RangeWork 超过 RequestScope 上限")
+		g.parFalls.Add(1)
+		return false
+	}
+	if keep > 0 && keep < len(srcs) {
+		srcs = srcs[:keep]
 	}
 
 	// 先开 .part，再写响应头：开不了文件还能干净地退回单流。

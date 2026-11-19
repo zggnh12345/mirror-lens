@@ -119,6 +119,11 @@ type Registry struct {
 	// 0 表示复用 hedge.after_ms。竞速本身不在这里开关：Host 级总开关存
 	// settings 表（默认全关），Source 资格是星标，配置无法绕过这两道门。
 	RaceAfterMS int `yaml:"race_after_ms"`
+
+	// UnifiedFramework 是 3.5.17 统一执行框架（RequestScope/Claim/预算）的
+	// 部署期全局开关。默认开启；关闭时请求完全不建 Scope，等价于回退到
+	// 旧执行链（T62：单请求不允许一半新一半旧，所以决策只在入口做一次）。
+	UnifiedFramework *bool `yaml:"unified_framework"`
 }
 
 // GitHub 是 /gh/ /raw/ /git/ 三条 GitHub 路径的总开关。

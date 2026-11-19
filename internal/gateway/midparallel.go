@@ -90,7 +90,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		log.Printf("中途并行跳过：没有候选源")
 		return false, false
 	}
-	srcs, tot := g.parPreflight(requestCtx, plan, targets, 6*time.Second)
+	srcs, tot := g.parPreflightShared(requestCtx, plan, targets, 6*time.Second)
 	// 总长必须和正在发的这份一致，否则拼起来必错。
 	// 只剩一台也能接：对同一台开多连接分段，比单流干等强。
 	if len(srcs) < 1 || (tot > 0 && tot != total) {
@@ -117,6 +117,16 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 	}
 	if n <= 0 {
 		return false, false
+	}
+	// 3.5.17：Midfill 与 tryParallel 共享同一个 RangeWork 账本与 Preflight
+	// 快照；每 Range 最多 4 个目标（含官方源），超限就继续单流。
+	keep, ok := rangeAdmit(requestCtx, len(srcs), n)
+	if !ok {
+		log.Printf("中途并行跳过：RangeWork 超过 RequestScope 上限")
+		return false, false
+	}
+	if keep > 0 && keep < len(srcs) {
+		srcs = srcs[:keep]
 	}
 
 	// 第 0 段直接从 sent 开始：拿到首块才算接手，之前失败都还能回单流。

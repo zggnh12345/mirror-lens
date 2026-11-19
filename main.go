@@ -432,7 +432,9 @@ func main() {
 	// 3.5.17 G：全服务 RequestScope 并发容量。N 取 limits.global_concurrency
 	// （limits.enabled=false 时仍作为内部硬上限，不得无限大），W 取分片 worker 数。
 	gw := gateway.New(st, gateway.Options{
-		Pool:              unified.NewPool(unified.GlobalCapacity(cfg.Limits.GlobalConcurrency, cfg.Parallel.Workers, 2, 2)),
+		Pool: unified.NewPool(unified.GlobalCapacity(cfg.Limits.GlobalConcurrency, cfg.Parallel.Workers, 2, 2)),
+		// 3.5.17 部署期全局回退（T62）：配置显式关掉时整条请求都不进新框架。
+		UnifiedOff:        cfg.Registry.UnifiedFramework != nil && !*cfg.Registry.UnifiedFramework,
 		Cache:             cstore,
 		MaxBytes:          cfg.Cache.MaxFileMB << 20,
 		GitTTL:            cfg.Git.TTL.Duration,

@@ -86,6 +86,39 @@ func (s *Scope) NewChain(id string, kind ChainKind) (*Chain, error) {
 	return c, nil
 }
 
+// chainFor 返回 Scope 内某类链的唯一实例表（内部用）。默认链 ID 固定为
+// 类型名，因此同一请求的同类执行路径必然共享同一条链与同一个 Claim。
+func (s *Scope) chainFor(kind ChainKind) (*Chain, error) {
+	if s == nil {
+		return nil, ErrScopeClosed
+	}
+	id := "bind-" + kind.String()
+	s.mu.Lock()
+	c := s.chains[id]
+	closed := s.closed || s.closing
+	s.mu.Unlock()
+	if c != nil {
+		return c, nil
+	}
+	if closed {
+		return nil, ErrScopeClosed
+	}
+	return s.NewChain(id, kind)
+}
+
+// ChainFor 是 chainFor 的导出形式，供执行层把请求绑定到某类链。
+// 同一 Scope 内同类链只创建一次；返回的链关闭后再调用会重新创建。
+func (s *Scope) ChainFor(kind ChainKind) (*Chain, error) {
+	c, err := s.chainFor(kind)
+	if err == nil && c.State() == ChainClosed {
+		s.mu.Lock()
+		delete(s.chains, "bind-"+kind.String())
+		s.mu.Unlock()
+		return s.chainFor(kind)
+	}
+	return c, err
+}
+
 // ID 返回链标识。
 func (c *Chain) ID() string {
 	if c == nil {
