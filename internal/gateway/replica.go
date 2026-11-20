@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,33 @@ type replicaArtifact struct {
 	lm       string
 	upstream string
 	size     int64
+}
+
+// recordReplicaSample 把一次已分类的副本回源样本原子写入持久化状态。
+// 它绝不影响当前下载请求：写失败只记日志，保留最近一次成功状态。
+// SourceID<=0（官方权威）或空映射身份时忽略，避免污染统计。
+func (g *Gateway) recordReplicaSample(in store.DynamicSampleInput) {
+	if g == nil || g.st == nil || in.SourceID <= 0 || in.RegistryHost == "" {
+		return
+	}
+	active := g.st.ActiveMappingIdentities(g.now())
+	// 双重确认：该映射当前确实有效，避免已撤销映射的迟到样本重新建状态。
+	ok := false
+	for _, id := range active {
+		if id.Host == in.RegistryHost && id.SID == in.SourceID {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return
+	}
+	if _, err := g.st.ApplyDynamicSample(in, active); err != nil {
+		// 持久化失败不阻断下载，也不发布未持久化排名（内存状态由 Store 层
+		// 保证不因写失败而对外发布；这里只记可诊断日志）。
+		slog.Warn("动态排序样本持久化失败",
+			"registry", in.RegistryHost, "source_id", in.SourceID, "err", err)
+	}
 }
 
 // replicaTarget 是一个跨 Registry 候选。
@@ -277,15 +305,108 @@ func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now ti
 			replicas++
 		}
 	}
+	// 3.5.18 18c：动态排序只重排已进入 M 的副本执行顺序，不改成员/M/预算。
+	// 条件：sort_mode=dynamic 且每条有效映射都达 50 样本门槛；否则固定顺序。
+	if g.dynamicSortReady(now) {
+		out = g.applyDynamicOrder(out, now)
+	}
 	return out, gen, nil
+}
+
+// dynamicSortReady 判断当前是否可以启用动态排序：
+// sort_mode 必须为 dynamic，持久化状态有效，且每条有效映射都达到 50 样本门槛。
+// 任一条件不满足（含状态损坏/版本不符/映射不足样本）都退回固定顺序。
+func (g *Gateway) dynamicSortReady(now time.Time) bool {
+	if g == nil || g.st == nil {
+		return false
+	}
+	cfg := g.st.ResolveBConfig(g.replica)
+	if cfg.SortMode != "dynamic" {
+		return false
+	}
+	st, err := g.st.LoadDynamicState()
+	if err != nil || len(st.Snapshot) == 0 {
+		return false
+	}
+	active := g.st.ActiveMappingIdentities(now)
+	if len(active) == 0 || len(st.Snapshot) < len(active) {
+		return false
+	}
+	// 每条有效映射都必须达到门槛（valid_samples==50 且存在于快照）。
+	ready := map[store.MappingIdentity]bool{}
+	for _, e := range st.Snapshot {
+		if e.ValidSamples >= store.DynamicSampleWindow() {
+			ready[store.MappingIdentity{Host: e.RegistryHost, SID: e.SourceID}] = true
+		}
+	}
+	for _, id := range active {
+		if !ready[id] {
+			return false
+		}
+	}
+	return true
+}
+
+// applyDynamicOrder 按排名快照重排副本（下标 0 权威站固定不动）。
+// 快照是 ComputeScores 按 Score 降序、并列固定顺序的结果；这里只按映射身份
+// 映射到候选并重排副本段，无法映射的候选保持原相对位置。
+func (g *Gateway) applyDynamicOrder(targets []replicaTarget, now time.Time) []replicaTarget {
+	if len(targets) <= 1 {
+		return targets
+	}
+	st, err := g.st.LoadDynamicState()
+	if err != nil {
+		return targets
+	}
+	rank := make(map[store.MappingIdentity]int, len(st.Snapshot))
+	for i, e := range st.Snapshot {
+		rank[store.MappingIdentity{Host: e.RegistryHost, SID: e.SourceID}] = i
+	}
+	official := targets[0]
+	replicas := append([]replicaTarget(nil), targets[1:]...)
+	sort.SliceStable(replicas, func(i, j int) bool {
+		ki := store.MappingIdentity{Host: replicas[i].registry, SID: replicas[i].sourceID}
+		kj := store.MappingIdentity{Host: replicas[j].registry, SID: replicas[j].sourceID}
+		ri, oki := rank[ki]
+		rj, okj := rank[kj]
+		if oki && okj {
+			return ri < rj
+		}
+		if oki != okj {
+			return oki // 有快照的排在前面
+		}
+		return false // 都无快照：保持稳定（固定顺序兜底）
+	})
+	out := make([]replicaTarget, 0, len(targets))
+	out = append(out, official)
+	out = append(out, replicas...)
+	return out
 }
 
 // fetchReplicaArtifact 完整下载一个候选正文到临时文件，计算 SHA-256 并做
 // 与官方一致的内容完整性检查。返回的临时文件由调用方负责提交或删除。
 func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, t replicaTarget, identityHost string) (replicaArtifact, int, error) {
 	var art replicaArtifact
-	up, err := g.openUpstreamAs(ctx, plan, nil, t.u, t.sourceID, t.registry, identityHost)
+	// 3.5.18 18c：每个真实回源尝试最多贡献一个样本。deferred 统一在返回时
+	// 按分类写入；成功须过 Manifest 校验（走到 art 提交才算 OK）。
+	sample := store.DynamicSampleInput{
+		RegistryHost: t.registry, SourceID: t.sourceID, TS: g.now().UnixNano(),
+	}
+	defer func() {
+		g.recordReplicaSample(sample)
+	}()
+
+	var dispatched bool
+	up, err := g.openUpstreamAs(ctx, plan, nil, t.u, t.sourceID, t.registry, identityHost, &dispatched)
 	if err != nil {
+		// 只有真实派发后的失败（超时/无响应头）才计失败样本；派发前的
+		// 策略/预算/认证拒绝不计（F03）。TTFB 不可测，不虚构。
+		if t.sourceID > 0 && dispatched {
+			sample.OK = false
+			sample.TTFBMeasurable = false
+		} else {
+			sample = store.DynamicSampleInput{} // 空 SourceID → 采集器忽略
+		}
 		// 候选派发诊断（debug）：把「谁真的发了、结果是什么」写成可复核的行。
 		// 官方权威（sourceID=0）会以 target=official 出现，因此「同意组没有
 		// 派发官方」可以由日志逐请求验证，而不是靠推理。
@@ -294,11 +415,15 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 		return art, 0, err
 	}
 	resp := up.resp
+	// 收到响应头 → TTFB 可测（冻结口径：终点=收到响应头）。
+	sample.TTFBMeasurable = true
+	sample.TTFBMS = up.ttfbMS
 	defer func() {
 		resp.Body.Close()
 		up.cancel()
 	}()
 	if resp.StatusCode != http.StatusOK {
+		// 有响应头的失败（404/401/429/5xx）：TTFB 参与 P50；成功率为 0。
 		loggw(slog.LevelDebug, "副本候选非 200", ctx, plan, "", nil,
 			"target", t.name, "registry", t.registry, "status", resp.StatusCode)
 		io.CopyN(io.Discard, resp.Body, 4096)
@@ -383,6 +508,8 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 		size:     n,
 	}
 	up.finishAttempt(http.StatusOK, nil)
+	// 走到这里：正文完整读取、长度/Digest/身份全部校验通过 → 成功样本。
+	sample.OK = true
 	return art, http.StatusOK, nil
 }
 

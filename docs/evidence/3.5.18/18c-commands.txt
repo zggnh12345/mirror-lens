@@ -1,0 +1,33 @@
+# 3.5.18 18c 实施命令记录
+
+工作目录：/opt/data/cache/scratch/ml8
+分支：feat/3.5.18
+Go：golang:1.27-alpine（docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8）
+
+## 阶段门禁（最终代码重跑）
+
+```
+export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath
+gofmt -l .                       # 空
+go vet ./...                     # OK
+go build ./...                   # OK
+go test ./... -count=1           # 34 包 ok
+CGO_ENABLED=1 go test -race ./... -count=1   # 34 包 ok, 0 DATA RACE
+```
+race 需先 `apk add --no-cache gcc musl-dev`。
+
+## 定向
+
+```
+go test ./internal/store -run "TestDynamic" -count=1       # 公式/持久化专项全绿
+go test ./internal/gateway -run "TestB18Dynamic|TestB18Sample|TestB18Official" -count=1  # 动态应用/采集全绿
+go test ./internal/api -run "TestCrossRegistryAPIDynamicState" -count=1
+```
+
+日志：18c-gate.log、18c-race.log。
+
+## 未执行（独立授权事项）
+
+- 远程 Push / Tag / Release / GHCR：未执行
+- 生产备份/迁移/切换：未执行（WAITING_FOR_USER_DECISION）
+- B15 性能外部配对：未执行（EXTERNAL_BLOCKED）

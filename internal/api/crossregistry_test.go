@@ -167,3 +167,41 @@ func auditCount(t *testing.T, st *store.Store, action string) int {
 	}
 	return n
 }
+
+// 3.5.18 18c：GET /api/cross-registry 暴露只读 dynamic_state（§7.7 Web 展示）。
+func TestCrossRegistryAPIDynamicState(t *testing.T) {
+	_, h := newTestServer(t)
+	ck := setupPanel(t, h)
+	rec := get(h, "/api/cross-registry", nil, ck)
+	if rec.Code != 200 {
+		t.Fatalf("读取失败 %d", rec.Code)
+	}
+	var out struct {
+		SortMode     string `json:"sort_mode"`
+		DynamicState struct {
+			Enabled        bool   `json:"enabled"`
+			FormulaVersion string `json:"formula_version"`
+			Reason         string `json:"reason"`
+		} `json:"dynamic_state"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("解析: %v", err)
+	}
+	if out.DynamicState.FormulaVersion != store.FormulaVersion {
+		t.Fatalf("公式版本错误: %q", out.DynamicState.FormulaVersion)
+	}
+	if out.DynamicState.Enabled {
+		t.Fatal("默认 fixed 时 dynamic_state.enabled 应为 false")
+	}
+	// 切到 dynamic 后 enabled=true；无样本时给出 reason、不虚构数据。
+	if rec := putJSON(h, "/api/cross-registry", `{"sort_mode":"dynamic"}`, ck); rec.Code != 200 {
+		t.Fatalf("切 dynamic 失败 %d %s", rec.Code, rec.Body.String())
+	}
+	rec = get(h, "/api/cross-registry", nil, ck)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.DynamicState.Enabled || out.DynamicState.Reason == "" {
+		t.Fatalf("dynamic 模式应 enabled 且无样本时给 reason: %+v", out.DynamicState)
+	}
+}

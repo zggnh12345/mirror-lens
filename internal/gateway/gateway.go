@@ -1497,6 +1497,11 @@ type upstream struct {
 	resp   *http.Response
 	u      *url.URL
 	cancel context.CancelFunc
+	// ttfbMS 是真实回源计时：起点=发出请求(cli.Do)、终点=收到响应头。
+	// 排除本地排队/Lease 等待/缓存处理/Body 读取。0 且 !ttfbMeasurable
+	// 表示未收到响应头（超时/网络错误），不虚构 TTFB。
+	ttfbMS         int64
+	ttfbMeasurable bool
 	// att 是 3.5.17 统一框架里的 Manifest Attempt；非 Manifest 路径为 nil。
 	att *unifiedAttempt
 }
@@ -1513,7 +1518,7 @@ func (u *upstream) finishAttempt(code int, err error) {
 // openUpstream 只负责到响应头为止，不读 Body。
 // 返回的 cancel 必须由调用方在读完/关闭 Body 后调用，否则子 context 泄漏。
 func (g *Gateway) openUpstream(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, logicalHost string) (*upstream, error) {
-	return g.openUpstreamAs(ctx, plan, prev, u, sourceID, logicalHost, logicalHost)
+	return g.openUpstreamAs(ctx, plan, prev, u, sourceID, logicalHost, logicalHost, nil)
 }
 
 // withScopeCancel 让一次上游派发随 Scope 耗尽被取消（blob 主流、分片、换源
@@ -1542,7 +1547,10 @@ func withScopeCancel(ctx context.Context) context.Context {
 // openUpstreamAs 与 openUpstream 相同，但把「认证策略 Host」与「Claim 身份
 // Host」分开：跨 Registry 副本用权威仓库作为 Claim 身份（同一逻辑资源），
 // 认证仍按候选自己的逻辑 Registry 解析（B 层冻结边界）。
-func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, policyHost, identityHost string) (*upstream, error) {
+func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, u *url.URL, sourceID int64, policyHost, identityHost string, dispatched *bool) (*upstream, error) {
+	if dispatched != nil {
+		*dispatched = false
+	}
 	if isBlobPlan(plan) {
 		ctx = withCDNRedirect(ctx)
 	}
@@ -1605,7 +1613,13 @@ func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *
 		}
 	}
 
+	// 3.5.18 18c：TTFB 起点=实际发出请求、终点=收到响应头（冻结口径）。
+	if dispatched != nil {
+		*dispatched = true // cli.Do 即将真实发出
+	}
+	ttfbStart := time.Now()
 	resp, err := g.cli.Do(req)
+	ttfbElapsed := time.Since(ttfbStart)
 	if err != nil {
 		if att != nil {
 			att.abort()
@@ -1613,7 +1627,10 @@ func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *
 		cancel()
 		return nil, err
 	}
-	return &upstream{resp: resp, u: u, cancel: cancel, att: att}, nil
+	return &upstream{
+		resp: resp, u: u, cancel: cancel, att: att,
+		ttfbMS: ttfbElapsed.Milliseconds(), ttfbMeasurable: true,
+	}, nil
 }
 
 // saveBody 接管胜者的响应体：状态判断、落盘、校验、提交。

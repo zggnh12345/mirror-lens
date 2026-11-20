@@ -37,12 +37,13 @@ func (s *Server) crossRegistry(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg := s.st.ResolveBConfig(deployMode)
 		writeJSON(w, 200, map[string]any{
-			"enabled":    cfg.Enabled,
-			"mode":       cfg.Mode,
-			"sort_mode":  cfg.SortMode,
-			"configured": s.st.CrossRegistryMode(), // 兼容 3.5.17：原样 settings 值
-			"selected":   s.st.CrossSelectedSources(),
-			"starred":    ids,
+			"enabled":       cfg.Enabled,
+			"mode":          cfg.Mode,
+			"sort_mode":     cfg.SortMode,
+			"configured":    s.st.CrossRegistryMode(), // 兼容 3.5.17：原样 settings 值
+			"selected":      s.st.CrossSelectedSources(),
+			"starred":       ids,
+			"dynamic_state": s.st.DynamicStateView(cfg.SortMode),
 		})
 	case http.MethodPut:
 		var in struct {

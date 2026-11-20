@@ -149,13 +149,14 @@
     <p class="hint" id="crossDesc" style="margin:6px 0 0">省请求，前一个 404/超时/无效才问下一个</p>
     <div class="row" style="margin:10px 0 0">
       <div class="main"><div class="rl1"><b>排序模式</b></div>
-        <div class="rl2"><i>固定优先级按 priority；动态排序需版本变更流程启用</i></div></div>
+        <div class="rl2"><i>固定优先级按 priority；动态排序按 50 有效样本的评分重排 M 内候选，不足门槛自动回退固定顺序</i></div></div>
       <div class="sseg" role="group" aria-label="排序模式">
         <button class="ssegb" data-sortmode="fixed" aria-pressed="true">固定</button>
-        <button class="ssegb" data-sortmode="dynamic" aria-pressed="false" title="动态排序由版本变更启用，当前只读展示">动态</button>
+        <button class="ssegb" data-sortmode="dynamic" aria-pressed="false">动态</button>
       </div>
     </div>
     <div id="crossSel" style="margin-top:8px"></div>
+    <div id="crossDyn" style="margin-top:10px"></div>
   </section>
 </div>
 
@@ -865,6 +866,27 @@ function renderCross(){
   if (d) d.textContent = CROSS.mode === 'race'
     ? '具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁'
     : '按可信映射顺序回退，不受参选勾选限制；前一个失败才问下一个';
+  // 动态排序展示（§7.7）：只展示后端真实快照，不虚构/不默认填充。
+  var dyn = $('#crossDyn');
+  if (dyn){
+    var ds = CROSS.dynamic_state || {};
+    if (ds.enabled && (ds.entries || []).length){
+      var rows = ds.entries.map(function(e){
+        var rate = (e.success_rate != null) ? (Math.round(e.success_rate*100) + '%') : '-';
+        var ls = (e.latency_score != null) ? e.latency_score.toFixed(3) : '-';
+        var sc = (e.score != null) ? e.score.toFixed(3) : '-';
+        var p50 = (e.p50_ttfb_ms != null) ? Math.round(e.p50_ttfb_ms) + 'ms' : '-';
+        return '<div class="row"><div class="main"><div class="rl1"><b>#' + (e.rank||'-')
+          + ' ' + (e.registry_host||'-') + ' #' + (e.source_id||'-') + '</b></div>'
+          + '<div class="rl2"><i>样本 ' + (e.valid_samples||0) + '/50 ' + (e.ready?'· 达标':'· 未达标')
+          + ' · 成功率 ' + rate + ' · P50 ' + p50 + ' · 延迟分 ' + ls + ' · 评分 ' + sc + '</i></div></div></div>';
+      }).join('');
+      dyn.innerHTML = '<p class="hint" style="margin:0 0 6px">动态排序快照（公式 ' + (ds.formula_version||'-')
+        + ' · 修订 ' + (ds.revision||0) + ' · 时间 ' + (ds.updated_at ? new Date(ds.updated_at*1000).toLocaleString() : '-') + '）</p>' + rows;
+    } else {
+      dyn.innerHTML = '<p class="hint">' + (ds.reason || '动态排序未启用') + '</p>';
+    }
+  }
   var sel = $('#crossSel');
   if (!sel) return;
   var selSet = {};
@@ -900,11 +922,10 @@ document.addEventListener('click', function(ev){
   var m = b.getAttribute('data-rmode');
   if (m && m !== CROSS.mode) setCrossMode(m);
   var sm = b.getAttribute('data-sortmode');
-  if (sm === 'dynamic') { toast('动态排序由版本变更流程启用，当前只读'); return; }
-  if (sm === 'fixed' && (CROSS.sort_mode || 'fixed') !== 'fixed') setCrossSort('fixed');
+  if (sm && sm !== (CROSS.sort_mode || 'fixed')) setCrossSort(sm);
 });
 async function setCrossSort(mode){
-  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({sort_mode: mode})}); toast('已切换为固定排序'); }
+  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({sort_mode: mode})}); toast(mode === 'dynamic' ? '已切换为动态排序（不足 50 样本自动回退固定顺序）' : '已切换为固定排序'); }
   catch(e){ toast(e.message); }
   await loadCross();
 }
