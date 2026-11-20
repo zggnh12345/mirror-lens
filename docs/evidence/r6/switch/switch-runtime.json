@@ -1,0 +1,379 @@
+{
+  "ids": {
+    "A": 1,
+    "B": 2
+  },
+  "caps_ready": true,
+  "slow_bytes_per_s": 1048576,
+  "group": {
+    "create": [
+      200,
+      {
+        "id": 1,
+        "ok": true
+      }
+    ],
+    "members": [
+      200,
+      {
+        "n": 1,
+        "ok": true,
+        "skipped": 0
+      }
+    ]
+  },
+  "warm": [
+    {
+      "repo": "warm/one",
+      "digest": "sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 846,
+      "bytes": 25165824,
+      "sha256": "8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/two",
+      "digest": "sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 839,
+      "bytes": 25165824,
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/three",
+      "digest": "sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 840,
+      "bytes": 25165824,
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "digest_ok": true
+    }
+  ],
+  "proxy_speed_B": {
+    "rows": [
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134063,
+        "bytes": 25165824,
+        "ms": 542
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134064,
+        "bytes": 25165824,
+        "ms": 545
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134065,
+        "bytes": 25165824,
+        "ms": 543
+      }
+    ],
+    "kb_per_s": [
+      46431,
+      46175,
+      46345
+    ],
+    "median_kb": 46345,
+    "switch_min_kbps": 8192,
+    "sample_gate_bytes": 16777216
+  },
+  "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+  "request": {
+    "repo": "sw/app",
+    "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+    "status": 200,
+    "headers": {
+      "content-length": "67108864",
+      "x-ml-cache": "MISS",
+      "x-ml-source": "sw-A"
+    },
+    "read_error": null,
+    "ms": 12486,
+    "bytes": 67108864,
+    "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+    "digest_ok": true,
+    "wall_ms": 12486
+  },
+  "upA": [
+    {
+      "method": "GET",
+      "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "status": 200,
+      "bytes": 12582912,
+      "range": null,
+      "repo": "sw/app",
+      "kind": "blob",
+      "mode": "slowbody",
+      "total": 67108864,
+      "chunk_ms": 1000,
+      "client_closed": true,
+      "t0": 1795134068.7327278,
+      "t1": 1795134081.4459307,
+      "port": 19621,
+      "inst": "A",
+      "seq": 32
+    }
+  ],
+  "upB": [
+    {
+      "method": "GET",
+      "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "status": 206,
+      "bytes": 55574528,
+      "range": "bytes=11534336-",
+      "repo": "sw/app",
+      "kind": "blob",
+      "mode": "ok",
+      "total": 67108864,
+      "declared_clen": 55574528,
+      "declared_total": 67108864,
+      "truncated": false,
+      "t0": 1795134080.4374743,
+      "t1": 1795134081.2059588,
+      "port": 19622,
+      "inst": "B",
+      "seq": 26
+    }
+  ],
+  "log_switch": [
+    "time=2026-11-20T08:21:20.435+08:00 level=INFO msg=\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+    "time=2026-11-20T08:21:20.435+08:00 level=INFO msg=\"换源跳过 sw-A：本轮已试过\"",
+    "time=2026-11-20T08:21:21.148+08:00 level=INFO msg=\"单流换源：sw-B 已接手（已发 11 MB，验证器=false）\""
+  ],
+  "cache_entries": [
+    {
+      "key": "docker:b:1:sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "sha256": "8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19622/v2/warm/one/blobs/sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c"
+    },
+    {
+      "key": "docker:b:1:sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19622/v2/warm/two/blobs/sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9"
+    },
+    {
+      "key": "docker:b:1:sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "size": 67108864,
+      "upstream": "http://127.0.0.1:19622/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519"
+    },
+    {
+      "key": "docker:b:1:sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19622/v2/warm/three/blobs/sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9"
+    }
+  ],
+  "blobs": [
+    {
+      "sha256": "8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "size": 25165824
+    },
+    {
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "size": 25165824
+    },
+    {
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "size": 25165824
+    },
+    {
+      "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "size": 67108864
+    }
+  ],
+  "partials": [],
+  "assertions": {
+    "warm_samples_real": {
+      "ok": true,
+      "detail": [
+        [
+          25165824,
+          542
+        ],
+        [
+          25165824,
+          545
+        ],
+        [
+          25165824,
+          543
+        ]
+      ]
+    },
+    "warm_median_over_gate": {
+      "ok": true,
+      "detail": [
+        46431,
+        46175,
+        46345
+      ]
+    },
+    "switch_200_digest_ok": {
+      "ok": true,
+      "detail": {
+        "repo": "sw/app",
+        "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+        "status": 200,
+        "headers": {
+          "content-length": "67108864",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "sw-A"
+        },
+        "read_error": null,
+        "ms": 12486,
+        "bytes": 67108864,
+        "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+        "digest_ok": true,
+        "wall_ms": 12486
+      }
+    },
+    "second_source_range_request": {
+      "ok": true,
+      "detail": [
+        {
+          "method": "GET",
+          "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "status": 206,
+          "bytes": 55574528,
+          "range": "bytes=11534336-",
+          "repo": "sw/app",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 67108864,
+          "declared_clen": 55574528,
+          "declared_total": 67108864,
+          "truncated": false,
+          "t0": 1795134080.4374743,
+          "t1": 1795134081.2059588,
+          "port": 19622,
+          "inst": "B",
+          "seq": 26
+        }
+      ]
+    },
+    "second_source_206_headers": {
+      "ok": true,
+      "detail": [
+        {
+          "method": "GET",
+          "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "status": 206,
+          "bytes": 55574528,
+          "range": "bytes=11534336-",
+          "repo": "sw/app",
+          "kind": "blob",
+          "mode": "ok",
+          "total": 67108864,
+          "declared_clen": 55574528,
+          "declared_total": 67108864,
+          "truncated": false,
+          "t0": 1795134080.4374743,
+          "t1": 1795134081.2059588,
+          "port": 19622,
+          "inst": "B",
+          "seq": 26
+        }
+      ]
+    },
+    "first_source_served_prefix_only": {
+      "ok": true,
+      "detail": [
+        {
+          "method": "GET",
+          "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "status": 200,
+          "bytes": 12582912,
+          "range": null,
+          "repo": "sw/app",
+          "kind": "blob",
+          "mode": "slowbody",
+          "total": 67108864,
+          "chunk_ms": 1000,
+          "client_closed": true,
+          "t0": 1795134068.7327278,
+          "t1": 1795134081.4459307,
+          "port": 19621,
+          "inst": "A",
+          "seq": 32
+        }
+      ]
+    },
+    "no_parallel_fallback": {
+      "ok": true,
+      "detail": [
+        "time=2026-11-20T08:21:20.435+08:00 level=INFO msg=\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+        "time=2026-11-20T08:21:20.435+08:00 level=INFO msg=\"换源跳过 sw-A：本轮已试过\"",
+        "time=2026-11-20T08:21:21.148+08:00 level=INFO msg=\"单流换源：sw-B 已接手（已发 11 MB，验证器=false）\""
+      ]
+    },
+    "no_partial_left": {
+      "ok": true,
+      "detail": []
+    },
+    "cache_entry_committed": {
+      "ok": true,
+      "detail": [
+        {
+          "key": "docker:b:1:sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+          "sha256": "8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19622/v2/warm/one/blobs/sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c"
+        },
+        {
+          "key": "docker:b:1:sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+          "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19622/v2/warm/two/blobs/sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9"
+        },
+        {
+          "key": "docker:b:1:sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "size": 67108864,
+          "upstream": "http://127.0.0.1:19622/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519"
+        },
+        {
+          "key": "docker:b:1:sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+          "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19622/v2/warm/three/blobs/sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9"
+        }
+      ]
+    },
+    "cross_source_no_partial": {
+      "ok": true,
+      "detail": []
+    },
+    "single_cache_entry": {
+      "ok": true,
+      "detail": null
+    }
+  }
+}

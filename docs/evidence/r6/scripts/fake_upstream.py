@@ -201,10 +201,16 @@ class Handler(BaseHTTPRequestHandler):
             delay = b.get("chunk_ms", 150) / 1000.0
             sent = 0
             for i in range(0, len(body), chunk):
-                sent += self._write_all(body[i:i + chunk])
+                n = self._write_all(body[i:i + chunk])
+                if n <= 0:
+                    # 客户端中途换源/断开：立即收尾并记录「实际发出的前缀字节」，
+                    # 不要睡完剩下的整份（否则取证脚本读日志时这条记录还没落盘）。
+                    break
+                sent += n
                 time.sleep(delay)
             self._record(t0, method=self.command, path=path, status=200, bytes=sent, range=rng, repo=repo,
-                         kind="blob", mode=mode, total=len(body), chunk_ms=b.get("chunk_ms"))
+                         kind="blob", mode=mode, total=len(body), chunk_ms=b.get("chunk_ms"),
+                         client_closed=(sent < len(body)))
             return
         sent = self._write_all(body)
         self._record(t0, method=self.command, path=path, status=200, bytes=sent, range=rng, repo=repo,

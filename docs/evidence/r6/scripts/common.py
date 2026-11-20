@@ -115,7 +115,18 @@ def start_fake(name, port, behavior, root, env_extra=None):
     p = subprocess.Popen([sys.executable, FAKE, "--port", str(port), "--name", name,
                           "--log", f"{root}/logs/up{name}.jsonl", "--behavior-map", beh],
                          stdout=lf, stderr=subprocess.STDOUT, env={**os.environ, **(env_extra or {})})
-    return p
+    # 端口必须真的由本次进程提供：上一次超时留下的孤儿会占着端口，
+    # 记录写到已被 rmtree 的旧文件里，表现为「有流量但日志为空」。
+    import urllib.request
+    for _ in range(60):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/v2/", timeout=1).read()
+            return p
+        except Exception:
+            if p.poll() is not None:
+                raise RuntimeError(f"假上游 {name}:{port} 启动失败（退出码 {p.returncode}），端口可能被占用")
+            time.sleep(0.1)
+    raise RuntimeError(f"假上游 {name}:{port} 未就绪")
 
 
 def start_gateway(cfg_text, root, env_extra=None):

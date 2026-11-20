@@ -1,0 +1,81 @@
+time=2026-11-20T08:20:54.521+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=1 禁用Host=0）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="Registry 缓存 epoch 已切换到 1（历史条目不可达）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r6/run/switch/data/backup（保留 7 份）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T08:20:54.637+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18440"
+time=2026-11-20T08:20:54.665+08:00 level=INFO msg=面板请求 request_id=a739e7eb8a5f6fba method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T08:20:54.729+08:00 level=INFO msg="初始账号已设置: user=r***(7)"
+time=2026-11-20T08:20:54.729+08:00 level=INFO msg=面板请求 request_id=347089f1daf856ea method=POST path=/api/setup status=200 duration_ms=63
+time=2026-11-20T08:20:54.785+08:00 level=INFO msg=面板请求 request_id=e1b5e1c10ed463f8 method=POST path=/api/login status=200 duration_ms=54
+time=2026-11-20T08:20:54.785+08:00 level=INFO msg=面板请求 request_id=3d5caad63581f99e method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T08:20:54.786+08:00 level=INFO msg=面板请求 request_id=64f9144b09a9c1c1 method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T08:20:54.787+08:00 level=INFO msg=面板请求 request_id=5ad9a6aa665ff20f method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T08:20:54.788+08:00 level=INFO msg=面板请求 request_id=b226b20c70c74d2d method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T08:20:54.788+08:00 level=INFO msg=面板请求 request_id=f37e66871a3b63fa method=PATCH path=/api/sources/2 status=200 duration_ms=0
+time=2026-11-20T08:20:56.776+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:20:56.788+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:21:00.332+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19622 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:00.388+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19621 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:00.887+08:00 level=INFO msg=面板请求 request_id=90f033c65f037805 method=POST path=/api/groups status=200 duration_ms=0
+time=2026-11-20T08:21:00.888+08:00 level=INFO msg=面板请求 request_id=b65b271150965769 method=POST path=/api/group-members status=200 duration_ms=0
+time=2026-11-20T08:21:00.889+08:00 level=INFO msg=面板请求 request_id=3ff4bfb009c2903c method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T08:21:05.370+08:00 level=INFO msg=面板请求 request_id=ed7c66e380a49a51 method=PATCH path=/api/sources/1 status=200 duration_ms=1
+time=2026-11-20T08:21:05.420+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19621 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:06.776+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:20:54.521+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=1 禁用Host=0）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="Registry 缓存 epoch 已切换到 1（历史条目不可达）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r6/run/switch/data/backup（保留 7 份）"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T08:20:54.636+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T08:20:54.637+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18440"
+time=2026-11-20T08:20:54.665+08:00 level=INFO msg=面板请求 request_id=a739e7eb8a5f6fba method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T08:20:54.729+08:00 level=INFO msg="初始账号已设置: user=r***(7)"
+time=2026-11-20T08:20:54.729+08:00 level=INFO msg=面板请求 request_id=347089f1daf856ea method=POST path=/api/setup status=200 duration_ms=63
+time=2026-11-20T08:20:54.785+08:00 level=INFO msg=面板请求 request_id=e1b5e1c10ed463f8 method=POST path=/api/login status=200 duration_ms=54
+time=2026-11-20T08:20:54.785+08:00 level=INFO msg=面板请求 request_id=3d5caad63581f99e method=GET path=/api/me status=200 duration_ms=0
+time=2026-11-20T08:20:54.786+08:00 level=INFO msg=面板请求 request_id=64f9144b09a9c1c1 method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T08:20:54.787+08:00 level=INFO msg=面板请求 request_id=5ad9a6aa665ff20f method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T08:20:54.788+08:00 level=INFO msg=面板请求 request_id=b226b20c70c74d2d method=POST path=/api/sources status=200 duration_ms=0
+time=2026-11-20T08:20:54.788+08:00 level=INFO msg=面板请求 request_id=f37e66871a3b63fa method=PATCH path=/api/sources/2 status=200 duration_ms=0
+time=2026-11-20T08:20:56.776+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:20:56.788+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:21:00.332+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19622 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:00.388+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19621 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:00.887+08:00 level=INFO msg=面板请求 request_id=90f033c65f037805 method=POST path=/api/groups status=200 duration_ms=0
+time=2026-11-20T08:21:00.888+08:00 level=INFO msg=面板请求 request_id=b65b271150965769 method=POST path=/api/group-members status=200 duration_ms=0
+time=2026-11-20T08:21:00.889+08:00 level=INFO msg=面板请求 request_id=3ff4bfb009c2903c method=PATCH path=/api/sources/1 status=200 duration_ms=0
+time=2026-11-20T08:21:05.370+08:00 level=INFO msg=面板请求 request_id=ed7c66e380a49a51 method=PATCH path=/api/sources/1 status=200 duration_ms=1
+time=2026-11-20T08:21:05.420+08:00 level=INFO msg="runner: 识别完成 http://127.0.0.1:19621 → docker=true ghcr=true github=false"
+time=2026-11-20T08:21:06.776+08:00 level=INFO msg="Host gcr.io 验证通过（native）"
+time=2026-11-20T08:21:07.541+08:00 level=INFO msg=已退出
+time=2026-11-20T08:21:08.081+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T08:21:08.115+08:00 level=INFO msg="已补 2 个源的站点名"
+time=2026-11-20T08:21:08.115+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=1 禁用Host=0）"
+time=2026-11-20T08:21:08.115+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T08:21:08.116+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T08:21:08.116+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T08:21:08.116+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T08:21:08.116+08:00 level=INFO msg="数据库每日快照: /opt/data/cache/scratch/r6/run/switch/data/backup（保留 7 份）"
+time=2026-11-20T08:21:08.116+08:00 level=INFO msg="缓存上限 100 GB"
+time=2026-11-20T08:21:08.117+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T08:21:08.120+08:00 level=INFO msg="Mirror Lens 已启动: http://127.0.0.1:18440"
+time=2026-11-20T08:21:08.226+08:00 level=INFO msg=面板请求 request_id=151a805b64a06984 method=GET path=/api/me status=401 duration_ms=0
+time=2026-11-20T08:21:16.218+08:00 level=INFO msg="runner: tier2 done, 6 checks over 2 sources"
+time=2026-11-20T08:21:16.314+08:00 level=INFO msg="runner: tier3 done, 6 checks over 2 sources"
+time=2026-11-20T08:21:20.435+08:00 level=INFO msg="换源候选：n=3 official_only=false sched=\"registry:gcr.io\" par_targets=false"
+time=2026-11-20T08:21:20.435+08:00 level=INFO msg="换源跳过 sw-A：本轮已试过"
+time=2026-11-20T08:21:21.148+08:00 level=INFO msg="单流换源：sw-B 已接手（已发 11 MB，验证器=false）"
+time=2026-11-20T08:21:21.213+08:00 level=INFO msg="测速样本丢弃：下游阻塞 30.829179ms / 总耗时 65.208425ms（源 2）"
