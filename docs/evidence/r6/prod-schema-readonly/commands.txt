@@ -1,0 +1,36 @@
+# 执行环境：NAS 宿主 Docker 28.5.2，2026-11-20
+# 生产容器：mirror-lens (mirror-lens:3.5.16)，数据目录 /vol1/1000/docker/mirror-lens/data
+# 所有对生产目录的挂载均为 :ro；写入只发生在独立 docker volume ml-schema-check。
+
+# 1) 只读查看生产数据目录
+docker run --rm -v /vol1/1000/docker/mirror-lens/data:/src:ro alpine:3.22 sh -c 'ls -la /src'
+# RC=0
+
+# 2) 用 SQLite backup API 取一致性副本（读源库，写独立卷）
+docker volume create ml-schema-check
+docker run --rm -v /vol1/1000/docker/mirror-lens/data:/src:ro -v ml-schema-check:/dst alpine:3.22 \
+  sh -c 'apk add --no-cache sqlite >/dev/null 2>&1 && sqlite3 /src/mirror-lens.db ".backup /dst/prod-clean.db"'
+# RC=0，副本 43,442,176 字节
+
+# 3) 读取副本的 Schema 指纹
+docker run --rm -v ml-schema-check:/data alpine:3.22 \
+  sh -c 'apk add --no-cache sqlite >/dev/null 2>&1 && sqlite3 -header -column /data/prod-clean.db \
+  "select schema_version, schema_hash, baseline_version, applied_at from schema_meta;"' > meta.txt
+# RC=0
+
+# 4) 3.5.17 运行时对副本做 verify（预期拒绝：副本仍是 3.5.14）
+docker run --rm -v ml-schema-check:/data ml-migrate:tmp verify --db /data/prod-clean.db > verify-src.log 2>&1
+# RC=1（预期），输出：Schema 版本为 "3.5.14"，运行时不支持（需要 "3.5.17"）
+
+# 5) 在副本上演练迁移 3.5.14 → 3.5.17
+docker run --rm -v ml-schema-check:/data ml-migrate:tmp \
+  migrate --in /data/prod-clean.db --out /data/prod-3.5.17-evidence.db --baseline 3.5.14 > migrate.log 2>&1
+# RC=0
+
+# 6) 校验迁移结果
+docker run --rm -v ml-schema-check:/data ml-migrate:tmp verify --db /data/prod-3.5.17-evidence.db > verify-out.log 2>&1
+# RC=0，输出：ok schema_version=3.5.17 baseline=3.5.14 hash=bfc7f2f9...
+
+# 7) 清理：删除含生产数据副本的卷与临时镜像（不触碰生产）
+docker volume rm ml-schema-check
+docker rmi ml-migrate:tmp

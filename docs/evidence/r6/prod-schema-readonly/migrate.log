@@ -1,0 +1,54 @@
+step: canonical ddl
+step: attach
+step: attached
+step: plan 25
+step: copy
+step: host-caps
+step: trusted-mappings
+step: sequences
+step: fk
+step: hash
+{
+  "baseline": "3.5.14",
+  "ok": true,
+  "policy_gaps": null,
+  "policy_rows": 0,
+  "schema_hash": "bfc7f2f9e1c1e489c294ac8ee4b7f7d463017e789f14e703ff3e4e6e400bb4ae",
+  "skipped": [
+    "schema_migrations_audit（旧库无此表，保留空表）",
+    "trusted_mapping_audit（旧库无此表，保留空表）",
+    "trusted_mapping_generation（旧库无此表，保留空表）",
+    "trusted_registry_replicas（旧库无此表，保留空表）",
+    "trusted_replica_audit（旧库无此表，保留空表）",
+    "trusted_replica_generation（旧库无此表，保留空表）",
+    "trusted_source_mappings（旧库无此表，保留空表）"
+  ],
+  "tables": {
+    "audit": 180,
+    "blob_integrity_failures": 0,
+    "blobs": 748,
+    "breaker_state": 23,
+    "cache_entries": 98,
+    "checks": 284094,
+    "live_speed": 37,
+    "meta": 5,
+    "pending_blobs": 0,
+    "proxy_speed": 209,
+    "registry_host_gen": 4,
+    "registry_host_recovery": 4,
+    "sessions": 2,
+    "settings": 10,
+    "source_events": 3641,
+    "source_groups": 2,
+    "source_health": 272,
+    "source_health_archive": 0,
+    "source_health_scope": 4,
+    "source_host_caps": 194,
+    "source_realm_policy": 194,
+    "sources": 95,
+    "tokens": 1,
+    "traffic_stats": 89,
+    "trusted_mapping_generation": 6,
+    "trusted_relays": 0
+  }
+}

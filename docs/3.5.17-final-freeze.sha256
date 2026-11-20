@@ -1,6 +1,6 @@
 dd5c71a18a83c7ae4de5f88dd4a7e377126c1f60f26dafc4f2bebe3ed1a807b8  docs/3.5.17-17b-r4-review.md
 c38f327ce0e0a4e145b191d45f137c3b8e97ed883b3043fa517f06874065a92f  docs/3.5.17-g0-matrix.md
-d9548779fa82459911d6122bc41e201befb59a128267d137c62f41e855d4875a  docs/PROGRESS-3.5.17.md
+108e257448173b3eee1842fd9401705df61a3b763b25583f4791e3b23f856385  docs/PROGRESS-3.5.17.md
 5ad068c3ad525a9f10e289fd3542c4382910ac19eac5479a67ae6380b68999d0  docs/evidence/r5/b17_browser.js
 d70099a18d228b0a44ba7dd617d3200c5930298dac25486106d44e21b585a5eb  docs/evidence/r5/browser/01-default-sequential.png
 93a11a5fa4d68cf9e81f45d6571c02d6a06d571b98c49bc7b5dfd22dca1ada86  docs/evidence/r5/browser/02-race-mode.png
@@ -111,7 +111,7 @@ ff5bcfc9088ec1ebfe2fcec169e2fcc0b8e2514013d7aed571a4850bbc9a5cc1  docs/evidence/
 56e36ec0c6424bcc90af499fbaa98e20e36972a6736121c8bad46bbfd2e38a5d  docs/evidence/r6/verify/gotest.log
 df31b3c005775ca355e222e0a28eef3e07356d6efedb32e4d5d901f3a97c552b  docs/evidence/r6/verify/static.log
 eb9d1a415a248019ac2e7965e05ebf5badef07d36f31072080c1f3d9bcc7a0cd  docs/evidence/r6/verify/test-names.txt
-ec312939fd529180bb16a55e9bba42757b8be3f0ea7912fb20d90003df506233  docs/registry-roadmap-v1.6.md
+ab76c14a6863efa56beced5bcf9805e11497d04f9ea94cf3e72be4ea4aea1609  docs/registry-roadmap-v1.6.md
 93304901bda144e19538f101bb0165b74fada852949934a0dee11c9a4fc83d8b  internal/adapter/adapter.go
 79f18e5d832dd43b50bc0e005137fa2541e4552c368c0ad871b53ba7879d9b11  internal/adapter/registryadapter/registry.go
 8c25dbd04b28dc41a7335a2b7f6908cd59d0496a9334db4319bcaafdf23c82dd  internal/gateway/gateway.go
@@ -134,3 +134,9 @@ cb0c3a87981725f727c2be5f800e1208a7a7bf5a17f9e53d0a5499865ea2c84a  docs/3.5.17-te
 6896f902c15301ff11dbda4c503963ad8349d71691096c7a31d9191cdd39c81b  .github/workflows/docker.yml
 63c90fedc54edb3989a54bfee62c0872b1f6b99413e5bd7ae4dd443d09cfdff1  scripts/check-version.sh
 d94fc4732499f6e4d00380d7b1d19461ffc6d2bef3cb846c087138a749769cc2  internal/version/version_test.go
+aebe69ed3c253032f2bf12477b097ea4abbb329d5417f85e5ba6640d30b61c71  docs/evidence/r6/prod-schema-readonly/README.md
+0742feae7324b0a02b03a928e2224c9bab6b137a94a06cdb1e73d572fbd9d0fc  docs/evidence/r6/prod-schema-readonly/commands.txt
+497a17bc5e4f17d0464cbbd24f6d463a61be20f8cd39e6676d8f68845dd7484a  docs/evidence/r6/prod-schema-readonly/meta.txt
+1b9c221c20e863d57154a70651d86920ac134945838fd831e1fe4f3b6e1ac35c  docs/evidence/r6/prod-schema-readonly/migrate.log
+4d37fb5ccab73c700e681be348708de204892d533297a98cba1802071ff0e40d  docs/evidence/r6/prod-schema-readonly/verify-src.log
+c7f2df837c0803e998c922a4642ed5fa9a6144765080c55f3fee72420dc0be1b  docs/evidence/r6/prod-schema-readonly/verify-out.log
