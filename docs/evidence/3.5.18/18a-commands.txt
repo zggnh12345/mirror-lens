@@ -1,0 +1,25 @@
+# 3.5.18 阶段 18a 实际命令记录
+# 工作目录 /opt/data/cache/scratch/ml8，分支 feat/3.5.18
+# Go 工具链：docker run --rm --volumes-from hermes -w <repo> golang:1.27-alpine
+
+# 定向测试（store B 配置）
+docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine \
+  sh -c 'export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath; \
+  go test ./internal/store -run "TestResolveBConfigMatrix|TestMigrateBConfigIdempotent|TestMigrateBConfigConflictWritesAudit|TestFreshInstallBDefaultsOn|TestBOffKeepsMappingAndSelection" -count=1 -v'
+
+# 回归测试
+go test ./internal/gateway -run "TestReplica|TestCrossSelected|TestCross" -count=1
+go test ./internal/api -count=1
+go test ./internal/config -count=1
+
+# 全量门禁（结果见 18a-gate.log）
+gofmt -l .
+go vet ./...
+go build ./...
+go test ./... -count=1
+
+# race（结果见 18a-race.log；bad substitution 为 sh 不支持 PIPESTATUS，不影响结果）
+docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine \
+  sh -c 'apk add --no-cache gcc musl-dev >/dev/null 2>&1; \
+  export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath CGO_ENABLED=1; \
+  go test -race ./... -count=1'

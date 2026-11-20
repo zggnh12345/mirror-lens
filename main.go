@@ -439,6 +439,12 @@ func main() {
 		log.Printf("registry.private_auth_hosts 已配置但 private_auth_enabled=false，不生效")
 	}
 
+	// 3.5.18 18a：把旧 B 配置一次性迁移为新三字段（settings）。幂等；
+	// 迁移失败不得改变 B 启停状态——失败即拒绝启动，避免静默缺省。
+	if _, merr := st.MigrateBConfig(cfg.Registry.ReplicaMode, "system", ""); merr != nil {
+		log.Fatalf("B 配置迁移失败，拒绝启动: %v", merr)
+	}
+
 	// 3.5.17 G：全服务 RequestScope 并发容量。N 取 limits.global_concurrency
 	// （limits.enabled=false 时仍作为内部硬上限，不得无限大），W 取分片 worker 数。
 	gw := gateway.New(st, gateway.Options{

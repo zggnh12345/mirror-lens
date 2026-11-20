@@ -30,44 +30,54 @@ func (s *Server) crossRegistry(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, id)
 		}
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		configured := s.st.CrossRegistryMode()
-		mode := configured
-		if mode == "" {
-			// 未设置时按 B17 默认「顺序回退」展示；部署期配置由网关决定实际生效值。
-			mode = "sequential"
-			if s.gw != nil {
-				mode = s.gw.EffectiveReplicaMode()
-			}
+		// 3.5.18 18a：B 三字段统一走 ResolveBConfig 单一入口。
+		deployMode := ""
+		if s.gw != nil {
+			deployMode = s.gw.DeployReplicaMode()
 		}
+		cfg := s.st.ResolveBConfig(deployMode)
 		writeJSON(w, 200, map[string]any{
-			"mode":       mode,
-			"configured": configured,
+			"enabled":    cfg.Enabled,
+			"mode":       cfg.Mode,
+			"sort_mode":  cfg.SortMode,
+			"configured": s.st.CrossRegistryMode(), // 兼容 3.5.17：原样 settings 值
 			"selected":   s.st.CrossSelectedSources(),
 			"starred":    ids,
 		})
 	case http.MethodPut:
 		var in struct {
+			Enabled  *bool    `json:"enabled"`
 			Mode     *string  `json:"mode"`
+			SortMode *string  `json:"sort_mode"`
 			Selected *[]int64 `json:"selected"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 			return
 		}
-		if in.Mode == nil && in.Selected == nil {
-			writeJSON(w, 400, map[string]string{"error": "需要 mode 或 selected"})
+		if in.Enabled == nil && in.Mode == nil && in.SortMode == nil && in.Selected == nil {
+			writeJSON(w, 400, map[string]string{"error": "需要 enabled / mode / sort_mode / selected"})
 			return
 		}
 		actor := s.st.GetSetting(auth.KeyUser, auth.DefaultUser)
 		ip := auth.ClientIP(r)
-		if in.Mode != nil {
-			if err := s.st.SetCrossRegistryMode(*in.Mode, actor, ip); err != nil {
+		if in.Enabled != nil {
+			if err := s.st.SetBEnabled(*in.Enabled, actor, ip); err != nil {
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
-			if s.gw != nil {
-				// 模式切换必须即时生效，不等快照 TTL。
-				s.gw.InvalidateReplicaMode()
+		}
+		if in.Mode != nil {
+			// 3.5.18：新模型 mode 只接受 sequential/race；off 由 enabled=false 表达。
+			if err := s.st.SetBMode(*in.Mode, actor, ip); err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		if in.SortMode != nil {
+			if err := s.st.SetBSortMode(*in.SortMode, actor, ip); err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
 			}
 		}
 		if in.Selected != nil {
@@ -76,10 +86,20 @@ func (s *Server) crossRegistry(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if s.gw != nil {
+			s.gw.InvalidateReplicaMode() // 切换即时生效
+		}
+		deployMode := ""
+		if s.gw != nil {
+			deployMode = s.gw.DeployReplicaMode()
+		}
+		cfg := s.st.ResolveBConfig(deployMode)
 		writeJSON(w, 200, map[string]any{
-			"ok":       true,
-			"mode":     s.st.CrossRegistryMode(),
-			"selected": s.st.CrossSelectedSources(),
+			"ok":        true,
+			"enabled":   cfg.Enabled,
+			"mode":      cfg.Mode,
+			"sort_mode": cfg.SortMode,
+			"selected":  s.st.CrossSelectedSources(),
 		})
 	default:
 		w.Header().Set("Allow", "GET, PUT")

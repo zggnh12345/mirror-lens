@@ -100,15 +100,18 @@ registry:
     - cgr.dev
   # 访问拒绝列表；只写精确 Host，空 = 不关闭。禁用后缓存命中也会返回 404。
   disabled_hosts: []
-  # 3.5.17 跨 Registry 可信副本模式（默认关闭）：
-  #   off/省略    关闭，行为与旧版本一致；
-  #   sequential  按副本 priority 固定顺序逐站尝试；
-  #   race        首轮两路并发 + 200ms Digest 投票，不一致先顺序补位，
-  #               仍不能解决才用唯一一次权威对照。
+  # 3.5.18 B 跨 Registry 调度：以 Web/设置页的三字段为准（存 settings 表），
+  # 这里只是部署期基线，仅当三字段从未设置时才生效：
+  #   cross_registry_enabled   true(默认开启)/false(关闭；关闭不删映射与参选配置)
+  #   cross_registry_mode      sequential(默认顺序回退)/race(跨站竞速，默认不开)
+  #   cross_registry_sort_mode fixed(默认固定顺序)/dynamic(动态评分排序)
+  # 三字段均缺省时 = enabled=true + sequential + fixed（默认 ON，但无可信映射
+  # 与参选 Source 时不会产生任何跨站请求）。本基线取值：off=关闭 / sequential /
+  # race；留空等价于 sequential。
   # 副本必须先在 trusted_registry_replicas 显式登记（仓库→仓库），
   # 每个副本 Registry 还要有 trusted_source_mappings（Host→Source）。
-  # 本开关不创建任何映射；v1 不支持 Repository 通配符。
-  replica_mode: "off"
+  # 本配置不创建任何映射；v1 不支持 Repository 通配符。
+  replica_mode: "sequential"
 
 # ── GitHub 加速 ─────────────────────────────────────────
 # /gh/（release 资产）、/raw/（raw 文件）、/git/（git clone）共用这一个开关

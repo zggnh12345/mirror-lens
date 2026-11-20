@@ -112,11 +112,17 @@ func (g *Gateway) replicaModeLive() string {
 			return sn.mode
 		}
 	}
-	m := g.st.CrossRegistryMode()
-	if m == "off" {
-		// off 是显式关闭，不能当成「未设置」再落回配置默认值。
-		g.replicaCfg.Store(&replicaModeSnapshot{mode: m, at: g.now()})
-		return m
+	// 仅当 settings 有 B 字段时才缓存合成模式；三键全缺省时返回空，
+	// 由 replicaMode() 走部署期 g.replica 分支（保证部署期原值变化即时生效）。
+	if !g.st.HasBConfig() {
+		return ""
+	}
+	cfg := g.st.ResolveBConfig(g.replica)
+	// 新模型：enabled=false → "off"；enabled=true → mode（sequential/race）。
+	// replicaMode() 主体据此保持旧 off 语义（返回空=关闭）不变。
+	m := cfg.Mode
+	if !cfg.Enabled {
+		m = "off"
 	}
 	g.replicaCfg.Store(&replicaModeSnapshot{mode: m, at: g.now()})
 	return m
@@ -133,6 +139,15 @@ func (g *Gateway) InvalidateReplicaMode() {
 // EffectiveReplicaMode 返回当前真正生效的跨站模式，供面板展示（只读）。
 func (g *Gateway) EffectiveReplicaMode() string {
 	return g.replicaMode()
+}
+
+// DeployReplicaMode 返回部署期 registry.replica_mode 基线原值，供 18a
+// ResolveBConfig 在 settings 三键全缺省时作底层基线。不读 UI 设置、无副作用。
+func (g *Gateway) DeployReplicaMode() string {
+	if g == nil {
+		return ""
+	}
+	return g.replica
 }
 
 // replicaEligible 判断本次 Manifest 请求是否进入跨 Registry 副本路径。
