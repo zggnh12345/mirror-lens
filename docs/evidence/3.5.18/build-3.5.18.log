@@ -1,0 +1,97 @@
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+Sending build context to Docker daemon   39.6MB
+Step 1/25 : FROM golang:1.27-alpine AS build
+ ---> 3f9f7b68d230
+Step 2/25 : WORKDIR /src
+ ---> Using cache
+ ---> 993b7e2bd215
+Step 3/25 : ENV CGO_ENABLED=0 GOOS=linux
+ ---> Using cache
+ ---> caa42d602c80
+Step 4/25 : ARG VERSION=dev
+ ---> Using cache
+ ---> 400e8905b572
+Step 5/25 : ARG COMMIT=unknown
+ ---> Using cache
+ ---> d1b79410cf1b
+Step 6/25 : ARG BUILD_DATE=unknown
+ ---> Using cache
+ ---> e0858ea7c004
+Step 7/25 : COPY go.mod go.sum ./
+ ---> Using cache
+ ---> d9cfce941af9
+Step 8/25 : RUN go mod download
+ ---> Running in c6954ae31106
+ ---> Removed intermediate container c6954ae31106
+ ---> dbf3c6d526e7
+Step 9/25 : COPY . .
+ ---> 37987fd546a7
+Step 10/25 : RUN if [ "$VERSION" != "dev" ]; then       want=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' internal/version/version.go);       [ "$VERSION" = "$want" ] || { echo "VERSION($VERSION) != Go Version($want)" >&2; exit 1; };     fi
+ ---> Running in 4ac27c62dfeb
+ ---> Removed intermediate container 4ac27c62dfeb
+ ---> e6dd0cea039d
+Step 11/25 : RUN go build -trimpath       -ldflags="-s -w -X github.com/zggnh12345/mirror-lens/internal/version.Commit=${COMMIT} -X github.com/zggnh12345/mirror-lens/internal/version.BuildDate=${BUILD_DATE}"       -o /out/mirror-lens .
+ ---> Running in e2c6e3c1f57e
+ ---> Removed intermediate container e2c6e3c1f57e
+ ---> 9c87f32a235a
+Step 12/25 : FROM alpine:3.22
+ ---> 812e99317af7
+Step 13/25 : ARG VERSION=dev
+ ---> Using cache
+ ---> b5045828cee2
+Step 14/25 : ARG COMMIT=unknown
+ ---> Using cache
+ ---> 6ff4ba2264c5
+Step 15/25 : ARG BUILD_DATE=unknown
+ ---> Using cache
+ ---> 000c6be4b454
+Step 16/25 : LABEL org.opencontainers.image.title="mirror-lens"       org.opencontainers.image.version="${VERSION}"       org.opencontainers.image.revision="${COMMIT}"       org.opencontainers.image.created="${BUILD_DATE}"
+ ---> Running in 4805962c0172
+ ---> Removed intermediate container 4805962c0172
+ ---> 67e606240320
+Step 17/25 : RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 lens
+ ---> Running in 447a720474b5
+fetch https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz
+fetch https://dl-cdn.alpinelinux.org/alpine/v3.22/community/x86_64/APKINDEX.tar.gz
+(1/2) Installing ca-certificates (20261020-r0)
+(2/2) Installing tzdata (2026f-r0)
+Executing busybox-1.37.0-r20.trigger
+Executing ca-certificates-20261020-r0.trigger
+OK: 8 MiB in 18 packages
+ ---> Removed intermediate container 447a720474b5
+ ---> c099f6cd685a
+Step 18/25 : COPY --from=build /out/mirror-lens /usr/local/bin/mirror-lens
+ ---> 8e4a747cd3e1
+Step 19/25 : ENV DATA_DIR=/data TZ=Asia/Shanghai
+ ---> Running in 5874e6760d40
+ ---> Removed intermediate container 5874e6760d40
+ ---> fe31e1285875
+Step 20/25 : RUN mkdir -p /data && chown lens:lens /data
+ ---> Running in 9e562106db25
+ ---> Removed intermediate container 9e562106db25
+ ---> 03b68fa4235e
+Step 21/25 : USER lens
+ ---> Running in 53d7aee0ab03
+ ---> Removed intermediate container 53d7aee0ab03
+ ---> a89a1f8f004d
+Step 22/25 : WORKDIR /data
+ ---> Running in 16ad3cba2acf
+ ---> Removed intermediate container 16ad3cba2acf
+ ---> 2d4ad3278aab
+Step 23/25 : VOLUME ["/data"]
+ ---> Running in 824bfc7627c8
+ ---> Removed intermediate container 824bfc7627c8
+ ---> 6583d7313721
+Step 24/25 : EXPOSE 8080
+ ---> Running in 837b1ad1873e
+ ---> Removed intermediate container 837b1ad1873e
+ ---> a9c600fb453e
+Step 25/25 : ENTRYPOINT ["mirror-lens"]
+ ---> Running in 41dd24d63011
+ ---> Removed intermediate container 41dd24d63011
+ ---> 8339c8913086
+Successfully built 8339c8913086
+Successfully tagged mirror-lens:3.5.18-local

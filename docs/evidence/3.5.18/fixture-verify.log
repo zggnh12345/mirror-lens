@@ -1,0 +1,9 @@
+--- sources ---
+--- caps ---
+--- recovery ---
+--- replicas ---
+--- mappings ---
+--- B settings ---
+cross_registry_enabled|true
+cross_registry_mode|sequential
+cross_registry_sort_mode|fixed

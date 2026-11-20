@@ -1,0 +1,30 @@
+time=2026-11-20T22:17:03.713+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T22:17:03.713+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T22:17:03.714+08:00 level=INFO msg="缓存上限 1 GB"
+time=2026-11-20T22:17:03.714+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T22:17:03.715+08:00 level=INFO msg="Mirror Lens 已启动: http://:8080"
+time=2026-11-20T22:17:25.687+08:00 level=INFO msg=已退出
+time=2026-11-20T22:17:28.454+08:00 level=INFO msg="mirror-lens 3.5.17 commit=da8eba5 built=2026-11-20"
+time=2026-11-20T22:17:28.454+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-20T22:17:28.478+08:00 level=INFO msg="当前仍是默认密码 admin：登录后必须先设置新的账号和密码，其它接口一律拒绝"
+time=2026-11-20T22:17:28.480+08:00 level=INFO msg="已补 2 个源的站点名"
+time=2026-11-20T22:17:28.480+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=2 禁用Host=0）"
+time=2026-11-20T22:17:28.481+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-20T22:17:28.481+08:00 level=INFO msg=私有分片内存窗口 并发文件=2 worker=4 段大小MB=4 最坏MB=32
+time=2026-11-20T22:17:28.482+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-20T22:17:28.482+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-20T22:17:28.482+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-20T22:17:28.482+08:00 level=INFO msg="缓存上限 1 GB"
+time=2026-11-20T22:17:28.483+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-20T22:17:28.484+08:00 level=INFO msg="信任中转 ml318-reg-a 的解析结果被拒绝：目标地址不允许访问: 172.19.0.2 属于内网/回环/链路本地"
+time=2026-11-20T22:17:28.484+08:00 level=INFO msg="信任中转 ml318-reg-b 的解析结果被拒绝：目标地址不允许访问: 172.19.0.3 属于内网/回环/链路本地"
+time=2026-11-20T22:17:28.485+08:00 level=ERROR msg="信任中转 fixture-reg-b 首次解析失败：ml318-reg-b 没有可用的公网地址；24h0m0s 内沿用系统解析（未钉住，高危）"
+time=2026-11-20T22:17:28.486+08:00 level=ERROR msg="信任中转 fixture-reg-a 首次解析失败：ml318-reg-a 没有可用的公网地址；24h0m0s 内沿用系统解析（未钉住，高危）"
+time=2026-11-20T22:17:28.488+08:00 level=INFO msg="Mirror Lens 已启动: http://:8080"
+time=2026-11-20T22:17:28.488+08:00 level=INFO msg="代表性仓库已变更，清除 2 条 Host 能力结论，等待重新探测"
+time=2026-11-20T22:17:28.490+08:00 level=INFO msg="Host 探测缺少仓库配置，已跳过这些 Host: [registry.gitlab.com registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"
+time=2026-11-20T22:17:40.702+08:00 level=INFO msg="runner: tier2 done, 6 checks over 2 sources"
+time=2026-11-20T22:17:40.707+08:00 level=INFO msg="runner: tier3 done, 2 checks over 2 sources"
+time=2026-11-20T22:17:41.007+08:00 level=INFO msg=源要求鉴权，换下一个 request_id=5fa980dc9872a2e2 kind=docker cache_key="docker:m:1:quay.io/library/alpine:t1|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=AUTH_TOKEN_INVALID source=quay.io status=401
+time=2026-11-20T22:17:41.095+08:00 level=INFO msg=面板请求 request_id=a3167d7546b5995a method=GET path=/api/cross-runs status=403 duration_ms=0
+time=2026-11-20T22:17:47.019+08:00 level=INFO msg=源要求鉴权，换下一个 request_id=d97fcab2b23e96ab kind=docker cache_key="docker:m:1:quay.io/library/alpine:t1|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=AUTH_TOKEN_INVALID source=quay.io status=401

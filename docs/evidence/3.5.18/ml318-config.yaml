@@ -1,0 +1,18 @@
+addr: ":8080"
+data: "/data"
+no_seed: true
+probe:
+  allow_private: true
+registry:
+  enabled: true
+  docker_enabled: true
+  ghcr_enabled: true
+  upstream: "registry-1.docker.io"
+  multi_origin_hosts:
+    - registry.gitlab.com
+    - registry.k8s.io
+  replica_mode: "sequential"
+cache:
+  max_gb: 1
+backup:
+  enabled: false

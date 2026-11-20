@@ -1,0 +1,6 @@
+t4-1st(cached from before): ('OK', 200, None, 'sha256:425cc93f1defe38a8b97998db794655f20f036cf7b371290e5dd07c0b8db9604', 16.7, 584)
+t4-2nd(cache hit)        : ('OK', 200, None, 'sha256:425cc93f1defe38a8b97998db794655f20f036cf7b371290e5dd07c0b8db9604', 0.8, 584)
+t1                        : ('OK', 200, 'fixture-reg-a', 'sha256:596ef24328ac6a1925b3c4f7cbc1a51f194857c8b81f66637c1daef04197e576', 6534.0, 584)
+t2                        : ('OK', 200, 'fixture-reg-a', 'sha256:44f87819b4923af82a344172e482697c7ec66b14fa74ea1aad9c2a0e369cb406', 1091.5, 745)
+t3                        : ('OK', 200, 'fixture-reg-a', 'sha256:3206d6a04ec1862d27124a5236aa3d49b6e2463ca4ec3e3337210120ab4e1277', 1659.7, 906)
+t5                        : ('OK', 200, 'fixture-reg-a', 'sha256:e6fab115fde03c486598fa2e1e83f11c6f32990ade906c0eba21de1ced9e4cae', 1660.6, 745)
