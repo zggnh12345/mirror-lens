@@ -27,3 +27,35 @@ RED 显式启用：
 - RED 默认用 t.Skip 隔离（ML_NESTED_RED=1 才运行），以便全量门禁保持绿；
   18d 核心重构阶段将移除该开关，使 RED 转为常驻硬门禁。
 - 开关只控制是否执行，不放宽任何断言。
+
+---
+
+# 18d 核心重构命令记录（RED 转常驻后）
+
+环境：宿主无 go；golang:1.27-alpine + --volumes-from hermes，
+工作目录 /opt/data/cache/scratch/ml8，GOCACHE=/tmp/gocache，GOPATH=/opt/data/cache/scratch/gopath。
+race 另需 apk add --no-cache gcc musl-dev + CGO_ENABLED=1。
+
+## 命令 3：编译门禁（→ 18d-core-vet-build.log）
+  gofmt -l .                     → 空
+  go vet ./...                   → VET_RC=0
+  go build ./...                 → BUILD_RC=0
+
+## 命令 4：全量测试（→ 18d-core-test.log）
+  go test ./... -count=1         → TEST_RC=0，34 包 ok，0 FAIL
+
+## 命令 5：定向门禁
+  go test ./internal/gateway -run "TestChar|TestNested|TestReplica|TestCross|TestB18" -count=1
+  → ok；8 项 characterization 全 PASS（硬门禁无回归）；
+    全部原有 TestReplica*/TestCross* PASS；
+    TestNestedBRegistryRunsASourceRace PASS（原 RED 转常驻绿）。
+
+## 命令 6：RED → GREEN 对照
+  基线 56335ab（18d-phase1-char-red.log）：hits2=0，FAIL（缺口存在）。
+  重构后（18d-core-test.log）：hits2>=1，PASS（缺口闭合）。
+
+## 命令 7：race 检测（→ 18d-core-race-focus.log）
+  首跑发现真实 DATA RACE：replica.go:968 写 plan.Source vs loggw 读 plan.Source
+  （成因：内层 goroutine 与主 goroutine 共享同一 *Plan）。
+  修复：每个内层 Source 用独立 plan 浅拷贝（内层只读 plan）。
+  重跑：见 18d-core-race-focus.log 末尾 RACE_RC。

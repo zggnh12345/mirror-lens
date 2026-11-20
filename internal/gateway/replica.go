@@ -50,6 +50,9 @@ const (
 	crossReplicaM = 4
 	// crossReplicaC 是跨站竞速首轮并发候选数，含于 M。
 	crossReplicaC = 2
+	// crossReplicaA 是单个 Registry 内部的 Source 并发上限（冻结稿 §4.2）。
+	// 嵌套 A+B 双竞速时首轮物理并发峰值 C×A=4。
+	crossReplicaA = 2
 )
 
 // replicaArtifact 是一次已完整读取并校验过的候选正文（临时文件）。
@@ -94,6 +97,20 @@ func (g *Gateway) recordReplicaSample(in store.DynamicSampleInput) {
 type replicaTarget struct {
 	u        *url.URL
 	registry string // 该候选的逻辑 Registry host
+	sourceID int64
+	name     string
+	// star 标记该 Source 已被星标（A 站内竞速资格）。
+	star bool
+	// alts 是该 Registry 内部可参与 A 站内竞速的其他星标合格 Source（最多
+	// crossReplicaA-1 个）。只要该 Registry 的 A 开关打开即填充，与 B 的
+	// race/sequential 模式无关（§4.2）。每个 Source 仍是同一 B 候选，不增加
+	// M/投票名额。B 路径不新建 ChainA，避免与 ChainB 争用同一权威 Claim 被抑制。
+	alts []replicaSourceAlt
+}
+
+// replicaSourceAlt 是同一副本 Registry 内的备选 Source。
+type replicaSourceAlt struct {
+	u        *url.URL
 	sourceID int64
 	name     string
 }
@@ -279,11 +296,12 @@ func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now ti
 			// 3.5.18 18b：仅 race 模式要求方案二 Source 级求交（星标 ∩ 参选）。
 			// sequential 模式的候选来自可信映射，不受参选勾选限制；但两类模式
 			// 都要求该 Source 已被调度器选中并经 Rewrite 成功（见下）。
-			if raceEligible {
-				if !c.Preferred || !selected[c.ID] {
-					skipped = append(skipped, fmt.Sprintf("%d:not-race-eligible(star=%v,sel=%v)", c.ID, c.Preferred, selected[c.ID]))
-					continue
-				}
+			// A 站内竞速资格按星标记（§4.2 S(B-race)：调度器选中 ∩ 星标 ∩ 参选）。
+			// race 模式还要求跨站参选勾选；sequential 模式不受参选限制。
+			aEligible := c.Preferred && (!raceEligible || selected[c.ID])
+			if raceEligible && !aEligible {
+				skipped = append(skipped, fmt.Sprintf("%d:not-race-eligible(star=%v,sel=%v)", c.ID, c.Preferred, selected[c.ID]))
+				continue
 			}
 			cc := c
 			u, ok := g.sched.Rewrite("registry:"+rep.ReplicaRegistry, base, cc)
@@ -291,17 +309,45 @@ func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now ti
 				skipped = append(skipped, fmt.Sprintf("%d:rewrite-failed(path=%q)", c.ID, cc.RegistryPath))
 				continue
 			}
-			picked = append(picked, replicaTarget{u: u, registry: rep.ReplicaRegistry, sourceID: cc.ID, name: cc.Name})
+			picked = append(picked, replicaTarget{u: u, registry: rep.ReplicaRegistry, sourceID: cc.ID, name: cc.Name, star: aEligible})
 		}
 		// 候选诊断：只在 debug 级别输出，逐副本给出每道门的结果。
 		// 它不改变任何选择结果，只把「为什么没进候选」变成可复核的事实。
 		loggw(slog.LevelDebug, "副本候选诊断", ctx, plan, "", nil,
 			"replica", rep.ReplicaRegistry, "mappings", len(maps), "sched_candidates", len(cands),
 			"preferred_selected", len(picked), "skipped", strings.Join(skipped, ","))
-		// 同一副本 Registry 可能有多个可信 Source；按候选顺序取第一个可用即可，
-		// 避免同一副本在投票里贡献两票（投票层仍按 source_id 去重）。
+		// 同一副本 Registry 可能有多个可信 Source。该 Registry 仍只占一个 B
+		// 候选/一个投票主体（避免同 Registry 多 Source 投两票）；但 3.5.18
+		// 嵌套调度要求：只要该 Registry 的 A 站内竞速开关打开（与 B 的
+		// race/sequential 模式无关，§4.2 两种模式内部都由 A 调度），就把
+		// 这个 Registry 内部最多 crossReplicaA 个星标合格 Source 带进 alts，
+		// 由内层竞速决定哪个 Source 交付。alts 必须是星标合格的 Source，
+		// 且不能把未勾选 Source 带入 B race 请求（§4.2 S(B-race)）。
 		if len(picked) > 0 {
-			out = append(out, picked[0])
+			primary := picked[0]
+			aOn := g.starRaceOn(rep.ReplicaRegistry)
+			// 顺序模式下主 Source 可能不是星标；若 A 开且存在星标备选，
+			// 优先把第一个星标 Source 提为主候选，保证 A 只在星标集合内竞速。
+			if aOn && !primary.star {
+				for i := 1; i < len(picked); i++ {
+					if picked[i].star {
+						primary = picked[i]
+						break
+					}
+				}
+			}
+			if aOn {
+				for i := 0; i < len(picked) && len(primary.alts) < crossReplicaA-1; i++ {
+					cand := picked[i]
+					if cand.sourceID == primary.sourceID || !cand.star {
+						continue
+					}
+					primary.alts = append(primary.alts, replicaSourceAlt{
+						u: cand.u, sourceID: cand.sourceID, name: cand.name,
+					})
+				}
+			}
+			out = append(out, primary)
 			replicas++
 		}
 	}
@@ -385,7 +431,36 @@ func (g *Gateway) applyDynamicOrder(targets []replicaTarget, now time.Time) []re
 
 // fetchReplicaArtifact 完整下载一个候选正文到临时文件，计算 SHA-256 并做
 // 与官方一致的内容完整性检查。返回的临时文件由调用方负责提交或删除。
+// replicaSampleGuard 让嵌套竞速能在「某 Source 因同 Registry 另一 Source
+// 胜出而被取消」时抑制其样本（F03 排除项），不影响单 Source 路径。
+type replicaSampleGuard struct {
+	mu       sync.Mutex
+	suppress bool
+}
+
+func (g *replicaSampleGuard) suppressed() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.suppress
+}
+
+func (g *replicaSampleGuard) setSuppress() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.suppress = true
+	g.mu.Unlock()
+}
+
 func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, t replicaTarget, identityHost string) (replicaArtifact, int, error) {
+	return g.fetchReplicaArtifactCore(ctx, plan, t, identityHost, nil)
+}
+
+func (g *Gateway) fetchReplicaArtifactCore(ctx context.Context, plan *adapter.Plan, t replicaTarget, identityHost string, guard *replicaSampleGuard) (replicaArtifact, int, error) {
 	var art replicaArtifact
 	// 3.5.18 18c：每个真实回源尝试最多贡献一个样本。deferred 统一在返回时
 	// 按分类写入；成功须过 Manifest 校验（走到 art 提交才算 OK）。
@@ -393,6 +468,10 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 		RegistryHost: t.registry, SourceID: t.sourceID, TS: g.now().UnixNano(),
 	}
 	defer func() {
+		// 嵌套竞速中被同 Registry 胜者取消的尝试不计样本（F03）。
+		if guard.suppressed() {
+			return
+		}
 		g.recordReplicaSample(sample)
 	}()
 
@@ -511,6 +590,114 @@ func (g *Gateway) fetchReplicaArtifact(ctx context.Context, plan *adapter.Plan, 
 	// 走到这里：正文完整读取、长度/Digest/身份全部校验通过 → 成功样本。
 	sample.OK = true
 	return art, http.StatusOK, nil
+}
+
+// fetchRegistryArtifact 在一个副本 Registry 内部执行嵌套 A 站内竞速。
+//
+// 冻结语义（§4.2/§4.3/§18d）：
+//   - 该 Registry 仍是 B 的一个候选、一个投票主体；alts 只决定内部谁交付；
+//   - 所有 Source Attempt 都在调用方已绑定的 ChainB 上，共享权威 Claim、
+//     进同一 RequestScope 的 R/P 预算，不新建 ChainA（否则会与 ChainB 争用
+//     同一 Claim 而被 errUnifiedSuppressed 抑制）；
+//   - Source 失败立即补位（这里并发启动，等价于失败即由其他 Source 顶上）；
+//   - 第一个通过完整校验的正文胜出；胜者确定后取消其余 Source，被取消者
+//     不计样本（F03），并清理临时文件与在途资源；
+//   - 全部 Source 失败 → 该 Registry 整体失败，交回外层 B 继续补位。
+func (g *Gateway) fetchRegistryArtifact(ctx context.Context, plan *adapter.Plan, t replicaTarget, identityHost string) (replicaArtifact, int, error) {
+	if len(t.alts) == 0 {
+		return g.fetchReplicaArtifact(ctx, plan, t, identityHost)
+	}
+
+	sources := make([]replicaTarget, 0, 1+len(t.alts))
+	sources = append(sources, t)
+	for _, a := range t.alts {
+		sources = append(sources, replicaTarget{
+			u: a.u, registry: t.registry, sourceID: a.sourceID, name: a.name,
+		})
+	}
+	if len(sources) > crossReplicaA {
+		sources = sources[:crossReplicaA]
+	}
+
+	type innerResult struct {
+		idx  int
+		art  replicaArtifact
+		code int
+		err  error
+	}
+	n := len(sources)
+	ch := make(chan innerResult, n)
+	guards := make([]*replicaSampleGuard, n)
+	cancels := make([]context.CancelFunc, n)
+
+	for i, src := range sources {
+		guards[i] = &replicaSampleGuard{}
+		sctx, cancel := context.WithCancel(ctx)
+		cancels[i] = cancel
+		idx, s, gd := i, src, guards[i]
+		go func() {
+			// 每个内层 Source 用独立的 plan 浅拷贝：fetchReplicaArtifactCore
+			// 内 loggw 会读 plan.Source，而外层胜者返回后会写 plan.Source。
+			// 共享同一 *Plan 会与仍在收尾的输家 goroutine 产生 DATA RACE
+			// （实测 replica.go:968 写 vs loggw 读）。内层只读 plan，浅拷贝
+			// 即可隔离该字段；不改任何被共享的引用型字段内容。
+			pp := *plan
+			art, code, err := g.fetchReplicaArtifactCore(sctx, &pp, s, identityHost, gd)
+			ch <- innerResult{idx: idx, art: art, code: code, err: err}
+		}()
+	}
+
+	// 胜者判定：第一个「完整校验通过（code==200 且无 err）」的结果。
+	// 其余先到的失败结果不提前结束整场——等在途 Source 或全部失败。
+	var winner *innerResult
+	var lastErr error
+	remaining := n
+	for remaining > 0 && winner == nil {
+		r := <-ch
+		remaining--
+		if r.err == nil && r.code == http.StatusOK {
+			w := r
+			winner = &w
+			continue
+		}
+		lastErr = r.err
+	}
+
+	cleanupLosers := func(keep int) {
+		// 先给所有输家打抑制标记，再取消 context：顺序反了会让被取消者的
+		// deferred 样本采集抢在抑制之前发生，违反 F03「因其他候选胜出取消
+		// 不计样本」。已完成的真实失败样本在消费结果时已经记录，不受影响。
+		for i := range sources {
+			if i == keep {
+				continue
+			}
+			guards[i].setSuppress()
+		}
+		for i := range sources {
+			cancels[i]()
+		}
+	}
+
+	if winner == nil {
+		cleanupLosers(-1)
+		if lastErr == nil {
+			lastErr = fmt.Errorf("Registry %s 内所有 Source 失败", t.registry)
+		}
+		return replicaArtifact{}, 0, lastErr
+	}
+
+	cleanupLosers(winner.idx)
+	// 收集迟到结果并清理其临时文件（迟到成功也可能落了 temp）。
+	go func() {
+		for i := 0; i < remaining; i++ {
+			r := <-ch
+			if r.art.tmp != "" {
+				removeFile(r.art.tmp)
+				g.cache.ForgetTemp(r.art.tmp)
+			}
+		}
+	}()
+	return winner.art, winner.code, nil
 }
 
 // commitReplicaArtifact 把已校验的候选正文提交为权威缓存条目。
@@ -647,7 +834,8 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 
 	if mode == "sequential" {
 		for _, t := range targets {
-			art, code, err := g.fetchReplicaArtifact(ctx, plan, t, idHost)
+			// A ON + B sequential：Registry 内部仍由 A 调度（§4.2 主链并发=A=2）。
+			art, code, err := g.fetchRegistryArtifact(ctx, plan, t, idHost)
 			if err != nil {
 				_ = code
 				continue
@@ -679,7 +867,10 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 	consumed := map[int]bool{}
 	run := func(i int) (string, error) {
 		slots[i].once.Do(func() {
-			art, _, err := g.fetchReplicaArtifact(ctx, plan, targets[i], idHost)
+			// A ON + B race：每个 Registry 内部再跑 A 站内竞速（C×A=4），
+			// 但该 Registry 仍是一个 B 候选/一个投票主体。内层所有 Source
+			// Attempt 在同一 ChainB/Claim 上，共享 RequestScope 预算。
+			art, _, err := g.fetchRegistryArtifact(ctx, plan, targets[i], idHost)
 			mu.Lock()
 			if err == nil {
 				slots[i].art = art

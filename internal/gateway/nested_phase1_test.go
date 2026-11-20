@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -251,33 +250,22 @@ func TestCharB_WrongDigestReplicaNotCommitted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// A+B 嵌套 RED：证明「B 选中的 Registry 内部没有 A 站内竞速」
+// A+B 嵌套常驻回归测试（原 RED）：证明「B 选中的 Registry 内部会跑 A 站内竞速」。
+// 在基线 56335ab 上本测试因 hits2==0 失败（RED 取证见 18d-phase1-char-red.log）；
+// 核心重构后第二个 Source 被内层竞速真实尝试，本测试常驻为绿。
 //
 // 冻结稿 §0.1/§18d/§4.2/§4.3 要求：A、B 都开启且均为竞速时，每个被 B 选中的
 // Registry 内部应再跑 A 的多 Source 竞速（C×A=4 峰值）。
 //
-// 当前代码事实（已复核）：replicaTargets 对同一副本 Registry 的多个可信 Source
-// 只取 picked[0]（replica.go:303-305），fetchReplicaArtifact 每副本只发一次
-// openUpstreamAs。故第二个 Source 永远不会被尝试。
-//
-// RED 设计（确定性，无 Sleep 赌时序）：
+// 确定性设计（无 Sleep 赌时序）：
 //   - 副本 Registry quay.io 配两个可信 Source：source-1 用屏障阻塞，source-2
 //     立即返回正确内容。
-//   - 若嵌套已实现：两个 Source 都会被竞速尝试 -> hits1 与 hits2 均 >=1。
-//   - 当前基线：只尝试 picked[0]（source-1），hits2==0 -> 断言失败（RED）。
+//   - 嵌套已实现：两个 Source 都竞速尝试 -> hits1 与 hits2 均 >=1。
 //   - 屏障保证 source-1 一定先被派发并卡住，source-2 若会被竞速派发也一定会
 //     被打到；不依赖固定时间。
 //
-// 注意：本测试在基线 56335ab 上必须「编译成功 + 因行为缺失失败」。
 // ---------------------------------------------------------------------------
-func TestRedNestedBRegistryRunsASourceRace(t *testing.T) {
-	// 18d 第一阶段取证用 RED：默认跳过以保住全量门禁绿；设 ML_NESTED_RED=1
-	// 时运行，证明「当前基线缺少每 Registry 的 A 站内竞速」。18d 核心重构
-	// 阶段将该测试转为常驻（去掉此开关）。开关只控制是否执行，不影响任何
-	// 生产代码，也不放宽断言——运行时 RED 仍严格因 hits2==0 失败。
-	if os.Getenv("ML_NESTED_RED") == "" {
-		t.Skip("18d RED 取证测试：设 ML_NESTED_RED=1 运行（当前基线预期失败）")
-	}
+func TestNestedBRegistryRunsASourceRace(t *testing.T) {
 	body := []byte(bodyValidManifest())
 	f := newReplicaFixture(t, body, body)
 	f.plan.ExpectSHA = shaOf(body)

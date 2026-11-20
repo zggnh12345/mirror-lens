@@ -94,5 +94,64 @@
 ## 七、18d 状态
 
 - 第一阶段（锁测试 + RED）：完成。
-- 核心重构阶段：待进入（用户确认后，移除 RED 开关并把 RED 转为常驻绿）。
+- 核心重构阶段：完成（见第八节）。
 - 生产/远程：未触碰。
+
+---
+
+## 八、18d 核心重构（按 Registry 嵌套 A 站内竞速）
+
+### 实现（生产代码仅改 `internal/gateway/replica.go`）
+
+1. `replicaTarget` 增加 `star`（该 Source 是否星标合格）与 `alts []replicaSourceAlt`
+   （同 Registry 内可参与 A 站内竞速的其他星标 Source，最多 `crossReplicaA-1=1` 个）。
+   `crossReplicaA=2` 为冻结的每 Registry Source 并发上限（§4.2）。
+2. `replicaTargets` 填充 alts：只要该 Registry 的 A 站内竞速开关 `starRaceOn` 打开
+   （与 B 的 race/sequential 模式无关，§4.2 两种模式内部都由 A 调度），就从该
+   Registry 的星标合格 Source 中取最多 2 个；主候选优先取星标 Source。每个
+   Registry 仍只 `out = append` 一次 → 仍是一个 B 候选、一个投票主体，不增加 M。
+   - race 模式的资格仍是「调度器选中 ∩ 星标 ∩ 跨站参选勾选」（18b 语义不变）；
+     sequential 模式不受参选勾选限制（18b 语义不变）。A 站内竞速额外要求星标。
+3. `fetchReplicaArtifactCore`（由原 `fetchReplicaArtifact` 抽出）接受一个
+   `replicaSampleGuard`，使嵌套竞速能抑制「因同 Registry 另一 Source 胜出而取消」
+   的尝试样本（F03 排除项）。原 `fetchReplicaArtifact` 保留为薄封装，行为不变。
+4. 新增 `fetchRegistryArtifact`：无 alts 时直通原路径（零行为变化）；有 alts 时
+   并发启动最多 `crossReplicaA=2` 个 Source，第一个通过完整校验（code 200 且无 err）
+   的正文胜出，其余取消并抑制样本、清理临时文件。所有内层 Source 都派生自调用方
+   ctx（已由 `fetchWithReplicas:769` 绑定 `unified.ChainB`），因此：
+   - 每个 Source 的 `openUpstreamAs → beginUnifiedAttemptAs` 都在 **ChainB** 上
+     `sc.Claim(chainB, authorityIdentity)`，同链共享同一 Claim（claim.go:85-108），
+     不新建 ChainA → 不与 ChainB 争用权威 Claim 而被 errUnifiedSuppressed 抑制；
+   - 每个 Source Attempt 通过 `ch.RegisterAttempt` 进入同一 RequestScope 的 R/P
+     核算（`openUpstreamAs:1604` 起），共享 P=8192、R=16 预算，不各自独立计数。
+5. B 的两个派发路径都改调 `fetchRegistryArtifact`：
+   - sequential（`replica.go:808`）：A ON + B sequential 主链并发 A=2（§4.2）；
+   - race（`replica.go:840` 槽位）：A ON + B race 每 Registry 内部竞速，C×A=4。
+   外层 `unified.RunCrossRace` 的投票/Authority/CachePut 完全未动。
+
+### 关键不变量（已核对代码事实）
+- 预算参数未改：R=16、C=2、A=2、M=4、P=8192、200ms 窗口、`digest_only` 均未被触碰。
+- 安全门禁未动：每个 Source 仍走 `fetchReplicaArtifactCore` 的派发前仓库身份检查
+  与响应后三方 Digest 校验；胜者才由 `commitReplicaArtifact` 写唯一 CacheKey。
+- Authority 唯一：外层 `run(0)` 仍由 `sync.Once` 记忆化，单请求至多一次实派发。
+- 两层补位：内层某 Source 失败不释放 B 槽位（仍在同 Registry 的 alts 内竞争）；
+  内层全失败 → 该 Registry 整体失败 → 外层 `RunCrossRace` 补其他 Registry。
+  赢家确定后取消 loser 并抑制其样本；样本抑制在取消前设置（避免 F03 竞态）。
+
+### RED → 常驻 GREEN
+- `TestRedNestedBRegistryRunsASourceRace` 改名为
+  `TestNestedBRegistryRunsASourceRace`，移除 `ML_NESTED_RED` 跳过开关，常驻执行。
+- 基线 56335ab：`hits2=0` FAIL（证据 `18d-phase1-char-red.log`）；
+  重构后：同一断言 `hits2>=1` PASS（`18d-core-test.log` 中
+  `TestNestedBRegistryRunsASourceRace ok`）——证明缺口已闭合。
+
+### 验证结果
+- `gofmt -l .` 空；`go vet ./...` RC=0；`go build ./...` RC=0（`18d-core-vet-build.log`）。
+- `go test ./... -count=1` RC=0，34 包 ok、0 FAIL（`18d-core-test.log`）。
+- A/B 8 项 characterization 与全部原有 `TestReplica*`/`TestCross*` 独立路径全绿 →
+  **重构硬门禁通过**（无回归）。
+- race 检测：定向 `18d-core-race-focus.log`（RACE_RC=0，0 DATA RACE，0 FAIL）；
+  首跑曾发现一处真实 DATA RACE（`plan.Source` 写 vs loggw 读，内层 goroutine
+  共享 *Plan），已用内层独立 plan 浅拷贝修复并重跑为绿；全量
+  `18d-core-race-full.log`（见文件内 RACE_FULL_RC）。
+- 原始证据均为本次重新运行生成，未从其他日志拼贴。
