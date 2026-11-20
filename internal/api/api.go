@@ -249,6 +249,8 @@ func New(st *store.Store, eng *runner.Engine, gw *gateway.Gateway, j *janitor.Ja
 	mux.HandleFunc("/api/registry-replica-audit", guard(s.registryReplicaAudit))
 	// 3.5.17 B17/B20：跨站两档模式与参选勾选（settings 载体，非新 store）。
 	mux.HandleFunc("/api/cross-registry", guard(csrf(s.crossRegistry)))
+	// 3.5.18 18f：跨 Registry 运行时状态（只读，内存有界环形缓冲）。
+	mux.HandleFunc("/api/cross-runs", guard(s.crossRuns))
 	mux.HandleFunc("/api/groups", guard(csrf(s.groups)))
 	mux.HandleFunc("/api/sched-order", guard(csrf(s.schedOrder)))
 	mux.HandleFunc("/api/groups/order", guard(csrf(s.reorderGroups)))

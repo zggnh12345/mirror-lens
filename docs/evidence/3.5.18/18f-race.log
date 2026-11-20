@@ -1,0 +1,41 @@
+ok  	github.com/zggnh12345/mirror-lens	1.037s
+ok  	github.com/zggnh12345/mirror-lens/cmd/db-migrate	31.847s
+?   	github.com/zggnh12345/mirror-lens/internal/adapter	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/ghadapter	1.010s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/gitadapter	1.010s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/httpadapter	1.011s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/raw	1.010s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter	1.007s
+ok  	github.com/zggnh12345/mirror-lens/internal/alert	1.006s
+ok  	github.com/zggnh12345/mirror-lens/internal/api	127.595s
+ok  	github.com/zggnh12345/mirror-lens/internal/auth	17.347s
+ok  	github.com/zggnh12345/mirror-lens/internal/cache	1.015s
+ok  	github.com/zggnh12345/mirror-lens/internal/config	1.063s
+ok  	github.com/zggnh12345/mirror-lens/internal/dblock	1.020s
+ok  	github.com/zggnh12345/mirror-lens/internal/discover	1.012s
+ok  	github.com/zggnh12345/mirror-lens/internal/gateway	138.121s
+ok  	github.com/zggnh12345/mirror-lens/internal/gc	2.142s
+ok  	github.com/zggnh12345/mirror-lens/internal/ghapi	1.352s
+ok  	github.com/zggnh12345/mirror-lens/internal/janitor	6.062s
+ok  	github.com/zggnh12345/mirror-lens/internal/keymutex	1.079s
+ok  	github.com/zggnh12345/mirror-lens/internal/limits	1.034s
+ok  	github.com/zggnh12345/mirror-lens/internal/logging	1.009s
+ok  	github.com/zggnh12345/mirror-lens/internal/metrics	1.216s
+ok  	github.com/zggnh12345/mirror-lens/internal/probe	1.825s
+ok  	github.com/zggnh12345/mirror-lens/internal/registryhost	1.015s
+ok  	github.com/zggnh12345/mirror-lens/internal/runner	14.855s
+ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	1.045s
+ok  	github.com/zggnh12345/mirror-lens/internal/scheduler	24.875s
+ok  	github.com/zggnh12345/mirror-lens/internal/secret	7.401s
+ok  	github.com/zggnh12345/mirror-lens/internal/store	61.792s
+ok  	github.com/zggnh12345/mirror-lens/internal/store/schema	2.603s
+ok  	github.com/zggnh12345/mirror-lens/internal/sums	1.006s
+?   	github.com/zggnh12345/mirror-lens/internal/tuning	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/unified	1.534s
+ok  	github.com/zggnh12345/mirror-lens/internal/v2auth	1.017s
+?   	github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/version	1.005s
+?   	github.com/zggnh12345/mirror-lens/tools/baseline	[no test files]
+?   	github.com/zggnh12345/mirror-lens/tools/migcheck	[no test files]
+?   	github.com/zggnh12345/mirror-lens/tools/mkunit	[no test files]
+RACE_RC=0

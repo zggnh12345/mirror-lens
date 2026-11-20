@@ -115,6 +115,7 @@ type Gateway struct {
 	parBytes      atomic.Int64  // 并行分片下下来的字节
 	parFalls      atomic.Int64  // 试过但退回单流（不支持 Range、源不够等）
 	tasks         *taskReg
+	crossRuns     *crossRunRing // 18f：跨 Registry 运行时状态有界环形缓冲
 	degradeMu     sync.Mutex
 	degradeAt     map[int64]time.Time
 	probeAt       map[int64]time.Time // 面板活跃任务表（内存）
@@ -326,6 +327,7 @@ func New(st *store.Store, o Options) *Gateway {
 		hedge:         o.Hedge,
 		race:          o.Race,
 		tasks:         newTaskReg(),
+		crossRuns:     newCrossRunRing(128), // 18f：运行时状态有界环形缓冲
 		degradeAt:     map[int64]time.Time{},
 		probeAt:       map[int64]time.Time{},
 		requireToken:  o.RequireToken,

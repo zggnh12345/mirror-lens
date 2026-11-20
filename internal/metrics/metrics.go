@@ -107,10 +107,12 @@ type Registry struct {
 	raceFallback   uint64            // 竞速失败后顺序回退
 	raceBudget     uint64            // 第二候选预算不足、未形成双路
 	raceIneligible map[string]uint64 // 未获资格的原因
-	srcDur         map[srcDurKey]*hist
-	srcTTFB        map[srcDurKey]*hist
-	inflight       map[int64]int
-	srclimit       map[int64]int
+	// 3.5.18 18f：跨 Registry 运行结论计数，mode|outcome|vote 封闭标签。
+	crossRun map[string]uint64
+	srcDur   map[srcDurKey]*hist
+	srcTTFB  map[srcDurKey]*hist
+	inflight map[int64]int
+	srclimit map[int64]int
 	// P0 观测：闸门排队时长、并发占用的时间加权均值。
 	gateWait    map[int64]*hist
 	inflightAvg map[int64]float64
@@ -199,19 +201,21 @@ var (
 // New 返回空注册表。
 func New() *Registry {
 	return &Registry{
-		httpReq:            map[httpKey]uint64{},
-		httpDur:            map[string]*hist{},
-		httpBytes:          map[string]uint64{},
-		cache:              map[cacheKey]uint64{},
-		tp:                 map[string]*hist{},
-		srcReq:             map[srcKey]uint64{},
-		srcResp:            map[string]uint64{},
-		src429:             map[string]uint64{},
-		srcMiss:            map[srcMissKey]uint64{},
-		srcDur:             map[srcDurKey]*hist{},
-		srcTTFB:            map[srcDurKey]*hist{},
-		raceStarted:        map[string]uint64{},
-		raceIneligible:     map[string]uint64{},
+		httpReq:        map[httpKey]uint64{},
+		httpDur:        map[string]*hist{},
+		httpBytes:      map[string]uint64{},
+		cache:          map[cacheKey]uint64{},
+		tp:             map[string]*hist{},
+		srcReq:         map[srcKey]uint64{},
+		srcResp:        map[string]uint64{},
+		src429:         map[string]uint64{},
+		srcMiss:        map[srcMissKey]uint64{},
+		srcDur:         map[srcDurKey]*hist{},
+		srcTTFB:        map[srcDurKey]*hist{},
+		raceStarted:    map[string]uint64{},
+		raceIneligible: map[string]uint64{},
+		// 3.5.18 18f：跨 Registry 运行结论计数，标签 mode|outcome|vote 均为封闭集合。
+		crossRun:           map[string]uint64{},
 		inflight:           map[int64]int{},
 		srclimit:           map[int64]int{},
 		gateWait:           map[int64]*hist{},
@@ -414,6 +418,30 @@ func FallbackSuppressed(n int) {
 	}
 	r.mu.Lock()
 	r.fbSuppressed += uint64(n)
+	r.mu.Unlock()
+}
+
+// CrossRun 记录一次跨 Registry 调度结论（18f）。
+// mode/outcome/vote 都折叠为封闭集合，避免外部输入撑开标签维度；不携带 URL/凭据/源 ID。
+func CrossRun(mode, outcome, vote string) {
+	modes := map[string]bool{"sequential": true, "race": true}
+	outcomes := map[string]bool{"ok": true, "fallback": true, "fail": true}
+	votes := map[string]bool{"confirmed": true, "mismatch": true, "authority_compare": true, "window_closed": true, "collecting": true, "none": true}
+	if !modes[mode] {
+		mode = "other"
+	}
+	if !outcomes[outcome] {
+		outcome = "other"
+	}
+	if !votes[vote] {
+		vote = "none"
+	}
+	r := current.Load()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.crossRun[mode+"|"+outcome+"|"+vote]++
 	r.mu.Unlock()
 }
 
@@ -1164,6 +1192,18 @@ func (r *Registry) render() []byte {
 		b.WriteString("# HELP " + prefix + "registry_race_budget_skipped_total 第二候选并发预算不足、未形成双路的次数\n")
 		b.WriteString("# TYPE " + prefix + "registry_race_budget_skipped_total counter\n")
 		fmt.Fprintf(&b, "%sregistry_race_budget_skipped_total %d\n", prefix, r.raceBudget)
+	}
+	if len(r.crossRun) > 0 {
+		b.WriteString("# HELP " + prefix + "cross_run_total 跨 Registry 调度结论次数（18f，封闭标签）\n")
+		b.WriteString("# TYPE " + prefix + "cross_run_total counter\n")
+		for _, k := range sortedKeys(r.crossRun) {
+			parts := strings.Split(k, "|")
+			mode, outcome, vote := "other", "other", "none"
+			if len(parts) == 3 {
+				mode, outcome, vote = parts[0], parts[1], parts[2]
+			}
+			fmt.Fprintf(&b, "%scross_run_total{mode=%q,outcome=%q,vote=%q} %d\n", prefix, mode, outcome, vote, r.crossRun[k])
+		}
 	}
 	if len(r.raceIneligible) > 0 {
 		b.WriteString("# HELP " + prefix + "registry_race_ineligible_total 未进入竞速的请求数（按原因）\n")

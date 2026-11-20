@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 
 	"github.com/zggnh12345/mirror-lens/internal/auth"
+	"github.com/zggnh12345/mirror-lens/internal/gateway"
 )
 
 // 3.5.17 B17 / B20：跨站副本的两档模式与参选勾选。
@@ -106,4 +108,29 @@ func (s *Server) crossRegistry(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PUT")
 		writeJSON(w, 405, map[string]string{"error": "method"})
 	}
+}
+
+// 3.5.18 18f：GET /api/cross-runs[?limit=] 返回最近的跨 Registry 运行时状态。
+// 只读、内存有界、字段低基数且不含凭据（只含 Registry/SourceID/Digest/关联键）。
+func (s *Server) crossRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		writeJSON(w, 405, map[string]string{"error": "method"})
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 128 { // 与 Gateway 环形缓冲容量一致，避免无限拉取
+		limit = 128
+	}
+	var items []gateway.CrossRunState
+	if s.gw != nil {
+		items = s.gw.CrossRunSnapshot(limit)
+	}
+	if items == nil {
+		items = []gateway.CrossRunState{}
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
 }

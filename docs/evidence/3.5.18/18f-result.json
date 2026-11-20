@@ -1,0 +1,43 @@
+{
+  "stage": "18f",
+  "gates": {
+    "gofmt": "empty",
+    "vet_rc": 0,
+    "build_rc": 0,
+    "test_rc": 0,
+    "packages_ok": 34,
+    "race_rc": 0,
+    "race_packages_ok": 34,
+    "race_data_races": 0
+  },
+  "observability": {
+    "cross_run_state_struct": true,
+    "bounded_ring_capacity": 128,
+    "vote_state_recorded": true,
+    "authority_recorded": true,
+    "backfill_approx_truncated": true,
+    "winner_single_assign": true,
+    "cache_put_recorded": true,
+    "cancel_recorded": true,
+    "generation_recorded": true,
+    "request_hint_sanitized": true,
+    "api_endpoint": "/api/cross-runs",
+    "web_audit_panel": true,
+    "metric": "mirrorlens_cross_run_total{mode,outcome,vote}",
+    "metric_closed_labels": true
+  },
+  "boundaries": {
+    "1_6_blob_unchanged": "74a0df7e832f7b0684617d08b2922404b34b4145",
+    "freeze_doc_blob_unchanged": "f68a0bd8123635b902adf3072ad3609ff81c45e3",
+    "schema_unchanged": "3.5.17",
+    "production": "WAITING_FOR_USER_DECISION",
+    "remote_push": false,
+    "tag": false,
+    "release": false,
+    "ghcr": false
+  },
+  "honest_limits": [
+    "backfill 用 out.Truncated 近似，非精确补位计数",
+    "运行状态为进程内环形缓冲，不跨重启持久化（有界留存策略）"
+  ]
+}

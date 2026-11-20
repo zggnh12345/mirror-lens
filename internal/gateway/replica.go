@@ -812,14 +812,34 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		return nil, false, nil
 	}
 	idHost := rangeHostOf(plan)
+
+	// 18f：本次跨站调度的运行时状态；用 defer 统一落环形缓冲，覆盖所有返回路径。
+	rec := CrossRunState{
+		At:          g.now(),
+		Mode:        g.replicaMode(),
+		RequestHint: sanitizeHint(plan.CacheKey),
+		Outcome:     "fail",
+		CachePut:    "skipped",
+	}
+	defer func() { g.recordCrossRun(rec) }()
+
 	targets, gen, err := g.replicaTargets(ctx, plan, g.now())
+	rec.Generation = gen
 	if err != nil {
 		// 配置读取失败不阻断主路径：副本是加速收益，不是可用性前提。
 		loggw(slog.LevelWarn, "副本候选解析失败，回到顺序路径", ctx, plan, logging.CacheCommitFailed, err)
+		rec.Outcome = "fail"
 		return nil, false, nil
 	}
 	if len(targets) < 2 {
 		return nil, false, nil
+	}
+	rec.Candidates = len(targets) - 1 // 权威站 targets[0] 不占候选名额
+	for _, t := range targets {
+		if len(t.alts) > 0 {
+			rec.Nested = true
+			rec.Sources += 1 + len(t.alts)
+		}
 	}
 	_ = gen
 
@@ -831,6 +851,7 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 	if mode == "race" && len(g.st.EffectiveCrossSelected()) == 0 {
 		mode = "sequential"
 	}
+	rec.Mode = mode // 记录实际生效模式（race 空参选已退化为 sequential），保证派发状态准确
 
 	if mode == "sequential" {
 		for _, t := range targets {
@@ -842,12 +863,19 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 			}
 			e, cerr := g.commitReplicaArtifact(ctx, plan, art)
 			if cerr != nil {
+				rec.CachePut = "rejected"
+				rec.Outcome = "fail"
 				return nil, true, cerr
 			}
+			rec.CachePut = "committed"
+			rec.Outcome = "ok"
+			rec.Registry = t.registry
+			rec.WinnerID = t.sourceID
+			rec.Digest = art.sha
 			plan.Source = t.name
 			return e, true, nil
 		}
-		return nil, false, nil
+		return nil, false, nil // 全部副本失败 → 交回顺序路径
 	}
 
 	// race 模式：每个候选只下载一次，产物保留到结论确定。
@@ -941,11 +969,15 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		},
 	}
 	out, rerr := unified.RunCrossRace(ctx, cfg, cands)
+	rec.Authority = out.AuthorityUsed
+	rec.VoteState = out.State.String()
+	rec.Backfill = out.Truncated // 首轮外候选（由补位机制处理）的近似计数
 	// 窗口外仍未完成的候选：标记放弃，让它带着自己的产物退出。
 	for i := range slots {
 		select {
 		case <-slots[i].done:
 		default:
+			rec.Canceled++
 			mu.Lock()
 			slots[i].abandoned = true
 			mu.Unlock()
@@ -974,10 +1006,16 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 			plan.Source = targets[wi].name
 		}
 		dropAll(wi)
+		rec.Registry = targets[wi].registry
+		rec.WinnerID = targets[wi].sourceID
+		rec.Digest = art.sha
+		rec.Outcome = "ok"
 		e, cerr := g.commitReplicaArtifact(ctx, plan, art)
 		if cerr != nil {
+			rec.CachePut = "rejected"
 			return nil, true, cerr
 		}
+		rec.CachePut = "committed"
 		return e, true, nil
 	}
 	// 不一致/无结论：权威正文若已校验，可以作最终交付（design §4.4）。
@@ -994,10 +1032,17 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 		art := authArt
 		consumed[0] = true
 		dropAll(0)
+		rec.Registry = targets[0].registry
+		rec.WinnerID = 0 // 权威兜底
+		rec.Digest = art.sha
+		rec.Outcome = "fallback"
+		rec.Authority = true
 		e, cerr := g.commitReplicaArtifact(ctx, plan, art)
 		if cerr != nil {
+			rec.CachePut = "rejected"
 			return nil, true, cerr
 		}
+		rec.CachePut = "committed"
 		return e, true, nil
 	}
 	dropAll(-1)

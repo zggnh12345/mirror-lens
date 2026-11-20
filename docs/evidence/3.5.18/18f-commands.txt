@@ -1,0 +1,26 @@
+# 18f 命令记录
+
+工作目录：/opt/data/cache/scratch/ml8
+分支：feat/3.5.18
+Go：golang:1.27-alpine，--volumes-from hermes，-w /opt/data/cache/scratch/ml8
+GOCACHE=/tmp/gocache，GOPATH=/opt/data/cache/scratch/gopath
+race：apk add --no-cache gcc musl-dev；CGO_ENABLED=1；-v ml-gocache:/tmp/gocache
+
+## 定向测试（RED 前置检查）
+go test ./internal/gateway -run TestCrossRun -count=1        -> GW_RC=0
+go test ./internal/metrics -run TestCrossRun -count=1        -> MET_RC=1（初版断言写错，修正后 0）
+go test ./internal/api -run TestCrossRuns -count=1           -> API_RC=0
+
+## 全量门禁（见 18f-gate.log）
+gofmt -l .                                                   -> 空
+go vet ./...                                                 -> VET_RC=0
+go build ./...                                               -> BUILD_RC=0
+go test ./... -count=1                                       -> TEST_RC=0（34 包 ok）
+
+## race（见 18f-race.log）
+CGO_ENABLED=1 go test -race ./... -count=1                   -> RACE_RC=0（34 包 ok，0 DATA RACE，0 FAIL）
+
+## 边界核对
+git diff --stat 478bf59 -- .                                 -> 6 改 + 新文件
+1.6 blob / 冻结稿 / sha256 清单 / Schema / CanonicalSchemaHash -> 未改
+生产 / 远程 push / tag / Release / GHCR                       -> 未触碰

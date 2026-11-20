@@ -157,6 +157,10 @@
     </div>
     <div id="crossSel" style="margin-top:8px"></div>
     <div id="crossDyn" style="margin-top:10px"></div>
+    <details id="crossRuns" style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">运行审计（最近跨站调度，只读）</summary>
+      <div id="crossRunsBody" style="margin-top:6px;font-size:12px;color:var(--faint)">加载中…</div>
+    </details>
   </section>
 </div>
 
@@ -899,6 +903,29 @@ function renderCross(){
           + (selSet[id] ? ' checked' : '') + '><span></span></label></div>';
       }).join('');
 }
+
+/* ---- 18f：运行审计（最近跨站调度，只读；按需加载） ---- */
+async function loadCrossRuns(){
+  var body = $('#crossRunsBody');
+  if (!body) return;
+  body.textContent = '加载中…';
+  try{
+    var out = await api('/api/cross-runs?limit=30');
+    var items = out.items || [];
+    if (!items.length){ body.innerHTML = '<p class="hint" style="margin:0">暂无跨站调度记录</p>'; return; }
+    body.innerHTML = items.map(function(r){
+      var winner = (r.winner_id && r.winner_id > 0) ? ('Source #' + r.winner_id) : (r.winner_id === 0 ? '官方权威' : '-');
+      var at = r.at ? new Date(r.at).toLocaleTimeString() : '-';
+      return '<div class="row"><div class="main"><div class="rl1"><b>' + at
+        + ' · ' + (r.registry||'-') + ' · ' + winner + '</b></div>'
+        + '<div class="rl2"><i>' + (r.mode||'-') + ' · 结果 ' + (r.outcome||'-')
+        + ' · 投票 ' + (r.vote_state||'-') + ' · 候选 ' + (r.candidates||0)
+        + ' · Source ' + (r.sources||0) + ' · 权威 ' + (r.authority?'是':'否')
+        + ' · 缓存 ' + (r.cache_put||'-') + ' · 补位 ' + (r.backfill||0)
+        + ' · 取消 ' + (r.canceled||0) + (r.nested?' · 嵌套竞速':'') + '</i></div></div></div>';
+    }).join('');
+  }catch(e){ body.textContent = '加载失败：' + (e.message || e); }
+}
 async function setCrossEnabled(on){
   try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({enabled: !!on})}); toast(on ? '已开启跨站副本' : '已关闭跨站副本（配置保留）'); }
   catch(e){ toast(e.message); }
@@ -1572,6 +1599,8 @@ setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.
 setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) load(true); }, 60000);
 setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadMetrics(); }, 15000);
 document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); } });
+var _crossRunsEl = $('#crossRuns');
+if (_crossRunsEl) _crossRunsEl.addEventListener('toggle', function(){ if (this.open) loadCrossRuns(); });
 </script>
 </body>
 </html>
