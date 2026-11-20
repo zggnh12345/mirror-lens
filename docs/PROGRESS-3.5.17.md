@@ -388,3 +388,104 @@ B17 的 UI 只做了静态接线与 API 验证，没有浏览器点击验收 →
 缺口仅第 3 项的两条：中途换源、206 长度不符（其余子场景已真实通过），
 以及「P 耗尽仍有 hedge/midfill」只能代码级覆盖。复现路径：
 `R5_CASES=switch_ab,switch_lenmismatch python3 /opt/data/cache/scratch/r5/drill3b.py`。
+
+---
+
+## 第六轮（17b 核心运行时证据闭环，2026-11-20）
+
+第五轮遗留的三条缺口（跨站副本真实并行、真实中途换源、206 长度不符）与
+P 耗尽集成，本轮全部用**实际二进制 + 本地假上游 + 真实 SQLite + 真实 HTTP**
+补齐。全程未改任何生产调度/缓存/回退/预算规则；为定位问题新增的日志只在
+debug/INFO 记录事实，不改变选择结果；唯一的产品行为修复是补上
+`Plan.LogicalUpstream`（见下）。B15 仍为 EXTERNAL_BLOCKED，生产 Schema/迁移仍
+NOT_EXECUTED，未访问生产库。
+
+### 1) 跨站多 Registry 副本真实并行 — 通过（受控上游）
+
+- 证据：`docs/evidence/r6/crossrace-runtime/`（候选诊断 JSON、A/B/C 三份上游 JSONL、
+  Gateway 日志 `副本候选诊断`/`副本候选失败`、请求结果、Digest 校验、并行重叠判定）。
+- 诊断定位：原候选为 0 的根因是**假上游 A 的 URL 与逻辑 Host `gcr.io` 不一致**，
+  `sched.Rewrite` 拿官方基址改写候选后仍指向同源而被跳过；逐一输出
+  `trusted_registry_replicas`/`trusted_source_mappings`/`cross_registry_selected_sources`/
+  星标/`source_host_caps.effective_status`/健康/recovery gen/Scheduler 选中/Rewrite
+  逐项后确认——**不是**星标/健康/私有认证/M/C 门禁问题。修正夹具（让 A 成为真正的
+  `gcr.io` 上游）后，在真实规则下两个不同 Registry（quay.io / registry.k8s.io）的
+  副本 Source 成为有效候选。
+- 断言（12/12 全过）：两副本 200 且 Digest 正确、起止时间区间重叠且第二在第一个完成前
+  已启动、Authority 不进入首轮 C（请求级 `副本候选失败 target=official` 日志核对，
+  并用"两副本内容不一致→真问一次官方 401"控制组证明该观察手段灵敏）、胜者 Digest 正确、
+  落败 Body 已关（无 cache 临时 fd 残留）、无跨 Registry 错误缓存提交、缓存单条目；
+  空参选（独立的 `seq/app`，`cross_registry_selected_sources` 为空）不派发副本、
+  A+B+C 命中增量 ≤1、不自动把全部星标加入候选。
+- 提交：`671fb75`。
+
+### 2) 真实中途换源 — 通过（受控上游）
+
+- 证据：`docs/evidence/r6/switch/`（switch-runtime.json、upA/upB JSONL、Gateway 日志、
+  trySwitch 触发日志、Range 请求/响应头、最终 SHA-256、缓存与 `.part` 状态）。
+- 产品行为修复（有据）：流式路径把 `plan.Upstream` 改写成本次供数源后，`targets`/
+  `parallelTargetsN` 继续拿它当 `Rewrite` 基址，导致换源候选永远凑不到第二台
+  （`Rewrite` 失败→只剩官方）。补上 `Plan.LogicalUpstream` 保留官方基址后，
+  换源候选从 1（仅官方）恢复到 3。生产门禁 `minProxySpeedBytes=16MiB`、
+  `switch_min_mbps=8`、`watch_mbps=3/watch_sec=10/switch_min_file_mib=60` 全部不动。
+- 断言（10/10 全过）：B 用 3 次真实 ≥16MiB 整份下载形成速度样本并进入 Scheduler、
+  中位数 46MB/s > 8MB/s 门限；A 慢源先发 12,582,912B 前缀后被判慢断连
+  （`client_closed=true`），B 真发 `Range: bytes=11534336-` 并回 206
+  （`Content-Range` 总长正确、实发 55,574,528B）；最终 64MiB 正文 SHA-256 == digest；
+  无 `.part` 残留、单一缓存条目；未触发中途并行（分片未启用，符合预期）。
+- 提交：`a2e696f`。
+
+### 3) 真实 206 长度错误 — 通过（受控上游，以换源为前置）
+
+- 证据：`docs/evidence/r6/range-validation/`（三个场景原始 JSONL + 日志 +
+  range-validation.json 汇总）。均先让 A 判慢触发换源，再由 B 对 Range 返回缺陷 206。
+- 三场景：① `bad206`（Content-Range 总长 `67108961≠67108864`）：`switchAcceptable`
+  响应头校验阶段拒绝，B 字节未读（bytes_sent=0），A 源补全，最终 digest 正确，缓存由 A 写；
+  ② `cl_bad`（Content-Length 多 512）：同样头校验阶段拒绝；③ `trunc206`（头合法但 body
+  只发一半）：接手后未完整结束→日志「换源后未完整结束，丢弃续传点」，缓存无条目、
+  `.part` 清空、坏字节未记为源成功（客户端 digest 不符，但不入缓存）。
+- 断言 4/4 全过。提交：`43f7706`。
+
+### 4) P 耗尽时 Hedge/Midfill 真实集成 — 通过（测试注入小 P）
+
+- 测试：`internal/unified/p_exhaust_integration_test.go`（5 个用例全 PASS）。
+  真实 `PTransport.RoundTrip` + 本地 `httptest` 上游 + 真实 `Response.Body`，
+  **不用伪造计数器**：服务端实到请求数与 P 提交数交叉核对。
+- 覆盖：主链/Hedge 两路真派发后在途耗尽→Scope Context 取消、2 个 Body 全关（各一次）、
+  第三次派发在 ReserveP 被拒且服务端 0 新增请求、committed 不回退、结果账本 0 行
+  （不污染 Source 失败指标）；Preflight+Range 共用同一 Scope P，耗尽后 ReserveP 拒绝
+  新 Range/trySwitch；`ReserveP/CommitP` 提交前取消释放、已提交不返还、8 并发抢 3 名额
+  零超额、重复结束只生效一次；生产构造路径零值 `ScopeConfig` 恒 `PMax=8192` 冻结。
+- 提交：`43f7706`。
+
+### 5) 清理与可重复性
+
+- `race-final.log`（2618B，第五轮全量测试输出）判为历史证据，已归档到
+  `docs/evidence/r6/archive/race-final.log`，未销毁。
+- `r5drill/` 依赖 `.git/info/exclude` 绕过扫描：已移到 `testdata/r5drill/main.go`
+  （Go 工具链不扫描 testdata），并从 `.git/info/exclude` 删除该行。
+- `go list ./...` 确认不再出现 `r5drill` 包；临时容器/网络/DB/进程结束均为空。
+
+### 6) 独立复核（最后一次代码修改后的全量重跑）
+
+- `gofmt -l .`：空；`go vet ./...`：OK；`go build ./...`：OK
+  （`docs/evidence/r6/verify/static.log`）。
+- `go test ./... -count=1`：33 包 ok，EXIT=0（`verify/gotest.log`）。
+- `go test -race ./... -count=1`：33 包 ok，EXIT=0，无 DATA RACE（`verify/gotest-race.log`）。
+- 测试名全集 1397 行（`verify/test-names.txt`）；文档引用测试名反向核对：19 个"缺名"
+  中 18 个为通配前缀（`TestHedge*`/`TestReplica*` 等，均有真实测试），1 个
+  `TestCrossRaceMismatchUsesAuthorityOnceThenFills` 为 PROGRESS 明确记载的旧名，
+  已按冻结顺序拆成 3 个现有测试——无虚报。
+- T50–T63：T50/51/52/53/56/57/59/60/63 有同名测试；T54/T55/T58/T61/T62 为矩阵
+  编号，映射到 `TestHedge*`/`TestMid*`、T58 注释、`TestFallbackStaticSuppression`、
+  `TestUnifiedOff`，均有真实断言。B01–B20 有 `TestB02*`/`TestB06*`/`TestCrossRace*`/
+  `TestDigestConsensus*` 等成组用例。B19 矩阵 `go test -run TestB19` PASS。
+- G0 矩阵证据分账已更新：代码测试 PASS；真实进程层由本轮受控上游补齐
+  （SIMULATED_PASS 口径）；公共第三方 Source 仍 NOT_EXECUTED。
+
+### 7) 状态与交接
+
+- 状态：**READY_FOR_FINAL_REVIEW**（内部证据齐全，不等于发布或生产完成）。
+- 四个提交：`671fb75`、`a2e696f`、`43f7706`（+ G0/PROGRESS 文档提交见最终 git log）。
+- 本地提交、未 push/tag/Release/生产切换。B15 EXTERNAL_BLOCKED；生产 Schema/迁移
+  NOT_EXECUTED；未访问生产库。

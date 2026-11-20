@@ -1,0 +1,5 @@
+=== gofmt -l (空=干净) ===
+=== go vet ./... ===
+VET_OK
+=== go build ./... ===
+BUILD_OK
