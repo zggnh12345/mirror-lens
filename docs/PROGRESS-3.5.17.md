@@ -489,3 +489,37 @@ NOT_EXECUTED，未访问生产库。
 - 四个提交：`671fb75`、`a2e696f`、`43f7706`（+ G0/PROGRESS 文档提交见最终 git log）。
 - 本地提交、未 push/tag/Release/生产切换。B15 EXTERNAL_BLOCKED；生产 Schema/迁移
   NOT_EXECUTED；未访问生产库。
+
+## P2 收尾（第六轮最终两项）
+
+### P2-1：P 耗尽证据归档 — 关闭
+
+新增 `docs/evidence/r6/p-exhaustion/`（README、commands.txt、p-exhaustion.log、
+result.json、production-budget.txt）。全部由本轮重新执行的真实测试生成：
+
+- Hedge：`pmax_injected=2`、`dispatched=2`、`rejected=1`、`bodies_created=2`、
+  `bodies_closed=2`、`on_exhaust_calls=1`、`ledger_rows=0`
+- Midfill：`preflight_runs=1`、`range_work_used=4`、`range_work_max=1024`、
+  `segments=1`、`committed=2`、`reserve_after_exhaust_rejected=2`
+- Reserve/Commit：`committed=1`、`outstanding=1`、并发 `committed=3`/`rejected=5`
+- 生产预算：`frozen=8192`、`scope_max=8192`（`internal/unified/errors.go:39`）
+
+测试文件仅补 `t.Logf` 可观测字段（提交 `9e4c2bb`），无生产逻辑变更。
+
+### P2-2：LogicalUpstream 提交拆分 — 关闭
+
+- 备份分支：`backup/3.5.17-before-p2-cleanup-60677cd`
+- 原 `a2e696f` 拆为：
+  - `8d72bd4` `fix(gateway): preserve logical upstream across source switches`（生产行为）
+  - `0d6a939` `test(gateway): switch drill evidence and candidate rewrite coverage`（证据/脚本）
+- 新增回归测试 `internal/gateway/logical_upstream_test.go`（提交 `419dda2`）
+- 树一致性：拆分前 `a2e696f^{tree}=9c93ac0d…`，拆分后同点 `9c93ac0d…`；
+  rebase 完成后 `HEAD^{tree}=4063887d…`，与拆分前 HEAD 完全一致。
+- 未使用空提交、未重复 Diff、未改变最终代码内容。
+
+### 收尾后 HEAD
+
+`9e4c2bbaff52f72d1a2ee13b69b19d75a767ec94`（工作区干净）
+
+外部边界不变：B15 `EXTERNAL_BLOCKED`；生产 Schema/迁移 `NOT_EXECUTED`；
+未 push、未打 tag、未发布、未触碰生产。
