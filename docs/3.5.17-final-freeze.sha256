@@ -140,3 +140,5 @@ aebe69ed3c253032f2bf12477b097ea4abbb329d5417f85e5ba6640d30b61c71  docs/evidence/
 1b9c221c20e863d57154a70651d86920ac134945838fd831e1fe4f3b6e1ac35c  docs/evidence/r6/prod-schema-readonly/migrate.log
 4d37fb5ccab73c700e681be348708de204892d533297a98cba1802071ff0e40d  docs/evidence/r6/prod-schema-readonly/verify-src.log
 c7f2df837c0803e998c922a4642ed5fa9a6144765080c55f3fee72420dc0be1b  docs/evidence/r6/prod-schema-readonly/verify-out.log
+bf07d6c6889dee6724deb2c0d894179f9993bdf1e6eca21717fb5e2c86341b50  docs/release-notes-3.5.17.md
+f962a0814b802549d58c561201e501d53065961bba4904e93327af0bac732252  docs/upgrade-3.5.17.md
