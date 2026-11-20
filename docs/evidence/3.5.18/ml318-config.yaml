@@ -9,6 +9,7 @@ registry:
   ghcr_enabled: true
   upstream: "registry-1.docker.io"
   multi_origin_hosts:
+    - quay.io
     - registry.gitlab.com
     - registry.k8s.io
   replica_mode: "sequential"

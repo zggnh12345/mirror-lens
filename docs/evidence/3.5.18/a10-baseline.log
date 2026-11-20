@@ -1,0 +1,11 @@
+baseline r1: ttfb=15.003ms total=15.045ms src=race-fast digok=True
+baseline r2: ttfb=20.75ms total=20.795ms src=race-fast digok=True
+baseline r3: ttfb=19.823ms total=19.871ms src=race-fast digok=True
+baseline r4: ttfb=20.521ms total=20.564ms src=race-fast digok=True
+baseline r5: ttfb=20.881ms total=20.922ms src=race-fast digok=True
+baseline r6: ttfb=20.529ms total=20.572ms src=race-fast digok=True
+baseline r7: ttfb=19.467ms total=19.525ms src=race-fast digok=True
+baseline r8: ttfb=19.817ms total=19.861ms src=race-fast digok=True
+baseline r9: ttfb=15.068ms total=15.113ms src=race-fast digok=True
+baseline r10: ttfb=20.99ms total=21.035ms src=race-fast digok=True
+SUMMARY {"label": "baseline", "n_total": 10, "n_ok": 10, "ttfb_p50": 20.172, "ttfb_p95": 20.941, "ttfb_p99": 20.98, "total_p50": 20.218, "total_p95": 20.984, "total_p99": 21.025, "winner_dist": {"race-fast": 10}}

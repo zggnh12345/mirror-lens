@@ -1,0 +1,11 @@
+race r1: ttfb=22.013ms total=22.058ms src=race-fast digok=True
+race r2: ttfb=20.532ms total=20.576ms src=race-fast digok=True
+race r3: ttfb=20.768ms total=20.811ms src=race-fast digok=True
+race r4: ttfb=21.854ms total=21.901ms src=race-fast digok=True
+race r5: ttfb=20.383ms total=20.436ms src=race-fast digok=True
+race r6: ttfb=21.042ms total=21.087ms src=race-fast digok=True
+race r7: ttfb=14.162ms total=14.203ms src=race-fast digok=True
+race r8: ttfb=14.047ms total=14.089ms src=race-fast digok=True
+race r9: ttfb=21.141ms total=21.185ms src=race-fast digok=True
+race r10: ttfb=19.842ms total=19.887ms src=race-fast digok=True
+SUMMARY {"label": "race", "n_total": 10, "n_ok": 10, "ttfb_p50": 20.65, "ttfb_p95": 21.941, "ttfb_p99": 21.999, "total_p50": 20.694, "total_p95": 21.987, "total_p99": 22.044, "winner_dist": {"race-fast": 10}}

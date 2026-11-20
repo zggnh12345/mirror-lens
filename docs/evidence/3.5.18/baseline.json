@@ -1,0 +1,110 @@
+{
+  "generated_at": "2026-11-20T22:49:49.469462",
+  "url": "http://ml318-perf-gw:8080/v2/quay.io/library/alpine/manifests/sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+  "samples": [
+    {
+      "ttfb_ms": 15.003,
+      "total_ms": 15.045,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 1
+    },
+    {
+      "ttfb_ms": 20.75,
+      "total_ms": 20.795,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 2
+    },
+    {
+      "ttfb_ms": 19.823,
+      "total_ms": 19.871,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 3
+    },
+    {
+      "ttfb_ms": 20.521,
+      "total_ms": 20.564,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 4
+    },
+    {
+      "ttfb_ms": 20.881,
+      "total_ms": 20.922,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 5
+    },
+    {
+      "ttfb_ms": 20.529,
+      "total_ms": 20.572,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 6
+    },
+    {
+      "ttfb_ms": 19.467,
+      "total_ms": 19.525,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 7
+    },
+    {
+      "ttfb_ms": 19.817,
+      "total_ms": 19.861,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 8
+    },
+    {
+      "ttfb_ms": 15.068,
+      "total_ms": 15.113,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 9
+    },
+    {
+      "ttfb_ms": 20.99,
+      "total_ms": 21.035,
+      "src": "race-fast",
+      "digest_hit": true,
+      "status": 200,
+      "bytes": 745,
+      "round": 10
+    }
+  ],
+  "summary": {
+    "label": "baseline",
+    "n_total": 10,
+    "n_ok": 10,
+    "ttfb_p50": 20.172,
+    "ttfb_p95": 20.941,
+    "ttfb_p99": 20.98,
+    "total_p50": 20.218,
+    "total_p95": 20.984,
+    "total_p99": 21.025,
+    "winner_dist": {
+      "race-fast": 10
+    }
+  }
+}
