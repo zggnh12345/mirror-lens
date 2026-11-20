@@ -1,0 +1,18 @@
+DIGESTS 8 ['sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2', 'sha256:aee633ad64fbcff7c0e2770b17bd42fe9e317d5ad3d8c91977d2959f411efabc', 'sha256:e1927a59672d5b7fa3fb484250dae463fc67149e5d0ef4ff26fdd95bcf08b294', 'sha256:87f15dbddb36aee92173b56db3f1367883ea04c7ee8ba3aa482c7f3da85c5772', 'sha256:a664e994339ec64309b556ee3892c78d6c08b88b984ae038597913ce718bc2c3', 'sha256:4b81706137aa933c63c0736f59a7f6eddc1f54058cf8784f8b3b0c3867935fdd', 'sha256:cf6ec17b18d8664443e6e4dc77058e061384af0a6ed7a6fe57c093f15f87741c', 'sha256:18df7714b5e2338417947d66f852d88d5fab11990a8f98979ca9700d355705b4']
+
+===== TIER conc=8 =====
+{"mode": "baseline", "star": false, "concurrency": 8, "rounds": 10, "n_samples": 80, "n_ok": 80, "n_err": 0, "err_rate": 0.0, "p50": 96.957, "p95": 434.585, "p99": 719.196, "winner_dist": {"race-fast": 80}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+{"mode": "race", "star": true, "concurrency": 8, "rounds": 10, "n_samples": 80, "n_ok": 60, "n_err": 20, "err_rate": 0.25, "p50": 107.894, "p95": 431.462, "p99": 434.004, "winner_dist": {"race-fast": 20, "race-slow": 40}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+TIER_RESULT conc=8 p95_improve=0.0072 met=False baseline_err=0.0 race_err=0.25
+
+===== TIER conc=3 =====
+{"mode": "baseline", "star": false, "concurrency": 3, "rounds": 10, "n_samples": 30, "n_ok": 30, "n_err": 0, "err_rate": 0.0, "p50": 39.513, "p95": 343.07, "p99": 347.198, "winner_dist": {"race-fast": 30}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+{"mode": "race", "star": true, "concurrency": 3, "rounds": 10, "n_samples": 30, "n_ok": 30, "n_err": 0, "err_rate": 0.0, "p50": 60.388, "p95": 342.829, "p99": 344.399, "winner_dist": {"race-slow": 28, "race-fast": 2}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+TIER_RESULT conc=3 p95_improve=0.0007 met=False baseline_err=0.0 race_err=0.0
+
+===== TIER conc=1 =====
+{"mode": "baseline", "star": false, "concurrency": 1, "rounds": 10, "n_samples": 10, "n_ok": 10, "n_err": 0, "err_rate": 0.0, "p50": 20.694, "p95": 322.881, "p99": 325.19, "winner_dist": {"race-fast": 10}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+{"mode": "race", "star": true, "concurrency": 1, "rounds": 10, "n_samples": 10, "n_ok": 10, "n_err": 0, "err_rate": 0.0, "p50": 43.136, "p95": 71.66, "p99": 88.313, "winner_dist": {"race-fast": 2, "race-slow": 8}, "race_started": 0, "extra_requests": 0, "rank1_wins": 0, "rank2_wins": 0, "body_failures": 0, "fallback": 0, "budget_skipped": 0, "ineligible": 0}
+TIER_RESULT conc=1 p95_improve=0.7781 met=True baseline_err=0.0 race_err=0.0
+
+ALL DONE

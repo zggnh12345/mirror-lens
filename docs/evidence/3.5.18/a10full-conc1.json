@@ -1,0 +1,314 @@
+{
+  "generated_at": "2026-11-21T06:36:01.891101",
+  "tier": 1,
+  "digests": [
+    "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+    "sha256:aee633ad64fbcff7c0e2770b17bd42fe9e317d5ad3d8c91977d2959f411efabc",
+    "sha256:e1927a59672d5b7fa3fb484250dae463fc67149e5d0ef4ff26fdd95bcf08b294",
+    "sha256:87f15dbddb36aee92173b56db3f1367883ea04c7ee8ba3aa482c7f3da85c5772",
+    "sha256:a664e994339ec64309b556ee3892c78d6c08b88b984ae038597913ce718bc2c3",
+    "sha256:4b81706137aa933c63c0736f59a7f6eddc1f54058cf8784f8b3b0c3867935fdd",
+    "sha256:cf6ec17b18d8664443e6e4dc77058e061384af0a6ed7a6fe57c093f15f87741c",
+    "sha256:18df7714b5e2338417947d66f852d88d5fab11990a8f98979ca9700d355705b4"
+  ],
+  "results": {
+    "baseline": {
+      "summary": {
+        "mode": "baseline",
+        "star": false,
+        "concurrency": 1,
+        "rounds": 10,
+        "n_samples": 10,
+        "n_ok": 10,
+        "n_err": 0,
+        "err_rate": 0.0,
+        "p50": 20.694,
+        "p95": 322.881,
+        "p99": 325.19,
+        "winner_dist": {
+          "race-fast": 10
+        },
+        "race_started": 0,
+        "extra_requests": 0,
+        "rank1_wins": 0,
+        "rank2_wins": 0,
+        "body_failures": 0,
+        "fallback": 0,
+        "budget_skipped": 0,
+        "ineligible": 0
+      },
+      "samples": [
+        {
+          "ttfb_ms": 21.484,
+          "total_ms": 21.548,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 1,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 16.684,
+          "total_ms": 16.724,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 2,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 15.716,
+          "total_ms": 15.763,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 3,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 22.625,
+          "total_ms": 22.688,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 4,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 319.353,
+          "total_ms": 319.454,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 5,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 20.513,
+          "total_ms": 20.579,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 6,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 325.767,
+          "total_ms": 325.966,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 7,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 20.874,
+          "total_ms": 20.938,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 8,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 15.014,
+          "total_ms": 15.104,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 9,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 20.433,
+          "total_ms": 20.495,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 10,
+          "slot": 1,
+          "digest_hit": true
+        }
+      ]
+    },
+    "race": {
+      "summary": {
+        "mode": "race",
+        "star": true,
+        "concurrency": 1,
+        "rounds": 10,
+        "n_samples": 10,
+        "n_ok": 10,
+        "n_err": 0,
+        "err_rate": 0.0,
+        "p50": 43.136,
+        "p95": 71.66,
+        "p99": 88.313,
+        "winner_dist": {
+          "race-fast": 2,
+          "race-slow": 8
+        },
+        "race_started": 10,
+        "extra_requests": 1,
+        "rank1_wins": 9,
+        "rank2_wins": 1,
+        "body_failures": 0,
+        "fallback": 0,
+        "budget_skipped": 0,
+        "ineligible": 0
+      },
+      "samples": [
+        {
+          "ttfb_ms": 23.125,
+          "total_ms": 23.188,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 1,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 15.913,
+          "total_ms": 15.958,
+          "src": "race-fast",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 2,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 92.476,
+          "total_ms": 92.68,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 3,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 46.219,
+          "total_ms": 46.424,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 4,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 38.207,
+          "total_ms": 38.401,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 5,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 43.286,
+          "total_ms": 43.414,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 6,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 42.985,
+          "total_ms": 43.058,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 7,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 41.632,
+          "total_ms": 41.685,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 8,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 44.256,
+          "total_ms": 44.444,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 9,
+          "slot": 1,
+          "digest_hit": true
+        },
+        {
+          "ttfb_ms": 43.816,
+          "total_ms": 44.008,
+          "src": "race-slow",
+          "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+          "bytes": 745,
+          "status": 200,
+          "round": 10,
+          "slot": 1,
+          "digest_hit": true
+        }
+      ]
+    },
+    "p95_improve": 0.7781
+  }
+}

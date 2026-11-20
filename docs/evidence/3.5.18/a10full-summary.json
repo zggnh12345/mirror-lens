@@ -1,0 +1,160 @@
+{
+  "8": {
+    "baseline": {
+      "mode": "baseline",
+      "star": false,
+      "concurrency": 8,
+      "rounds": 10,
+      "n_samples": 80,
+      "n_ok": 80,
+      "n_err": 0,
+      "err_rate": 0.0,
+      "p50": 96.957,
+      "p95": 434.585,
+      "p99": 719.196,
+      "winner_dist": {
+        "race-fast": 80
+      },
+      "race_started": 0,
+      "extra_requests": 0,
+      "rank1_wins": 0,
+      "rank2_wins": 0,
+      "body_failures": 0,
+      "fallback": 0,
+      "budget_skipped": 0,
+      "ineligible": 0
+    },
+    "race": {
+      "mode": "race",
+      "star": true,
+      "concurrency": 8,
+      "rounds": 10,
+      "n_samples": 80,
+      "n_ok": 60,
+      "n_err": 20,
+      "err_rate": 0.25,
+      "p50": 107.894,
+      "p95": 431.462,
+      "p99": 434.004,
+      "winner_dist": {
+        "race-fast": 20,
+        "race-slow": 40
+      },
+      "race_started": 80,
+      "extra_requests": 6,
+      "rank1_wins": 54,
+      "rank2_wins": 6,
+      "body_failures": 0,
+      "fallback": 20,
+      "budget_skipped": 22,
+      "ineligible": 0
+    },
+    "p95_improve": 0.0072
+  },
+  "3": {
+    "baseline": {
+      "mode": "baseline",
+      "star": false,
+      "concurrency": 3,
+      "rounds": 10,
+      "n_samples": 30,
+      "n_ok": 30,
+      "n_err": 0,
+      "err_rate": 0.0,
+      "p50": 39.513,
+      "p95": 343.07,
+      "p99": 347.198,
+      "winner_dist": {
+        "race-fast": 30
+      },
+      "race_started": 0,
+      "extra_requests": 0,
+      "rank1_wins": 0,
+      "rank2_wins": 0,
+      "body_failures": 0,
+      "fallback": 0,
+      "budget_skipped": 0,
+      "ineligible": 0
+    },
+    "race": {
+      "mode": "race",
+      "star": true,
+      "concurrency": 3,
+      "rounds": 10,
+      "n_samples": 30,
+      "n_ok": 30,
+      "n_err": 0,
+      "err_rate": 0.0,
+      "p50": 60.388,
+      "p95": 342.829,
+      "p99": 344.399,
+      "winner_dist": {
+        "race-slow": 28,
+        "race-fast": 2
+      },
+      "race_started": null,
+      "extra_requests": null,
+      "rank1_wins": null,
+      "rank2_wins": null,
+      "body_failures": null,
+      "fallback": null,
+      "budget_skipped": null,
+      "ineligible": 0,
+      "counter_note": "counter \u56e0\u91c7\u96c6\u811a\u672c\u6b63\u5219\u7f3a\u9677\u672a\u53d6\u5230\uff0c\u5df2\u7531 winner_dist/err_rate \u4f50\u8bc1\u7ade\u901f\u53d1\u751f\uff1b\u4e0d\u586b\u5047\u503c"
+    },
+    "p95_improve": 0.0007
+  },
+  "1": {
+    "baseline": {
+      "mode": "baseline",
+      "star": false,
+      "concurrency": 1,
+      "rounds": 10,
+      "n_samples": 10,
+      "n_ok": 10,
+      "n_err": 0,
+      "err_rate": 0.0,
+      "p50": 20.694,
+      "p95": 322.881,
+      "p99": 325.19,
+      "winner_dist": {
+        "race-fast": 10
+      },
+      "race_started": 0,
+      "extra_requests": 0,
+      "rank1_wins": 0,
+      "rank2_wins": 0,
+      "body_failures": 0,
+      "fallback": 0,
+      "budget_skipped": 0,
+      "ineligible": 0
+    },
+    "race": {
+      "mode": "race",
+      "star": true,
+      "concurrency": 1,
+      "rounds": 10,
+      "n_samples": 10,
+      "n_ok": 10,
+      "n_err": 0,
+      "err_rate": 0.0,
+      "p50": 43.136,
+      "p95": 71.66,
+      "p99": 88.313,
+      "winner_dist": {
+        "race-fast": 2,
+        "race-slow": 8
+      },
+      "race_started": 10,
+      "extra_requests": 1,
+      "rank1_wins": 9,
+      "rank2_wins": 1,
+      "body_failures": 0,
+      "fallback": 0,
+      "budget_skipped": 0,
+      "ineligible": 0
+    },
+    "p95_improve": 0.7781
+  },
+  "counter_collection_note": "\u9996\u8f6e metrics \u6b63\u5219\u7f3a \\s+ \u4e14\u672a\u5339\u914d\u65e0 label \u884c\uff0ccounter \u8bb0\u4e3a 0\uff1b\u4fee\u6b63\u540e conc=1\u3001conc=8 \u7ade\u901f\u6863\u5df2\u540c\u914d\u7f6e\u8865\u8bc1\u51c6\u786e counter\uff1bconc=3 counter \u56e0\u91cd\u542f\u6e05\u96f6\u65e0\u6cd5\u56de\u6eaf\uff0c\u8bb0 null \u4e0d\u586b\u5047\u503c\u3002TTFB/\u9519\u8bef\u7387/\u80dc\u8005\u5206\u5e03\u4e0d\u53d7\u8be5 bug \u5f71\u54cd\u3002"
+}
