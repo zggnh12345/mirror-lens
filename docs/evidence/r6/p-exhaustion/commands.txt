@@ -1,0 +1,5 @@
+# 执行目录: /opt/data/cache/scratch/ml8
+# 时间: 2026-11-20T01:09:35
+# Go: go version go1.27.4 linux/amd64
+
+go test ./internal/unified -run 'TestPExhaustRealRoundTrip|TestPExhaustNoCachePutAfter|TestMidfillRangeSoleUseP|TestReservePCommitP|TestProductionPMaxFrozen' -count=1 -v

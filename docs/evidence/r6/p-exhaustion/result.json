@@ -1,0 +1,54 @@
+{
+  "command": "go test ./internal/unified -run 'TestPExhaustRealRoundTrip|TestPExhaustNoCachePutAfter|TestMidfillRangeSoleUseP|TestReservePCommitP|TestProductionPMaxFrozen' -count=1 -v",
+  "exit_code": 0,
+  "package": "./internal/unified",
+  "tests": {
+    "TestPExhaustRealRoundTrip": "PASS",
+    "TestPExhaustNoCachePutAfter": "PASS",
+    "TestMidfillRangeSoleUseP": "PASS",
+    "TestReservePCommitP": "PASS",
+    "TestProductionPMaxFrozen": "PASS"
+  },
+  "observations": {
+    "p_exhaust_hedge": {
+      "pmax_injected": 2,
+      "dispatched": 2,
+      "rejected": 1,
+      "bodies_created": 2,
+      "bodies_closed": 2,
+      "on_exhaust_calls": 1,
+      "claims_dispatched": 0,
+      "chains": 0,
+      "ledger_rows": 0,
+      "outstanding": 2
+    },
+    "p_exhaust_midfill": {
+      "pmax_injected": 2,
+      "preflight_runs": 1,
+      "range_work_used": 4,
+      "range_work_max": 1024,
+      "segments": 1,
+      "committed": 2,
+      "reserve_after_exhaust_rejected": 2,
+      "bodies_closed": 0
+    },
+    "reserve_commit": {
+      "pmax": 2,
+      "committed": 1,
+      "outstanding": 1,
+      "concurrent_committed": 3,
+      "concurrent_rejected": 5
+    },
+    "production_pmax": {
+      "frozen": 8192,
+      "scope_max": 8192
+    }
+  },
+  "log": "p-exhaustion.log",
+  "generated_at": "2026-11-20T01:09:35",
+  "notes": {
+    "claims_dispatched": "本测试直接驱动 PTransport，不建 Chain，故为 0；Chain/Claim 生命周期由 gateway 集成测试覆盖",
+    "bodies_closed_midfill": "midfill 用例两个 Body 在测试内主动关闭，Scope 耗尽时无在途 Body，故 bodies_closed=0",
+    "cache_put": "本包不接 Cache；未提交由 ledger_rows=0 与无 CachePut 通道断言"
+  }
+}

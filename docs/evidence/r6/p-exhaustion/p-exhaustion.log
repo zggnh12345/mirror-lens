@@ -1,0 +1,18 @@
+=== RUN   TestPExhaustRealRoundTrip
+    p_exhaust_integration_test.go:116: p_exhaust hedge: pmax_injected=2 dispatched=2 rejected=1 bodies_created=2 bodies_closed=2 on_exhaust_calls=1 claims_dispatched=0 chains=0 ledger_rows=0 outstanding=2
+--- PASS: TestPExhaustRealRoundTrip (0.00s)
+=== RUN   TestPExhaustNoCachePutAfter
+--- PASS: TestPExhaustNoCachePutAfter (0.00s)
+=== RUN   TestMidfillRangeSoleUseP
+    p_exhaust_integration_test.go:217: p_exhaust midfill: pmax_injected=2 preflight_runs=1 range_work_used=4 range_work_max=1024 segments=1 committed=2 reserve_after_exhaust_rejected=2 bodies_closed=0
+--- PASS: TestMidfillRangeSoleUseP (0.00s)
+=== RUN   TestReservePCommitP
+    p_exhaust_integration_test.go:288: reserve_commit: pmax=2 committed=1 outstanding=1 concurrent_committed=3 concurrent_rejected=5
+--- PASS: TestReservePCommitP (0.00s)
+=== RUN   TestProductionPMaxFrozen
+    p_exhaust_integration_test.go:309: production_pmax: frozen=8192 scope_max=8192
+--- PASS: TestProductionPMaxFrozen (0.00s)
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/unified	0.006s
+
+EXIT=0

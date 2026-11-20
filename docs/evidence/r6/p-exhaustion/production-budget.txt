@@ -1,0 +1,28 @@
+生产 P 预算依据（只读代码核对，2026-11-20）
+
+1) 冻结常量
+   internal/unified/errors.go:36-39
+     // PMax 是 RequestScope 应用层受控 RoundTrip 派发硬上限。
+     PMax = 8192
+
+2) 生产构造路径
+   internal/unified/scope.go:109
+     p: newPBudget(cfg.PMax)
+   internal/unified/budget.go:19-24
+     func newPBudget(max int64) *PBudget {
+         if max <= 0 { max = PMax }
+         ...
+     }
+   → 生产 NewScope(ScopeConfig{}) 得到 8192。
+
+3) 测试注入边界
+   internal/unified/scope.go:26-27  ScopeConfig.PMax
+   仅作为结构体字段供测试构造使用；未暴露到 config.yaml、环境变量或管理 API。
+   生产代码路径不读取任何外部可配的 P 上限。
+
+4) 测试依据
+   TestProductionPMaxFrozen（internal/unified/p_exhaust_integration_test.go:293）
+     - 断言 PMax == 8192
+     - 断言 NewScope(ScopeConfig{}) 的 P().Max() == PMax
+   本轮实测输出：
+     production_pmax: frozen=8192 scope_max=8192
