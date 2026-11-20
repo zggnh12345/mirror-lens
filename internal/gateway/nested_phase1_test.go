@@ -358,6 +358,39 @@ func TestNestedBRegistryRunsASourceRace(t *testing.T) {
 		t.Fatalf("RED：B 选中的 quay.io 未在其内部竞速第二个 Source（hits2=0）。" +
 			"当前 replicaTargets 每 Registry 只取 picked[0]，A+B 站内竞速路径不存在（B08 NOT_IMPLEMENTED）")
 	}
+
+	// 18e 不变量：嵌套 A 站内竞速不得突破冻结预算（RequestScope 统一核算）。
+	// 注意本夹具的 plan 可能不携带完整 manifest 身份，beginUnifiedAttemptAs 会
+	// 跳过 Claim，故 DispatchedClaims 可能为 0；这里只记录实际值，不断言固定
+	// 票数。R 预算上界则始终成立，且 R.Max 必须为冻结值 16。
+	usedR := f.sc.R().Used()
+	maxR := f.sc.R().Max()
+	t.Logf("18e 嵌套预算：R.Used=%d / R.Max=%d，DispatchedClaims=%d",
+		usedR, maxR, f.sc.DispatchedClaims())
+	if usedR > maxR {
+		t.Fatalf("嵌套竞速 R 预算超额：Used=%d Max=%d", usedR, maxR)
+	}
+	if maxR != 16 {
+		t.Fatalf("R 预算被改动：Max=%d，冻结值 16", maxR)
+	}
+	// 「同一 Registry 的多个 Source 只算一个 B 候选」在候选构造层直接可观测：
+	// replicaTargets 对 quay.io 只 append 一个 replicaTarget（其余进 alts）。
+	targets, _, err := f.gw.replicaTargets(f.ctx(), f.plan, time.Now())
+	if err != nil {
+		t.Fatalf("候选构造: %v", err)
+	}
+	quayVotes := 0
+	for _, tg := range targets {
+		if tg.registry == "quay.io" {
+			quayVotes++
+			if len(tg.alts) < 1 {
+				t.Fatalf("嵌套候选应携带同 Registry 的备选 Source（alts），实际 0")
+			}
+		}
+	}
+	if quayVotes != 1 {
+		t.Fatalf("同一 Registry 的多个 Source 被计成 %d 个 B 候选，期望 1", quayVotes)
+	}
 }
 
 // ---------------------------------------------------------------------------

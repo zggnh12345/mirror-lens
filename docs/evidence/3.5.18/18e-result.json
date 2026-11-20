@@ -1,0 +1,48 @@
+{
+  "stage": "18e",
+  "branch": "feat/3.5.18",
+  "commit": "32193dd53e5eb195016b144a1438f88036d5398b",
+  "evidence_source": "parsed from logs by script (not hand-filled)",
+  "gates": {
+    "test_rc0": true,
+    "test_packages_ok": 34,
+    "test_fail": 0,
+    "race_rc0": true,
+    "race_packages_ok": 34,
+    "race_data_races": 0,
+    "race_fail": 0
+  },
+  "security_tests_present": {
+    "TestT63AuthoritySingleAttempt": {
+      "exists": true
+    },
+    "TestReplicaTagRequiresAuthorityAgreement": {
+      "exists": true
+    },
+    "TestB18DegradedStillEnforcesDigestGate": {
+      "exists": true
+    },
+    "TestT51SameChainSharesClaim": {
+      "exists": true
+    },
+    "TestT60PBudgetNeverExceeds": {
+      "exists": true
+    },
+    "TestPExhaustNoCachePutAfter": {
+      "exists": true
+    },
+    "TestRecheckRedirectPolicyCrossHostSkips": {
+      "exists": true
+    },
+    "TestB19PrivateAuthorityNoCandidatesAndHostScopedCreds": {
+      "exists": true
+    }
+  },
+  "nested_assertions": {
+    "R_max_frozen_16": true,
+    "R_used_le_max": true,
+    "one_b_candidate_per_registry_with_alts": true,
+    "honesty_note": "unit fixture lacks full manifest identity -> R.Used=0, DispatchedClaims=0 logged not asserted; full budget execution proof deferred to 18g"
+  },
+  "all_pass": true
+}
