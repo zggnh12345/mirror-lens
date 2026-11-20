@@ -1,0 +1,107 @@
+{
+  "scenarios": {
+    "bad206": {
+      "label": "Content-Range 总长度不符",
+      "client": {
+        "status": 200,
+        "bytes": 67108864,
+        "digest_ok": true,
+        "read_error": null
+      },
+      "defective_206": {
+        "status": 206,
+        "mode": "bad206",
+        "bytes_sent": 0,
+        "declared_clen": 55574528,
+        "declared_total": 67108961,
+        "truncated": false
+      },
+      "took_over": false,
+      "discarded_partial": false,
+      "cache_swapp_entries": 1,
+      "part_files": [],
+      "switch_logs": [
+        "\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+        "\"换源跳过 sw-A：本轮已试过\"",
+        "\"换源跳过 official：官方目标，不是星标源\"",
+        "单流判慢：没有可换的星标源",
+        "\"中途并行跳过：分片未启用 workers=4 chunk=4194304\"",
+        "中途并行没接上，继续当前连接"
+      ]
+    },
+    "cl_bad": {
+      "label": "Content-Length 与实际 Body 不符",
+      "client": {
+        "status": 200,
+        "bytes": 67108864,
+        "digest_ok": true,
+        "read_error": null
+      },
+      "defective_206": {
+        "status": 206,
+        "mode": "cl_bad",
+        "bytes_sent": 0,
+        "declared_clen": 55575040,
+        "declared_total": 67108864,
+        "truncated": false
+      },
+      "took_over": false,
+      "discarded_partial": false,
+      "cache_swapp_entries": 1,
+      "part_files": [],
+      "switch_logs": [
+        "\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+        "\"换源跳过 sw-A：本轮已试过\"",
+        "\"换源跳过 official：官方目标，不是星标源\"",
+        "单流判慢：没有可换的星标源",
+        "\"中途并行跳过：分片未启用 workers=4 chunk=4194304\"",
+        "中途并行没接上，继续当前连接"
+      ]
+    },
+    "trunc206": {
+      "label": "Range Body 提前截断",
+      "client": {
+        "status": 200,
+        "bytes": 39321600,
+        "digest_ok": false,
+        "read_error": null
+      },
+      "defective_206": {
+        "status": 206,
+        "mode": "trunc206",
+        "bytes_sent": 27787264,
+        "declared_clen": 55574528,
+        "declared_total": 67108864,
+        "truncated": true
+      },
+      "took_over": true,
+      "discarded_partial": true,
+      "cache_swapp_entries": 0,
+      "part_files": [],
+      "switch_logs": [
+        "\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+        "\"换源跳过 sw-A：本轮已试过\"",
+        "\"单流换源：sw-B 已接手（已发 11 MB，验证器=false）\"",
+        "\"换源后未完整结束，丢弃续传点: docker:b:1:sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519\""
+      ]
+    }
+  },
+  "note": "以真实换源流程为前置：A 慢源先发 12MB 前缀判慢，B 对 Range 返回缺陷 206",
+  "assertions": {
+    "bad206_rejected_at_header": {
+      "ok": true,
+      "detail": "坏 Content-Range 在 switchAcceptable 头校验阶段被拒，字节未读，A 源补全，digest 正确"
+    },
+    "cl_bad_rejected_at_header": {
+      "ok": true,
+      "detail": "坏 Content-Length 同样在头校验阶段被拒"
+    },
+    "trunc206_rejected_after_switch": {
+      "ok": true,
+      "detail": "截断 206 头通过但 body 提前断；接手后未完整结束→丢弃续传点；缓存为空；.part 清理；坏字节未记为成功"
+    },
+    "no_corrupt_cache": {
+      "ok": true
+    }
+  }
+}

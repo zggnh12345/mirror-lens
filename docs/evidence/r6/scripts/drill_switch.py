@@ -17,15 +17,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa
 from fake_upstream import content  # noqa
 
-ROOT = f"{C.ROOT}/switch"
-ADDR = "127.0.0.1:18440"
+MODE = os.environ.get("R6_SWITCH_MODE", "ok")           # ok / bad206 / cl_bad / trunc206
+ROOT = os.environ.get("R6_ROOT", f"{C.ROOT}/switch")
+ADDR = os.environ.get("R6_ADDR", "127.0.0.1:18440")
 BASE = "http://" + ADDR
-EVID = "/opt/data/cache/scratch/ml8/docs/evidence/r6/switch"
+EVID = os.environ.get("R6_EVID", "/opt/data/cache/scratch/ml8/docs/evidence/r6/switch")
+UPA_PORT = int(os.environ.get("R6_UPA_PORT", "19621"))
+UPB_PORT = int(os.environ.get("R6_UPB_PORT", "19622"))
 HOST = "gcr.io"
 SW_REPO = "sw/app"
 SW_SIZE = 64 << 20          # ≥ switch_min_file_mib(60MiB)
 WARM_SIZE = 24 << 20        # ≥ minProxySpeedBytes(16MiB)
-WARM_REPOS = ["warm/one", "warm/two", "warm/three"]
+WARM_REPOS = ["warm/one", "warm/two", "warm/three", "warm/four", "warm/five", "warm/six"]
 
 CONFIG = f"""\
 addr: "{ADDR}"
@@ -98,17 +101,20 @@ def main():
     os.makedirs(EVID, exist_ok=True)
     C.fresh_root(ROOT)
     slow_rate = 1 << 20  # 1MB/s < watch_mbps(3MB/s)，10s 窗口约 10MB，远小于 switch_max_sent(48MiB)
+    swB = {"mode": MODE, "size": SW_SIZE, "range_ok": True}
+    if MODE == "slowbody":
+        swB.update({"chunk": 1 << 20, "chunk_ms": 1000})
     behA = {"probe/app": {"mode": "ok", "size": 4096},
             SW_REPO: {"mode": "slowbody", "size": SW_SIZE, "chunk": 1 << 20, "chunk_ms": 1000}}
     behB = {"probe/app": {"mode": "ok", "size": 4096},
-            SW_REPO: {"mode": "ok", "size": SW_SIZE, "range_ok": True}}
+            SW_REPO: swB}
     for r in WARM_REPOS:
         # 真实单流 ≥16MiB，按 1MiB/25ms 发：上游耗时 ~600ms，下游阻塞占比远低于
         # 1/3，样本不会被 noteSpeed 的下游背压判据丢弃（loopback 全速时 24MiB
         # 只花 ~27ms，几乎全被算成阻塞）。
         behB[r] = {"mode": "slowbody", "size": WARM_SIZE, "range_ok": True,
                    "chunk": 1 << 20, "chunk_ms": 25}
-    ups = [C.start_fake("A", 19621, behA, ROOT), C.start_fake("B", 19622, behB, ROOT)]
+    ups = [C.start_fake("A", UPA_PORT, behA, ROOT), C.start_fake("B", UPB_PORT, behB, ROOT)]
     time.sleep(0.6)
     gw = C.start_gateway(CONFIG, ROOT, {"ML_HOSTPROBE_REPOS": f"{HOST}=probe/app",
                                         "ML_HOSTPROBE_SCAN": "2s", "ML_HOSTPROBE_INTERVAL": "5m"})
@@ -117,7 +123,7 @@ def main():
     cl.login()
 
     ids = {}
-    for name, port in (("A", 19621), ("B", 19622)):
+    for name, port in (("A", UPA_PORT), ("B", UPB_PORT)):
         st, _, j = cl.req("POST", "/api/sources", {"name": f"sw-{name}", "url": f"http://127.0.0.1:{port}", "host": HOST})
         ids[name] = j.get("id")
         cl.req("PATCH", f"/api/sources/{ids[name]}", {"preferred": True})
@@ -144,10 +150,10 @@ def main():
 
     # 样本是异步落库：等到 B 的 ≥16MiB 样本满 3 条再往下走（有上限，避免死等）。
     ps = []
-    for _ in range(40):
+    for _ in range(80):
         _snap = C.snapshot(f"{ROOT}/data/mirror-lens.db")
         ps = [r for r in _snap["proxy_speed"] if r["source_id"] == ids["B"]]
-        if len(ps) >= 3:
+        if len(ps) >= 4:
             break
         time.sleep(0.25)
     snap = C.snapshot(f"{ROOT}/data/mirror-lens.db")

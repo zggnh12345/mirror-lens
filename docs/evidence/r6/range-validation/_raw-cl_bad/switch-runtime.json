@@ -1,0 +1,450 @@
+{
+  "ids": {
+    "A": 1,
+    "B": 2
+  },
+  "caps_ready": true,
+  "slow_bytes_per_s": 1048576,
+  "group": {
+    "create": [
+      200,
+      {
+        "id": 1,
+        "ok": true
+      }
+    ],
+    "members": [
+      200,
+      {
+        "n": 1,
+        "ok": true,
+        "skipped": 0
+      }
+    ]
+  },
+  "warm": [
+    {
+      "repo": "warm/one",
+      "digest": "sha256:8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 843,
+      "bytes": 25165824,
+      "sha256": "8186464c75a9c0ba67e48827d161ef015d305c6ff3be25cba9674b5fa4e8b34c",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/two",
+      "digest": "sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 835,
+      "bytes": 25165824,
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/three",
+      "digest": "sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 829,
+      "bytes": 25165824,
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/four",
+      "digest": "sha256:cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 826,
+      "bytes": 25165824,
+      "sha256": "cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/five",
+      "digest": "sha256:f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 831,
+      "bytes": 25165824,
+      "sha256": "f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+      "digest_ok": true
+    },
+    {
+      "repo": "warm/six",
+      "digest": "sha256:1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+      "status": 200,
+      "headers": {
+        "content-length": "25165824",
+        "x-ml-cache": "MISS",
+        "x-ml-source": "sw-B"
+      },
+      "read_error": null,
+      "ms": 829,
+      "bytes": 25165824,
+      "sha256": "1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+      "digest_ok": true
+    }
+  ],
+  "proxy_speed_B": {
+    "rows": [
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134515,
+        "bytes": 25165824,
+        "ms": 547
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134516,
+        "bytes": 25165824,
+        "ms": 544
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134517,
+        "bytes": 25165824,
+        "ms": 548
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134518,
+        "bytes": 25165824,
+        "ms": 540
+      },
+      {
+        "source_id": 2,
+        "kind": "registry",
+        "ts": 1795134519,
+        "bytes": 25165824,
+        "ms": 543
+      }
+    ],
+    "kb_per_s": [
+      46006,
+      46260,
+      45923,
+      46603,
+      46345
+    ],
+    "median_kb": 46260,
+    "switch_min_kbps": 8192,
+    "sample_gate_bytes": 16777216
+  },
+  "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+  "request": {
+    "repo": "sw/app",
+    "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+    "status": 200,
+    "headers": {
+      "content-length": "67108864",
+      "x-ml-cache": "MISS",
+      "x-ml-source": "sw-A"
+    },
+    "read_error": null,
+    "ms": 63741,
+    "bytes": 67108864,
+    "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+    "digest_ok": true,
+    "wall_ms": 63741
+  },
+  "upA": [],
+  "upB": [
+    {
+      "method": "GET",
+      "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "status": 206,
+      "bytes": 0,
+      "range": "bytes=11534336-",
+      "repo": "sw/app",
+      "kind": "blob",
+      "mode": "cl_bad",
+      "total": 67108864,
+      "declared_clen": 55575040,
+      "declared_total": 67108864,
+      "truncated": false,
+      "t0": 1795134534.7910209,
+      "t1": 1795134535.501732,
+      "port": 19642,
+      "inst": "B",
+      "seq": 29
+    }
+  ],
+  "log_switch": [
+    "time=2026-11-20T08:28:54.789+08:00 level=INFO msg=\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+    "time=2026-11-20T08:28:54.789+08:00 level=INFO msg=\"换源跳过 sw-A：本轮已试过\"",
+    "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=\"换源跳过 official：官方目标，不是星标源\"",
+    "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=单流判慢：没有可换的星标源",
+    "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=\"中途并行跳过：分片未启用 workers=4 chunk=4194304\"",
+    "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=中途并行没接上，继续当前连接"
+  ],
+  "cache_entries": [
+    {
+      "key": "docker:b:1:sha256:1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+      "sha256": "1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19642/v2/warm/six/blobs/sha256:1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a"
+    },
+    {
+      "key": "docker:b:1:sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19642/v2/warm/two/blobs/sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9"
+    },
+    {
+      "key": "docker:b:1:sha256:cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+      "sha256": "cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19642/v2/warm/four/blobs/sha256:cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338"
+    },
+    {
+      "key": "docker:b:1:sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "size": 67108864,
+      "upstream": "http://127.0.0.1:19632/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519"
+    },
+    {
+      "key": "docker:b:1:sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19642/v2/warm/three/blobs/sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9"
+    },
+    {
+      "key": "docker:b:1:sha256:f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+      "sha256": "f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+      "size": 25165824,
+      "upstream": "http://127.0.0.1:19642/v2/warm/five/blobs/sha256:f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed"
+    }
+  ],
+  "blobs": [
+    {
+      "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+      "size": 25165824
+    },
+    {
+      "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+      "size": 25165824
+    },
+    {
+      "sha256": "cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+      "size": 25165824
+    },
+    {
+      "sha256": "f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+      "size": 25165824
+    },
+    {
+      "sha256": "1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+      "size": 25165824
+    },
+    {
+      "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+      "size": 67108864
+    }
+  ],
+  "partials": [],
+  "assertions": {
+    "warm_samples_real": {
+      "ok": true,
+      "detail": [
+        [
+          25165824,
+          547
+        ],
+        [
+          25165824,
+          544
+        ],
+        [
+          25165824,
+          548
+        ],
+        [
+          25165824,
+          540
+        ],
+        [
+          25165824,
+          543
+        ]
+      ]
+    },
+    "warm_median_over_gate": {
+      "ok": true,
+      "detail": [
+        46006,
+        46260,
+        45923,
+        46603,
+        46345
+      ]
+    },
+    "switch_200_digest_ok": {
+      "ok": true,
+      "detail": {
+        "repo": "sw/app",
+        "digest": "sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+        "status": 200,
+        "headers": {
+          "content-length": "67108864",
+          "x-ml-cache": "MISS",
+          "x-ml-source": "sw-A"
+        },
+        "read_error": null,
+        "ms": 63741,
+        "bytes": 67108864,
+        "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+        "digest_ok": true,
+        "wall_ms": 63741
+      }
+    },
+    "second_source_range_request": {
+      "ok": true,
+      "detail": [
+        {
+          "method": "GET",
+          "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "status": 206,
+          "bytes": 0,
+          "range": "bytes=11534336-",
+          "repo": "sw/app",
+          "kind": "blob",
+          "mode": "cl_bad",
+          "total": 67108864,
+          "declared_clen": 55575040,
+          "declared_total": 67108864,
+          "truncated": false,
+          "t0": 1795134534.7910209,
+          "t1": 1795134535.501732,
+          "port": 19642,
+          "inst": "B",
+          "seq": 29
+        }
+      ]
+    },
+    "second_source_206_headers": {
+      "ok": false,
+      "detail": [
+        {
+          "method": "GET",
+          "path": "/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "status": 206,
+          "bytes": 0,
+          "range": "bytes=11534336-",
+          "repo": "sw/app",
+          "kind": "blob",
+          "mode": "cl_bad",
+          "total": 67108864,
+          "declared_clen": 55575040,
+          "declared_total": 67108864,
+          "truncated": false,
+          "t0": 1795134534.7910209,
+          "t1": 1795134535.501732,
+          "port": 19642,
+          "inst": "B",
+          "seq": 29
+        }
+      ]
+    },
+    "first_source_served_prefix_only": {
+      "ok": false,
+      "detail": []
+    },
+    "no_parallel_fallback": {
+      "ok": false,
+      "detail": [
+        "time=2026-11-20T08:28:54.789+08:00 level=INFO msg=\"换源候选：n=3 official_only=false sched=\\\"registry:gcr.io\\\" par_targets=false\"",
+        "time=2026-11-20T08:28:54.789+08:00 level=INFO msg=\"换源跳过 sw-A：本轮已试过\"",
+        "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=\"换源跳过 official：官方目标，不是星标源\"",
+        "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=单流判慢：没有可换的星标源",
+        "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=\"中途并行跳过：分片未启用 workers=4 chunk=4194304\"",
+        "time=2026-11-20T08:28:55.501+08:00 level=INFO msg=中途并行没接上，继续当前连接"
+      ]
+    },
+    "no_partial_left": {
+      "ok": true,
+      "detail": []
+    },
+    "cache_entry_committed": {
+      "ok": true,
+      "detail": [
+        {
+          "key": "docker:b:1:sha256:1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+          "sha256": "1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19642/v2/warm/six/blobs/sha256:1b18b873758a3e15b7ee8450911c3e4a768c24a63bfd259988e8b226f8cfbd4a"
+        },
+        {
+          "key": "docker:b:1:sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+          "sha256": "8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19642/v2/warm/two/blobs/sha256:8e648073cd8a282c3a2a9a437d469778bb881a4c2db150107e7323a3d64b27e9"
+        },
+        {
+          "key": "docker:b:1:sha256:cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+          "sha256": "cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19642/v2/warm/four/blobs/sha256:cd514e99fb0fd71027633514d6cba4b21eb7579a6de80eed351167ca62f44338"
+        },
+        {
+          "key": "docker:b:1:sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "sha256": "e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519",
+          "size": 67108864,
+          "upstream": "http://127.0.0.1:19632/v2/sw/app/blobs/sha256:e2b796f745b16bc0a011a71901816b7207495f6c28f538d59329bcca5abc8519"
+        },
+        {
+          "key": "docker:b:1:sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+          "sha256": "e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19642/v2/warm/three/blobs/sha256:e6d61e772350f041d35683c2ebd67fef030f536f346932e805c7f85ec6ff56a9"
+        },
+        {
+          "key": "docker:b:1:sha256:f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+          "sha256": "f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed",
+          "size": 25165824,
+          "upstream": "http://127.0.0.1:19642/v2/warm/five/blobs/sha256:f7f92302824c634080c7e5c2c611371df76553b863c5b0c8e5acb236ed0511ed"
+        }
+      ]
+    },
+    "cross_source_no_partial": {
+      "ok": true,
+      "detail": []
+    },
+    "single_cache_entry": {
+      "ok": true,
+      "detail": null
+    }
+  }
+}
