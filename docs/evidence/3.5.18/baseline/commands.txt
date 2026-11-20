@@ -1,0 +1,10 @@
+# 阶段0 基线取证实际命令
+分支: git checkout -b feat/3.5.18 6770711
+Go 工具链: golang:1.27-alpine via `docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8`
+全量门禁:
+  gofmt -l .
+  go vet ./...
+  go build ./...
+  go test ./... -count=1
+  go test -race ./... -count=1   # CGO_ENABLED=1 + apk add gcc musl-dev
+结果: 全部 PASS；test/race 各 34 包 ok；race 零 DATA RACE。
