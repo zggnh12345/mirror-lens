@@ -523,3 +523,23 @@ result.json、production-budget.txt）。全部由本轮重新执行的真实测
 
 外部边界不变：B15 `EXTERNAL_BLOCKED`；生产 Schema/迁移 `NOT_EXECUTED`；
 未 push、未打 tag、未发布、未触碰生产。
+
+## 收口修订：B08 已知范围缺口（2026-11-20）
+
+**结论变更：** 撤销无条件 `READY_FOR_FINAL_REVIEW`，改为
+`CORE_IMPLEMENTED_WITH_KNOWN_SCOPE_GAP`。
+
+**事实：** B08（A+B 嵌套竞速）未实现，且不是证据缺口——
+
+- `internal/gateway/registry.go:166`：`fetchWithReplicas` 先于 `fetchOnce`，B 有结论即返回；
+- `internal/gateway/replica.go:264`：`fetchReplicaArtifact` 每副本只发一路 `openUpstreamAs`；
+- `raceManifest(` 唯一调用点 `internal/gateway/gateway.go:1143`，仅 A 路径可达。
+
+**影响：** B13 的 A+B 组合预算 `NOT_VERIFIED`；B15 的 A+B 配对性能无从测量。
+
+**处置：** 本版本不补实现。A+B 嵌套涉及 R/C/A/P/G/Claim/Authority/Cache
+已冻结语义，须单独立项。1.6 已同步：状态行、3.5.17 实现范围、B08/B13 行、
+11.1 行，并新增 11.9。
+
+**边界不变：** 代码零改动（HEAD 树未变）；B15 `EXTERNAL_BLOCKED`；
+生产 Schema/迁移 `NOT_EXECUTED`；未推送、未打 Tag、未发布、未触碰生产。

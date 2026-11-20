@@ -1,6 +1,6 @@
 dd5c71a18a83c7ae4de5f88dd4a7e377126c1f60f26dafc4f2bebe3ed1a807b8  docs/3.5.17-17b-r4-review.md
 c38f327ce0e0a4e145b191d45f137c3b8e97ed883b3043fa517f06874065a92f  docs/3.5.17-g0-matrix.md
-09ed6d39828269156243a286e4c0723fa3624339e3d70fafa23ec8809fcc8bba  docs/PROGRESS-3.5.17.md
+71fba691c931a19fce15140ce56709fcf9cbf58a9e2889401e6d60934d89c02f  docs/PROGRESS-3.5.17.md
 5ad068c3ad525a9f10e289fd3542c4382910ac19eac5479a67ae6380b68999d0  docs/evidence/r5/b17_browser.js
 d70099a18d228b0a44ba7dd617d3200c5930298dac25486106d44e21b585a5eb  docs/evidence/r5/browser/01-default-sequential.png
 93a11a5fa4d68cf9e81f45d6571c02d6a06d571b98c49bc7b5dfd22dca1ada86  docs/evidence/r5/browser/02-race-mode.png
@@ -111,7 +111,7 @@ ff5bcfc9088ec1ebfe2fcec169e2fcc0b8e2514013d7aed571a4850bbc9a5cc1  docs/evidence/
 56e36ec0c6424bcc90af499fbaa98e20e36972a6736121c8bad46bbfd2e38a5d  docs/evidence/r6/verify/gotest.log
 df31b3c005775ca355e222e0a28eef3e07356d6efedb32e4d5d901f3a97c552b  docs/evidence/r6/verify/static.log
 eb9d1a415a248019ac2e7965e05ebf5badef07d36f31072080c1f3d9bcc7a0cd  docs/evidence/r6/verify/test-names.txt
-1b38a071a7de36d5d47817f53e81859df54b155e6493339f99c9ab49d90e92bc  docs/registry-roadmap-v1.6.md
+7d33f73f4709cb7a64bd54c1eb924dd48e9984dbd1ffb554c8362b8dacaffbe3  docs/registry-roadmap-v1.6.md
 93304901bda144e19538f101bb0165b74fada852949934a0dee11c9a4fc83d8b  internal/adapter/adapter.go
 79f18e5d832dd43b50bc0e005137fa2541e4552c368c0ad871b53ba7879d9b11  internal/adapter/registryadapter/registry.go
 8c25dbd04b28dc41a7335a2b7f6908cd59d0496a9334db4319bcaafdf23c82dd  internal/gateway/gateway.go
