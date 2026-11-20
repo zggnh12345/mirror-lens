@@ -1,0 +1,111 @@
+{
+  "stage": "18d-core",
+  "branch": "feat/3.5.18",
+  "commit": "b04cadb0a7d37dfa5f92c3539fd6cfe37656f961",
+  "evidence_source": "parsed from logs by script (not hand-filled)",
+  "gates": {
+    "gofmt_empty": true,
+    "vet_rc0": true,
+    "build_rc0": true,
+    "test_rc0": true,
+    "test_packages_ok": 34,
+    "race_full_rc0": true,
+    "race_data_races": 0
+  },
+  "four_column_review": [
+    {
+      "rule": "A 每 Registry Source 并发上限=2",
+      "design": "§4.2",
+      "code_symbol": "crossReplicaA = 2",
+      "code_present": 1,
+      "gate_test": "TestCharA_AtMostTwoSources",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "同 Registry 多 Source 内层竞速",
+      "design": "§18d/§4.2",
+      "code_symbol": "func (g *Gateway) fetchRegistryArtifact",
+      "code_present": 1,
+      "gate_test": "TestNestedBRegistryRunsASourceRace",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "内层复用 ChainB 无新 ChainA",
+      "design": "§18d",
+      "code_symbol": "withUnifiedChain(ctx, unified.ChainB)",
+      "code_present": 1,
+      "gate_test": "TestCharB_SingleRequestClaim",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "每 Source Attempt 进同一 Claim/Scope",
+      "design": "§18d",
+      "code_symbol": "sc.Claim(ch.ID(), id)",
+      "code_present": 1,
+      "gate_test": "TestCharB_SingleRequestClaim",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "取消 loser 不计样本(F03)",
+      "design": "§18c-F03",
+      "code_symbol": "guard.suppressed()",
+      "code_present": 1,
+      "gate_test": "TestB18SampleCollectedOnSuccess",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "抑制先于取消 + plan 隔离(无 race)",
+      "design": "§18d",
+      "code_symbol": "guards[i].setSuppress()",
+      "code_present": 1,
+      "gate_test": "TestNestedBRegistryRunsASourceRace",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "A ON + B sequential 内部 A=2",
+      "design": "§4.2",
+      "code_symbol": "fetchRegistryArtifact(ctx, plan, t, idHost)",
+      "code_present": 1,
+      "gate_test": "TestReplicaSequentialRejectsWrongDigest",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "坏赢家不污染缓存",
+      "design": "§4.3",
+      "code_symbol": "checkDigest",
+      "code_present": 1,
+      "gate_test": "TestCharB_WrongDigestReplicaNotCommitted",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    },
+    {
+      "rule": "A 失败立即补位",
+      "design": "§4.1",
+      "code_symbol": "fetchRegistryArtifact(ctx, plan, targets[i], idHost)",
+      "code_present": 1,
+      "gate_test": "TestCharA_FailureBackfillsWithinHost",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1",
+      "note": "内层多 Source 并发、首个成功即胜出；失败 Source 由其余在途 Source 立即补位（无需等待）"
+    },
+    {
+      "rule": "预算可观测(R/P/Claim)",
+      "design": "§预算冻结",
+      "code_symbol": "func (g *Gateway) fetchRegistryArtifact",
+      "code_present": 1,
+      "gate_test": "TestCharHelper_ScopeBudgetObservable",
+      "test_pass": true,
+      "evidence": "docs/evidence/3.5.18/18d-core-targeted-v.log --- PASS x1"
+    }
+  ],
+  "four_column_all_pass": true,
+  "gates_all_pass": true,
+  "all_pass": true
+}

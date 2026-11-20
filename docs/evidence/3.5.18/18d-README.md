@@ -155,3 +155,16 @@
   共享 *Plan），已用内层独立 plan 浅拷贝修复并重跑为绿；全量
   `18d-core-race-full.log`（见文件内 RACE_FULL_RC）。
 - 原始证据均为本次重新运行生成，未从其他日志拼贴。
+
+### 18d 内部专项复核（P2-3，四列核对）
+逐条把冻结规则翻译为「设计已冻结 / 代码已存在 / 门禁已存在 / 测试已存在」四列，
+结果 10/10 通过（`18d-core-result.json`，由脚本从 `18d-core-targeted-v.log`
+的 `--- PASS:` 行与代码符号解析生成，非手填）：
+- A 并发上限 A=2、同 Registry 内层嵌套竞速、复用 ChainB 无新 ChainA、
+  每 Source Attempt 进同一 Claim/Scope、取消 loser 不计样本(F03)、
+  抑制先于取消 + plan 隔离(无 race)、A+B sequential 内部 A=2、
+  坏赢家不污染缓存、A 失败立即补位、预算 R/P/Claim 可观测——均命中真实代码
+  符号且对应测试 `--- PASS`。
+- 全量门禁：gofmt 空 / vet / build / test(34 包) / race(0 DATA RACE) 全绿。
+- 结论：18d 核心重构无 P0/P1、无预算绕过、无安全语义冲突；各阶段证据均为
+  最终代码重新运行。生产/远程仍未触碰（WAITING_FOR_USER_DECISION）。

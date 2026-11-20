@@ -1,0 +1,82 @@
+=== RUN   TestB18SequentialIgnoresEmptySelection
+--- PASS: TestB18SequentialIgnoresEmptySelection (0.05s)
+=== RUN   TestB18RaceEmptySelectionDegradesToSequential
+--- PASS: TestB18RaceEmptySelectionDegradesToSequential (0.06s)
+=== RUN   TestB18DegradedStillEnforcesDigestGate
+--- PASS: TestB18DegradedStillEnforcesDigestGate (0.06s)
+=== RUN   TestB18SequentialSelectionChangesDoNotAlterCandidates
+--- PASS: TestB18SequentialSelectionChangesDoNotAlterCandidates (0.04s)
+=== RUN   TestB18DynamicBelowThresholdUsesFixed
+--- PASS: TestB18DynamicBelowThresholdUsesFixed (0.03s)
+=== RUN   TestB18DynamicDisabledUsesFixed
+--- PASS: TestB18DynamicDisabledUsesFixed (0.06s)
+=== RUN   TestB18DynamicReadyAndOrder
+--- PASS: TestB18DynamicReadyAndOrder (0.07s)
+=== RUN   TestB18SampleCollectedOnSuccess
+--- PASS: TestB18SampleCollectedOnSuccess (0.04s)
+=== RUN   TestB18OfficialNoSample
+--- PASS: TestB18OfficialNoSample (0.05s)
+=== RUN   TestCharA_RaceEligibilitySingleSource
+--- PASS: TestCharA_RaceEligibilitySingleSource (0.09s)
+=== RUN   TestCharA_AtMostTwoSources
+--- PASS: TestCharA_AtMostTwoSources (0.18s)
+=== RUN   TestCharA_FailureBackfillsWithinHost
+--- PASS: TestCharA_FailureBackfillsWithinHost (0.05s)
+=== RUN   TestCharA_BadWinnerNotCached
+2026/11/20 13:04:35 WARN 源不可用，换下一个 request_id="" kind=registry cache_key="docker:manifest:quay.io/foo/bar:sha256:b3f42046540039d1ab0eb2ee4a4bb0729b0685f372076dd386ad086372e1dcdd|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=UPSTREAM_CONNECT_FAILED error="内容与客户端给的摘要不符：期望 b3f42046540039d1ab0eb2ee4a4bb0729b0685f372076dd386ad086372e1dcdd 实得 5397e7f0e89591087f9ea12579b4e1707ad951c96f6ce768aab54746e8c7f163" source=http://127.0.0.1:39717
+--- PASS: TestCharA_BadWinnerNotCached (0.05s)
+=== RUN   TestCharB_AgreementConfirmsWithoutAuthority
+--- PASS: TestCharB_AgreementConfirmsWithoutAuthority (0.06s)
+=== RUN   TestCharB_MismatchFallsBackToAuthority
+--- PASS: TestCharB_MismatchFallsBackToAuthority (0.12s)
+=== RUN   TestCharB_AuthorityNotCountedInM
+--- PASS: TestCharB_AuthorityNotCountedInM (0.05s)
+=== RUN   TestCharB_SingleRequestClaim
+--- PASS: TestCharB_SingleRequestClaim (0.04s)
+=== RUN   TestCharB_WrongDigestReplicaNotCommitted
+--- PASS: TestCharB_WrongDigestReplicaNotCommitted (0.03s)
+=== RUN   TestNestedBRegistryRunsASourceRace
+    nested_phase1_test.go:350: RED 前置条件成立：quay.io 合格星标 Source 数=2（调度器候选 cands=2）
+--- PASS: TestNestedBRegistryRunsASourceRace (0.06s)
+=== RUN   TestCharHelper_ScopeBudgetObservable
+--- PASS: TestCharHelper_ScopeBudgetObservable (0.05s)
+=== RUN   TestReplicaRaceConfirmsOnAgreement
+--- PASS: TestReplicaRaceConfirmsOnAgreement (0.05s)
+=== RUN   TestReplicaRaceMismatchFallsBackToAuthority
+--- PASS: TestReplicaRaceMismatchFallsBackToAuthority (0.06s)
+=== RUN   TestReplicaWithoutSourceMappingSkips
+--- PASS: TestReplicaWithoutSourceMappingSkips (0.06s)
+=== RUN   TestReplicaSequentialRejectsWrongDigest
+--- PASS: TestReplicaSequentialRejectsWrongDigest (0.06s)
+=== RUN   TestReplicaRaceMergesConcurrentRequests
+--- PASS: TestReplicaRaceMergesConcurrentRequests (0.06s)
+=== RUN   TestReplicaRaceSlowCandidatesStillConfirm
+--- PASS: TestReplicaRaceSlowCandidatesStillConfirm (0.68s)
+=== RUN   TestReplicaNoConclusionFallsBackOnSameChain
+2026/11/20 13:04:36 调度：候选为空 kind=registry:registry.k8s.io raw=0 通过TTL=0 出列表=0（guard 之后 0）
+--- PASS: TestReplicaNoConclusionFallsBackOnSameChain (0.06s)
+=== RUN   TestReplicaAuthorityNotInFirstRound
+--- PASS: TestReplicaAuthorityNotInFirstRound (0.06s)
+=== RUN   TestReplicaAuthorityNotCountedInM
+--- PASS: TestReplicaAuthorityNotCountedInM (0.05s)
+=== RUN   TestReplicaCandidatesShareSingleClaim
+--- PASS: TestReplicaCandidatesShareSingleClaim (0.04s)
+=== RUN   TestCrossFlightKeyNamespaced
+--- PASS: TestCrossFlightKeyNamespaced (0.00s)
+=== RUN   TestReplicaTagRequiresAuthorityAgreement
+--- PASS: TestReplicaTagRequiresAuthorityAgreement (0.04s)
+=== RUN   TestReplicaDigestSkipsAuthority
+--- PASS: TestReplicaDigestSkipsAuthority (0.06s)
+=== RUN   TestReplicaEmptySelectionDegrades
+--- PASS: TestReplicaEmptySelectionDegrades (0.06s)
+=== RUN   TestReplicaRequiresSelection
+--- PASS: TestReplicaRequiresSelection (0.04s)
+=== RUN   TestCrossSelectedStaleEntryFiltered
+--- PASS: TestCrossSelectedStaleEntryFiltered (0.04s)
+=== RUN   TestReplicaExcludesPrivateAuthority
+--- PASS: TestReplicaExcludesPrivateAuthority (0.25s)
+=== RUN   TestReplicaModeDefaultsAndLiveSwitch
+--- PASS: TestReplicaModeDefaultsAndLiveSwitch (0.04s)
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/gateway	2.991s
+TARGETED_V_RC=0
