@@ -41,6 +41,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/secret"
 	"github.com/zggnh12345/mirror-lens/internal/store"
 	"github.com/zggnh12345/mirror-lens/internal/unified"
+	"github.com/zggnh12345/mirror-lens/internal/version"
 )
 
 // 多源范围只来自配置；没有单独的配置总开关，也没有环境变量覆盖。
@@ -172,7 +173,14 @@ func main() {
 	addr := flag.String("addr", "", "监听地址，覆盖配置文件")
 	dataDir := flag.String("data", "", "数据目录，覆盖配置文件")
 	noSeed := flag.Bool("no-seed", false, "不写入内置候选池")
+	showVersion := flag.Bool("version", false, "打印版本并退出（不读配置、不连数据库、不启动服务）")
 	flag.Parse()
+
+	// 版本查询必须发生在任何配置/数据目录/数据库动作之前。
+	if *showVersion {
+		fmt.Println(version.Info())
+		return
+	}
 
 	path, required := *cfgPath, true
 	if path == "" {
@@ -220,6 +228,8 @@ func main() {
 	}); err != nil {
 		log.Fatalf("初始化日志: %v", err)
 	}
+	// 启动即记录版本与构建信息：排障时先确认镜像版本。
+	log.Printf("%s", version.Info())
 
 	// 探测与网关共用安全拨号：源地址是用户填的，不能变成内网探针。
 	probe.Configure(cfg.Probe.AllowPrivate, cfg.Network.IPFamily)

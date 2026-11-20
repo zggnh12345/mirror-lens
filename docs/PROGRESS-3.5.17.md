@@ -572,3 +572,43 @@ B08（A+B 嵌套）与 B13 的 A+B 组合预算**正式延期至 3.5.18**。
 - B15 真实外部性能：`EXTERNAL_BLOCKED`，是否允许带阻塞发布需最终裁定
 - 生产 Schema 指纹核对与迁移：`NOT_EXECUTED`（需只读访问授权）
 - 推送、Tag、Release、GHCR：均未执行，需单独授权
+
+## 发布工程增强（2026-11-20，授权范围：三项）
+
+### 1. 启动版本日志
+
+`main.go` 在日志初始化后打印 `version.Info()`：
+`mirror-lens 3.5.17 commit=<sha> built=<RFC3339>`。
+实测启动日志已出现该行。
+
+### 2. `-version` / `--version`
+
+`main.go` 在 `flag.Parse()` 后、任何配置/数据目录/数据库动作之前返回。
+实测：退出码 0，输出
+`mirror-lens 3.5.17 commit=deadbeef built=2026-11-20T02:00:00Z`，
+临时目录保持为空（未生成 config.yaml，未建 data）。
+
+### 3. CI 版本校验 + OCI Label
+
+- 新增 `scripts/check-version.sh`：唯一权威来源为 `internal/version/version.go`；
+  tag 必须是 `vX.Y.Z` 且与 Go 常量一致；非 tag 构建只读常量、不误伤。
+- `.github/workflows/docker.yml` 新增 `resolve version` 步骤，输出
+  `VERSION` 与 `BUILD_DATE`，作为 build-args 传入。
+- `Dockerfile` 新增 `ARG VERSION/COMMIT/BUILD_DATE`、ldflags 注入
+  `Commit/BuildDate`，以及 OCI labels：
+  `org.opencontainers.image.{title,version,revision,created}`。
+- 程序版本仍以 `const Version` 为唯一来源；`Commit/BuildDate` 不进入 Schema。
+
+### 验收
+
+- 新增 `internal/version/version_test.go`（3 个用例）
+- 脚本实测 5 组：v3.5.17 通过；v3.5.18、vfoo、v3.5.17.1 失败；分支构建通过
+- 全量 `go test ./...`：34 包 ok；`-race` 见当轮日志
+- 未推送、未打 Tag、未发布
+
+### 镜像内版本自证（补充）
+
+`Dockerfile` 在 `COPY . .` 后增加校验：非 `dev` 构建时，`ARG VERSION` 必须等于
+`internal/version/version.go` 的 `const Version`，否则构建失败。
+正面构建（VERSION=3.5.17）已成功；负面构建（VERSION=3.5.18）因命令被安全门
+拦截，未执行，记为 `NOT_EXECUTED`，不得写成通过。
