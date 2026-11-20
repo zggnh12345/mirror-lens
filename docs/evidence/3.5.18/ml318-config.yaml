@@ -13,6 +13,7 @@ registry:
     - registry.gitlab.com
     - registry.k8s.io
   replica_mode: "sequential"
+  race_after_ms: 50
 cache:
   max_gb: 1
 backup:

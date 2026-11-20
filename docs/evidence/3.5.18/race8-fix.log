@@ -1,0 +1,11 @@
+race8-fix r1: n_ok=6/8 ttfb=[84.564, 89.575, 106.607, 107.286, 109.131, 196.858] winners=['race-fast', 'race-slow', 'race-slow', 'race-slow', 'race-slow', 'race-fast']
+race8-fix r2: n_ok=6/8 ttfb=[90.398, 108.12, 108.783, 110.407, 130.185, 203.922] winners=['race-slow', 'race-fast', 'race-slow', 'race-fast', 'race-slow', 'race-slow']
+race8-fix r3: n_ok=6/8 ttfb=[90.566, 93.398, 106.593, 106.775, 107.072, 129.575] winners=['race-slow', 'race-fast', 'race-fast', 'race-fast', 'race-slow', 'race-slow']
+race8-fix r4: n_ok=6/8 ttfb=[90.466, 91.084, 105.826, 106.203, 106.802, 130.352] winners=['race-fast', 'race-slow', 'race-slow', 'race-fast', 'race-slow', 'race-fast']
+race8-fix r5: n_ok=6/8 ttfb=[90.717, 93.252, 95.607, 106.004, 109.78, 110.346] winners=['race-fast', 'race-slow', 'race-fast', 'race-slow', 'race-slow', 'race-fast']
+race8-fix r6: n_ok=6/8 ttfb=[90.019, 91.281, 106.414, 108.879, 109.649, 231.216] winners=['race-slow', 'race-slow', 'race-slow', 'race-slow', 'race-fast', 'race-fast']
+race8-fix r7: n_ok=6/8 ttfb=[91.742, 92.61, 106.477, 108.638, 109.393, 135.474] winners=['race-fast', 'race-slow', 'race-slow', 'race-fast', 'race-slow', 'race-fast']
+race8-fix r8: n_ok=6/8 ttfb=[89.201, 92.168, 104.238, 108.922, 110.126, 135.36] winners=['race-fast', 'race-slow', 'race-slow', 'race-fast', 'race-fast', 'race-slow']
+race8-fix r9: n_ok=6/8 ttfb=[87.947, 92.459, 105.124, 109.077, 109.322, 129.703] winners=['race-fast', 'race-slow', 'race-slow', 'race-fast', 'race-slow', 'race-fast']
+race8-fix r10: n_ok=6/8 ttfb=[89.892, 92.764, 106.69, 106.695, 107.459, 131.38] winners=['race-fast', 'race-slow', 'race-fast', 'race-fast', 'race-slow', 'race-slow']
+SUMMARY {"label": "race8-fix", "rounds": 10, "concurrency": 8, "n_samples": 80, "n_ok": 60, "ttfb_p50": 106.692, "ttfb_p95": 138.543, "ttfb_p99": 215.113, "winner_dist": {"race-fast": 27, "race-slow": 33}}
