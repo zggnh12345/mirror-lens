@@ -1,6 +1,6 @@
 dd5c71a18a83c7ae4de5f88dd4a7e377126c1f60f26dafc4f2bebe3ed1a807b8  docs/3.5.17-17b-r4-review.md
 c38f327ce0e0a4e145b191d45f137c3b8e97ed883b3043fa517f06874065a92f  docs/3.5.17-g0-matrix.md
-71fba691c931a19fce15140ce56709fcf9cbf58a9e2889401e6d60934d89c02f  docs/PROGRESS-3.5.17.md
+9873c82600863139547f3bb7e50e374347b27450097f9b0f0e9ca5f27dc775b5  docs/PROGRESS-3.5.17.md
 5ad068c3ad525a9f10e289fd3542c4382910ac19eac5479a67ae6380b68999d0  docs/evidence/r5/b17_browser.js
 d70099a18d228b0a44ba7dd617d3200c5930298dac25486106d44e21b585a5eb  docs/evidence/r5/browser/01-default-sequential.png
 93a11a5fa4d68cf9e81f45d6571c02d6a06d571b98c49bc7b5dfd22dca1ada86  docs/evidence/r5/browser/02-race-mode.png
@@ -111,7 +111,7 @@ ff5bcfc9088ec1ebfe2fcec169e2fcc0b8e2514013d7aed571a4850bbc9a5cc1  docs/evidence/
 56e36ec0c6424bcc90af499fbaa98e20e36972a6736121c8bad46bbfd2e38a5d  docs/evidence/r6/verify/gotest.log
 df31b3c005775ca355e222e0a28eef3e07356d6efedb32e4d5d901f3a97c552b  docs/evidence/r6/verify/static.log
 eb9d1a415a248019ac2e7965e05ebf5badef07d36f31072080c1f3d9bcc7a0cd  docs/evidence/r6/verify/test-names.txt
-7d33f73f4709cb7a64bd54c1eb924dd48e9984dbd1ffb554c8362b8dacaffbe3  docs/registry-roadmap-v1.6.md
+ec312939fd529180bb16a55e9bba42757b8be3f0ea7912fb20d90003df506233  docs/registry-roadmap-v1.6.md
 93304901bda144e19538f101bb0165b74fada852949934a0dee11c9a4fc83d8b  internal/adapter/adapter.go
 79f18e5d832dd43b50bc0e005137fa2541e4552c368c0ad871b53ba7879d9b11  internal/adapter/registryadapter/registry.go
 8c25dbd04b28dc41a7335a2b7f6908cd59d0496a9334db4319bcaafdf23c82dd  internal/gateway/gateway.go
@@ -127,3 +127,5 @@ fe4c6eed1a43f8c75e62453a73c90ef5ee4a7148460ef3e8dac2e5967f64c989  docs/evidence/
 4f654944138ded0870448a0325f500089dd7013845dd9cf8d568e09a9c7e3949  docs/evidence/r6/p-exhaustion/production-budget.txt
 e74923a55b8c1e5c052afcd8b2eaea2d7990ae1edac1f5cbe746faebabd1ed6d  docs/evidence/r6/p-exhaustion/result.json
 883937e62bc49b89afffb10b7c554b94551abbaa9cb51eccee3d59d08677dbc5  internal/gateway/logical_upstream_test.go
+020b25d373842b240652ebffbb319d5fd1d254d83fbe7dbdf7be7fab00154135  internal/version/version.go
+cb0c3a87981725f727c2be5f800e1208a7a7bf5a17f9e53d0a5499865ea2c84a  docs/3.5.17-test-matrix.md
