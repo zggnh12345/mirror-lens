@@ -1,0 +1,16 @@
+NODE=v24.22.3
+=== RUN   TestWebCrossRunsAuditPanel
+--- PASS: TestWebCrossRunsAuditPanel (0.00s)
+=== RUN   TestPanelRowContract
+--- PASS: TestPanelRowContract (0.08s)
+=== RUN   TestPanelCapabilityTagsGeneral
+--- PASS: TestPanelCapabilityTagsGeneral (0.06s)
+=== RUN   TestPanelLiveContract
+--- PASS: TestPanelLiveContract (0.00s)
+=== RUN   TestWebUIRegressions
+--- PASS: TestWebUIRegressions (0.00s)
+=== RUN   TestWebUISyntax
+--- PASS: TestWebUISyntax (0.08s)
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/api	0.225s
+WEBE2E_RC=0

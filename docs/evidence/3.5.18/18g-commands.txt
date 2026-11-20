@@ -1,0 +1,28 @@
+# 18g 命令记录
+
+工作目录：/opt/data/cache/scratch/ml8，分支：feat/3.5.18
+Go：golang:1.27-alpine，--volumes-from hermes，-v ml-gocache:/tmp/gocache
+GOCACHE=/tmp/gocache，GOPATH=/opt/data/cache/scratch/gopath
+
+## 全量门禁（18g-gate.log）
+gofmt -l .                                    -> 空
+go vet ./...                                  -> VET_RC=0
+go build ./...                                -> BUILD_RC=0
+go test ./... -count=1                        -> TEST_RC=0（34 包 ok）
+
+## race（18g-race.log）
+apk add --no-cache gcc musl-dev
+CGO_ENABLED=1 go test -race ./... -count=1    -> RACE_RC=0（34 包 ok，0 DATA RACE；夹具竞态修复后重跑）
+
+## Web 端到端（18g-web-e2e.log）
+apk add --no-cache nodejs                     -> node v24.22.3
+NODE_BIN=$(command -v node) go test ./internal/api -run "TestPanel|TestWeb" -count=1 -v
+                                              -> WEBE2E_RC=0（TestPanel*/TestWeb* 全绿）
+
+## 测试名清单
+grep -rhoE '^func Test[A-Za-z0-9_]+' --include='*_test.go' . | sed 's/^func //' | sort -u
+                                              -> 1438 个（18g-test-inventory.txt）
+
+## 边界
+1.6 blob / 冻结稿 / sha256 清单 / Schema / CanonicalSchemaHash -> 未改
+生产 / 远程 push / tag / Release / GHCR                       -> 未触碰

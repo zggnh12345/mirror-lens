@@ -54,6 +54,9 @@ type privUpstream struct {
 	basicHits int32
 	bearerHit int32
 	tokenHit  int32
+	// authMu 保护 lastAuth / tokenAuth：并发请求会由多个 HTTP handler goroutine
+	// 同时写这两个字段；测试线程在请求完成后读取，必须用同一把锁同步。
+	authMu    sync.Mutex
 	lastAuth  string
 	tokenAuth string
 	// publicCC 模拟私有 manifest 带一年 public 缓存头（真实 registry 行为）。
@@ -63,12 +66,26 @@ type privUpstream struct {
 	statusHits int32
 }
 
+func (u *privUpstream) lastAuthRead() string {
+	u.authMu.Lock()
+	defer u.authMu.Unlock()
+	return u.lastAuth
+}
+
+func (u *privUpstream) tokenAuthRead() string {
+	u.authMu.Lock()
+	defer u.authMu.Unlock()
+	return u.tokenAuth
+}
+
 func (u *privUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/token":
 		atomic.AddInt32(&u.tokenHit, 1)
 		user, pass, ok := r.BasicAuth()
+		u.authMu.Lock()
 		u.tokenAuth = r.Header.Get("Authorization")
+		u.authMu.Unlock()
 		if u.tokenUser != "" && (!ok || user != u.tokenUser || pass != u.tokenPass) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -90,7 +107,9 @@ func (u *privUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Surrogate-Key", "private-content")
 	}
 	auth := r.Header.Get("Authorization")
+	u.authMu.Lock()
 	u.lastAuth = auth
+	u.authMu.Unlock()
 	if auth == "" {
 		atomic.AddInt32(&u.anon, 1)
 	}
@@ -257,11 +276,11 @@ func TestPrivateAuthBearerTokenBasic(t *testing.T) {
 	if atomic.LoadInt32(&up.tokenHit) != 1 {
 		t.Fatalf("应换一次 Token，实际 %d", up.tokenHit)
 	}
-	if !strings.HasPrefix(up.tokenAuth, "Basic ") {
-		t.Fatalf("Token 端点应带 Basic，实际 %q", up.tokenAuth)
+	if !strings.HasPrefix(up.tokenAuthRead(), "Basic ") {
+		t.Fatalf("Token 端点应带 Basic，实际 %q", up.tokenAuthRead())
 	}
-	if up.lastAuth != "Bearer tok-1" {
-		t.Fatalf("资源请求应带 Bearer，实际 %q", up.lastAuth)
+	if up.lastAuthRead() != "Bearer tok-1" {
+		t.Fatalf("资源请求应带 Bearer，实际 %q", up.lastAuthRead())
 	}
 }
 

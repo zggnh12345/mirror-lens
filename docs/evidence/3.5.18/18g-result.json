@@ -1,0 +1,56 @@
+{
+  "stage": "18g",
+  "gates": {
+    "gofmt": "empty",
+    "vet_rc": 0,
+    "build_rc": 0,
+    "test_rc": 0,
+    "packages_ok": 34,
+    "race_rc": 0,
+    "data_races": 0,
+    "web_e2e_rc": 0
+  },
+  "classification": {
+    "code_test_layer": {
+      "unit_tests": "PASS",
+      "integration_tests": "PASS",
+      "race": "PASS",
+      "fault_injection": "PASS_CODE_LEVEL",
+      "security_regression": "PASS_CODE_LEVEL",
+      "config_migration": "PASS",
+      "web_e2e_dom": "PASS"
+    },
+    "real_process_layer": {
+      "docker_real_pull": "NOT_EXECUTED",
+      "trusted_replica_real": "NOT_EXECUTED",
+      "authority_real": "NOT_EXECUTED"
+    },
+    "production_layer": {
+      "pre_upgrade_check": "WAITING_FOR_USER_DECISION",
+      "backup_rollback": "WAITING_FOR_USER_DECISION"
+    },
+    "performance": {
+      "baseline": "EXTERNAL_BLOCKED",
+      "candidate_compare": "EXTERNAL_BLOCKED"
+    }
+  },
+  "fixture_race_fix": {
+    "test": "TestPrivateAndPublicConcurrentDoNotShareCache",
+    "file": "internal/gateway/privateauth_test.go",
+    "nature": "pre-existing test fixture, not 3.5.18 production code",
+    "fix": "authMu mutex guarding lastAuth/tokenAuth, assertions unchanged",
+    "verified": "-count=5 race green + full race RC=0"
+  },
+  "boundaries": {
+    "production": "WAITING_FOR_USER_DECISION",
+    "remote_push": false,
+    "tag": false,
+    "release": false,
+    "ghcr": false,
+    "schema": "3.5.17"
+  },
+  "honest_limits": [
+    "所有 PASS 均为代码测试层，真实进程/公共源/生产/性能层未执行或阻塞",
+    "完整交付需生产授权与外部环境，本阶段不伪造 PASS"
+  ]
+}
