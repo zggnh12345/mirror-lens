@@ -1,0 +1,37 @@
+== characterization (default, RED skipped) ==
+=== RUN   TestCharA_RaceEligibilitySingleSource
+--- PASS: TestCharA_RaceEligibilitySingleSource (0.07s)
+=== RUN   TestCharA_AtMostTwoSources
+--- PASS: TestCharA_AtMostTwoSources (0.18s)
+=== RUN   TestCharA_FailureBackfillsWithinHost
+--- PASS: TestCharA_FailureBackfillsWithinHost (0.06s)
+=== RUN   TestCharA_BadWinnerNotCached
+2026/11/20 12:32:53 WARN 源不可用，换下一个 request_id="" kind=registry cache_key="docker:manifest:quay.io/foo/bar:sha256:b3f42046540039d1ab0eb2ee4a4bb0729b0685f372076dd386ad086372e1dcdd|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=UPSTREAM_CONNECT_FAILED error="内容与客户端给的摘要不符：期望 b3f42046540039d1ab0eb2ee4a4bb0729b0685f372076dd386ad086372e1dcdd 实得 5397e7f0e89591087f9ea12579b4e1707ad951c96f6ce768aab54746e8c7f163" source=http://127.0.0.1:38735
+--- PASS: TestCharA_BadWinnerNotCached (0.06s)
+=== RUN   TestCharB_AgreementConfirmsWithoutAuthority
+--- PASS: TestCharB_AgreementConfirmsWithoutAuthority (0.04s)
+=== RUN   TestCharB_MismatchFallsBackToAuthority
+--- PASS: TestCharB_MismatchFallsBackToAuthority (0.04s)
+=== RUN   TestCharB_AuthorityNotCountedInM
+--- PASS: TestCharB_AuthorityNotCountedInM (0.04s)
+=== RUN   TestCharB_SingleRequestClaim
+--- PASS: TestCharB_SingleRequestClaim (0.04s)
+=== RUN   TestCharB_WrongDigestReplicaNotCommitted
+--- PASS: TestCharB_WrongDigestReplicaNotCommitted (0.05s)
+=== RUN   TestRedNestedBRegistryRunsASourceRace
+    nested_phase1_test.go:280: 18d RED 取证测试：设 ML_NESTED_RED=1 运行（当前基线预期失败）
+--- SKIP: TestRedNestedBRegistryRunsASourceRace (0.00s)
+=== RUN   TestCharHelper_ScopeBudgetObservable
+--- PASS: TestCharHelper_ScopeBudgetObservable (0.04s)
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/gateway	0.638s
+DEFAULT_RC=0
+== nested RED enabled ==
+=== RUN   TestRedNestedBRegistryRunsASourceRace
+    nested_phase1_test.go:363: RED 前置条件成立：quay.io 合格星标 Source 数=2（调度器候选 cands=2）
+    nested_phase1_test.go:371: RED：B 选中的 quay.io 未在其内部竞速第二个 Source（hits2=0）。当前 replicaTargets 每 Registry 只取 picked[0]，A+B 站内竞速路径不存在（B08 NOT_IMPLEMENTED）
+--- FAIL: TestRedNestedBRegistryRunsASourceRace (0.04s)
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	0.039s
+FAIL
+RED_RC=1

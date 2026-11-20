@@ -1,0 +1,29 @@
+# 18d 第一阶段命令记录（真实执行，输出见同目录日志）
+
+版本 3.5.18 / 阶段 18d 第一阶段 / 分支 feat/3.5.18
+基线 HEAD：56335abf1dc66ab6c3425ee3411339d7a053d5a2（未修改任何生产代码）
+
+Go 工具链：docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine
+环境变量：export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath
+
+## 命令 1：全量门禁（输出 → 18d-phase1-gate.log）
+gofmt -l .
+go vet ./...
+go build ./...
+go test ./... -count=1
+结果：GOFMT 空 / VET_RC=0 / BUILD_RC=0 / TEST_RC=0，无 FAIL。
+
+## 命令 2：characterization + RED（输出 → 18d-phase1-char-red.log）
+默认运行：
+  go test ./internal/gateway -run 'TestCharA_|TestCharB_|TestCharHelper_|TestRedNested' -count=1 -v
+结果：8 个 characterization/helper PASS；TestRedNestedBRegistryRunsASourceRace SKIP；DEFAULT_RC=0。
+
+RED 显式启用：
+  ML_NESTED_RED=1 go test ./internal/gateway -run 'TestRedNested' -count=1 -v
+结果：前置条件 quay.io 合格星标 Source=2（cands=2）成立；因 hits2=0 断言失败；RED_RC=1。
+定性：编译成功、前置条件成立、因目标行为缺失失败（非编译/环境/Mock 错误）。
+
+## 说明
+- RED 默认用 t.Skip 隔离（ML_NESTED_RED=1 才运行），以便全量门禁保持绿；
+  18d 核心重构阶段将移除该开关，使 RED 转为常驻硬门禁。
+- 开关只控制是否执行，不放宽任何断言。
