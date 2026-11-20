@@ -1,0 +1,117 @@
+ok  	github.com/zggnh12345/mirror-lens	1.042s
+ok  	github.com/zggnh12345/mirror-lens/cmd/db-migrate	32.500s
+?   	github.com/zggnh12345/mirror-lens/internal/adapter	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/ghadapter	1.010s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/gitadapter	1.015s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/httpadapter	1.010s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/raw	1.009s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter	1.007s
+ok  	github.com/zggnh12345/mirror-lens/internal/alert	1.006s
+ok  	github.com/zggnh12345/mirror-lens/internal/api	119.296s
+ok  	github.com/zggnh12345/mirror-lens/internal/auth	17.310s
+ok  	github.com/zggnh12345/mirror-lens/internal/cache	1.021s
+ok  	github.com/zggnh12345/mirror-lens/internal/config	1.083s
+ok  	github.com/zggnh12345/mirror-lens/internal/dblock	1.019s
+ok  	github.com/zggnh12345/mirror-lens/internal/discover	1.009s
+2026/11/20 11:24:55 中途并行跳过：当前连接无法异常终止（HTTP/2 或不支持 Hijack）
+2026/11/20 11:24:55 分片请求失败: 源=mirror.invalid range=0-65535 err=Get "http://mirror.invalid/blob": context canceled
+2026/11/20 11:24:55 分片放弃: range=0-65535 尝试=1 台源 last=Get "http://mirror.invalid/blob": context canceled
+2026/11/20 11:24:55 分片短读: 源=mirror.invalid range=0-65535 got=1024 want=65536 err=attempt cancelled
+2026/11/20 11:24:55 分片放弃: range=0-65535 尝试=1 台源 last=attempt cancelled
+2026/11/20 11:24:55 分片短读: 源=mirror.invalid range=0-65535 got=10 want=65536 err=<nil>
+2026/11/20 11:24:56 分片响应异常: 源=mirror.invalid range=0-32767 status=200 content-range="" content-length=0
+2026/11/20 11:24:56 分片放弃: range=0-32767 尝试=1 台源 last=分段响应对不上：mirror.invalid 返回 200 ""
+2026/11/20 11:24:56 WARN 本地写入失败，转透传 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=CACHE_COMMIT_FAILED error="创建临时文件失败: open /tmp/TestDiskFailureNotBlamedOnSource1769572869/001/cache/tmp/dl-3811084817: not a directory"
+2026/11/20 11:24:57 WARN 源不可用，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 500" source=bad
+2026/11/20 11:25:00 WARN 本地写入失败，转透传 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=CACHE_COMMIT_FAILED error="提交缓存失败: rename /tmp/TestCacheCommitFailureServesWithoutIndex2894187105/001/cache/tmp/dl-2222249544 /tmp/TestCacheCommitFailureServesWithoutIndex2894187105/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: file exists"
+2026/11/20 11:25:00 缓存落盘失败: rename /tmp/TestCacheCommitFailureServesWithoutIndex2894187105/001/cache/partial/88a3828d1455920543554654441c5792aa25f714.part /tmp/TestCacheCommitFailureServesWithoutIndex2894187105/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: file exists
+2026/11/20 11:25:00 WARN 缓存文件丢失 cache_key=raw:o/r/main/a.txt sha256=2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824 error="open /tmp/TestCacheMissingBlobDropsIndexAndRefetches3992036311/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: no such file or directory" error_code=CACHE_READ_FAILED
+2026/11/20 11:25:01 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error="读取上游中断: unexpected EOF"
+2026/11/20 11:25:03 INFO 源要求鉴权，换下一个 request_id="" kind=docker cache_key="docker:manifest:registry-1.docker.io/library/alpine:latest|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=AUTH_TOKEN_INVALID source=registry-1.docker.io status=401
+2026/11/20 11:25:08 INFO 源要求鉴权，换下一个 request_id="" kind=ghcr cache_key="docker:manifest:ghcr.io/zggnh12345/mirror-lens:3.1.0|accept=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.v1+prettyjws" error_code=AUTH_TOKEN_INVALID source=ghcr.io status=401
+2026/11/20 11:25:08 内容校验失败，不入缓存：期望 4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25 实得 6c640f4bf986ba2d8a749bf818f10b24f6e5522733b2245f5fe68266c43dcd68 (http://127.0.0.1:38709/v2/library/alpine/blobs/sha256:4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25)
+2026/11/20 11:25:08 调度：候选为空(缓存) kind=docker 缓存=1 TTL后=1 出列表=0 guard耗尽=0
+2026/11/20 11:25:09 内容校验失败，不入缓存：期望 4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25 实得 7d504102ea9f669fda73cb2d866dade1735ca9c3395d9612e5cf9008dda9acca (http://127.0.0.1:46825/v2/library/alpine/blobs/sha256:4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25)
+2026/11/20 11:25:09 调度：候选为空(缓存) kind=docker 缓存=1 TTL后=1 出列表=0 guard耗尽=0
+2026/11/20 11:25:09 内容校验失败，不入缓存：期望 4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25 实得 302217fa2de267dd86462a0d5bf71fde824bd7abfc1811698ce12e2876d4bed5 (http://127.0.0.1:36207/v2/library/alpine/blobs/sha256:4165341f4fe8bf7f8dae8d82258ba573db1ec0eb999f6a385c49bc98f8254f25)
+2026/11/20 11:25:09 WARN 源不可用，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error=内容与上游声明的摘要不符：http://127.0.0.1:37095/o/r/main/a.txt source=mirror
+2026/11/20 11:25:09 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 500"
+2026/11/20 11:25:09 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error=内容与上游声明的摘要不符：http://127.0.0.1:33721/o/r/main/a.txt
+2026/11/20 11:25:10 缓存盘剩余 412578 MB 低于底线 4398046511104 MB，暂停落盘、改为直通
+2026/11/20 11:25:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:10 单流换源：b 已接手（已发 0 MB，验证器=true）
+2026/11/20 11:25:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:10 单流换源：b 已接手（已发 0 MB，验证器=true）
+2026/11/20 11:25:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:10 单流换源：blocked 已接手（已发 0 MB，验证器=true）
+2026/11/20 11:25:11 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/20 11:25:11 单流换源：ctxblocked 已接手（已发 0 MB，验证器=true）
+2026/11/20 11:25:12 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error="Get \"http://127.0.0.1:44283/o/r/main/a.txt\": 目标地址不允许访问: 127.0.0.1 属于内网/回环/链路本地"
+2026/11/20 11:25:12 INFO 源未命中，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt source=127.0.0.1:42903 status=404
+2026/11/20 11:25:12 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 404"
+2026/11/20 11:25:19 单流 60ms 无进展，回收名额（源 91）
+==================
+WARNING: DATA RACE
+Write at 0x00c00062a1d0 by goroutine 41257:
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*privUpstream).ServeHTTP()
+      /opt/data/cache/scratch/ml8/internal/gateway/privateauth_test.go:93 +0x769
+  net/http.serverHandler.ServeHTTP()
+      /usr/local/go/src/net/http/server.go:3440 +0x2a1
+  net/http.(*conn).serve()
+      /usr/local/go/src/net/http/server.go:2161 +0xeda
+  net/http.(*Server).Serve.gowrap3()
+      /usr/local/go/src/net/http/server.go:3608 +0x46
+
+Previous write at 0x00c00062a1d0 by goroutine 41269:
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*privUpstream).ServeHTTP()
+      /opt/data/cache/scratch/ml8/internal/gateway/privateauth_test.go:93 +0x769
+  net/http.serverHandler.ServeHTTP()
+      /usr/local/go/src/net/http/server.go:3440 +0x2a1
+  net/http.(*conn).serve()
+      /usr/local/go/src/net/http/server.go:2161 +0xeda
+  net/http.(*Server).Serve.gowrap3()
+      /usr/local/go/src/net/http/server.go:3608 +0x46
+
+Goroutine 41257 (running) created at:
+  net/http.(*Server).Serve()
+      /usr/local/go/src/net/http/server.go:3608 +0x929
+  net/http/httptest.(*Server).goServe.func1()
+      /usr/local/go/src/net/http/httptest/server.go:586 +0xac
+
+Goroutine 41269 (running) created at:
+  net/http.(*Server).Serve()
+      /usr/local/go/src/net/http/server.go:3608 +0x929
+  net/http/httptest.(*Server).goServe.func1()
+      /usr/local/go/src/net/http/httptest/server.go:586 +0xac
+==================
+--- FAIL: TestPrivateAndPublicConcurrentDoNotShareCache (0.18s)
+    testing.go:1867: race detected during execution of test
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	132.308s
+ok  	github.com/zggnh12345/mirror-lens/internal/gc	1.857s
+ok  	github.com/zggnh12345/mirror-lens/internal/ghapi	1.345s
+ok  	github.com/zggnh12345/mirror-lens/internal/janitor	6.139s
+ok  	github.com/zggnh12345/mirror-lens/internal/keymutex	1.080s
+ok  	github.com/zggnh12345/mirror-lens/internal/limits	1.034s
+ok  	github.com/zggnh12345/mirror-lens/internal/logging	1.007s
+ok  	github.com/zggnh12345/mirror-lens/internal/metrics	1.207s
+ok  	github.com/zggnh12345/mirror-lens/internal/probe	2.002s
+ok  	github.com/zggnh12345/mirror-lens/internal/registryhost	1.012s
+ok  	github.com/zggnh12345/mirror-lens/internal/runner	15.193s
+ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	1.043s
+ok  	github.com/zggnh12345/mirror-lens/internal/scheduler	25.232s
+ok  	github.com/zggnh12345/mirror-lens/internal/secret	7.383s
+ok  	github.com/zggnh12345/mirror-lens/internal/store	61.611s
+ok  	github.com/zggnh12345/mirror-lens/internal/store/schema	2.778s
+ok  	github.com/zggnh12345/mirror-lens/internal/sums	1.008s
+?   	github.com/zggnh12345/mirror-lens/internal/tuning	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/unified	1.526s
+ok  	github.com/zggnh12345/mirror-lens/internal/v2auth	1.019s
+?   	github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest	[no test files]
+ok  	github.com/zggnh12345/mirror-lens/internal/version	1.010s
+?   	github.com/zggnh12345/mirror-lens/tools/baseline	[no test files]
+?   	github.com/zggnh12345/mirror-lens/tools/migcheck	[no test files]
+?   	github.com/zggnh12345/mirror-lens/tools/mkunit	[no test files]
+FAIL

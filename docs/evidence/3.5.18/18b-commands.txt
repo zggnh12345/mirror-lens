@@ -1,0 +1,31 @@
+# 3.5.18 阶段 18b 实际命令记录
+# 工作目录 /opt/data/cache/scratch/ml8，分支 feat/3.5.18
+
+# 反向测试 RED（修正前）—— 4 个新测试在旧逻辑下失败
+docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine \
+  sh -c 'export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath; \
+  go test ./internal/gateway -run "TestB18" -count=1 -v'
+# 结果：TestB18SequentialIgnoresEmptySelection FAIL（0 候选）、
+#       TestB18RaceEmptySelectionDegradesToSequential FAIL（handled=false）、
+#       TestB18SequentialSelectionChangesDoNotAlterCandidates 构造期 FAIL（星标门禁）
+
+# 修正后定向 GREEN
+docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine \
+  sh -c 'export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath; \
+  go test ./internal/gateway -run "TestB18|TestReplicaEmptySelectionDegrades|TestCrossSelectedStaleEntryFiltered|TestReplicaRequiresSelection" -count=1 -v; \
+  go test ./internal/api -run "TestCrossRegistryAPI" -count=1 -v'
+
+# 全量门禁（18b-gate.log）
+gofmt -l .
+go vet ./...
+go build ./...
+go test ./... -count=1
+
+# race（18b-race.log 首次 / 18b-race-rerun.log 重跑）
+docker run --rm --volumes-from hermes -w /opt/data/cache/scratch/ml8 golang:1.27-alpine \
+  sh -c 'apk add --no-cache gcc musl-dev >/dev/null 2>&1; \
+  export GOCACHE=/tmp/gocache GOPATH=/opt/data/cache/scratch/gopath CGO_ENABLED=1; \
+  go test -race ./... -count=1'
+
+# 偶发 DATA RACE 隔离：单跑 3 次
+go test -race ./internal/gateway -run "TestPrivateAndPublicConcurrentDoNotShareCache" -count=1

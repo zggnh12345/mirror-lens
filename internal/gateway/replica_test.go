@@ -570,25 +570,26 @@ func TestReplicaDigestSkipsAuthority(t *testing.T) {
 	}
 }
 
-// B20：空勾选 = 没有跨站候选（默认值即退化顺序回退）。
+// 3.5.18 18b：race 空勾选退化为按可信映射的顺序回退（冻结稿反向测试 2/4）。
 func TestReplicaEmptySelectionDegrades(t *testing.T) {
-	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
-	f := newReplicaFixture(t, body, body)
+	good := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
+	bad := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[{"digest":"sha256:evil"}]}`)
+	f := newReplicaFixture(t, bad, good)
+	sum := sha256.Sum256(good)
+	f.plan.Ref = "sha256:" + hex.EncodeToString(sum[:])
+	f.plan.ExpectSHA = hex.EncodeToString(sum[:])
+	f.plan.Immutable = true
+	f.plan.Upstream.Path = "/v2/kube-apiserver/manifests/" + f.plan.Ref
 	if err := f.st.SetCrossSelectedSources(nil, "admin", ""); err != nil {
 		t.Fatalf("清空勾选: %v", err)
 	}
-	ts, _, err := f.gw.replicaTargets(context.Background(), f.plan, time.Now())
-	if err != nil {
-		t.Fatalf("候选解析: %v", err)
+	// 3.5.18 18b（冻结稿反向测试 2/4）：race + 空勾选不启动跨站竞速，
+	// 但退化为按可信映射顺序回退，仍须请求副本并执行安全门禁。
+	if _, handled, _ := f.gw.crossRegistryManifest(f.ctx(), f.plan, nil); !handled {
+		t.Fatal("空勾选应退化为顺序回退并由 B 处理")
 	}
-	if len(ts) != 0 {
-		t.Fatalf("空勾选不得产生跨站候选，实际 %d 个", len(ts))
-	}
-	if _, handled, _ := f.gw.crossRegistryManifest(f.ctx(), f.plan, nil); handled {
-		t.Fatal("空勾选必须退化为原有顺序路径")
-	}
-	if f.replica.Load() != 0 {
-		t.Fatalf("空勾选不得请求副本，实际 %d", f.replica.Load())
+	if f.replica.Load() == 0 {
+		t.Fatalf("空勾选退化为顺序回退后必须请求副本，实际 %d", f.replica.Load())
 	}
 }
 
@@ -619,7 +620,9 @@ func TestReplicaRequiresSelection(t *testing.T) {
 	}
 }
 
-// B20：撤星后陈旧勾选条目读时过滤，不留幽灵资格。
+// B20：撤星后陈旧勾选条目读时过滤，不留幽灵竞速资格。
+// 3.5.18 18b：race 模式下撤星导致无合格竞速候选，退化为按可信映射顺序回退，
+// 候选来自可信映射而非星标/勾选，所以仍可发现副本（不是绕过安全门禁的裸回退）。
 func TestCrossSelectedStaleEntryFiltered(t *testing.T) {
 	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
 	f := newReplicaFixture(t, body, body)
@@ -637,8 +640,15 @@ func TestCrossSelectedStaleEntryFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("候选解析: %v", err)
 	}
-	if len(ts) != 0 {
-		t.Fatalf("撤星后不得有跨站候选，实际 %d", len(ts))
+	// 撤星后不再有基于星标/勾选的竞速资格，但顺序候选来自可信映射，仍可发现副本。
+	foundReplica := false
+	for _, c := range ts {
+		if c.sourceID == f.srcID {
+			foundReplica = true
+		}
+	}
+	if !foundReplica {
+		t.Fatal("撤星后顺序候选仍应来自可信映射（不受参选/星标限制）")
 	}
 }
 

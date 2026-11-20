@@ -106,6 +106,54 @@ func TestCrossRegistryAPISelection(t *testing.T) {
 	}
 }
 
+// 3.5.18 18b：前后端配置一致性——enabled/sort_mode/mode 三字段 PUT 后正确落库、读回。
+func TestCrossRegistryAPIBConfigFields(t *testing.T) {
+	st, h := newTestServer(t)
+	ck := setupPanel(t, h)
+
+	// 默认：enabled=true、mode=sequential、sort_mode=fixed。
+	rec := get(h, "/api/cross-registry", nil, ck)
+	var out struct {
+		Enabled  bool   `json:"enabled"`
+		Mode     string `json:"mode"`
+		SortMode string `json:"sort_mode"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("解析: %v", err)
+	}
+	if !out.Enabled || out.Mode != "sequential" || out.SortMode != "fixed" {
+		t.Fatalf("默认应为 enabled=true/sequential/fixed，实际 %+v", out)
+	}
+
+	// 关闭 B：enabled=false，但映射与参选不变（这里只验字段）。
+	if rec := putJSON(h, "/api/cross-registry", `{"enabled":false}`, ck); rec.Code != 200 {
+		t.Fatalf("关闭 B 失败 %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.GetSetting(store.BEnabledKey(), ""); got != "false" {
+		t.Fatalf("enabled 未落库: %q", got)
+	}
+	rec = get(h, "/api/cross-registry", nil, ck)
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Enabled {
+		t.Fatalf("应读回 enabled=false，实际 %+v", out)
+	}
+
+	// 重新开启 + 切 dynamic 排序（后端允许设置，UI 层只读展示）。
+	if rec := putJSON(h, "/api/cross-registry", `{"enabled":true,"sort_mode":"dynamic"}`, ck); rec.Code != 200 {
+		t.Fatalf("设置失败 %d %s", rec.Code, rec.Body.String())
+	}
+	rec = get(h, "/api/cross-registry", nil, ck)
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if !out.Enabled || out.SortMode != "dynamic" {
+		t.Fatalf("应读回 enabled=true/dynamic，实际 %+v", out)
+	}
+
+	// 非法 sort_mode 拒绝。
+	if rec := putJSON(h, "/api/cross-registry", `{"sort_mode":"turbo"}`, ck); rec.Code != 400 {
+		t.Fatalf("非法 sort_mode 应 400，实际 %d", rec.Code)
+	}
+}
+
 func itoa64(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

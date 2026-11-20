@@ -135,13 +135,26 @@
   </section>
 
   <section id="crossSec" class="sec" style="margin-top:14px">
-    <h2>跨站副本 <span style="font-weight:400;color:var(--faint);font-size:11px">3.5.17 · 默认顺序回退</span></h2>
-    <p class="hint" style="margin:2px 0 8px">只作用于 <b>/v2/ 清单获取</b>，raw/git 多源不受影响。候选必须同时是<b>星标源</b>、<b>已勾选参选</b>，且被调度器选中；未通过内容身份校验的候选不参与竞速。</p>
+    <h2>跨站副本 <span style="font-weight:400;color:var(--faint);font-size:11px">3.5.18 · B 总开关默认开启</span></h2>
+    <p class="hint" style="margin:2px 0 8px">只作用于 <b>/v2/ 清单获取</b>，raw/git 多源不受影响。<b>顺序回退</b>候选来自可信映射、不受参选勾选限制；<b>跨站竞速</b>才要求候选同时是星标源、已勾选参选且被调度器选中。身份校验失败的候选不参与、不回退（Fail Closed）。</p>
+    <div class="row" style="margin:0 0 10px">
+      <div class="main"><div class="rl1"><b>B 总开关</b></div>
+        <div class="rl2"><i>关闭仅停用跨站调度，不删除映射与参选配置</i></div></div>
+      <label class="sw"><input type="checkbox" id="crossEnabled"><span></span></label>
+    </div>
     <div class="sseg" role="group" aria-label="跨站模式">
       <button class="ssegb" data-rmode="sequential" aria-pressed="true">顺序回退</button>
       <button class="ssegb" data-rmode="race" aria-pressed="false">跨站竞速</button>
     </div>
     <p class="hint" id="crossDesc" style="margin:6px 0 0">省请求，前一个 404/超时/无效才问下一个</p>
+    <div class="row" style="margin:10px 0 0">
+      <div class="main"><div class="rl1"><b>排序模式</b></div>
+        <div class="rl2"><i>固定优先级按 priority；动态排序需版本变更流程启用</i></div></div>
+      <div class="sseg" role="group" aria-label="排序模式">
+        <button class="ssegb" data-sortmode="fixed" aria-pressed="true">固定</button>
+        <button class="ssegb" data-sortmode="dynamic" aria-pressed="false" title="动态排序由版本变更启用，当前只读展示">动态</button>
+      </div>
+    </div>
     <div id="crossSel" style="margin-top:8px"></div>
   </section>
 </div>
@@ -829,34 +842,45 @@ function renderRace(){
       + '</div>';
   }).join('');
 }
-/* ---- 跨站副本（3.5.17 B17/B20） ---- */
-var CROSS = {mode:'sequential', selected:[], starred:[]};
+/* ---- 跨站副本（3.5.18 18b） ---- */
+var CROSS = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]};
 async function loadCross(){
-  try{ CROSS = await api('/api/cross-registry'); }catch(e){ CROSS = {mode:'sequential', selected:[], starred:[]}; }
+  try{ CROSS = await api('/api/cross-registry'); }catch(e){ CROSS = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]}; }
   renderCross();
 }
 function renderCross(){
   var box = $('#crossSec');
   if (!box) return;
-  document.querySelectorAll('#crossSec .ssegb').forEach(function(b){
+  var en = $('#crossEnabled');
+  if (en) en.checked = CROSS.enabled !== false;
+  document.querySelectorAll('#crossSec .ssegb[data-rmode]').forEach(function(b){
     var on = (b.getAttribute('data-rmode') === CROSS.mode);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('#crossSec .ssegb[data-sortmode]').forEach(function(b){
+    var on = (b.getAttribute('data-sortmode') === (CROSS.sort_mode || 'fixed'));
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   var d = $('#crossDesc');
   if (d) d.textContent = CROSS.mode === 'race'
     ? '具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁'
-    : '省请求，前一个 404/超时/无效才问下一个';
+    : '按可信映射顺序回退，不受参选勾选限制；前一个失败才问下一个';
   var sel = $('#crossSel');
   if (!sel) return;
   var selSet = {};
   (CROSS.selected || []).forEach(function(id){ selSet[id] = 1; });
-  if (!(CROSS.starred || []).length){ sel.innerHTML = '<p class="hint">还没有星标源：跨站候选必须来自星标源，先在上方给源加星标。</p>'; return; }
-  sel.innerHTML = '<p class="hint" style="margin:0 0 6px">跨站参选（只有勾选的星标源会参与跨站）</p>'
+  if (!(CROSS.starred || []).length){ sel.innerHTML = '<p class="hint">还没有星标源：跨站竞速候选必须来自星标源；顺序回退不受此限制。</p>'; return; }
+  sel.innerHTML = '<p class="hint" style="margin:0 0 6px">跨站参选（仅约束竞速：只有勾选的星标源会参与跨站竞速；顺序回退不受影响）</p>'
     + CROSS.starred.map(function(id){
         return '<div class="row"><div class="main"><div class="rl1"><b>Source #' + id + '</b></div></div>'
           + '<label class="sw"><input type="checkbox" data-cross-sel="' + id + '"'
           + (selSet[id] ? ' checked' : '') + '><span></span></label></div>';
       }).join('');
+}
+async function setCrossEnabled(on){
+  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({enabled: !!on})}); toast(on ? '已开启跨站副本' : '已关闭跨站副本（配置保留）'); }
+  catch(e){ toast(e.message); }
+  await loadCross();
 }
 async function setCrossMode(mode){
   try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({mode: mode})}); toast('已切换为' + (mode==='race'?'跨站竞速':'顺序回退')); }
@@ -875,9 +899,18 @@ document.addEventListener('click', function(ev){
   if (!b) return;
   var m = b.getAttribute('data-rmode');
   if (m && m !== CROSS.mode) setCrossMode(m);
+  var sm = b.getAttribute('data-sortmode');
+  if (sm === 'dynamic') { toast('动态排序由版本变更流程启用，当前只读'); return; }
+  if (sm === 'fixed' && (CROSS.sort_mode || 'fixed') !== 'fixed') setCrossSort('fixed');
 });
+async function setCrossSort(mode){
+  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({sort_mode: mode})}); toast('已切换为固定排序'); }
+  catch(e){ toast(e.message); }
+  await loadCross();
+}
 document.addEventListener('change', function(ev){
   var t = ev.target;
+  if (t && t.id === 'crossEnabled'){ setCrossEnabled(t.checked); return; }
   if (t && t.getAttribute && t.getAttribute('data-cross-sel')){
     setCrossSelected(parseInt(t.getAttribute('data-cross-sel'), 10), t.checked);
   }

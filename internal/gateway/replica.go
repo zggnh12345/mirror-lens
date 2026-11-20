@@ -176,12 +176,15 @@ func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now ti
 	if g.privateRegistryHost(authority) {
 		return nil, 0, nil
 	}
-	// B20：跨站参选勾选是星标在跨站用途上的子集过滤器。默认空列表 =
-	// 没有跨站候选（退化为顺序回退），不是「全部参选」。
+	// 3.5.18 18b：候选来源按派发模式分离（冻结稿 §1.3/§1.6、反向测试 1/2/3/4）。
+	//   - sequential：候选来自可信映射，不受参选集合限制（顺序回退不受参选勾选约束）；
+	//   - race：候选还须满足 Source 星标 ∩ 跨站参选（方案二 Source 级求交）；
+	//   - race + 空参选：无合格竞速候选，退化为 sequential 按可信映射顺序回退。
+	// 无论哪种模式，候选都必须来自可信映射（trusted_registry_replicas +
+	// trusted_source_mappings）且经调度器选中，仓库身份不靠同名/404 猜测。
 	selected := g.st.EffectiveCrossSelected()
-	if len(selected) == 0 {
-		return nil, 0, nil
-	}
+	mode := g.replicaMode()
+	raceEligible := mode == "race" && len(selected) > 0
 	reps, err := g.st.ActiveRegistryReplicas(authority, plan.Repo, now)
 	if err != nil {
 		return nil, 0, err
@@ -245,11 +248,14 @@ func (g *Gateway) replicaTargets(ctx context.Context, plan *adapter.Plan, now ti
 				skipped = append(skipped, fmt.Sprintf("%d:no-mapping", c.ID))
 				continue
 			}
-			// 星标是唯一的人工授权；勾选只是它在跨站用途上的子集，
-			// 两个条件都满足才进入候选（未勾选的星标节点不进跨站候选）。
-			if !c.Preferred || !selected[c.ID] {
-				skipped = append(skipped, fmt.Sprintf("%d:not-selected(star=%v,sel=%v)", c.ID, c.Preferred, selected[c.ID]))
-				continue
+			// 3.5.18 18b：仅 race 模式要求方案二 Source 级求交（星标 ∩ 参选）。
+			// sequential 模式的候选来自可信映射，不受参选勾选限制；但两类模式
+			// 都要求该 Source 已被调度器选中并经 Rewrite 成功（见下）。
+			if raceEligible {
+				if !c.Preferred || !selected[c.ID] {
+					skipped = append(skipped, fmt.Sprintf("%d:not-race-eligible(star=%v,sel=%v)", c.ID, c.Preferred, selected[c.ID]))
+					continue
+				}
 			}
 			cc := c
 			u, ok := g.sched.Rewrite("registry:"+rep.ReplicaRegistry, base, cc)
@@ -503,7 +509,16 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 	}
 	_ = gen
 
-	if g.replicaMode() == "sequential" {
+	// 3.5.18 18b：race + 空参选 → 无合格竞速候选，退化为按可信映射的
+	// sequential 顺序回退（冻结稿 §1.6、反向测试 2/4）。退化只改变派发
+	// 形态，不降低任何安全门禁：候选仍来自可信映射、仍经 fetchReplicaArtifact
+	// 执行派发前仓库身份检查与响应后 B.3 三方 Digest 校验。
+	mode := g.replicaMode()
+	if mode == "race" && len(g.st.EffectiveCrossSelected()) == 0 {
+		mode = "sequential"
+	}
+
+	if mode == "sequential" {
 		for _, t := range targets {
 			art, code, err := g.fetchReplicaArtifact(ctx, plan, t, idHost)
 			if err != nil {
