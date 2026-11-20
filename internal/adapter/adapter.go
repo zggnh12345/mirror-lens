@@ -61,9 +61,15 @@ type Plan struct {
 	// Registry 为真表示这是 /v2/ 的 Registry plan。认证策略必须显式声明，
 	// 不能靠 LogicalHost 是否为空来猜；11a 之前这里只有 LogicalHost。
 	Registry bool
-	Upstream *url.URL    // 真正要请求的上游
-	Method   string      // 一般 GET；git 的 POST 走透明转发
-	Header   http.Header // 追加到上游请求的头（认证、Accept 等）
+	Upstream *url.URL // 真正要请求的上游
+	// LogicalUpstream 是创建计划时的官方上游地址，永不改写。流式路径会把
+	// Upstream 换成「本次实际供数的源」（换源后还要再换一次），中途换源 /
+	// 中途并行如果继续拿 Upstream 当 Rewrite 的基址，就会把镜像站地址当
+	// 官方地址去改写，结果永远凑不到第二台候选（Rewrite 失败 → 只剩官方）。
+	// 为空表示与 Upstream 相同（非 Registry 路径不需要区分）。
+	LogicalUpstream *url.URL
+	Method          string      // 一般 GET；git 的 POST 走透明转发
+	Header          http.Header // 追加到上游请求的头（认证、Accept 等）
 
 	Redirects int // 允许的重定向跳数，0 用默认值
 

@@ -580,7 +580,20 @@ func (s *Scheduler) CandidatesN(kind string, limit int) []Candidate {
 		items = append(items, Candidate{ID: st.ID, Name: st.Name, BaseURL: st.BaseURL, Score: score(st, s.cfg.SpeedCapKBps), Trust: st.Trust, Preferred: st.Preferred, GroupRank: st.GroupRank, Gen: s.gen[st.ID] + 1, GhcrPrefix: st.GhcrPrefix, RangeCap: st.RangeCap, RangeAt: st.RangeAt, SpeedKBps: st.SpeedKBps, RegistryPath: st.RegistryPath})
 	}
 	s.lists[kind] = listEntry{items: items, okAt: okAt, at: s.now()}
-	return s.guardFilter(kind, s.orderN(kind, items, limit))
+	out := s.guardFilter(kind, s.orderN(kind, items, limit))
+	if len(out) == 0 {
+		// 候选掉空是「换源没得换」的直接原因，必须能一眼看到是哪一层清空的。
+		log.Printf("调度：候选为空 kind=%s raw=%d 通过TTL=%d 出列表=%d（guard 之后 %d）",
+			kind, len(stats), len(items), len(s.orderN(kind, items, limit)), len(out))
+	}
+	return out
+}
+
+func exhaustionCount(st *store.Store) uint64 {
+	if st == nil || st.RecoveryGuard() == nil {
+		return 0
+	}
+	return st.RecoveryGuard().Exhausted()
 }
 
 // cached 返回仍在 TTL 内的候选列表。
@@ -592,13 +605,19 @@ func (s *Scheduler) cached(kind string, limit int) ([]Candidate, bool) {
 		return nil, false
 	}
 	items := le.items
+	rawN := len(items)
 	if _, isRegistry := strings.CutPrefix(kind, "registry:"); isRegistry {
 		// 缓存里的列表可能是 TTL 到期前构建的：SQL 的 TTL 条件只在查询时
 		// 生效，命中缓存必须用当前时间重算，否则过期结论能一直复用。
 		cutoff := s.now().Unix() - int64(s.st.RecoveryTTL()/time.Second)
 		items = freshByLastSuccess(items, le.okAt, cutoff)
 	}
-	return s.guardFilter(kind, s.orderN(kind, items, limit)), true
+	out := s.guardFilter(kind, s.orderN(kind, items, limit))
+	if len(out) == 0 {
+		log.Printf("调度：候选为空(缓存) kind=%s 缓存=%d TTL后=%d 出列表=%d guard耗尽=%d",
+			kind, rawN, len(items), len(s.orderN(kind, items, limit)), exhaustionCount(s.st))
+	}
+	return out, true
 }
 
 // freshByLastSuccess 返回独立切片，不修改输入（缓存保留的原始列表）。

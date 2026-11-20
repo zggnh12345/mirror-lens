@@ -800,20 +800,38 @@ func (g *Gateway) newRequestScope(r *http.Request) (*http.Request, func(), error
 
 func (g *Gateway) targets(plan *adapter.Plan, prev *store.CacheEntry) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
+	base := plan.Upstream
+	if plan.LogicalUpstream != nil {
+		// 流式路径已经把 Upstream 改写成本次供数的源；重新推导候选必须从
+		// 官方地址出发，否则 Rewrite 会把镜像站当成官方站再改写一次。
+		base = plan.LogicalUpstream
+	}
 	fbs := g.fallbackTargets(plan, prev)
 	if prev != nil || plan.OfficialOnly || !g.sched.Enabled() {
 		return append(out, fbs...)
 	}
 	cands := g.sched.Candidates(plan.Sched())
 	metrics.SourceCandidates(len(cands))
+	if len(cands) == 0 {
+		loggw(slog.LevelDebug, "目标组装：候选 0 个", context.Background(), plan, "", nil)
+	}
 	var head []fetchTarget
 	for _, c := range cands {
 		cc := c
-		u, ok := g.sched.Rewrite(plan.Sched(), plan.Upstream, cc)
-		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
+		u, ok := g.sched.Rewrite(plan.Sched(), base, cc)
+		if !ok || strings.EqualFold(u.Host, base.Host) {
+			th := ""
+			if u != nil {
+				th = u.Host
+			}
+			loggw(slog.LevelDebug, "目标组装：跳过候选", context.Background(), plan, "", nil,
+				"cand", c.Name, "rewrite_ok", ok, "target_host", th, "upstream_host", plan.Upstream.Host)
 			continue
 		}
 		head = append(head, fetchTarget{u: u, c: &cc})
+	}
+	if len(head) == 0 {
+		loggw(slog.LevelDebug, "目标组装：候选全部未进链", context.Background(), plan, "", nil, "cands", len(cands))
 	}
 	return append(append(head, out...), fbs...)
 }
@@ -829,6 +847,10 @@ func (g *Gateway) parallelTargets(plan *adapter.Plan) []fetchTarget {
 // 中途接入时单流已经慢，多探几台才有机会凑到两台能分片的源。
 func (g *Gateway) parallelTargetsN(plan *adapter.Plan, want int) []fetchTarget {
 	out := []fetchTarget{{u: plan.Upstream}}
+	base := plan.Upstream
+	if plan.LogicalUpstream != nil {
+		base = plan.LogicalUpstream
+	}
 	fbs := g.fallbackTargets(plan, nil)
 	if plan.OfficialOnly || !g.sched.Enabled() {
 		return append(out, fbs...)
@@ -848,8 +870,8 @@ func (g *Gateway) parallelTargetsN(plan *adapter.Plan, want int) []fetchTarget {
 	metrics.SourceCandidates(len(cands))
 	for _, c := range cands {
 		cc := c
-		u, ok := g.sched.Rewrite(plan.Sched(), plan.Upstream, cc)
-		if !ok || strings.EqualFold(u.Host, plan.Upstream.Host) {
+		u, ok := g.sched.Rewrite(plan.Sched(), base, cc)
+		if !ok || strings.EqualFold(u.Host, base.Host) {
 			continue
 		}
 		head = append(head, fetchTarget{u: u, c: &cc})

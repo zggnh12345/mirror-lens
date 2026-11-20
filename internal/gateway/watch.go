@@ -278,6 +278,20 @@ func switchAcceptable(curHdr, newHdr http.Header, status int, clen, sent, total 
 	return false, expectSHA != ""
 }
 
+func skipReason(t fetchTarget, tried map[int64]bool, cur *fetchTarget) string {
+	switch {
+	case t.c == nil:
+		return "官方目标，不是星标源"
+	case !t.c.Preferred:
+		return "未勾选星标"
+	case tried[t.c.ID]:
+		return "本轮已试过"
+	case cur != nil && cur.c != nil && cur.c.ID == t.c.ID:
+		return "就是当前源"
+	}
+	return "未知"
+}
+
 // trySwitch 在旧连接不动的前提下，向下一台有快样本的星标发一次请求。
 // 只有 1 秒内读到第一块数据、并且能证明与旧源是同一版本，才算成功。
 // verified 为假表示没有可比验证器，只能靠 ExpectSHA 事后兜底。
@@ -286,14 +300,23 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		return nil, nil, nil, false, errors.New("没有可用的换源条件")
 	}
 	cands := g.switchCandidates(plan)
+	log.Printf("换源候选：n=%d official_only=%v sched=%q par_targets=%v",
+		len(cands), plan.OfficialOnly, plan.Sched(), g.parTargets != nil)
 	for _, t := range cands {
 		if t.c == nil || !t.c.Preferred || tried[t.c.ID] || (cur != nil && cur.c != nil && cur.c.ID == t.c.ID) {
+			name := "official"
+			if t.c != nil {
+				name = t.c.Name
+			}
+			log.Printf("换源跳过 %s：%s", name, skipReason(t, tried, cur))
 			continue
 		}
 		// 只换到有真实快样本的源：没样本时赌它快，代价是几十秒空档，不划算。
 		// 取最近 5 条的中位数：生产样本 CV>1.4，最新一条的峰值会让慢源插队。
 		sp := g.recentProxySpeeds(t.c.ID, plan.Kind, 5)
 		if !switchSpeedOK(sp, g.par.SwitchMinMBps*1024) {
+			log.Printf("换源跳过 %s：样本不足/偏慢 kind=%q n=%d sp=%v 门限=%dKB/s",
+				t.c.Name, plan.Kind, len(sp), sp, g.par.SwitchMinMBps*1024)
 			continue
 		}
 		tried[t.c.ID] = true
@@ -301,6 +324,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		// 交接用预留名额：拿不到就放弃本次换源，绝不排队（I6）。
 		l, lerr := g.leaseFor(ctx, t, scheduler.KindHandover)
 		if lerr != nil {
+			log.Printf("换源跳过 %s：交接名额不可用 %v", t.c.Name, lerr)
 			continue
 		}
 

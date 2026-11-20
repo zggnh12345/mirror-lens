@@ -423,6 +423,9 @@ func (g *Gateway) noteSpeed(t *fetchTarget, kind string, bytes int64, start time
 	// 上游读到的只是 TCP 背压后的节奏，不是源站能力，直接丢弃这条样本。
 	// 实测：客户端限速 1MB/s、源站 10MB/s 时，仅扣时间仍会记成 1.6MB/s。
 	if blocked*3 > el {
+		// 下游（客户端/落盘）阻塞占比过高：这条样本不代表源站能力，直接丢弃。
+		// 只在「本来够格」的大样本上打一行，方便解释「为什么没有 proxy_speed」。
+		log.Printf("测速样本丢弃：下游阻塞 %v / 总耗时 %v（源 %d）", blocked, el, t.c.ID)
 		return
 	}
 	if up := el - blocked; up >= time.Millisecond {
