@@ -1172,13 +1172,18 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 						}
 					}
 				} else {
-					// 竞速没能形成（预算不足/两路都失败）：回到原有顺序路径，
-					// 已确认失败的源不再重试。
+					// 竞速没能形成（预算不足/两路都失败）：回到原有顺序路径。
+					// 预算不足时两个候选根本没拨号，tried 预留必须撤销，
+					// 否则顺序回退会跳过全部合格镜像源而错误回退官方源。
+					// 只有真正发起过请求并失败的源才保留在 tried 里。
 					metrics.RegistryRaceFallback()
 					if errors.Is(rerr, v2auth.ErrPolicyMissing) && policyErr == nil {
 						policyErr = rerr
 					}
-					if rerr != nil && !errors.Is(rerr, errRaceNoBudget) {
+					if errors.Is(rerr, errRaceNoBudget) {
+						delete(tried, ia)
+						delete(tried, ib)
+					} else if rerr != nil {
 						lastErr = rerr
 					}
 				}

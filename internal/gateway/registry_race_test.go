@@ -866,3 +866,57 @@ func TestRaceOfficialOnlyNoRace(t *testing.T) {
 		t.Fatalf("OfficialOnly 不得竞速：ready=%v policy=%q", plan.RaceReady, plan.FlightPolicy)
 	}
 }
+
+// P0 回归：竞速第一路预算不足（errRaceNoBudget）导致整场不竞速时，
+// 顺序回退必须仍能走原本合格的镜像源，不得因为竞速预留的 tried 标记
+// 把两个候选都跳过而回退官方源。
+//
+// 复现 3.5.18 A10 并发8的故障：budget_skipped=22 / fallback=20 / 20 个官方 401。
+func TestRaceNoBudgetFallsBackToMirrorNotOfficial(t *testing.T) {
+	metrics.Enable()
+	f := newRaceFixture(t, "quay.io")
+	// 每源并发上限 1：预占后 TryAcquireLease 返回 nil，触发 errRaceNoBudget。
+	f.gw.sched = scheduler.New(f.st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 1})
+	f.gw.sched.Invalidate()
+	body := mirrorManifest
+	digest := digestOf(body)
+	srvA, hitsA := f.mirror(t, body, 0)
+	srvB, hitsB := f.mirror(t, body, 0)
+	idA := f.addRegistrySource(t, srvA, "native")
+	idB := f.addRegistrySource(t, srvB, "native")
+	f.star(t, idA, true)
+	f.star(t, idB, true)
+	f.switchHost(t, "quay.io", true)
+	// 官方源返回明显不同的内容：一旦回退官方，body 断言必然失败。
+	f.officialBody = []byte(`{"schemaVersion":2,"official":true,"SHOULD_NOT":"be used"}`)
+
+	// 占满两个镜像源的唯一名额，使竞速每一路都拿不到 Lease。
+	heldA, err := f.gw.sched.TryAcquireLease(context.Background(), idA, scheduler.KindNormal)
+	if err != nil || heldA == nil {
+		t.Fatalf("预占 A 名额失败: %v %v", heldA, err)
+	}
+	defer heldA.Release(heldA.Token())
+	heldB, err := f.gw.sched.TryAcquireLease(context.Background(), idB, scheduler.KindNormal)
+	if err != nil || heldB == nil {
+		t.Fatalf("预占 B 名额失败: %v %v", heldB, err)
+	}
+	defer heldB.Release(heldB.Token())
+
+	before := f.officialHits.Load()
+	w := f.getDigest(t, digest)
+	if w.Code != http.StatusOK {
+		t.Fatalf("预算不足后顺序回退应成功：status=%d body=%q", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(w.Body.String()) != body {
+		t.Fatalf("应从镜像源取回内容，实际 body=%q（若含 SHOULD_NOT 表示回退了官方源）", w.Body.String())
+	}
+	if got := f.officialHits.Load(); got != before {
+		t.Fatalf("合格镜像源存在时不得回退官方源：officialHits %d -> %d", before, got)
+	}
+	if hitsA.Load()+hitsB.Load() == 0 {
+		t.Fatal("顺序回退应命中至少一个镜像源")
+	}
+	if got := counterValue(t, scrapeRaceMetrics(t), "mirrorlens_registry_race_budget_skipped_total"); got < 1 {
+		t.Fatalf("应记录预算不足，实得 %v", got)
+	}
+}
