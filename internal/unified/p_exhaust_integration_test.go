@@ -82,8 +82,11 @@ func TestPExhaustRealRoundTrip(t *testing.T) {
 
 	// 第三次：预算耗尽。真实 RoundTrip 在 ReserveP 处被拒，不得到达服务端。
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/v2/a/blobs/x", nil)
+	rejected := 0
 	if _, err := mt.RoundTrip(req); !IsBudgetExhausted(err) {
 		t.Fatalf("第三次应因 P 耗尽被拒，实际 %v", err)
+	} else {
+		rejected++
 	}
 	if got := up.hits.Load(); got != 2 {
 		t.Fatalf("耗尽后不得新派发：服务端请求=%d want 2", got)
@@ -110,6 +113,9 @@ func TestPExhaustRealRoundTrip(t *testing.T) {
 	if n := s.Ledger().Len(); n != 0 {
 		t.Fatalf("预算拒绝不得写结果账本，实际 %d 行", n)
 	}
+	t.Logf("p_exhaust hedge: pmax_injected=%d dispatched=%d rejected=%d bodies_created=%d bodies_closed=%d on_exhaust_calls=%d claims_dispatched=%d chains=%d ledger_rows=%d outstanding=%d",
+		s.P().Max(), s.P().Committed(), rejected, up.hits.Load(), up.closed.Load(), exhaust.Load(),
+		s.DispatchedClaims(), s.ChainCount(), s.Ledger().Len(), s.P().Outstanding())
 }
 
 // TestPExhaustNoCachePut：耗尽后不提交缓存（本 Scope 无 CachePut 通道即视为
@@ -194,15 +200,23 @@ func TestMidfillRangeSoleUseP(t *testing.T) {
 	// 耗尽后：第三条 Range / Preflight / trySwitch 都不允许再获额度。
 	// RangeWork 与 P 是两个独立账本：耗尽 P 后 ReserveP 被拒，真正的
 	// Range/trySwitch 都由 ReserveP 把关，因此这里断言 ReserveP 拒绝即可。
+	rej := 0
 	if _, err := s.ReserveP(); !IsBudgetExhausted(err) {
 		t.Fatalf("耗尽后 ReserveP 必须拒绝 Range/trySwitch: %v", err)
+	} else {
+		rej++
 	}
 	if _, err := s.ReserveP(); err == nil {
 		t.Fatal("耗尽后 ReserveP 必须拒绝（取消或预算耗尽）")
+	} else {
+		rej++
 	}
 	if got := s.PreflightRuns(); got != 1 {
 		t.Fatalf("耗尽后 Preflight 轮数变化=%d", got)
 	}
+	t.Logf("p_exhaust midfill: pmax_injected=%d preflight_runs=%d range_work_used=%d range_work_max=%d segments=%d committed=%d reserve_after_exhaust_rejected=%d bodies_closed=%d",
+		s.P().Max(), s.PreflightRuns(), s.Ranges().Used(), s.Ranges().Max(), s.Ranges().Segments(),
+		s.P().Committed(), rej, up.closed.Load())
 }
 
 // TestReservePCommitP 两阶段：提交前取消释放预留；已提交不返还；并发不超额；
@@ -271,6 +285,8 @@ func TestReservePCommitP(t *testing.T) {
 	if s2.P().Outstanding() != 3 {
 		t.Fatalf("并发超额 outstanding=%d", s2.P().Outstanding())
 	}
+	t.Logf("reserve_commit: pmax=%d committed=%d outstanding=%d concurrent_committed=%d concurrent_rejected=%d",
+		s.P().Max(), s.P().Committed(), s.P().Outstanding(), ok.Load(), rejected.Load())
 }
 
 // TestProductionPMaxFrozen：生产构造路径恒为冻结值 8192；测试注入的小额度
@@ -290,4 +306,5 @@ func TestProductionPMaxFrozen(t *testing.T) {
 	}
 	// 1 秒内不超时的 sanity：耗尽路径不会卡住（真实 Body 已关）。
 	time.Sleep(time.Millisecond)
+	t.Logf("production_pmax: frozen=%d scope_max=%d", PMax, s.P().Max())
 }
