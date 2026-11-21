@@ -1,0 +1,39 @@
+CONC 8 TAG iso-c8
+SETUP
+SEED FIXTURE
+SEED SQL 0
+POOLCHECK after_seed {"rows": [[1, "http://ml318-a10fast:19001", "race-fast", "fixture", 1, "usable", 1], [2, "http://ml318-a10slow:19001", "race-slow", "fixture", 1, "usable", 1]], "discovered_count": 0, "selected": null, "star": null}
+DIGESTS 8
+BASELINE star=OFF
+STAR [1, 2]
+POOLCHECK group_star_0 {"rows": [[1, "http://ml318-a10fast:19001", "race-fast", "fixture", 1, "usable", 1], [2, "http://ml318-a10slow:19001", "race-slow", "fixture", 1, "usable", 1]], "discovered_count": 0, "selected": "[1, 2]", "star": "0"}
+  r1: ok=8/8 err=0
+  r2: ok=8/8 err=0
+  r3: ok=8/8 err=0
+  r4: ok=8/8 err=0
+  r5: ok=8/8 err=0
+  r6: ok=8/8 err=0
+  r7: ok=8/8 err=0
+  r8: ok=8/8 err=0
+  r9: ok=8/8 err=0
+  r10: ok=8/8 err=0
+RACE star=ON
+STAR [1, 2]
+POOLCHECK group_star_1 {"rows": [[1, "http://ml318-a10fast:19001", "race-fast", "fixture", 1, "usable", 1], [2, "http://ml318-a10slow:19001", "race-slow", "fixture", 1, "usable", 1]], "discovered_count": 0, "selected": "[1, 2]", "star": "1"}
+  r1: ok=8/8 err=0
+  r2: ok=8/8 err=0
+  r3: ok=8/8 err=0
+  r4: ok=8/8 err=0
+  r5: ok=8/8 err=0
+  r6: ok=8/8 err=0
+  r7: ok=8/8 err=0
+  r8: ok=8/8 err=0
+  r9: ok=8/8 err=0
+  r10: ok=8/8 err=0
+POST-RUN POOL CHECK
+POOLCHECK after_all {"rows": [[1, "http://ml318-a10fast:19001", "race-fast", "fixture", 1, "usable", 1], [2, "http://ml318-a10slow:19001", "race-slow", "fixture", 1, "usable", 1]], "discovered_count": 0, "selected": "[1, 2]", "star": "1"}
+VERDICT {"p95_improve": 0.5043, "threshold_met": true, "caliber_consistent": true, "PASS": true}
+BASE p50/p95/p99 100.681 406.696 437.37 err 0.0 401 0
+RACE p50/p95/p99 108.313 201.583 245.775 err 0.0 401 0
+RACE metrics {"started_total": 80.0, "extra_requests_total": 6.0, "wins_rank1": 54.0, "wins_rank2": 6.0, "cancelled_total": 6.0, "body_failures_total": 0.0, "fallback_total": 20.0, "budget_skipped_total": 20.0, "ineligible_total": 80.0}
+DONE

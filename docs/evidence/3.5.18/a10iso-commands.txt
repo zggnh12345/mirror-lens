@@ -1,0 +1,7 @@
+# 最终代码门禁（HEAD c326538，镜像 6b2a3ac5048e 构建点）
+# gofmt -l / go vet ./... / go build ./... : 无输出 RC=0
+git diff --check  => RC=0
+go build ./...    => RC=0  (log a10iso-gate-build.log)
+go vet ./...      => RC=0  (log a10iso-gate-vet.log)
+go test ./... -count=1        => RC=0  (log a10iso-gate-test.log)
+go test -race ./... -count=1  => RC=0  (log a10iso-gate-race.log)

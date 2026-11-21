@@ -1,0 +1,286 @@
+{
+  "generated_at": "2026-11-21T08:54:57.455223",
+  "image": "mirror-lens:3.5.18-final",
+  "fix": "c326538 P0+P1+P2+P3+3.5.18",
+  "isolation": "internal-network-no-discover + fresh-volume",
+  "frozen_concurrency": 8,
+  "run_concurrency": 1,
+  "run_tag": "iso-c1",
+  "baseline": {
+    "star": false,
+    "concurrency": 1,
+    "rounds": 10,
+    "n_samples": 10,
+    "n_ok": 10,
+    "n_err": 0,
+    "err_rate": 0.0,
+    "official_401": 0,
+    "p50": 21.183,
+    "p95": 326.154,
+    "p99": 329.227,
+    "winner_dist": {
+      "race-fast": 10
+    },
+    "metrics": {
+      "ineligible_total": 10.0
+    },
+    "samples": [
+      {
+        "ttfb_ms": 329.995,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 1,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 20.295,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 2,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 20.403,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 3,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 321.46,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 4,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 22.465,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 5,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 21.755,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 6,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 20.447,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 7,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 20.611,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 8,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 25.183,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 9,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 14.948,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 10,
+        "slot": 1,
+        "digest_hit": true
+      }
+    ]
+  },
+  "race": {
+    "star": true,
+    "concurrency": 1,
+    "rounds": 10,
+    "n_samples": 10,
+    "n_ok": 10,
+    "n_err": 0,
+    "err_rate": 0.0,
+    "official_401": 0,
+    "p50": 44.023,
+    "p95": 74.071,
+    "p99": 92.259,
+    "winner_dist": {
+      "race-fast": 2,
+      "race-slow": 8
+    },
+    "metrics": {
+      "started_total": 10.0,
+      "extra_requests_total": 1.0,
+      "wins_rank1": 9.0,
+      "wins_rank2": 1.0,
+      "cancelled_total": 1.0,
+      "body_failures_total": 0.0,
+      "fallback_total": 0.0,
+      "budget_skipped_total": 0.0,
+      "ineligible_total": 10.0
+    },
+    "samples": [
+      {
+        "ttfb_ms": 20.332,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 1,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 21.704,
+        "src": "race-fast",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 2,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 96.806,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 3,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 43.621,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 4,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 44.208,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 5,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 43.838,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 6,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 44.534,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 7,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 46.284,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 8,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 44.533,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 9,
+        "slot": 1,
+        "digest_hit": true
+      },
+      {
+        "ttfb_ms": 43.673,
+        "src": "race-slow",
+        "dig": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "want": "sha256:c523440f7149bf332dcb740c52b0aadd78c585e9856d74a72025e0fb98264bc2",
+        "bytes": 745,
+        "status": 200,
+        "round": 10,
+        "slot": 1,
+        "digest_hit": true
+      }
+    ]
+  },
+  "verdict": {
+    "p95_improve": 0.7729,
+    "threshold_met": true,
+    "caliber_consistent": true,
+    "PASS": true
+  }
+}

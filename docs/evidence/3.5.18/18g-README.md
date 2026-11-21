@@ -4,8 +4,9 @@
 
 冻结稿 §18g（行 631–635）任务 19 项。按授权边界与证据分层逐项分类：
 代码级/单元/集成/故障注入/安全回归/配置迁移/Web DOM 属授权内可验证；
-真实公网回源、生产升级、备份回滚、性能基线属 `NOT_EXECUTED` /
-`WAITING_FOR_USER_DECISION` / `EXTERNAL_BLOCKED`（§12.5 已冻结 B15 阻塞，生产授权被明确排除）。
+真实公网回源、生产升级、备份回滚属 `NOT_EXECUTED` / `WAITING_FOR_USER_DECISION`
+（生产授权被明确排除）。性能基线已在隔离冻结场景重测达 50% P95 门槛、状态 PASS
+（见 `phase11-a10-isolated-final-result.md`）；污染环境探索数据不计入。
 
 ## 18g 任务逐项分类（诚实分账）
 
@@ -23,8 +24,8 @@
 | Authority 真实验收 | NOT_EXECUTED | 真实公网 Authority 环境不可用 |
 | 生产升级前检查 | WAITING_FOR_USER_DECISION | 生产授权被明确排除 |
 | 备份和回滚验证 | WAITING_FOR_USER_DECISION | 生产备份/回滚需生产授权 |
-| 性能基线 | PERFORMANCE_NOT_MET | 已执行 R1/R2 正式配对（R1 52.84%/R2 49.77%，跨 50% 线），见 `phase11-a10-postfix-result.md`；REV-1 合法枚举；P1/P2/P3 修复后待 A10 重测定稿 |
-| 候选版本性能对照 | PERFORMANCE_NOT_MET | 同上；官方 401 修复后 0/80，口径一致；不挑样本、不改阈值 |
+| 性能基线 | PASS | 隔离冻结场景重测：并发8 P95 改善 50.43%、并发3 74.08%、并发1 77.29%，官方401=0、口径一致，见 `phase11-a10-isolated-final-result.md`（REV-1 合法枚举） |
+| 候选版本性能对照 | PASS | 同上；最终镜像 c326538 / 6b2a3ac5048e；全程候选池仅 2 fixture 源、discovered=0，唯一变量 star |
 | 文档归档 / 证据归档 / 清理收尾 / 最终交付审计 | 见 sfinal | 最终交付阶段处理 |
 
 证据分层（不混算）：本阶段所有 PASS 均为**代码测试层**；真实进程层与公共源层未执行，
@@ -68,11 +69,10 @@ handler goroutine 无同步地写普通 string。该竞态在此前 18b 阶段�
 - 全量测试：通过。
 - 真实环境结果与测试预期不一致：未执行真实环境，不适用。
 - 生产备份/回滚无法验证：因无生产授权，标 WAITING，不自行验证。
-- 性能基线无法复现：B15 已预冻结 EXTERNAL_BLOCKED，按 §12.5 收口。
+- 性能基线：隔离冻结场景重测已达 50% P95 门槛（并发8 +50.43%），状态 PASS，见 `phase11-a10-isolated-final-result.md`；历史污染环境数据不计入。
 - 新决策/生产授权：生产阶段需单独授权，按终止条件停下报告。
 
-结论：代码与代码测试层可进入最终交付审计；真实环境/性能/生产三项保持冻结的阻塞态，
-不伪造 PASS。
+结论：代码与代码测试层、性能层（隔离冻结场景重测）可进入最终交付审计；真实公网源层保持 BLOCKED（无配对环境）、生产层 WAITING_FOR_USER_DECISION（无授权），不伪造 PASS。
 
 ## 边界
 
