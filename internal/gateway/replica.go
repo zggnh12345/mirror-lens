@@ -977,7 +977,8 @@ func (g *Gateway) crossRegistryManifest(ctx context.Context, plan *adapter.Plan,
 	out, rerr := unified.RunCrossRace(ctx, cfg, cands)
 	rec.Authority = out.AuthorityUsed
 	rec.VoteState = out.State.String()
-	rec.Backfill = out.Truncated // 首轮外候选（由补位机制处理）的近似计数
+	rec.Backfill = out.Backfill             // 真实失败补位次数（runBackfill 计数）
+	rec.TruncatedCandidates = out.Truncated // 被 M 截断的候选数，独立语义
 	// 窗口外仍未完成的候选：标记放弃，让它带着自己的产物退出。
 	for i := range slots {
 		select {

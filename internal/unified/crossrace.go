@@ -71,6 +71,8 @@ type CrossRaceOutcome struct {
 	Digest string
 	// Truncated 是被 M 截断掉的候选数（诊断用，不影响结论）。
 	Truncated int
+	// Backfill 是本次真实发生的失败补位次数（首轮 C 之外的 runCandidate 调用）。
+	Backfill int
 	// AuthorityUsed 表示本次是否真的问了官方权威。
 	AuthorityUsed bool
 }
@@ -93,15 +95,24 @@ type crossResult struct {
 // 返回的 outcome.Winner 是调用方应当使用的候选下标；其余候选已被 Abort。
 // 返回 ErrCrossRaceNoCandidate 时调用方必须按原有顺序回退，不能把
 // 「竞速无结论」当成失败写进源健康（这是中性事件）。
-func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandidate) (CrossRaceOutcome, error) {
+func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandidate) (out CrossRaceOutcome, err error) {
 	cfg = cfg.normalized()
-	out := CrossRaceOutcome{Winner: -1}
+	out = CrossRaceOutcome{Winner: -1}
+	backfillCount := 0
+	// 所有 return 路径统一把真实补位次数写入结果，避免散落赋值遗漏 early return。
+	defer func() { out.Backfill = backfillCount }()
 	if len(cands) == 0 {
 		return out, ErrCrossRaceNoCandidate
 	}
 	if len(cands) > cfg.MaxCandidates {
 		out.Truncated = len(cands) - cfg.MaxCandidates
 		cands = cands[:cfg.MaxCandidates]
+	}
+	// runBackfill 统一封装首轮之外的补位调用：每次实际发起一次补位回源即计数。
+	// 覆盖 VoteMismatch 与 VoteWindowClosed/VoteAuthorityCompare 两条补位路径。
+	runBackfill := func(i int) (string, error) {
+		backfillCount++
+		return runCandidate(ctx, cands[i])
 	}
 	abortExcept := func(keep int) {
 		for i := range cands {
@@ -249,7 +260,7 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			return out, nil
 		}
 		for i := first; i < len(cands); i++ {
-			d, err := runCandidate(ctx, cands[i])
+			d, err := runBackfill(i)
 			if err != nil || d == "" {
 				continue
 			}
@@ -306,7 +317,7 @@ func RunCrossRace(ctx context.Context, cfg CrossRaceConfig, cands []CrossCandida
 			}
 		}
 		for i := first; i < len(cands); i++ {
-			if d, err := runCandidate(ctx, cands[i]); err == nil && d == ad {
+			if d, err := runBackfill(i); err == nil && d == ad {
 				out.State = VoteAuthorityCompare
 				out.Winner = i
 				out.Digest = ad

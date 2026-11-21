@@ -12,23 +12,24 @@ import (
 // 只保存低基数的判定字段：Registry host、SourceID、Digest、结果分类；
 // 不保存 URL / Authorization / Token / 查询串，避免凭据泄漏与高基数标签。
 type CrossRunState struct {
-	Seq         uint64    `json:"seq"`          // 进程内递增序号，关联一次逻辑请求
-	At          time.Time `json:"at"`           // 结论时间
-	Mode        string    `json:"mode"`         // sequential / race
-	Registry    string    `json:"registry"`     // 胜者所在逻辑 Registry（低基数）
-	WinnerID    int64     `json:"winner_id"`    // 胜者 SourceID（0=权威兜底）
-	Digest      string    `json:"digest"`       // 已校验摘要（内容寻址，低基数）
-	Candidates  int       `json:"candidates"`   // 参与候选数（同 Registry 多 Source 计 1）
-	Sources     int       `json:"sources"`      // 内层实际尝试的 Source 数（A+B 嵌套）
-	Authority   bool      `json:"authority"`    // 本次是否真的问了官方权威
-	CachePut    string    `json:"cache_put"`    // committed / rejected / skipped
-	Outcome     string    `json:"outcome"`      // ok / fallback / fail
-	VoteState   string    `json:"vote_state"`   // 投票结论：confirmed/mismatch/authority_compare/window_closed/collecting
-	Backfill    int       `json:"backfill"`     // 失败补位次数
-	Canceled    int       `json:"canceled"`     // 被取消的候选/Source 数
-	Nested      bool      `json:"nested"`       // 是否触发同 Registry 内 A 站内竞速
-	Generation  uint64    `json:"generation"`   // 配置代次（关联审计）
-	RequestHint string    `json:"request_hint"` // 脱敏请求关联键（cache_key 的摘要，不含查询串）
+	Seq                 uint64    `json:"seq"`                  // 进程内递增序号，关联一次逻辑请求
+	At                  time.Time `json:"at"`                   // 结论时间
+	Mode                string    `json:"mode"`                 // sequential / race
+	Registry            string    `json:"registry"`             // 胜者所在逻辑 Registry（低基数）
+	WinnerID            int64     `json:"winner_id"`            // 胜者 SourceID（0=权威兜底）
+	Digest              string    `json:"digest"`               // 已校验摘要（内容寻址，低基数）
+	Candidates          int       `json:"candidates"`           // 参与候选数（同 Registry 多 Source 计 1）
+	Sources             int       `json:"sources"`              // 内层实际尝试的 Source 数（A+B 嵌套）
+	Authority           bool      `json:"authority"`            // 本次是否真的问了官方权威
+	CachePut            string    `json:"cache_put"`            // committed / rejected / skipped
+	Outcome             string    `json:"outcome"`              // ok / fallback / fail
+	VoteState           string    `json:"vote_state"`           // 投票结论：confirmed/mismatch/authority_compare/window_closed/collecting
+	Backfill            int       `json:"backfill"`             // 真实失败补位次数（首轮 C 之外的补位回源）
+	TruncatedCandidates int       `json:"truncated_candidates"` // 被 M 截断的候选数（诊断，不等于补位）
+	Canceled            int       `json:"canceled"`             // 被取消的候选/Source 数
+	Nested              bool      `json:"nested"`               // 是否触发同 Registry 内 A 站内竞速
+	Generation          uint64    `json:"generation"`           // 配置代次（关联审计）
+	RequestHint         string    `json:"request_hint"`         // 脱敏请求关联键（cache_key 的摘要，不含查询串）
 }
 
 // crossRunRing 是固定容量的运行时状态环形缓冲。

@@ -118,6 +118,10 @@ func TestCrossRaceMismatchFillQuorumBeforeAuthority(t *testing.T) {
 		t.Fatalf("补位应逐个尝试并在多数成立时停止: fill1=%d fill2=%d",
 			fill1.runs.Load(), fill2.runs.Load())
 	}
+	// P3：backfill 是真实补位次数（本例 1 次），不是首轮外的截断数。
+	if out.Backfill != 1 {
+		t.Fatalf("真实补位次数应为 1，实得 %d", out.Backfill)
+	}
 }
 
 // 补位仍不一致：才动用唯一一次 Authority，并且只接受与权威一致的内容。
@@ -201,6 +205,10 @@ func TestCrossRaceTruncatesToM(t *testing.T) {
 	}
 	if out.Truncated != 2 {
 		t.Fatalf("应截断 2 个，实得 %d", out.Truncated)
+	}
+	// P3：截断 2 个不等于补位；首轮即一致，真实补位次数必须为 0。
+	if out.Backfill != 0 {
+		t.Fatalf("首轮一致不应补位，backfill 应为 0，实得 %d", out.Backfill)
 	}
 	if fakes[4].runs.Load() != 0 || fakes[5].runs.Load() != 0 {
 		t.Fatal("被截断的候选不得发请求")

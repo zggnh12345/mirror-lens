@@ -922,6 +922,7 @@ async function loadCrossRuns(){
         + ' · 投票 ' + (r.vote_state||'-') + ' · 候选 ' + (r.candidates||0)
         + ' · Source ' + (r.sources||0) + ' · 权威 ' + (r.authority?'是':'否')
         + ' · 缓存 ' + (r.cache_put||'-') + ' · 补位 ' + (r.backfill||0)
+        + (r.truncated_candidates? ' · 截断 ' + r.truncated_candidates : '')
         + ' · 取消 ' + (r.canceled||0) + (r.nested?' · 嵌套竞速':'') + '</i></div></div></div>';
     }).join('');
   }catch(e){ body.textContent = '加载失败：' + (e.message || e); }
