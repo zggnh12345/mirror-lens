@@ -23,8 +23,8 @@
 | Authority 真实验收 | NOT_EXECUTED | 真实公网 Authority 环境不可用 |
 | 生产升级前检查 | WAITING_FOR_USER_DECISION | 生产授权被明确排除 |
 | 备份和回滚验证 | WAITING_FOR_USER_DECISION | 生产备份/回滚需生产授权 |
-| 性能基线 | EXTERNAL_BLOCKED | B15 已冻结 EXTERNAL_BLOCKED（§12.5） |
-| 候选版本性能对照 | EXTERNAL_BLOCKED | 无真实多 Registry 配对环境 |
+| 性能基线 | PERFORMANCE_NOT_MET | 已执行 R1/R2 正式配对（R1 52.84%/R2 49.77%，跨 50% 线），见 `phase11-a10-postfix-result.md`；REV-1 合法枚举；P1/P2/P3 修复后待 A10 重测定稿 |
+| 候选版本性能对照 | PERFORMANCE_NOT_MET | 同上；官方 401 修复后 0/80，口径一致；不挑样本、不改阈值 |
 | 文档归档 / 证据归档 / 清理收尾 / 最终交付审计 | 见 sfinal | 最终交付阶段处理 |
 
 证据分层（不混算）：本阶段所有 PASS 均为**代码测试层**；真实进程层与公共源层未执行，

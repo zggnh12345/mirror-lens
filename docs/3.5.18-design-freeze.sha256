@@ -11,6 +11,11 @@
 | 设计冻结文档 | SHA-256 | eded95cbae25d4fc4322e746224b73a40a223813d58a55321013ad206ad84eb3 |
 | 设计冻结文档 | Git Blob (SHA-1) | f68a0bd8123635b902adf3072ad3609ff81c45e3 |
 | 设计冻结文档 | 字节 / 行数 | 86104 / 976 |
+| 设计冻结文档 REV-1（§15.3 枚举扩充，正式授权） | SHA-256 | 51b6e0114722679aa821ecd9f45cae989ad84085d4d2f6ad945a22f4cf367ff0 |
+| 设计冻结文档 REV-1 | Git Blob (SHA-1) | 2ebdf9ff94fca0da93132722db8e536e3bd3308a |
+| 设计冻结文档 REV-1 | 字节 / 行数 | 87802 / 989 |
+| 原 FROZEN 版本备份 | 文件 | docs/evidence/3.5.18/3.5.18-design-freeze-errata-draft.FROZEN-ORIGINAL.md |
+| 原 FROZEN 校验清单备份 | 文件 | docs/evidence/3.5.18/3.5.18-design-freeze.FROZEN-ORIGINAL.sha256 |
 | 冻结前 DRAFT 态 | Git Blob (SHA-1) | 9f4d5ac6436b6c57ea78dd8b6b4b389d481383e5 |
 | 1.6 权威文档 | Git Blob (SHA-1) | 74a0df7e832f7b0684617d08b2922404b34b4145 |
 | 基线 HEAD | commit | 6ca6e76a72eca13ad2f3311c59263900679130de |

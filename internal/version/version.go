@@ -10,7 +10,7 @@ import "fmt"
 //
 // 发布流程按 Tag 校验它（scripts/check-version.sh）；不要在 main.go、
 // Dockerfile 或 workflow 里重复硬编码版本号。
-const Version = "3.5.17"
+const Version = "3.5.18"
 
 // Commit 与 BuildDate 由构建时通过 ldflags 注入：
 //
