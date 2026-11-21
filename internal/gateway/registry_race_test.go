@@ -61,8 +61,16 @@ func (f *raceFixture) switchHost(t *testing.T, host string, on bool) {
 
 func (f *raceFixture) mirror(t *testing.T, body string, delay time.Duration) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	return f.mirrorWithStatus(t, body, delay, 0)
+}
+
+// mirrorWithStatus 扩展 mirror，允许按 Source 指定响应状态码（0 表示照旧 200）。
+// 用于构造「首路真实失败（如 500）」路径：moMirror 对非 200/304 直接
+// WriteHeader(status)，使 openUpstream 走 upstreamError 与快速失败补发。
+func (f *raceFixture) mirrorWithStatus(t *testing.T, body string, delay time.Duration, status int) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
 	var hits atomic.Int32
-	m := &moMirror{path: "/v2/foo/bar/manifests/" + digestOf(body), body: body, hits: &hits, delay: delay}
+	m := &moMirror{path: "/v2/foo/bar/manifests/" + digestOf(body), body: body, hits: &hits, delay: delay, status: status}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
 	return srv, &hits
@@ -553,6 +561,59 @@ func TestRaceSecondCandidateBudget(t *testing.T) {
 	}
 	if got := counterValue(t, scrapeRaceMetrics(t), "mirrorlens_registry_race_budget_skipped_total"); got < 1 {
 		t.Fatalf("应记一次预算不足，实得 %v", got)
+	}
+}
+
+// 首路真实失败 + 次路预算不足：f22a50a 只覆盖了「首路即无预算」，
+// 本用例锁定另一条路径——首路真拨号返回 500，快速失败补发次路但次路
+// Lease 被占满。此时 raceManifest 返回首路的真实错误（非 errRaceNoBudget），
+// 若 tried 不按实际拨号状态回滚，顺序回退会跳过两个合格镜像源而错误回退官方。
+//
+// 期望（修复后）：顺序回退命中次路 B、不重复请求首路 A、不回退官方。
+// 修复前（RED）：次路 B 的 tried 未回滚，跳过 B 直接回退官方。
+func TestRaceFirstFailedSecondNoBudgetFallsBackToMirror(t *testing.T) {
+	metrics.Enable()
+	f := newRaceFixture(t, "quay.io")
+	f.gw.sched = scheduler.New(f.st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 1})
+	f.gw.sched.Invalidate()
+	body := mirrorManifest
+	digest := digestOf(body)
+
+	// 先添加的 A 的 ID 更小 → 排序在 slot0（首路）；返回可控 500。
+	srvA, hitsA := f.mirrorWithStatus(t, body, 0, http.StatusInternalServerError)
+	// 后添加的 B 在 slot1（次路）；正常返回 200 body。两者 body 相同以匹配同一 digest path。
+	srvB, hitsB := f.mirror(t, body, 0)
+	idA := f.addRegistrySource(t, srvA, "native")
+	idB := f.addRegistrySource(t, srvB, "native")
+	f.star(t, idA, true)
+	f.star(t, idB, true)
+	f.switchHost(t, "quay.io", true)
+	// 官方返回明显不同的内容：一旦错误回退官方，body 断言必然失败。
+	f.officialBody = []byte(`{"schemaVersion":2,"official":true,"SHOULD_NOT":"be used"}`)
+
+	// 预占次路 B 的唯一名额：次路启动后 TryAcquireLease 返回 nil，未拨号。
+	heldB, err := f.gw.sched.TryAcquireLease(context.Background(), idB, scheduler.KindNormal)
+	if err != nil || heldB == nil {
+		t.Fatalf("预占 B 名额失败: %v %v", heldB, err)
+	}
+	defer heldB.Release(heldB.Token())
+
+	before := f.officialHits.Load()
+	w := f.getDigest(t, digest)
+	if w.Code != http.StatusOK {
+		t.Fatalf("顺序回退应成功：status=%d body=%q", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(w.Body.String()) != body {
+		t.Fatalf("应从次路镜像源取回内容，实际 body=%q（若含 SHOULD_NOT 表示错误回退了官方源）", w.Body.String())
+	}
+	if hitsA.Load() != 1 {
+		t.Fatalf("首路已真实失败并保留 tried，顺序回退不应重复请求首路：hitsA=%d", hitsA.Load())
+	}
+	if hitsB.Load() < 1 {
+		t.Fatal("顺序回退应命中次路镜像源 B（其预算跳过时未拨号，tried 必须回滚）")
+	}
+	if got := f.officialHits.Load(); got != before {
+		t.Fatalf("合格镜像源存在时不得回退官方源：officialHits %d -> %d", before, got)
 	}
 }
 

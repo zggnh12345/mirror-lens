@@ -1,0 +1,6 @@
+=== RUN   TestRaceFirstFailedSecondNoBudgetFallsBackToMirror
+    registry_race_test.go:605: 顺序回退应成功：status=502 body="502 回源失败: 内容与客户端给的摘要不符：期望 b3f42046540039d1ab0eb2ee4a4bb0729b0685f372076dd386ad086372e1dcdd 实得 da81ed46ebaaf1ec1e062a442b19d0cf6884dd344a8362d228cd3a5fc113e933\n"
+--- FAIL: TestRaceFirstFailedSecondNoBudgetFallsBackToMirror (0.05s)
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	0.050s
+FAIL

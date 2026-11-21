@@ -251,23 +251,32 @@ func (g *Gateway) raceAfter() time.Duration {
 }
 
 type raceResult struct {
-	slot  int
-	up    *upstream
-	start time.Time
-	err   error
+	slot   int
+	up     *upstream
+	start  time.Time
+	err    error
+	dialed bool // 该 slot 是否真正进入了 openUpstream 调用边界（区别于仅启动 goroutine）
 }
 
 // raceManifest 在同 Host 的两个合格镜像 Source 之间竞速，返回胜者的响应头。
+//
+// dialedOut（调用方传入长度 n 的切片）在返回时按 slot 填好「该路是否真正
+// 进入 openUpstream」。它让调用方只回滚未拨号候选的 tried：预算跳过时
+// started=true 但 dialed=false，不能混为一谈。填充只发生在主 goroutine
+// 收到该 slot 的 raceResult 之后（channel 建立 happens-before），不读并发写。
 //
 // 约束（与 7.1/7.2/3.8 对应）：
 //   - 每个 attempt 独立 Context，取消一个不会掐断另一个的 Body；
 //   - 两路都要先拿到并发 Lease，拿不到就不形成双路（T31）；
 //   - 只交出响应头胜者，正文由调用方 saveBody 校验，校验通过才提交缓存；
 //   - 返回时保证未胜出的 attempt 已被取消并关闭 Body，不留 goroutine。
-func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, pair []fetchTarget) (*upstream, int, time.Time, error) {
+func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *store.CacheEntry, pair []fetchTarget, dialedOut []bool) (*upstream, int, time.Time, error) {
 	n := len(pair)
 	if n < 2 {
 		return nil, -1, time.Time{}, errRaceNoCandidate
+	}
+	for i := range dialedOut {
+		dialedOut[i] = false
 	}
 	// 3.5.17：A 站内竞速的所有 Attempt 属于同一条 A 链，因此共享同一个
 	// Claim（同 Identity 多 Source 可并发，不重复 Dispatched）。
@@ -313,14 +322,14 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 			l, err := g.sched.TryAcquireLease(actx, t.c.ID, scheduler.KindNormal)
 			if err != nil {
 				acancel()
-				ch <- raceResult{slot: slot, err: err}
+				ch <- raceResult{slot: slot, err: err, dialed: false}
 				return true
 			}
 			lease = l
 			if lease == nil {
 				metrics.RegistryRaceBudgetSkip()
 				acancel()
-				ch <- raceResult{slot: slot, err: errRaceNoBudget}
+				ch <- raceResult{slot: slot, err: errRaceNoBudget, dialed: false}
 				return true
 			}
 			releases[slot] = func() { lease.Release(lease.Token()) }
@@ -331,6 +340,9 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 		}
 		go func() {
 			st := time.Now()
+			// dialed 表示该 slot 真正进入 openUpstream 调用边界；必须在调用前
+			// 置位。它与 started（仅表示 goroutine 已启动）严格区分。
+			dialed := true
 			up, err := g.openUpstream(actx, plan, prev, t.u, sourceIDFor(t), logicalHostFor(t, plan))
 			if up != nil {
 				// Body 关闭后再还名额：名额要覆盖整个 attempt 的生命周期。
@@ -349,10 +361,10 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 						up.att.abort()
 					}
 				}
-				ch <- raceResult{slot: slot, start: st, err: errHedgeCanceled}
+				ch <- raceResult{slot: slot, start: st, err: errHedgeCanceled, dialed: dialed}
 				return
 			}
-			ch <- raceResult{slot: slot, up: up, start: st, err: err}
+			ch <- raceResult{slot: slot, up: up, start: st, err: err, dialed: dialed}
 			if up == nil {
 				return
 			}
@@ -408,6 +420,11 @@ func (g *Gateway) raceManifest(ctx context.Context, plan *adapter.Plan, prev *st
 		select {
 		case r := <-ch:
 			pending--
+			// 只在主 goroutine 收到该 slot 的结果后回填拨号状态：channel 接收
+			// 与 goroutine 内的发送建立 happens-before，不读并发写入的状态。
+			if r.slot >= 0 && r.slot < len(dialedOut) {
+				dialedOut[r.slot] = r.dialed
+			}
 			if r.err != nil {
 				if errors.Is(r.err, errRaceNoBudget) {
 					budgetOut = true

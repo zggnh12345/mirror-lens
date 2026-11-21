@@ -1142,7 +1142,11 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 			if ia, ib, ok := raceTargets(targets, pair); ok {
 				raceFormed = true
 				tried[ia], tried[ib] = true, true
-				up, win, start, rerr := g.raceManifest(ctx, plan, prev, pair)
+				// dialed 按 slot 记录「是否真正进入 openUpstream」：slot0→ia、
+				// slot1→ib（raceTargets 保证 pair[0]→ia、pair[1]→ib）。仅对
+				// 未拨号的候选回滚 tried，已真实拨号失败的源保留，避免重复请求。
+				dialed := make([]bool, 2)
+				up, win, start, rerr := g.raceManifest(ctx, plan, prev, pair, dialed)
 				if up != nil {
 					winIdx := ia
 					if win == 1 {
@@ -1180,10 +1184,18 @@ func (g *Gateway) fetchSeq(ctx context.Context, plan *adapter.Plan, prev *store.
 					if errors.Is(rerr, v2auth.ErrPolicyMissing) && policyErr == nil {
 						policyErr = rerr
 					}
-					if errors.Is(rerr, errRaceNoBudget) {
+					// 只回滚「未真正拨号」的候选：预算跳过时 started=true 但
+					// openUpstream 从未调用，tried 预留必须撤销，否则顺序回退
+					// 会跳过合格镜像源而错误回退官方。已拨号失败的源保留 tried，
+					// 不会被顺序路径重复请求。dialed 由 raceManifest 在收到各
+					// slot 的 raceResult 后填充，读取无数据竞争。
+					if !dialed[0] {
 						delete(tried, ia)
+					}
+					if !dialed[1] {
 						delete(tried, ib)
-					} else if rerr != nil {
+					}
+					if rerr != nil && !errors.Is(rerr, errRaceNoBudget) {
 						lastErr = rerr
 					}
 				}
