@@ -604,8 +604,15 @@ func (g *Gateway) fetchReplicaArtifactCore(ctx context.Context, plan *adapter.Pl
 //     不计样本（F03），并清理临时文件与在途资源；
 //   - 全部 Source 失败 → 该 Registry 整体失败，交回外层 B 继续补位。
 func (g *Gateway) fetchRegistryArtifact(ctx context.Context, plan *adapter.Plan, t replicaTarget, identityHost string) (replicaArtifact, int, error) {
+	// P2：B 候选执行路径不得读写共享父级 plan.Source。胜者回填发生在
+	// crossRegistryManifest:1006/875，而 abandoned 输家在 RunCrossRace 返回后
+	// 仍可能在 core 失败路径 loggw 读 plan.Source，形成无同步 data race
+	// （实测：写 replica.go:1006 vs 读 gateway.go:1988 via replica.go:506）。
+	// 在入口做一次独立快照，下面两条执行路径（单 Source 与内层 A 竞速）
+	// 都只操作各自的快照；外层仅在确定最终胜者后回填共享 plan.Source。
+	base := *plan
 	if len(t.alts) == 0 {
-		return g.fetchReplicaArtifact(ctx, plan, t, identityHost)
+		return g.fetchReplicaArtifact(ctx, &base, t, identityHost)
 	}
 
 	sources := make([]replicaTarget, 0, 1+len(t.alts))
@@ -636,12 +643,11 @@ func (g *Gateway) fetchRegistryArtifact(ctx context.Context, plan *adapter.Plan,
 		cancels[i] = cancel
 		idx, s, gd := i, src, guards[i]
 		go func() {
-			// 每个内层 Source 用独立的 plan 浅拷贝：fetchReplicaArtifactCore
-			// 内 loggw 会读 plan.Source，而外层胜者返回后会写 plan.Source。
-			// 共享同一 *Plan 会与仍在收尾的输家 goroutine 产生 DATA RACE
-			// （实测 replica.go:968 写 vs loggw 读）。内层只读 plan，浅拷贝
-			// 即可隔离该字段；不改任何被共享的引用型字段内容。
-			pp := *plan
+			// 从 B 候选独立快照 base 派生内层 Source 快照：既不读共享父级
+			// plan.Source（P2 隔离），也保留内层 A 竞速各自的 Source 记录语义。
+			// fetchReplicaArtifactCore 对 plan 只读，浅拷贝即可隔离 Source 字段，
+			// 不改任何被共享的引用型字段内容。
+			pp := base
 			art, code, err := g.fetchReplicaArtifactCore(sctx, &pp, s, identityHost, gd)
 			ch <- innerResult{idx: idx, art: art, code: code, err: err}
 		}()

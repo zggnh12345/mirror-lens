@@ -1,0 +1,69 @@
+==================
+WARNING: DATA RACE
+Read at 0x00c00014e588 by goroutine 1389:
+  github.com/zggnh12345/mirror-lens/internal/gateway.loggw()
+      /opt/data/cache/scratch/ml8/internal/gateway/gateway.go:1988 +0x338
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).fetchReplicaArtifactCore()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:506 +0x624
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).fetchReplicaArtifact()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:460 +0x224
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).fetchRegistryArtifact()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:608 +0x14c
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).crossRegistryManifest.func2.1()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:901 +0x1cc
+  sync.(*Once).doSlow()
+      /opt/data/cache/tools/go/src/sync/once.go:78 +0xa1
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).crossRegistryManifest.func4()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:957 +0x38
+  github.com/zggnh12345/mirror-lens/internal/unified.runCandidate()
+      /opt/data/cache/scratch/ml8/internal/unified/crossrace.go:360 +0xf8
+  github.com/zggnh12345/mirror-lens/internal/unified.RunCrossRace.func3()
+      /opt/data/cache/scratch/ml8/internal/unified/crossrace.go:162 +0x1b0
+  github.com/zggnh12345/mirror-lens/internal/unified.RunCrossRace.gowrap1()
+      /opt/data/cache/scratch/ml8/internal/unified/crossrace.go:181 +0x38
+
+Previous write at 0x00c00014e588 by goroutine 1211:
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).crossRegistryManifest()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:1006 +0x1795
+  github.com/zggnh12345/mirror-lens/internal/gateway.TestReplicaRaceSlowLoserNoSharedPlanSourceRace()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica_test.go:361 +0x18e
+  testing.tRunner()
+      /opt/data/cache/tools/go/src/testing/testing.go:2195 +0x21c
+  testing.(*T).Run.gowrap1()
+      /opt/data/cache/tools/go/src/testing/testing.go:2260 +0x38
+
+Goroutine 1389 (running) created at:
+  github.com/zggnh12345/mirror-lens/internal/unified.RunCrossRace()
+      /opt/data/cache/scratch/ml8/internal/unified/crossrace.go:160 +0x84e
+  github.com/zggnh12345/mirror-lens/internal/gateway.(*Gateway).crossRegistryManifest()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica.go:971 +0x1058
+  github.com/zggnh12345/mirror-lens/internal/gateway.TestReplicaRaceSlowLoserNoSharedPlanSourceRace()
+      /opt/data/cache/scratch/ml8/internal/gateway/replica_test.go:361 +0x18e
+  testing.tRunner()
+      /opt/data/cache/tools/go/src/testing/testing.go:2195 +0x21c
+  testing.(*T).Run.gowrap1()
+      /opt/data/cache/tools/go/src/testing/testing.go:2260 +0x38
+
+Goroutine 1211 (running) created at:
+  testing.(*T).Run()
+      /opt/data/cache/tools/go/src/testing/testing.go:2260 +0xb12
+  testing.runTests.func1()
+      /opt/data/cache/tools/go/src/testing/testing.go:2744 +0x84
+  testing.tRunner()
+      /opt/data/cache/tools/go/src/testing/testing.go:2195 +0x21c
+  testing.runTests()
+      /opt/data/cache/tools/go/src/testing/testing.go:2742 +0x9e9
+  testing.(*M).Run()
+      /opt/data/cache/tools/go/src/testing/testing.go:2602 +0xf44
+  go.uber.org/goleak.VerifyTestMain()
+      /opt/data/home/go/pkg/mod/go.uber.org/goleak@v1.3.0/testmain.go:53 +0x64
+  github.com/zggnh12345/mirror-lens/internal/gateway.TestMain()
+      /opt/data/cache/scratch/ml8/internal/gateway/leak_test.go:12 +0x5e4
+  main.main()
+      _testmain.go:996 +0x171
+==================
+--- FAIL: TestReplicaRaceSlowLoserNoSharedPlanSourceRace (0.48s)
+    testing.go:1867: race detected during execution of test
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	18.990s
+FAIL

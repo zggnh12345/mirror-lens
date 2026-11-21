@@ -346,6 +346,38 @@ func TestReplicaRaceSlowCandidatesStillConfirm(t *testing.T) {
 	}
 }
 
+// P2 共享 plan.Source 竞态定向验证：快胜者 quay.io（200）、慢失败副本
+// gcr.io（延迟 350ms > 200ms 窗口后返回 500）。慢副本在 RunCrossRace 返回、
+// 胜者回填 plan.Source 之后，仍在 fetchReplicaArtifactCore 的非 200 失败路径
+// loggw 读共享 plan.Source——若未隔离即产生无同步的写/读 data race。
+// 同时断言胜者 Source 与响应头语义不变。用 -race -count 反复触发。
+func TestReplicaRaceSlowLoserNoSharedPlanSourceRace(t *testing.T) {
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}`)
+	f := newReplicaFixture(t, body, body)
+	// 新增慢失败副本：延迟贴近写窗口，确保胜者回填 plan.Source 前后它正在
+	// fetchReplicaArtifactCore 的非 200 失败路径 loggw 读共享 plan.Source。
+	f.addReplicaWithBehavior(t, "gcr.io", "mirror/kube-apiserver", body, 210*time.Millisecond, http.StatusInternalServerError)
+
+	e, handled, err := f.gw.crossRegistryManifest(f.ctx(), f.plan, nil)
+	if err != nil || !handled || e == nil {
+		t.Fatalf("快胜者应确认交付: handled=%v err=%v", handled, err)
+	}
+	if e.SHA256 != shaOf(body) {
+		t.Fatalf("内容不对: %s", e.SHA256)
+	}
+	// 胜者必须是快的 quay.io 副本（名 replica-mirror），不能被慢失败副本覆盖。
+	if got := f.plan.Source; got != "replica-mirror" {
+		t.Fatalf("共享 plan.Source 应指向最终胜者 quay.io，实际 %q", got)
+	}
+	// 慢失败副本确实被调用（构造出 abandoned 输家时序）。
+	f.mu.Lock()
+	slowHits := f.replicaHits["gcr.io"].Load()
+	f.mu.Unlock()
+	if slowHits < 1 {
+		t.Fatalf("慢失败副本应被派发一次，实际 %d", slowHits)
+	}
+}
+
 // 竞速没有结论时，顺序回退必须落在同一条 B 链上，不能被 F19 的 dispatched
 // Claim 抑制（那会把「副本不可用」变成 502）。
 func TestReplicaNoConclusionFallsBackOnSameChain(t *testing.T) {
@@ -373,9 +405,24 @@ func TestReplicaNoConclusionFallsBackOnSameChain(t *testing.T) {
 // 真实 Host 能力提交、真实映射、星标与参选勾选。返回该副本的 Source ID。
 func (f *replicaFixtureT) addReplica(t *testing.T, regHost, repo string, body []byte) int64 {
 	t.Helper()
+	return f.addReplicaWithBehavior(t, regHost, repo, body, 0, 0)
+}
+
+// addReplicaWithBehavior 追加一个可控延迟/状态码的可信副本，用于构造
+// 「窗口关闭后 abandoned 输家仍在 core 失败路径读 plan.Source」的并发时序
+// （P2 共享 plan.Source 竞态定向验证）。delay/status 只作用于 HTTP handler。
+func (f *replicaFixtureT) addReplicaWithBehavior(t *testing.T, regHost, repo string, body []byte, delay time.Duration, status int) int64 {
+	t.Helper()
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if status != 0 {
+			http.Error(w, "boom", status)
+			return
+		}
 		w.Header().Set("Content-Type", manifestsAccept)
 		w.Write(body)
 	}))
