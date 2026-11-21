@@ -1,0 +1,36 @@
+CONC 8 TAG c8clean
+SETUP
+SEED FIXTURE
+SEED SQL 0
+DIGESTS 8
+BASELINE star=OFF
+STAR [1, 2] CLEANED_DISCOVERED
+PRETEST_CLEAN 0
+  r1: ok=8/8 err=0
+  r2: ok=8/8 err=0
+  r3: ok=8/8 err=0
+  r4: ok=8/8 err=0
+  r5: ok=8/8 err=0
+  r6: ok=8/8 err=0
+  r7: ok=8/8 err=0
+  r8: ok=8/8 err=0
+  r9: ok=8/8 err=0
+  r10: ok=8/8 err=0
+RACE star=ON
+STAR [1, 2] CLEANED_DISCOVERED
+PRETEST_CLEAN 72
+  r1: ok=8/8 err=0
+  r2: ok=8/8 err=0
+  r3: ok=8/8 err=0
+  r4: ok=8/8 err=0
+  r5: ok=8/8 err=0
+  r6: ok=8/8 err=0
+  r7: ok=8/8 err=0
+  r8: ok=8/8 err=0
+  r9: ok=8/8 err=0
+  r10: ok=8/8 err=0
+VERDICT {"p95_improve": 0.7698, "threshold_met": true, "caliber_consistent": true, "PASS": true}
+BASE p50/p95/p99 129.044 891.209 894.365 err 0.0 401 0
+RACE p50/p95/p99 107.258 205.135 393.621 err 0.0 401 0
+RACE metrics {"started_total": 80.0, "extra_requests_total": 6.0, "wins_rank1": 54.0, "wins_rank2": 6.0, "cancelled_total": 6.0, "body_failures_total": 0.0, "fallback_total": 20.0, "budget_skipped_total": 20.0, "ineligible_total": 80.0}
+DONE
