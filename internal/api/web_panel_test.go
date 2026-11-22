@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -398,8 +400,13 @@ func TestPanelLiveContract(t *testing.T) {
 	if !strings.Contains(src, "loadLive(); }, 2000)") {
 		t.Error("实时区必须 2 秒一刷，否则进度条和速度看着是死的")
 	}
-	if !strings.Contains(src, "app.css?v=16") {
-		t.Error("改了样式却没升 app.css 版本号，浏览器会继续用旧缓存")
+	// 改了样式必须升 app.css 版本号，浏览器才不会用旧缓存。
+	// 断言版本号 >= 基准（16），而不是等于某个固定值——后者会在每次合法升版时误报。
+	m := regexp.MustCompile(`app\.css\?v=([0-9]+)`).FindStringSubmatch(src)
+	if m == nil {
+		t.Error("index.html 未引用带版本号 app.css?v=N")
+	} else if v, err := strconv.Atoi(m[1]); err != nil || v < 16 {
+		t.Errorf("app.css 版本号必须 >= 16（改样式要升版），实际 %q", m[1])
 	}
 	css, err := webFS.ReadFile("web/app.css")
 	if err != nil {
