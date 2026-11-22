@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=16">
+<link rel="stylesheet" href="/app.css?v=20">
 </head>
 <body>
 <header>
@@ -31,6 +31,29 @@
   </div>
 </header>
 
+<aside class="app-sidebar" aria-label="主导航">
+  <div class="sidebar-label">工作区</div>
+  <a class="side-link active" href="#dashboardHome"><span class="side-icon">▦</span><span>运行总览</span></a>
+  <a class="side-link" href="#sourceManagement"><span class="side-icon">◫</span><span>加速源管理</span></a>
+  <a class="side-link" href="#raceSec"><span class="side-icon">⇄</span><span>同站竞速</span></a>
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-label">系统</div>
+  <a class="side-link" href="/settings"><span class="side-icon">⚙</span><span>设置中心</span></a>
+  <div class="sidebar-bottom">
+    <span class="side-status-dot"></span>
+    <span>Mirror Lens</span>
+    <span class="side-version" id="sideVersion">3.5.18</span>
+  </div>
+</aside>
+
+<nav class="mobile-nav" aria-label="快捷导航">
+  <a class="active" href="#dashboardHome">总览</a>
+  <a href="#sourceManagement">源管理</a>
+  <a href="#raceSec">同站竞速</a>
+  <a href="/settings">设置</a>
+</nav>
+
+<div class="app-main">
 <div class="wrap">
   <div id="pwbar" style="display:none;margin-top:12px">
     <div class="sec" style="display:flex;align-items:center;gap:10px;border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-soft);margin:0">
@@ -38,6 +61,19 @@
       <a class="btn" href="/settings">去设置</a>
     </div>
   </div>
+
+  <section id="dashboardHome" class="dashboard-page">
+    <div class="page-heading">
+      <div>
+        <div class="eyebrow">OVERVIEW</div>
+        <h2>运行总览</h2>
+        <p>镜像加速服务运行状态与流量表现</p>
+      </div>
+      <div class="heading-actions">
+        <span class="live-status"><i></i>实时监控</span>
+        <a class="btn ghost" href="/settings">系统设置</a>
+      </div>
+    </div>
 
   <div class="stats">
     <div class="stat"><b id="sTotal">–</b><span>全部源</span></div>
@@ -80,6 +116,64 @@
       <div class="ovnote" id="ovConcNote"></div>
     </div>
   </section>
+
+  <section id="dashCharts" class="dash-grid" aria-label="流量分析">
+    <article class="dash-card dash-wide">
+      <div class="dash-card-head">
+        <div>
+          <h2>近 7 天流量趋势</h2>
+          <p>按日统计缓存命中、回源填充与透传流量</p>
+        </div>
+        <span class="chart-period">最近 7 天</span>
+      </div>
+      <div class="dash-legend">
+        <span><i class="legend-hit"></i>缓存命中</span>
+        <span><i class="legend-fill"></i>回源填充</span>
+        <span><i class="legend-bypass"></i>透传</span>
+      </div>
+      <div id="trafficChart" class="traffic-chart">
+        <div class="chart-empty">正在读取流量账本…</div>
+      </div>
+    </article>
+
+    <article class="dash-card">
+      <div class="dash-card-head">
+        <div>
+          <h2>实时吞吐</h2>
+          <p>当前页面会话内采样，刷新后重新累计</p>
+        </div>
+        <strong id="throughputValue" class="chart-live-value">等待数据</strong>
+      </div>
+      <svg id="throughputChart" class="throughput-chart" viewBox="0 0 720 220"
+           preserveAspectRatio="none" role="img" aria-label="实时吞吐曲线"></svg>
+      <div class="chart-foot">
+        <span id="throughputRange">等待活跃任务采样</span>
+        <span>最多 60 个采样点</span>
+      </div>
+    </article>
+
+    <article class="dash-card">
+      <div class="dash-card-head">
+        <div>
+          <h2>今日流量构成</h2>
+          <p>按协议场景统计实际传输字节</p>
+        </div>
+      </div>
+      <div id="trafficKindChart" class="traffic-kind-chart">
+        <div class="chart-empty">等待流量数据</div>
+      </div>
+    </article>
+  </section>
+  </section>
+
+  <section id="sourceManagement" class="source-section">
+    <div class="page-heading source-heading">
+      <div>
+        <div class="eyebrow">SOURCES</div>
+        <h2>加速源管理</h2>
+        <p>维护源站、分组和 Docker / GitHub 调度顺序</p>
+      </div>
+    </div>
 
   <div class="toolbar">
     <input class="search" id="q" placeholder="搜索名称或域名" autocomplete="off">
@@ -125,44 +219,19 @@
   </div>
 
   <div class="list" id="list"></div>
+  </section>
 
   <!-- 3.5.16 Manifest 竞速：Host 开关（人工启停）、星标（人工资格）、
        能力状态（探测结果）三个概念分开显示，绝不合并成「已授权竞速」。 -->
-  <section id="raceSec" class="sec" style="margin-top:14px;display:none">
+  <section id="raceSec" class="sec feature-section race-section" style="margin-top:14px;display:none">
     <h2>Manifest 竞速 <span style="font-weight:400;color:var(--faint);font-size:11px">3.5.16 · 默认关闭</span></h2>
     <p class="hint" style="margin:2px 0 8px">只对<b>不可变 Digest</b> 的 Manifest 生效，可变 tag 仍按原顺序回源。开关是必要条件：还要有两个已星标、且在该 Host 能力合格的源。</p>
     <div id="raceRows"></div>
   </section>
 
-  <section id="crossSec" class="sec" style="margin-top:14px">
-    <h2>跨站副本 <span style="font-weight:400;color:var(--faint);font-size:11px">3.5.18 · B 总开关默认开启</span></h2>
-    <p class="hint" style="margin:2px 0 8px">只作用于 <b>/v2/ 清单获取</b>，raw/git 多源不受影响。<b>顺序回退</b>候选来自可信映射、不受参选勾选限制；<b>跨站竞速</b>才要求候选同时是星标源、已勾选参选且被调度器选中。身份校验失败的候选不参与、不回退（Fail Closed）。</p>
-    <div class="row" style="margin:0 0 10px">
-      <div class="main"><div class="rl1"><b>B 总开关</b></div>
-        <div class="rl2"><i>关闭仅停用跨站调度，不删除映射与参选配置</i></div></div>
-      <label class="sw"><input type="checkbox" id="crossEnabled"><span></span></label>
-    </div>
-    <div class="sseg" role="group" aria-label="跨站模式">
-      <button class="ssegb" data-rmode="sequential" aria-pressed="true">顺序回退</button>
-      <button class="ssegb" data-rmode="race" aria-pressed="false">跨站竞速</button>
-    </div>
-    <p class="hint" id="crossDesc" style="margin:6px 0 0">省请求，前一个 404/超时/无效才问下一个</p>
-    <div class="row" style="margin:10px 0 0">
-      <div class="main"><div class="rl1"><b>排序模式</b></div>
-        <div class="rl2"><i>固定优先级按 priority；动态排序按 50 有效样本的评分重排 M 内候选，不足门槛自动回退固定顺序</i></div></div>
-      <div class="sseg" role="group" aria-label="排序模式">
-        <button class="ssegb" data-sortmode="fixed" aria-pressed="true">固定</button>
-        <button class="ssegb" data-sortmode="dynamic" aria-pressed="false">动态</button>
-      </div>
-    </div>
-    <div id="crossSel" style="margin-top:8px"></div>
-    <div id="crossDyn" style="margin-top:10px"></div>
-    <details id="crossRuns" style="margin-top:12px">
-      <summary class="hint" style="cursor:pointer">运行审计（最近跨站调度，只读）</summary>
-      <div id="crossRunsBody" style="margin-top:6px;font-size:12px;color:var(--faint)">加载中…</div>
-    </details>
-  </section>
+
 </div>
+</div><!-- /.app-main -->
 
 <!-- 添加 -->
 <!-- 告警：error 级日志，点开即已读 -->
@@ -815,7 +884,6 @@ async function load(quiet){
     try{ SORDER = await api('/api/sched-order'); }catch(e){}
     render();
     loadRace();
-    loadCross();
   }catch(e){ if(!quiet) toast(e.message); }
 }
 
@@ -847,123 +915,6 @@ function renderRace(){
       + '</div>';
   }).join('');
 }
-/* ---- 跨站副本（3.5.18 18b） ---- */
-var CROSS = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]};
-async function loadCross(){
-  try{ CROSS = await api('/api/cross-registry'); }catch(e){ CROSS = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]}; }
-  renderCross();
-}
-function renderCross(){
-  var box = $('#crossSec');
-  if (!box) return;
-  var en = $('#crossEnabled');
-  if (en) en.checked = CROSS.enabled !== false;
-  document.querySelectorAll('#crossSec .ssegb[data-rmode]').forEach(function(b){
-    var on = (b.getAttribute('data-rmode') === CROSS.mode);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-  document.querySelectorAll('#crossSec .ssegb[data-sortmode]').forEach(function(b){
-    var on = (b.getAttribute('data-sortmode') === (CROSS.sort_mode || 'fixed'));
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-  var d = $('#crossDesc');
-  if (d) d.textContent = CROSS.mode === 'race'
-    ? '具备资格的可信候选在预算内并行请求，谁先返回有效清单用谁'
-    : '按可信映射顺序回退，不受参选勾选限制；前一个失败才问下一个';
-  // 动态排序展示（§7.7）：只展示后端真实快照，不虚构/不默认填充。
-  var dyn = $('#crossDyn');
-  if (dyn){
-    var ds = CROSS.dynamic_state || {};
-    if (ds.enabled && (ds.entries || []).length){
-      var rows = ds.entries.map(function(e){
-        var rate = (e.success_rate != null) ? (Math.round(e.success_rate*100) + '%') : '-';
-        var ls = (e.latency_score != null) ? e.latency_score.toFixed(3) : '-';
-        var sc = (e.score != null) ? e.score.toFixed(3) : '-';
-        var p50 = (e.p50_ttfb_ms != null) ? Math.round(e.p50_ttfb_ms) + 'ms' : '-';
-        return '<div class="row"><div class="main"><div class="rl1"><b>#' + (e.rank||'-')
-          + ' ' + (e.registry_host||'-') + ' #' + (e.source_id||'-') + '</b></div>'
-          + '<div class="rl2"><i>样本 ' + (e.valid_samples||0) + '/50 ' + (e.ready?'· 达标':'· 未达标')
-          + ' · 成功率 ' + rate + ' · P50 ' + p50 + ' · 延迟分 ' + ls + ' · 评分 ' + sc + '</i></div></div></div>';
-      }).join('');
-      dyn.innerHTML = '<p class="hint" style="margin:0 0 6px">动态排序快照（公式 ' + (ds.formula_version||'-')
-        + ' · 修订 ' + (ds.revision||0) + ' · 时间 ' + (ds.updated_at ? new Date(ds.updated_at*1000).toLocaleString() : '-') + '）</p>' + rows;
-    } else {
-      dyn.innerHTML = '<p class="hint">' + (ds.reason || '动态排序未启用') + '</p>';
-    }
-  }
-  var sel = $('#crossSel');
-  if (!sel) return;
-  var selSet = {};
-  (CROSS.selected || []).forEach(function(id){ selSet[id] = 1; });
-  if (!(CROSS.starred || []).length){ sel.innerHTML = '<p class="hint">还没有星标源：跨站竞速候选必须来自星标源；顺序回退不受此限制。</p>'; return; }
-  sel.innerHTML = '<p class="hint" style="margin:0 0 6px">跨站参选（仅约束竞速：只有勾选的星标源会参与跨站竞速；顺序回退不受影响）</p>'
-    + CROSS.starred.map(function(id){
-        return '<div class="row"><div class="main"><div class="rl1"><b>Source #' + id + '</b></div></div>'
-          + '<label class="sw"><input type="checkbox" data-cross-sel="' + id + '"'
-          + (selSet[id] ? ' checked' : '') + '><span></span></label></div>';
-      }).join('');
-}
-
-/* ---- 18f：运行审计（最近跨站调度，只读；按需加载） ---- */
-async function loadCrossRuns(){
-  var body = $('#crossRunsBody');
-  if (!body) return;
-  body.textContent = '加载中…';
-  try{
-    var out = await api('/api/cross-runs?limit=30');
-    var items = out.items || [];
-    if (!items.length){ body.innerHTML = '<p class="hint" style="margin:0">暂无跨站调度记录</p>'; return; }
-    body.innerHTML = items.map(function(r){
-      var winner = (r.winner_id && r.winner_id > 0) ? ('Source #' + r.winner_id) : (r.winner_id === 0 ? '官方权威' : '-');
-      var at = r.at ? new Date(r.at).toLocaleTimeString() : '-';
-      return '<div class="row"><div class="main"><div class="rl1"><b>' + at
-        + ' · ' + (r.registry||'-') + ' · ' + winner + '</b></div>'
-        + '<div class="rl2"><i>' + (r.mode||'-') + ' · 结果 ' + (r.outcome||'-')
-        + ' · 投票 ' + (r.vote_state||'-') + ' · 候选 ' + (r.candidates||0)
-        + ' · Source ' + (r.sources||0) + ' · 权威 ' + (r.authority?'是':'否')
-        + ' · 缓存 ' + (r.cache_put||'-') + ' · 补位 ' + (r.backfill||0)
-        + (r.truncated_candidates? ' · 截断 ' + r.truncated_candidates : '')
-        + ' · 取消 ' + (r.canceled||0) + (r.nested?' · 嵌套竞速':'') + '</i></div></div></div>';
-    }).join('');
-  }catch(e){ body.textContent = '加载失败：' + (e.message || e); }
-}
-async function setCrossEnabled(on){
-  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({enabled: !!on})}); toast(on ? '已开启跨站副本' : '已关闭跨站副本（配置保留）'); }
-  catch(e){ toast(e.message); }
-  await loadCross();
-}
-async function setCrossMode(mode){
-  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({mode: mode})}); toast('已切换为' + (mode==='race'?'跨站竞速':'顺序回退')); }
-  catch(e){ toast(e.message); }
-  await loadCross();
-}
-async function setCrossSelected(id, on){
-  var next = (CROSS.selected || []).filter(function(v){ return v !== id; });
-  if (on) next.push(id);
-  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({selected: next})}); }
-  catch(e){ toast(e.message); }
-  await loadCross();
-}
-document.addEventListener('click', function(ev){
-  var b = ev.target && ev.target.closest ? ev.target.closest('#crossSec .ssegb') : null;
-  if (!b) return;
-  var m = b.getAttribute('data-rmode');
-  if (m && m !== CROSS.mode) setCrossMode(m);
-  var sm = b.getAttribute('data-sortmode');
-  if (sm && sm !== (CROSS.sort_mode || 'fixed')) setCrossSort(sm);
-});
-async function setCrossSort(mode){
-  try{ await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({sort_mode: mode})}); toast(mode === 'dynamic' ? '已切换为动态排序（不足 50 样本自动回退固定顺序）' : '已切换为固定排序'); }
-  catch(e){ toast(e.message); }
-  await loadCross();
-}
-document.addEventListener('change', function(ev){
-  var t = ev.target;
-  if (t && t.id === 'crossEnabled'){ setCrossEnabled(t.checked); return; }
-  if (t && t.getAttribute && t.getAttribute('data-cross-sel')){
-    setCrossSelected(parseInt(t.getAttribute('data-cross-sel'), 10), t.checked);
-  }
-});
 async function setRaceHost(host, on){
   try{
     await api('/api/star-race/' + encodeURIComponent(host), {method:'PUT', body: JSON.stringify({enabled: !!on})});
@@ -1466,6 +1417,153 @@ function renderSpark(){
   var pts = hitSpark.map(function(v,i){ var y=(h-3)-(v*(h-6)); return (i*(w/(n-1))).toFixed(1)+','+y.toFixed(1); });
   svg.innerHTML = '<polyline points="'+pts.join(' ')+'" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round"/>';
 }
+
+/* ---- Dashboard charts: data comes only from existing API snapshots ---- */
+var throughputSamples = [];
+var throughputLastTS = 0;
+
+function dashboardBytes(n){
+  n = Math.max(0, Number(n) || 0);
+  var units = ['B','KB','MB','GB','TB'], i = 0;
+  while (n >= 1024 && i < units.length - 1){ n /= 1024; i++; }
+  return n.toFixed(i && n < 10 ? 1 : 0) + ' ' + units[i];
+}
+function dashboardRate(n){
+  n = Math.max(0, Number(n) || 0);
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB/s';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB/s';
+  return Math.round(n) + ' B/s';
+}
+function renderTrafficChart(rows){
+  var box = $('#trafficChart');
+  if (!box) return;
+  if (!rows.length){
+    box.innerHTML = '<div class="chart-empty">最近 7 天没有流量记录</div>';
+    return;
+  }
+  var max = rows.reduce(function(v, r){
+    return Math.max(v, r.hit + r.fill + r.bypass);
+  }, 0);
+  if (!max){
+    box.innerHTML = '<div class="chart-empty">最近 7 天暂无有效流量</div>';
+    return;
+  }
+  box.innerHTML = '<div class="traffic-bars">' + rows.map(function(r){
+    var total = r.hit + r.fill + r.bypass;
+    var h = function(v){ return Math.max(0, v / max * 100); };
+    var label = r.day.slice(5).replace('-', '/');
+    return '<div class="traffic-day" title="' + esc(r.day) + ' · ' + esc(dashboardBytes(total)) + '">' +
+      '<div class="traffic-bar-stack">' +
+        '<i class="hit" style="height:' + h(r.hit).toFixed(2) + '%"></i>' +
+        '<i class="fill" style="height:' + h(r.fill).toFixed(2) + '%"></i>' +
+        '<i class="bypass" style="height:' + h(r.bypass).toFixed(2) + '%"></i>' +
+      '</div><span>' + esc(label) + '</span></div>';
+  }).join('') + '</div><div class="chart-foot"><span>最大日流量 ' +
+    esc(dashboardBytes(max)) + '</span><span>单位：字节</span></div>';
+}
+function renderTrafficKindChart(kinds){
+  var box = $('#trafficKindChart');
+  if (!box) return;
+  var labels = {
+    docker:'Docker', git:'Git', raw:'GitHub Raw', gh:'GitHub Release',
+    http:'HTTP', unknown:'未知场景'
+  };
+  var palette = ['#3977e8','#13a68b','#8b70d6','#e4a343','#35a4c7','#8793a4'];
+  var rows = Object.keys(kinds || {}).map(function(k, i){
+    var v = kinds[k] || {};
+    var bytes = Math.max(0, Number(v.hit) || 0) +
+      Math.max(0, Number(v.fill) || 0) +
+      Math.max(0, Number(v.bypass) || 0);
+    return {kind:k, label:labels[k] || k, bytes:bytes, color:palette[i % palette.length]};
+  }).filter(function(x){ return x.bytes > 0; }).sort(function(a,b){ return b.bytes-a.bytes; });
+  var total = rows.reduce(function(n,x){ return n+x.bytes; },0);
+  if (!total){
+    box.innerHTML = '<div class="chart-empty">今日暂无流量统计</div>';
+    return;
+  }
+  var angle = 0, stops = [];
+  rows.forEach(function(x){
+    var next = angle + x.bytes / total * 100;
+    stops.push(x.color + ' ' + angle.toFixed(3) + '% ' + next.toFixed(3) + '%');
+    angle = next;
+  });
+  box.innerHTML =
+    '<div class="kind-donut-wrap"><div class="kind-donut" style="background:conic-gradient(' +
+    stops.join(',') + ')"><div class="kind-donut-hole"><b>' +
+    esc(dashboardBytes(total)) + '</b><span>今日总流量</span></div></div></div>' +
+    '<div class="kind-legend">' + rows.map(function(x){
+      return '<div><i style="background:' + x.color + '"></i><span>' +
+        esc(x.label) + '</span><b>' + esc(dashboardBytes(x.bytes)) + '</b></div>';
+    }).join('') + '</div>';
+}
+async function loadTrafficDashboard(){
+  try{
+    var d = await api('/api/accel/stats');
+    var byDay = {};
+    (d.traffic || []).forEach(function(r){
+      if (!r || !/^\d{4}-\d{2}-\d{2}$/.test(r.day || '')) return;
+      var day = byDay[r.day] || (byDay[r.day] = {
+        day:r.day, hit:0, fill:0, bypass:0
+      });
+      var n = Math.max(0, Number(r.bytes) || 0);
+      if (r.traffic === 'cache_hit') day.hit += n;
+      else if (r.traffic === 'cache_fill') day.fill += n;
+      else if (r.traffic === 'bypass') day.bypass += n;
+    });
+    var rows = Object.keys(byDay).sort().slice(-7).map(function(k){ return byDay[k]; });
+    renderTrafficChart(rows);
+    renderTrafficKindChart((d.today && d.today.kinds) || {});
+  }catch(e){
+    var a = $('#trafficChart'), b = $('#trafficKindChart');
+    if (a) a.innerHTML = '<div class="chart-empty bad">流量加载失败：' + esc(e.message) + '</div>';
+    if (b) b.innerHTML = '<div class="chart-empty">暂时无法读取</div>';
+  }
+}
+function recordThroughput(d){
+  if (!d) return;
+  var bps = Number(d.window_bps);
+  if (!Number.isFinite(bps) || bps < 0) return;
+  var ts = Number(d.now) || Math.floor(Date.now()/1000);
+  if (ts < throughputLastTS) return;
+  throughputLastTS = ts;
+  var last = throughputSamples[throughputSamples.length - 1];
+  if (last && last.ts === ts) last.bps = bps;
+  else throughputSamples.push({ts:ts, bps:bps});
+  if (throughputSamples.length > 60) throughputSamples.shift();
+  renderThroughputChart();
+}
+function renderThroughputChart(){
+  var svg = $('#throughputChart');
+  var val = $('#throughputValue');
+  if (!svg || !val) return;
+  if (!throughputSamples.length){
+    svg.innerHTML = '';
+    val.textContent = '等待数据';
+    return;
+  }
+  var vals = throughputSamples.map(function(x){ return x.bps; });
+  var max = Math.max.apply(Math, vals.concat([1]));
+  var min = Math.min.apply(Math, vals);
+  var span = Math.max(1, max - min);
+  var W=720,H=220,L=10,R=10,T=12,B=20;
+  var grid = [0,1,2,3].map(function(i){
+    var y=T+i*(H-T-B)/3;
+    return '<line x1="' + L + '" y1="' + y.toFixed(1) +
+      '" x2="' + (W-R) + '" y2="' + y.toFixed(1) +
+      '" stroke="var(--line)" stroke-width="1"/>';
+  }).join('');
+  var pts = vals.map(function(v,i){
+    var x = L + (vals.length < 2 ? (W-L-R)/2 : i*(W-L-R)/(vals.length-1));
+    var y = T + (max-v)*(H-T-B)/span;
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  });
+  svg.innerHTML = grid + '<polyline points="' + pts.join(' ') +
+    '" fill="none" stroke="var(--brand)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>';
+  val.textContent = dashboardRate(vals[vals.length-1]);
+  var range = $('#throughputRange');
+  if (range) range.textContent = throughputSamples.length + ' 个采样点 · 当前会话';
+}
+
 async function loadMetrics(){
   try{
     var m = await api('/api/metrics');
@@ -1520,10 +1618,12 @@ async function loadMetrics(){
 api('/api/me').then(function(d){
   window.ML_CSRF = d.csrf || '';
   $('#sub').textContent = d.user + ' · v' + d.version;
+  var sv = document.getElementById('sideVersion'); if (sv) sv.textContent = 'v' + d.version;
   $('#pwbar').style.display = d.must_change ? '' : 'none';
 }).catch(function(){});
 load();
 loadMetrics();
+loadTrafficDashboard();
 
 // 实时：活跃任务 2 秒一刷。只读展示，点不动、也改不了调度。
 // 场景热度的四类颜色：按协议区分，图例与堆叠条同一套。
@@ -1541,6 +1641,7 @@ function fmtSp(n){
   return Math.max(1, Math.round(n/1024))+' KB/s';
 }
 function renderLive(d){
+  recordThroughput(d);
   const sec = document.getElementById('liveSec');
   const act = (d && d.active) || [];
   const rec = (d && d.recent) || [];
@@ -1599,9 +1700,38 @@ setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.
 // 列表里的源状态最快也要几分钟才变一次，60 秒足够；指标曲线仍按 15 秒采样。
 setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) load(true); }, 60000);
 setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadMetrics(); }, 15000);
-document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); } });
-var _crossRunsEl = $('#crossRuns');
-if (_crossRunsEl) _crossRunsEl.addEventListener('toggle', function(){ if (this.open) loadCrossRuns(); });
+setInterval(function(){ if (!document.hidden && !document.querySelector('.sheet.on')) loadTrafficDashboard(); }, 60000);
+document.addEventListener('visibilitychange', function(){ if (!document.hidden){ load(true); loadMetrics(); loadTrafficDashboard(); } });
 </script>
+
+<script>
+/* UI navigation only: highlight the current section link. */
+(function(){
+  var links = document.querySelectorAll('.app-sidebar .side-link, .mobile-nav a');
+  function activate(id){
+    links.forEach(function(a){
+      var href = a.getAttribute('href') || '';
+      a.classList.toggle('active', href === '#' + id);
+    });
+  }
+  links.forEach(function(a){
+    a.addEventListener('click', function(){
+      var href = a.getAttribute('href') || '';
+      if (href.charAt(0) === '#') activate(href.slice(1));
+    });
+  });
+  if ('IntersectionObserver' in window) {
+    var targets = ['dashboardHome','sourceManagement','raceSec']
+      .map(function(id){ return document.getElementById(id); }).filter(Boolean);
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) activate(entry.target.id);
+      });
+    }, {rootMargin:'-18% 0px -68% 0px'});
+    targets.forEach(function(el){ observer.observe(el); });
+  }
+})();
+</script>
+
 </body>
 </html>

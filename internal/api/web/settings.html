@@ -7,9 +7,9 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <meta name="theme-color" content="#f6f7f9">
 <script>(function(){try{var t=localStorage.getItem('ml_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
-<link rel="stylesheet" href="/app.css?v=16">
+<link rel="stylesheet" href="/app.css?v=20">
 </head>
-<body>
+<body class="settings-page">
 <header>
   <div class="hbar">
     <a class="iconbtn" href="/" title="返回面板" aria-label="返回面板">
@@ -23,7 +23,9 @@
   </div>
 </header>
 
-<nav class="tabs" id="tabs" style="padding:6px 16px 2px">
+<div class="settings-shell">
+<nav class="tabs" id="tabs" aria-label="设置导航">
+  <div class="settings-nav-caption">SETTINGS</div>
   <button data-tab="account" class="on">账号</button>
   <button data-tab="appearance">外观</button>
   <button data-tab="probe">探测</button>
@@ -35,7 +37,17 @@
   <button data-tab="about">关于</button>
 </nav>
 
-<div class="wrap" style="max-width:640px">
+<main class="settings-main">
+  <div class="settings-page-heading">
+    <div>
+      <div class="eyebrow">CONFIGURATION</div>
+      <h2>系统设置</h2>
+      <p>管理账号、安全策略、加速行为与运行参数</p>
+    </div>
+    <a class="btn ghost" href="/">返回运行总览</a>
+  </div>
+
+<div class="wrap settings-wrap">
 
   <!-- 账号 -->
   <div data-panel="account" class="active">
@@ -110,51 +122,124 @@
   </div>
   </div>
 
-  <!-- 加速器 -->
-  <div data-panel="accel">
-  <div class="sec">
-    <h2>加速器<span class="qi" data-tip="在原始地址前加本站前缀就能用，客户端用 Access Token 认证（用户名随便填，密码位填 Token）。">?</span></h2>
-    <div class="kv"><span>GitHub Raw</span><code id="uRaw">/raw/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;path&gt;</code></div>
-    <div class="kv"><span>Git 克隆</span><code id="uGit">/git/github.com/&lt;owner&gt;/&lt;repo&gt;.git</code></div>
-    <div class="kv"><span>Docker 镜像</span><code id="uDocker">docker pull &lt;本站地址&gt;/library/alpine:3.20</code></div>
-    <div class="kv"><span>缓存占用</span><span id="acCache">—</span></div>
-    <div class="kv"><span>内容校验</span><span id="acVerify">—</span></div>
-    <div class="kv"><span>今日命中</span><span id="acHit">—</span></div>
-    <div class="kv"><span>回源 / 直通</span><span id="acFlow">—</span></div>
-    <div class="kv"><span>磁盘剩余</span><span id="acFree">—</span></div>
-    <div class="kv" id="acFreeFloorRow" hidden><span>剩余底线</span><span id="acFreeFloor">—</span></div>
-    <div class="kv mid"><span>调度顺序</span><div id="acSched">—</div></div>
-    <div class="kv"><span>并行分片</span><span id="acPar">—</span></div>
-    <div class="hint" style="margin-top:8px">★ 为手动优先源；在首页源列表点 ☆ 设置，调度时会排在同等可用源最前。</div>
-    <div class="saverow" style="margin-top:12px;flex-wrap:wrap;gap:8px">
-      <button class="btn" data-purge="raw">清空 Raw</button>
-      <button class="btn" data-purge="docker">清空 Docker</button>
-      <button class="btn danger" data-purge="all">清空全部</button>
-      <span class="hint" id="purgeMsg"></span>
-    </div>
+  <!-- 加速器：六个编号卡片，保留原有功能 ID 与事件绑定 -->
+  <div data-panel="accel" class="a1">
+  <div class="a1-wrap">
 
-    <label for="tkName" style="margin-top:14px">新建 Token<span class="qi" data-tip="给 Token 起个名字，方便以后认出是哪台设备在用。名字只是备注，不影响权限。">?</span></label>
-    <div class="saverow" style="margin-top:0">
-      <input type="text" id="tkName" placeholder="例如：我的笔记本" style="flex:1;min-width:0">
-      <button class="btn primary" id="btnToken">创建</button>
-    </div>
-    <div class="hint" id="tkMsg"></div>
-    <div class="tknew" id="tkNew" hidden>
-      <div class="hint">只显示这一次，复制走：</div>
-      <code id="tkPlain"></code>
-    </div>
-    <div class="tklist" id="tkList"></div>
+    <!-- 1 运行概况 -->
+    <section class="a1-card">
+      <div class="a1-h"><span class="a1-no">1.</span><h2>运行概况</h2><span class="badge-ok" id="acRunBadge"><i></i>运行中</span></div>
+      <div class="a1-metrics">
+        <div class="a1-metric"><span class="a1-ml">缓存命中率</span><span class="a1-mv" id="mHit">—</span></div>
+        <div class="a1-metric"><span class="a1-ml">活跃请求</span><span class="a1-mv" id="mActive">—</span></div>
+        <div class="a1-metric"><span class="a1-ml">可用来源</span><span class="a1-mv" id="mSources">—</span></div>
+      </div>
+      <div class="a1-detail"><button type="button" class="linkbtn" id="acDetail">查看详细信息 ›</button></div>
+    </section>
 
-    <h2 style="margin-top:20px">信任加速站<span class="qi" data-tip="从已有源里选。选中的源在拉私有仓库（带 PAT）时会同时竞速，取最快的一个；全部失败回退官方。">?</span></h2>
-    <div class="saverow" style="margin-top:0;flex-wrap:wrap">
-      <select id="trGroup" style="flex:1;min-width:110px"></select>
-      <button class="btn primary" id="trAdd" disabled>加入所选</button>
-    </div>
-    <div class="trpick" id="trPick"></div>
-    <div class="hint" id="trMsg"></div>
-    <div class="tklist" id="trList"></div>
+    <!-- 2 下载代理与缓存 -->
+    <section class="a1-card">
+      <div class="a1-h"><span class="a1-no">2.</span><h2>下载代理与缓存</h2><span class="badge-ok"><i></i>已启用</span></div>
+      <div class="a1-list">
+        <div class="a1-frow"><span class="a1-ico">⌁</span><span class="a1-fn">GitHub Raw 加速</span><code id="uRaw">/raw/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;path&gt;</code><span class="cok">✓</span></div>
+        <div class="a1-frow"><span class="a1-ico">⑂</span><span class="a1-fn">Git 克隆加速</span><code id="uGit">git clone https://本站/git/github.com/&lt;owner&gt;/&lt;repo&gt;.git</code><span class="cok">✓</span></div>
+        <div class="a1-frow"><span class="a1-ico">▣</span><span class="a1-fn">Docker 镜像加速</span><code id="uDocker">docker pull 本站/library/alpine:3.20</code><span class="cok">✓</span></div>
+        <div class="a1-frow"><span class="a1-ico">◫</span><span class="a1-fn">缓存管理</span><span class="a1-subline" id="acCache">—</span><button type="button" class="a1-mini" data-scroll="purge">管理</button></div>
+        <div class="a1-frow"><span class="a1-ico">⚿</span><span class="a1-fn">访问令牌</span><button type="button" class="a1-mini" data-scroll="token">管理</button></div>
+      </div>
+      <div class="a1-substats">
+        <span>今日命中 <b id="acHit">—</b></span>
+        <span>回源 / 直通 <b id="acFlow">—</b></span>
+        <span>内容校验 <b id="acVerify">—</b></span>
+        <span>磁盘剩余 <b id="acFree">—</b></span>
+        <span id="acFreeFloorRow" hidden>剩余底线 <b id="acFreeFloor">—</b></span>
+        <span>并行分片 <b id="acPar">—</b></span>
+      </div>
+    </section>
+
+    <!-- 3 当前节点顺序 -->
+    <section class="a1-card">
+      <div class="a1-h"><span class="a1-no">3.</span><h2>当前节点顺序</h2></div>
+      <div id="acSched" class="a1-tbl"></div>
+      <p class="a1-note"><span class="star">★</span> 表示手动优先节点。</p>
+    </section>
+
+    <!-- 4 站内竞速 -->
+    <section class="a1-card">
+      <div class="a1-h"><span class="a1-no">4.</span><h2>站内竞速</h2><span class="badge-ok"><i></i>已启用</span></div>
+      <div class="a1-row"><span>启用站内加速</span><label class="sw"><input type="checkbox" id="mohEnabled" checked><span></span></label></div>
+      <div class="a1-bluehint">来源路由由所有 Source 层标、Host 能力和健康状态等条件决定。</div>
+      <div class="a1-row"><span>最大并发 Source 数</span><div class="stepper"><input type="number" id="mohMax" min="1" max="10" value="2"><span class="stbtns"><button type="button" data-step="up">▲</button><button type="button" data-step="down">▼</button></span></div></div>
+    </section>
+
+    <!-- 5 跨站加速 -->
+    <section class="a1-card">
+      <div class="a1-h"><span class="a1-no">5.</span><h2>跨站加速</h2><span class="badge-ok"><i></i>已启用</span></div>
+      <div class="a1-field">请求方式</div>
+      <div class="a1-radio2">
+        <button type="button" class="a1-rc" data-rmode="sequential"><span class="a1-rd"></span>顺序回退</button>
+        <button type="button" class="a1-rc sel" data-rmode="race"><span class="a1-rd"></span>跨站快选</button>
+      </div>
+      <div class="a1-field">候选排序</div>
+      <div class="a1-radio2">
+        <button type="button" class="a1-rc" data-sortmode="fixed"><span class="a1-rd"></span>固定排序</button>
+        <button type="button" class="a1-rc sel" data-sortmode="dynamic"><span class="a1-rd"></span>动态排序</button>
+      </div>
+      <div class="a1-field">竞速来源</div>
+      <div class="a1-checks" id="crossSel"></div>
+      <p class="a1-note" id="crossDesc"></p>
+      <div class="a1-savewrap">
+        <button type="button" class="btn ghost" id="crossReset">恢复默认</button>
+        <button type="button" class="btn primary" id="crossSave">保存配置</button>
+        <span class="hint" id="crossMsg"></span>
+      </div>
+    </section>
+
+    <!-- 6 信任加速站 -->
+    <section class="a1-card" id="purge">
+      <div class="a1-h"><span class="a1-no">6.</span><h2>信任加速站</h2></div>
+      <div class="a1-trust">
+        <p>管理私有或来自认证信任加速站，与公共镜像源隔离。</p>
+        <button type="button" class="a1-mini primary">管理信任加速站</button>
+      </div>
+      <div class="a1-management">
+        <div class="a1-subpanel">
+          <h3>缓存清理</h3>
+          <div class="accel-purge-actions">
+            <button type="button" class="btn" data-purge="raw">清空 Raw</button>
+            <button type="button" class="btn" data-purge="docker">清空 Docker</button>
+            <button type="button" class="btn danger" data-purge="all">清空全部</button>
+          </div>
+          <p class="hint" id="purgeMsg"></p>
+        </div>
+        <div class="a1-subpanel">
+          <h3>信任加速站</h3>
+          <div class="saverow accel-trust-create">
+            <select id="trGroup" style="flex:1;min-width:110px"></select>
+            <button type="button" class="btn primary" id="trAdd" disabled>加入所选</button>
+          </div>
+          <div class="trpick" id="trPick"></div>
+          <div class="hint" id="trMsg"></div>
+          <div class="tklist" id="trList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Token（功能 ID 保留；作为第 2 卡「访问令牌→管理」的目标，不再单列编号卡） -->
+    <section class="a1-card" id="token">
+      <div class="a1-h"><span class="a1-no">·</span><h2>访问令牌 Access Token</h2></div>
+      <label for="tkName">新建 Token</label>
+      <div class="saverow">
+        <input type="text" id="tkName" placeholder="例如：我的笔记本" style="flex:1;min-width:0">
+        <button type="button" class="btn primary" id="btnToken">创建</button>
+      </div>
+      <div class="hint" id="tkMsg"></div>
+      <div class="tknew" id="tkNew" hidden><div class="hint">只显示这一次，复制走：</div><code id="tkPlain"></code></div>
+      <div class="tklist" id="tkList"></div>
+    </section>
+
   </div>
-  </div>
+</div>
 
   <!-- Realm 策略 -->
   <div data-panel="policy">
@@ -216,6 +301,18 @@
     </div>
     <div class="hint">没有"查看密码"入口；密码与 Token 不会出现在列表、日志或错误信息里。</div>
   </div>
+
+  <div class="sec">
+    <h2>GitHub Release Token<span class="qi" data-tip="用于加速 GitHub Release Asset 的摘要 API。留空=完全不调用，不耗配额；填入后加密保存，不回显。也可改用环境变量 github.token_env（优先）。">?</span></h2>
+    <div class="hint" id="ghTokenHint">检查状态中…</div>
+    <label for="ghToken">Token（留空保持不变）</label>
+    <input type="password" id="ghToken" autocomplete="new-password" placeholder="粘贴新的 GitHub Token，留空不改变">
+    <div class="saverow" style="margin-top:10px;flex-wrap:wrap">
+      <button type="button" class="btn primary" id="ghTokenSave">保存</button>
+      <button type="button" class="btn" id="ghTokenClear" hidden>清除</button>
+      <span class="hint" id="ghTokenMsg"></span>
+    </div>
+  </div>
   </div>
 
   <!-- 配置参数 -->
@@ -246,6 +343,8 @@
   </div>
 
 </div>
+</main>
+</div><!-- /.settings-shell -->
 
 <div class="toast" id="toast"></div>
 
@@ -477,6 +576,7 @@ var ME = {};
     var a = await api('/api/accel/stats');
     renderAccel(a);
   }catch(e){}
+  loadMaxCand(); loadCross();
   loadTokens();
 })();
 
@@ -538,6 +638,17 @@ function renderAccel(a){
     rows.push('<div class="schedRow"><b>' + esc(r.kind) + '</b><span>' + r.items.map(function(x){ return (x.preferred ? '★' : '') + esc(x.name); }).join(' → ') + '</span></div>');
   });
   $('#acSched').innerHTML = rows.length ? rows.join('') : '<span class="hint">仅官方源</span>';
+  /* 1:1 指标卡：命中率取今日 all；活跃请求取 recent 最近一分钟计数；可用来源取调度链去重 */
+  var all = (a.today && a.today.all) || {};
+  if ($('#mHit')) $('#mHit').textContent = all.hit_rate != null ? Math.round(all.hit_rate*100) + '%' : '—';
+  if ($('#mActive')) {
+    var rec = a.recent || []; var active = rec.length ? (rec[0].active != null ? rec[0].active : '—') : '—';
+    $('#mActive').textContent = active;
+  }
+  if ($('#mSources')) {
+    var uniq = {}; (a.scheduler || []).forEach(function(r){ (r.items || []).forEach(function(it){ uniq[it.name || it.host || it.id] = 1; }); });
+    var n = Object.keys(uniq).length; $('#mSources').textContent = n || '—';
+  }
 }
 document.querySelectorAll('[data-purge]').forEach(function(b){
   b.addEventListener('click', async function(){
@@ -679,6 +790,9 @@ function mohHtml(value){
 
 function cfgControl(f){
   var k = f.key;
+  // 目录类字段留空=用默认路径；渲染时把默认值直接显示出来，避免看起来是空的。
+  var DEFAULT_DIR = { 'cache.dir':'/data/cache', 'backup.dir':'/data/backup' };
+  var disp = (f.value === '' || f.value == null) && DEFAULT_DIR[k] ? DEFAULT_DIR[k] : f.value;
   if (k === 'registry.multi_origin_hosts') return mohHtml(f.value);
   if (f.kind === 'bool' || f.kind === 'enum'){
     var opts = f.kind === 'bool' ? ['true','false'] : f.options;
@@ -715,7 +829,7 @@ function cfgControl(f){
   if (f.hasMax) attrs += ' max="' + f.max + '"';
   // 时间类配置存的是 30s/5m/2h 这种字符串，给个格式示例；其余数值把单位显示在输入框右边。
   if (f.kind === 'duration') attrs += ' placeholder="例：30s / 5m / 2h"';
-  var inp = '<input class="cfg-in" type="' + type + '"' + step + attrs + ' data-key="' + k + '" value="' + esc(f.value) + '">';
+  var inp = '<input class="cfg-in" type="' + type + '"' + step + attrs + ' data-key="' + k + '" value="' + esc(disp) + '">';
   if (!f.unit) return inp;
   return '<span class="cfg-unit">' + inp + '<span class="cfg-unit-t">' + esc(f.unit) + '</span></span>';
 }
@@ -750,6 +864,7 @@ function buildConfig(d){
     html += '<div class="sec" data-group="' + esc(sec.group || '') + '"' +
       (show ? '' : ' style="display:none"') + '><h2>' + esc(sec.title) + '</h2>';
     sec.fields.forEach(function(f){
+      if (f.key === 'github.token') return; // 已迁到「凭据」tab 的 GitHub Release Token 卡
       CFG.orig[f.key] = f.value; CFG.cur[f.key] = f.value;
       var rtag = f.restart
         ? '<span class="rtag">重启生效</span>'
@@ -1175,6 +1290,177 @@ loadCreds();
   });
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
 })();
+
+
+
+
+/* ===== 1:1 加速器：站内并发数、跨站配置、管理跳转 ===== */
+function byId(id){ return document.getElementById(id); }
+async function loadMaxCand(){
+  try{
+    var d = await api('/api/config');
+    (d.sections || []).forEach(function(sec){
+      (sec.fields || []).forEach(function(f){
+        if (f.key === 'sources.max_candidates'){
+          var el = byId('mohMax'); if (el) el.value = f.value;
+        }
+      });
+    });
+  }catch(e){}
+}
+(function bindMaxCand(){
+  var el = byId('mohMax'); if (!el) return;
+  document.querySelectorAll('[data-step]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var v = +el.value || 1;
+      v += (b.dataset.step === 'up' ? 1 : -1);
+      v = Math.max(1, Math.min(10, v)); el.value = v;
+      saveMaxCand(v);
+    });
+  });
+  el.addEventListener('change', function(){ saveMaxCand(Math.max(1, Math.min(10, +el.value || 2))); });
+})();
+async function saveMaxCand(v){
+  try{
+    var o = {}; o['sources.max_candidates'] = v;
+    await api('/api/config', {method:'PUT', body: JSON.stringify({values:o})});
+  }catch(e){}
+}
+
+var XCFG = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]};
+async function loadCross(){
+  try{ XCFG = await api('/api/cross-registry'); }
+  catch(e){ XCFG = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]}; }
+  renderCross();
+}
+function renderCross(){
+  var m = XCFG.mode || 'sequential', sm = XCFG.sort_mode || 'fixed';
+  document.querySelectorAll('[data-rmode]').forEach(function(b){ b.classList.toggle('sel', b.dataset.rmode === m); });
+  document.querySelectorAll('[data-sortmode]').forEach(function(b){ b.classList.toggle('sel', b.dataset.sortmode === sm); });
+  var box = byId('crossSel');
+  if (box){
+    var stars = XCFG.starred || [], sel = XCFG.selected || [];
+    if (!stars.length){ box.innerHTML = '<span class="hint">暂无星标源，请先在首页源列表点 ☆ 标星。</span>'; }
+    else{
+      box.innerHTML = stars.map(function(id){
+        var on = sel.indexOf(id) >= 0;
+        return '<label class="chk"><span class="cbox" data-sid="' + id + '">' + (on ? '✓' : '') + '</span>' +
+          '<span>Source #' + id + (on ? '（参与竞速）' : '') + '</span></label>';
+      }).join('');
+      box.querySelectorAll('.cbox').forEach(function(c){
+        c.addEventListener('click', function(){
+          var id = +c.dataset.sid, i = sel.indexOf(id);
+          if (i >= 0){ sel.splice(i,1); c.textContent=''; }
+          else{ sel.push(id); c.textContent='✓'; }
+        });
+      });
+    }
+  }
+  var desc = byId('crossDesc');
+  if (desc) desc.textContent = m === 'race' ? '并发请求多个可信副本，取最快有效响应。' : '省请求，前一个 404/超时/无效才问下一个。';
+}
+(function bindCross(){
+  document.querySelectorAll('[data-rmode]').forEach(function(b){
+    b.addEventListener('click', function(){ XCFG.mode = b.dataset.rmode; renderCross(); });
+  });
+  document.querySelectorAll('[data-sortmode]').forEach(function(b){
+    b.addEventListener('click', function(){ XCFG.sort_mode = b.dataset.sortmode; renderCross(); });
+  });
+  var save = byId('crossSave');
+  if (save) save.addEventListener('click', async function(){
+    var msg = byId('crossMsg'); msg.textContent = '保存中…';
+    var sel = Array.from(document.querySelectorAll('#crossSel .cbox')).filter(function(c){ return c.textContent.indexOf('✓') >= 0; }).map(function(c){ return +c.dataset.sid; });
+    try{
+      await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({
+        enabled: XCFG.enabled !== false, mode: XCFG.mode, sort_mode: XCFG.sort_mode, selected: sel
+      })});
+      msg.textContent = '已保存'; toast('跨站配置已保存'); loadCross();
+    }catch(e){ msg.textContent = e.message || '保存失败'; }
+  });
+  var reset = byId('crossReset');
+  if (reset) reset.addEventListener('click', async function(){
+    var msg = byId('crossMsg'); msg.textContent = '恢复中…';
+    try{
+      await api('/api/cross-registry', {method:'PUT', body: JSON.stringify({enabled:true, mode:'sequential', sort_mode:'fixed', selected:[]})});
+      msg.textContent = '已恢复默认'; loadCross();
+    }catch(e){ msg.textContent = e.message || '恢复失败'; }
+  });
+})();
+
+/* 管理按钮：跳到对应区块 */
+document.querySelectorAll('[data-scroll]').forEach(function(b){
+  b.addEventListener('click', function(){
+    var t = byId(b.dataset.scroll); if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+  });
+});
+
+
+
+/* ===== 凭据 tab：GitHub Release Token（前端脱敏，后端不回显） ===== */
+(function initGhToken(){
+  var KEY='github.token', LS='ml.ghTokenMask';
+  var inp=byId('ghToken'), hint=byId('ghTokenHint'), msg=byId('ghTokenMsg');
+  var save=byId('ghTokenSave'), clear=byId('ghTokenClear');
+  if (!inp || !hint) return;
+  function mask(v){
+    v=String(v||'');
+    if (v.length<=8) return v.slice(0,2)+'****'+v.slice(-2);
+    return v.slice(0,4)+'****'+v.slice(-4);
+  }
+  function showState(){
+    var isSet=false;
+    try{ isSet=!!(window.CFG && CFG.orig && (KEY in CFG.orig)); }catch(e){}
+    var memo=''; try{ memo=localStorage.getItem(LS)||''; }catch(e){}
+    if (memo) hint.textContent='已配置 · '+memo+'（本机记忆，点输入框可更新）';
+    else if (isSet) hint.textContent='已配置 ✓（值不回显；换设备显示为已配置）';
+    else hint.textContent='未配置 · 留空=完全不调用 Release API，不耗配额';
+    if (clear) clear.hidden=!isSet && !memo;
+  }
+  // 输入时实时预览脱敏串
+  inp.addEventListener('input', function(){
+    var v=inp.value;
+    msg.textContent = v ? ('将保存为 '+mask(v)) : '';
+  });
+  // 读取 set 状态（复用 /api/config，不新增接口、不回显 token）
+  api('/api/config').then(function(d){
+    (d.sections||[]).forEach(function(sec){
+      (sec.fields||[]).forEach(function(f){
+        if (f.key===KEY && f.set){ try{ window.CFG=window.CFG||{}; window.CFG.orig=window.CFG.orig||{}; window.CFG.orig[KEY]=1; }catch(e){} }
+      });
+    });
+    showState();
+  }).catch(function(){ showState(); });
+
+  if (save) save.addEventListener('click', async function(){
+    var v=inp.value.trim();
+    if (!v){ msg.textContent='请先填入 Token'; return; }
+    save.disabled=true; msg.textContent='保存中…';
+    try{
+      var o={}; o[KEY]=v;
+      await api('/api/config',{method:'PUT',body:JSON.stringify({values:o})});
+      try{ localStorage.setItem(LS, mask(v)); }catch(e){}
+      inp.value=''; msg.textContent='已保存'; toast('GitHub Token 已保存');
+      try{ window.CFG=window.CFG||{}; window.CFG.orig=window.CFG.orig||{}; window.CFG.orig[KEY]=1; }catch(e){}
+      showState();
+    }catch(e){ msg.textContent=e.message||'保存失败'; }
+    save.disabled=false;
+  });
+
+  if (clear) clear.addEventListener('click', async function(){
+    if (!confirm('清除 GitHub Release Token？清除后将不再调用 Release Asset API。')) return;
+    clear.disabled=true; msg.textContent='清除中…';
+    try{
+      var o={}; o[KEY]='';
+      await api('/api/config',{method:'PUT',body:JSON.stringify({values:o})});
+      try{ localStorage.removeItem(LS); }catch(e){}
+      try{ if (window.CFG&&CFG.orig) delete CFG.orig[KEY]; }catch(e){}
+      inp.value=''; msg.textContent='已清除'; toast('GitHub Token 已清除');
+      showState();
+    }catch(e){ msg.textContent=e.message||'清除失败'; }
+    clear.disabled=false;
+  });
+})();
+
 </script>
 </body>
 </html>
