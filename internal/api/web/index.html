@@ -339,6 +339,35 @@
 
 <div class="toast" id="toast"></div>
 
+
+<script>
+/* UI navigation only: highlight the current section link. */
+(function(){
+  var links = document.querySelectorAll('.app-sidebar .side-link, .mobile-nav a');
+  function activate(id){
+    links.forEach(function(a){
+      var href = a.getAttribute('href') || '';
+      a.classList.toggle('active', href === '#' + id);
+    });
+  }
+  links.forEach(function(a){
+    a.addEventListener('click', function(){
+      var href = a.getAttribute('href') || '';
+      if (href.charAt(0) === '#') activate(href.slice(1));
+    });
+  });
+  if ('IntersectionObserver' in window) {
+    var targets = ['dashboardHome','sourceManagement','raceSec']
+      .map(function(id){ return document.getElementById(id); }).filter(Boolean);
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) activate(entry.target.id);
+      });
+    }, {rootMargin:'-18% 0px -68% 0px'});
+    targets.forEach(function(el){ observer.observe(el); });
+  }
+})();
+</script>
 <script>
 'use strict';
 var $ = function(s){ return document.querySelector(s); };
@@ -1734,34 +1763,6 @@ var _crossRunsEl = $('#crossRuns');
 if (_crossRunsEl) _crossRunsEl.addEventListener('toggle', function(){ if (this.open) loadCrossRuns(); });
 </script>
 
-<script>
-/* UI navigation only: highlight the current section link. */
-(function(){
-  var links = document.querySelectorAll('.app-sidebar .side-link, .mobile-nav a');
-  function activate(id){
-    links.forEach(function(a){
-      var href = a.getAttribute('href') || '';
-      a.classList.toggle('active', href === '#' + id);
-    });
-  }
-  links.forEach(function(a){
-    a.addEventListener('click', function(){
-      var href = a.getAttribute('href') || '';
-      if (href.charAt(0) === '#') activate(href.slice(1));
-    });
-  });
-  if ('IntersectionObserver' in window) {
-    var targets = ['dashboardHome','sourceManagement','raceSec']
-      .map(function(id){ return document.getElementById(id); }).filter(Boolean);
-    var observer = new IntersectionObserver(function(entries){
-      entries.forEach(function(entry){
-        if (entry.isIntersecting) activate(entry.target.id);
-      });
-    }, {rootMargin:'-18% 0px -68% 0px'});
-    targets.forEach(function(el){ observer.observe(el); });
-  }
-})();
-</script>
 
 </body>
 </html>
