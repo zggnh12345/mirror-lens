@@ -317,6 +317,27 @@
   </div>
 </div>
 
+<div class="sheet" id="sheetCross">
+  <div class="panel">
+    <div class="phead">
+      <h2>跨站加速配置</h2>
+      <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="hint" style="margin:2px 0 12px">同一个镜像多个源站都有副本时，并发问几个、取最快有效响应。修改后立即生效。</p>
+    <div class="xrow"><span>启用跨站加速</span><button type="button" class="sw" id="xcOn" aria-label="启用跨站加速"></button></div>
+    <div class="xrow"><span>请求方式</span><div class="ssegb" id="xcModeSeg">
+      <button type="button" data-v="race">跨站快选</button><button type="button" data-v="fallback">顺序回退</button>
+    </div></div>
+    <div class="xrow"><span>候选排序</span><div class="ssegb" id="xcSortSeg">
+      <button type="button" data-v="fixed">固定排序</button><button type="button" data-v="dynamic">动态排序</button>
+    </div></div>
+    <div class="xfield"><label>竞速来源 <span class="hint">勾选参与竞速的源</span></label>
+      <div class="a1-checks" id="xcSources"></div>
+    </div>
+    <div class="btnrow"><button type="button" class="btn primary" id="xcSave">保存配置</button><span class="hint" id="xcMsg"></span></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 
@@ -970,11 +991,66 @@ function renderCross(){
     +   '<div class="main"><div class="rl1"><b>状态</b><span class="note">' + (on ? '已启用' : '未启用') + '</span></div></div>'
     + '</div>'
     + '<div class="row"><div class="main"><div class="rl2">'
-    +   '<i>请求方式 ' + esc(mode) + '</i><i>候选排序 ' + esc(sort) + '</i>'
-    + '</div><div class="rl2"><i>竞速来源 ' + cand + '</i></div></div></div>'
-    + '<div class="row"><div class="main"><span class="hint">改模式、排序和候选源 → 设置页「跨站加速」</span></div>'
-    +   '<a class="btn" href="/settings">去配置</a></div>';
+    +   '<i>请求方式 <b>' + esc(mode) + '</b></i><i>候选排序 <b>' + esc(sort) + '</b></i>'
+    + '</div><div class="rl2"><i>竞速来源 <b>' + cand + '</b></i></div></div></div>'
+    + '<div class="row"><div class="main"><span class="hint">改模式、排序和候选源</span></div>'
+    +   '<button type="button" class="btn primary" id="btnCrossCfg">配置</button></div>';
 }
+
+/* ---- 3.5.21 首页跨站配置弹层 ---- */
+var XCFG = null;
+function xcLoad(){
+  var src = (DATA||[]).filter(function(x){ return x.enabled !== false; });
+  var box = $('#xcSources');
+  if (!box) return;
+  var sel = (XCFG && XCFG.selected) || [];
+  box.innerHTML = src.map(function(x){
+    var on = sel.indexOf(x.id) >= 0;
+    return '<label class="chk" title="Source #' + x.id + '"><span class="cbox' + (on ? ' sel' : '') + '" data-sid="' + x.id + '">' + (on ? '✓' : '') + '</span>' + esc(dispName(x)) + '</label>';
+  }).join('') || '<span class="hint">暂无可用源</span>';
+  if (XCFG){
+    var on = XCFG.enabled !== false;
+    $('#xcOn').classList.toggle('on', on);
+    segSel('xcModeSeg', XCFG.mode || 'race');
+    segSel('xcSortSeg', XCFG.sort_mode || 'fixed');
+  }
+}
+function segSel(id, v){
+  var seg = $('#'+id); if (!seg) return;
+  seg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v') === v); });
+}
+function segVal(id){ var b = $('#'+id+' button.on'); return b ? b.getAttribute('data-v') : null; }
+document.addEventListener('click', function(e){
+  var b = e.target.closest('#btnCrossCfg');
+  if (b){
+    XCFG = XRUN ? JSON.parse(JSON.stringify(XRUN)) : null;
+    $('#xcMsg').textContent = '';
+    xcLoad(); openSheet('sheetCross'); return;
+  }
+  var sw = e.target.closest('#xcOn');
+  if (sw){ sw.classList.toggle('on'); return; }
+  var sb = e.target.closest('.ssegb button');
+  if (sb){ segSel(sb.parentElement.id, sb.getAttribute('data-v')); return; }
+  var cb = e.target.closest('#xcSources .cbox[data-sid]');
+  if (cb){
+    var id = Number(cb.getAttribute('data-sid'));
+    cb.classList.toggle('sel'); cb.textContent = cb.classList.contains('sel') ? '✓' : '';
+    return;
+  }
+});
+$('#xcSave').addEventListener('click', function(){
+  var sel = [].map.call($('#xcSources .cbox.sel'), function(c){ return Number(c.getAttribute('data-sid')); });
+  var body = {
+    enabled: $('#xcOn').classList.contains('on'),
+    mode: segVal('xcModeSeg') || 'race',
+    sort_mode: segVal('xcSortSeg') || 'fixed',
+    selected: sel
+  };
+  var msg = $('#xcMsg'); msg.textContent = '保存中…'; msg.className = 'hint';
+  api('/api/cross-registry', {method:'PUT', body: JSON.stringify(body)})
+    .then(function(){ msg.textContent = '已保存'; msg.className = 'note ok'; XRUN = Object.assign({}, XRUN, body); renderCross(); setTimeout(closeSheets, 600); })
+    .catch(function(e){ msg.textContent = e.message; msg.className = 'hint bad'; });
+});
 
 /* ---- 历史 ---- */
 function drawHist(id){
@@ -1416,6 +1492,13 @@ function dashboardRate(n){
   if (n >= 1024) return Math.round(n / 1024) + ' KB/s';
   return Math.round(n) + ' B/s';
 }
+/* 3.5.21 公共：把最大值向上取整到 1/2/5×10ⁿ，作两张图的 y 轴刻度 */
+function niceMax(v){
+  v = Math.max(1, Number(v) || 1);
+  var exp = Math.floor(Math.log(v) / Math.LN10), base = Math.pow(10, exp), f = v / base;
+  var nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  return nice * base;
+}
 function renderTrafficChart(rows){
   var box = $('#trafficChart');
   if (!box) return;
@@ -1430,9 +1513,13 @@ function renderTrafficChart(rows){
     box.innerHTML = '<div class="chart-empty">最近 7 天暂无有效流量</div>';
     return;
   }
-  box.innerHTML = '<div class="traffic-bars">' + rows.map(function(r){
+  var axisMax = niceMax(max);
+  var axis = '<div class="axis-line" style="top:0"></div><span class="axis-label" style="top:0">' + esc(dashboardBytes(axisMax)) + '</span>' +
+    '<div class="axis-line" style="top:50%"></div><span class="axis-label" style="top:50%">' + esc(dashboardBytes(axisMax / 2)) + '</span>' +
+    '<div class="axis-line" style="top:100%"></div><span class="axis-label" style="top:100%">0</span>';
+  box.innerHTML = '<div class="traffic-bars">' + axis + rows.map(function(r){
     var total = r.hit + r.fill + r.bypass;
-    var h = function(v){ return Math.max(0, v / max * 100); };
+    var h = function(v){ return Math.max(0, v / axisMax * 100); };
     var label = r.day.slice(5).replace('-', '/');
     return '<div class="traffic-day" title="' + esc(r.day) + ' · ' + esc(dashboardBytes(total)) + '">' +
       '<div class="traffic-bar-stack">' +
@@ -1525,18 +1612,21 @@ function renderThroughputChart(){
   }
   var vals = throughputSamples.map(function(x){ return x.bps; });
   var max = Math.max.apply(Math, vals.concat([1]));
-  var min = Math.min.apply(Math, vals);
-  var span = Math.max(1, max - min);
-  var W=720,H=220,L=10,R=10,T=12,B=20;
-  var grid = [0,1,2,3].map(function(i){
-    var y=T+i*(H-T-B)/3;
+  var axisMax = niceMax(max);
+  var W=720,H=220,L=64,R=10,T=12,B=20;
+  /* 3.5.21 y 轴标尺：3 条网格线 + 左侧速率刻度，随采样自动适配 */
+  var grid = [0,1,2].map(function(i){
+    var y=T+i*(H-T-B)/2;
+    var lab=i===0?dashboardRate(axisMax):i===1?dashboardRate(axisMax/2):'0';
     return '<line x1="' + L + '" y1="' + y.toFixed(1) +
       '" x2="' + (W-R) + '" y2="' + y.toFixed(1) +
-      '" stroke="var(--line)" stroke-width="1"/>';
+      '" stroke="var(--line)" stroke-width="1"/>' +
+      '<text x="' + (L-8) + '" y="' + (y+4).toFixed(1) +
+      '" text-anchor="end" font-size="11" fill="var(--faint)">' + lab + '</text>';
   }).join('');
   var pts = vals.map(function(v,i){
     var x = L + (vals.length < 2 ? (W-L-R)/2 : i*(W-L-R)/(vals.length-1));
-    var y = T + (max-v)*(H-T-B)/span;
+    var y = T + (axisMax-v)/axisMax*(H-T-B);
     return x.toFixed(1) + ',' + y.toFixed(1);
   });
   svg.innerHTML = grid + '<polyline points="' + pts.join(' ') +

@@ -223,15 +223,6 @@
     <div class="hint" id="polMsg"></div>
     <div class="tklist" id="polList"><div class="hint">加载中…</div></div>
 
-    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)">
-      <h2 style="font-size:13px">多源 Host 开关<span class="qi" data-tip="决定哪些 Host 允许多个候选源参与调度；关 = 该 Host 只回官方源。和「配置参数」里的多源 Host 开关是同一份配置，改后需重启才生效。">?</span></h2>
-      <div class="hint" style="margin:4px 0 10px">与「配置参数 → 多源 Host 开关」同源；勾选后点保存，重启生效。</div>
-      <div class="moh-grid" id="polMoh"></div>
-      <div class="saverow" style="margin-top:10px">
-        <button type="button" class="btn primary" id="polMohSave">保存多源开关</button>
-        <span class="hint" id="polMohMsg"></span>
-      </div>
-    </div>
 
     <div id="polEdit" hidden>
       <h2 style="margin-top:18px">编辑策略</h2>
@@ -248,7 +239,7 @@
       </div>
     </div>
 
-    <h2 style="margin-top:20px">策略变更</h2>
+    <h2 style="margin-top:28px;padding-top:16px;border-top:1px solid var(--line2)">策略变更</h2>
     <div id="polAudit" class="hint">加载中…</div>
   </div>
   </div>
@@ -941,6 +932,10 @@ function bindCfg(){
         CFG.cur['registry.multi_origin_hosts'] = vals.join('\n');
         var row = moh.closest('.cfgrow');
         if (row) row.classList.remove('bad');
+        /* 3.5.21 开关即存：无需再点整页「保存配置」 */
+        api('/api/config', {method:'PUT', body: JSON.stringify({values:{'registry.multi_origin_hosts': CFG.cur['registry.multi_origin_hosts']}})})
+          .then(function(){ CFG.orig['registry.multi_origin_hosts'] = CFG.cur['registry.multi_origin_hosts']; toast('多源开关已保存，重启生效'); })
+          .catch(function(e){ say(row?row.querySelector('.hint'):null, e.message, 'bad'); });
       });
     });
   }
@@ -1331,8 +1326,6 @@ loadCreds();
 })();
 
 
-
-
 /* ===== 1:1 加速器：站内并发数、跨站配置、管理跳转 ===== */
 function byId(id){ return document.getElementById(id); }
 async function loadMaxCand(){
@@ -1442,14 +1435,14 @@ function renderCross(){
       box.innerHTML = stars.map(function(id){
         var on = sel.indexOf(id) >= 0;
         var label = SRC_LABEL[id] || ('Source #' + id);
-        return '<label class="chk" title="Source #' + id + '"><span class="cbox" data-sid="' + id + '">' + (on ? '✓' : '') + '</span>' +
+        return '<label class="chk" title="Source #' + id + '"><span class="cbox' + (on ? ' sel' : '') + '" data-sid="' + id + '">' + (on ? '✓' : '') + '</span>' +
           '<span>' + esc(label) + (on ? '（参与竞速）' : '') + '</span></label>';
       }).join('');
       box.querySelectorAll('.cbox').forEach(function(c){
         c.addEventListener('click', function(){
           var id = +c.dataset.sid, i = sel.indexOf(id);
-          if (i >= 0){ sel.splice(i,1); c.textContent=''; }
-          else{ sel.push(id); c.textContent='✓'; }
+          if (i >= 0){ sel.splice(i,1); c.textContent=''; c.classList.remove('sel'); }
+          else{ sel.push(id); c.textContent='✓'; c.classList.add('sel'); }
         });
       });
     }
@@ -1524,8 +1517,6 @@ function renderCross(){
     if (ev.target === sheet || ev.target.closest('[data-close]')) close();
   });
 })();
-
-
 
 /* ===== 凭据 tab：GitHub Release Token（前端脱敏，后端不回显） ===== */
 (function initGhToken(){
@@ -1603,7 +1594,8 @@ function renderCross(){
   var SOURCES = [], SORDER = {mode:'auto', orders:{}};
   function badge(on){
     var b = byId('schedBadge'); if (!b) return;
-    b.className = on ? 'badge-ok' : 'badge-mute';
+    /* 3.5.21 自动/手动都是有效状态，统一用醒目的绿色徽标 */
+    b.className = 'badge-ok';
     b.innerHTML = '<i></i>' + (on ? '手动' : '自动');
   }
   function renderSched(){
@@ -1687,43 +1679,6 @@ function renderCross(){
   window.__schedState = function(){ return {mode: SORDER.mode, orders: SORDER.orders, sheetOn: byId('schedSheet').classList.contains('on')}; };
 })();
 
-/* Realm 页多源 Host 开关：复用配置参数的同一份 config.yaml 键，不碰数据库 */
-(function bindPolMoh(){
-  var KEY = 'registry.multi_origin_hosts';
-  var cur = [];
-  function render(){
-    var box = byId('polMoh'); if (!box) return;
-    box.innerHTML = MOH_HOSTS.map(function(o){
-      var on = cur.indexOf(o.v) >= 0;
-      return '<label class="moh-item" title="' + esc(o.h) + '">'
-        + '<span class="moh-l"><b>' + esc(o.t) + '</b><small>' + esc(o.h.split('（')[0]) + '</small></span>'
-        + '<span class="sw"><input type="checkbox" data-pmoh="' + esc(o.v) + '"' + (on ? ' checked' : '') + '><span></span></span></label>';
-    }).join('');
-  }
-  (async function(){
-    try{
-      var d = await api('/api/config');
-      var val = '';
-      (d.sections || []).forEach(function(sec){
-        (sec.fields || []).forEach(function(f){ if (f.key === KEY) val = f.value || ''; });
-      });
-      cur = String(val).split('\n').map(function(x){ return x.trim(); }).filter(Boolean);
-      render();
-    }catch(e){ var m = byId('polMohMsg'); if (m) m.textContent = e.message || '读取失败'; }
-  })();
-  var save = byId('polMohSave');
-  if (save) save.addEventListener('click', async function(){
-    var vals = [];
-    document.querySelectorAll('#polMoh input[data-pmoh]').forEach(function(el){ if (el.checked) vals.push(el.dataset.pmoh); });
-    var msg = byId('polMohMsg'); msg.textContent = '保存中…'; save.disabled = true;
-    try{
-      var o = {}; o[KEY] = vals.join('\n');
-      await api('/api/config', {method:'PUT', body: JSON.stringify({values:o})});
-      cur = vals; msg.textContent = '已保存，需重启生效'; toast('多源开关已保存，重启生效');
-    }catch(e){ msg.textContent = e.message || '保存失败'; }
-    save.disabled = false;
-  });
-})();
 
 </script>
 </body>
