@@ -41,8 +41,7 @@
   <div class="settings-page-heading">
     <div>
       <div class="eyebrow">CONFIGURATION</div>
-      <h2>系统设置</h2>
-      <p>管理账号、安全策略、加速行为与运行参数</p>
+      <h2>系统设置<span class="qi" data-tip="管理账号、安全策略、加速行为与运行参数。改配置后部分项需重启才生效。">?</span></h2>
     </div>
     <a class="btn ghost" href="/">返回运行总览</a>
   </div>
@@ -126,24 +125,13 @@
   <div data-panel="accel" class="a1">
   <div class="a1-wrap">
 
-    <!-- 1 运行概况 -->
-    <section class="a1-card">
-      <div class="a1-h"><span class="a1-no">1.</span><h2>运行概况</h2><span class="badge-ok" id="acRunBadge"><i></i>运行中</span></div>
-      <div class="a1-metrics">
-        <div class="a1-metric"><span class="a1-ml">缓存命中率</span><span class="a1-mv" id="mHit">—</span></div>
-        <div class="a1-metric"><span class="a1-ml">活跃请求</span><span class="a1-mv" id="mActive">—</span></div>
-        <div class="a1-metric"><span class="a1-ml">可用来源</span><span class="a1-mv" id="mSources">—</span></div>
-      </div>
-      <div class="a1-detail"><button type="button" class="linkbtn" id="acDetail">查看详细信息 ›</button></div>
-    </section>
-
     <!-- 2 下载代理与缓存 -->
     <section class="a1-card">
-      <div class="a1-h"><span class="a1-no">2.</span><h2>下载代理与缓存</h2><span class="badge-ok"><i></i>已启用</span></div>
+      <div class="a1-h"><h2>下载代理与缓存<span class="qi" data-tip="Docker / Raw / Git 三类加速地址，以及今日命中、回源、校验、磁盘、分片等实时统计。缓存管理、访问令牌点右侧「管理」。">?</span></h2></div>
       <div class="a1-list">
+        <div class="a1-frow"><span class="a1-ico">▣</span><span class="a1-fn">Docker 镜像加速</span><code id="uDocker">docker pull 本站/library/alpine:3.20</code><span class="cok">✓</span></div>
         <div class="a1-frow"><span class="a1-ico">⌁</span><span class="a1-fn">GitHub Raw 加速</span><code id="uRaw">/raw/&lt;owner&gt;/&lt;repo&gt;/&lt;ref&gt;/&lt;path&gt;</code><span class="cok">✓</span></div>
         <div class="a1-frow"><span class="a1-ico">⑂</span><span class="a1-fn">Git 克隆加速</span><code id="uGit">git clone https://本站/git/github.com/&lt;owner&gt;/&lt;repo&gt;.git</code><span class="cok">✓</span></div>
-        <div class="a1-frow"><span class="a1-ico">▣</span><span class="a1-fn">Docker 镜像加速</span><code id="uDocker">docker pull 本站/library/alpine:3.20</code><span class="cok">✓</span></div>
         <div class="a1-frow"><span class="a1-ico">◫</span><span class="a1-fn">缓存管理</span><span class="a1-subline" id="acCache">—</span><button type="button" class="a1-mini" data-scroll="purge">管理</button></div>
         <div class="a1-frow"><span class="a1-ico">⚿</span><span class="a1-fn">访问令牌</span><button type="button" class="a1-mini" data-scroll="token">管理</button></div>
       </div>
@@ -157,24 +145,33 @@
       </div>
     </section>
 
-    <!-- 3 当前节点顺序 -->
+    <!-- 3 调度方式与当前节点顺序 -->
     <section class="a1-card">
-      <div class="a1-h"><span class="a1-no">3.</span><h2>当前节点顺序</h2></div>
+      <div class="a1-h"><h2>调度方式<span class="qi" data-tip="自动=按实时评分排；手动=每种协议固定前 3 个源优先，其余仍按评分。">?</span></h2><span class="badge-mute" id="schedBadge"><i></i>读取中</span></div>
+      <div class="a1-row" style="align-items:center">
+        <span>策略</span>
+        <div class="sseg" role="group" aria-label="调度方式" style="margin-left:auto">
+          <button type="button" class="ssegb" data-smode="auto" aria-pressed="false">自动</button>
+          <button type="button" class="ssegb" data-smode="manual" aria-pressed="false">手动</button>
+        </div>
+      </div>
+      <div class="a1-bluehint" id="schedDesc">按实时评分自动排</div>
+      <div class="a1-row"><span>优先源</span><button type="button" class="a1-mini" id="btnOrder" style="margin-left:auto">设置前 3 个源</button></div>
+      <div class="a1-h" style="margin-top:12px"><h2 style="font-size:13px">当前节点顺序<span class="qi" data-tip="每种协议按评分排出的源顺序。★ 表示手动调度时固定的优先节点。">?</span></h2></div>
       <div id="acSched" class="a1-tbl"></div>
       <p class="a1-note"><span class="star">★</span> 表示手动优先节点。</p>
     </section>
 
     <!-- 4 站内竞速 -->
     <section class="a1-card">
-      <div class="a1-h"><span class="a1-no">4.</span><h2>站内竞速</h2><span class="badge-ok"><i></i>已启用</span></div>
-      <div class="a1-row"><span>启用站内加速</span><label class="sw"><input type="checkbox" id="mohEnabled" checked><span></span></label></div>
-      <div class="a1-bluehint">来源路由由所有 Source 层标、Host 能力和健康状态等条件决定。</div>
-      <div class="a1-row"><span>最大并发 Source 数</span><div class="stepper"><input type="number" id="mohMax" min="1" max="10" value="2"><span class="stbtns"><button type="button" data-step="up">▲</button><button type="button" data-step="down">▼</button></span></div></div>
+      <div class="a1-h"><h2>站内竞速<span class="qi" data-tip="同一 Host 有多个合格源时并发取最快。Host 开关立即生效；最多尝试源数保存后需重启。">?</span></h2><span class="badge-mute" id="raceBadge"><i></i>未开启</span></div>
+      <div class="a1-row"><span>竞速 Host<small class="a1-subline" id="raceHosts">—</small></span><button type="button" class="a1-mini" data-scroll="race">管理</button></div>
+      <div class="a1-row"><span>最多尝试源数<span class="rtag">重启生效</span></span><div class="stepper"><input type="number" id="mohMax" min="1" max="10" value="2"><span class="stbtns"><button type="button" data-step="up">▲</button><button type="button" data-step="down">▼</button></span></div></div>
     </section>
 
     <!-- 5 跨站加速 -->
     <section class="a1-card">
-      <div class="a1-h"><span class="a1-no">5.</span><h2>跨站加速</h2><span class="badge-ok"><i></i>已启用</span></div>
+      <div class="a1-h"><h2>跨站加速<span class="qi" data-tip="同一镜像在多个源站都有副本时，顺序回退省请求，跨站快选取最快。候选排序可选固定或动态；竞速来源只从星标源里挑。">?</span></h2><span class="badge-mute" id="crossBadge"><i></i>未启用</span></div>
       <div class="a1-field">请求方式</div>
       <div class="a1-radio2">
         <button type="button" class="a1-rc" data-rmode="sequential"><span class="a1-rd"></span>顺序回退</button>
@@ -197,23 +194,9 @@
 
     <!-- 6 信任加速站 -->
     <section class="a1-card" id="purge">
-      <div class="a1-h"><span class="a1-no">6.</span><h2>信任加速站</h2></div>
-      <div class="a1-trust">
-        <p>管理私有或来自认证信任加速站，与公共镜像源隔离。</p>
-        <button type="button" class="a1-mini primary">管理信任加速站</button>
-      </div>
+      <div class="a1-h"><h2>信任加速站<span class="qi" data-tip="管理私有或来自认证信任加速站的源，与公共镜像源隔离，避免混用。">?</span></h2></div>
       <div class="a1-management">
         <div class="a1-subpanel">
-          <h3>缓存清理</h3>
-          <div class="accel-purge-actions">
-            <button type="button" class="btn" data-purge="raw">清空 Raw</button>
-            <button type="button" class="btn" data-purge="docker">清空 Docker</button>
-            <button type="button" class="btn danger" data-purge="all">清空全部</button>
-          </div>
-          <p class="hint" id="purgeMsg"></p>
-        </div>
-        <div class="a1-subpanel">
-          <h3>信任加速站</h3>
           <div class="saverow accel-trust-create">
             <select id="trGroup" style="flex:1;min-width:110px"></select>
             <button type="button" class="btn primary" id="trAdd" disabled>加入所选</button>
@@ -225,18 +208,6 @@
       </div>
     </section>
 
-    <!-- Token（功能 ID 保留；作为第 2 卡「访问令牌→管理」的目标，不再单列编号卡） -->
-    <section class="a1-card" id="token">
-      <div class="a1-h"><span class="a1-no">·</span><h2>访问令牌 Access Token</h2></div>
-      <label for="tkName">新建 Token</label>
-      <div class="saverow">
-        <input type="text" id="tkName" placeholder="例如：我的笔记本" style="flex:1;min-width:0">
-        <button type="button" class="btn primary" id="btnToken">创建</button>
-      </div>
-      <div class="hint" id="tkMsg"></div>
-      <div class="tknew" id="tkNew" hidden><div class="hint">只显示这一次，复制走：</div><code id="tkPlain"></code></div>
-      <div class="tklist" id="tkList"></div>
-    </section>
 
   </div>
 </div>
@@ -244,13 +215,23 @@
   <!-- Realm 策略 -->
   <div data-panel="policy">
   <div class="sec">
-    <h2>Realm 策略<span class="qi" data-tip="按 Source 编辑认证 Realm。Host 的多源开关仍由 config.yaml 的 multi_origin_hosts 管理，这里只读展示。删除策略会让该 Source 在运行时 fail closed。">?</span></h2>
+    <h2>Realm 策略<span class="qi" data-tip="按 Source 编辑认证 Realm。删除策略会让该 Source 在运行时 fail closed。Host 的多源开关在下方，和「配置参数」是同一份配置（config.yaml），改后需重启。">?</span></h2>
     <div class="saverow" style="margin-top:0">
       <select id="polHost" style="flex:1;min-width:160px"></select>
       <button class="btn" id="polReload">刷新</button>
     </div>
     <div class="hint" id="polMsg"></div>
     <div class="tklist" id="polList"><div class="hint">加载中…</div></div>
+
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line2)">
+      <h2 style="font-size:13px">多源 Host 开关<span class="qi" data-tip="决定哪些 Host 允许多个候选源参与调度；关 = 该 Host 只回官方源。和「配置参数」里的多源 Host 开关是同一份配置，改后需重启才生效。">?</span></h2>
+      <div class="hint" style="margin:4px 0 10px">与「配置参数 → 多源 Host 开关」同源；勾选后点保存，重启生效。</div>
+      <div class="moh-grid" id="polMoh"></div>
+      <div class="saverow" style="margin-top:10px">
+        <button type="button" class="btn primary" id="polMohSave">保存多源开关</button>
+        <span class="hint" id="polMohMsg"></span>
+      </div>
+    </div>
 
     <div id="polEdit" hidden>
       <h2 style="margin-top:18px">编辑策略</h2>
@@ -280,9 +261,12 @@
     <div class="hint" id="crMsg"></div>
     <div class="tklist" id="crList"><div class="hint">加载中…</div></div>
 
-    <h2 style="margin-top:18px">新增 / 更新</h2>
+    <div id="crForm">
+    <h2 style="margin-top:18px" id="crFormTitle">配置凭据</h2>
+    <div class="hint">选择 Host 后填写并保存；已有凭据会被更新，没有则新建。</div>
     <label for="crHost">Host</label>
     <select id="crHost"></select>
+    <div class="hint" id="crHosts"></div>
     <label for="crMode">认证方式</label>
     <select id="crMode">
       <option value="bearer_token_basic">Bearer + Token 端点 Basic</option>
@@ -294,16 +278,17 @@
     <label for="crPass">密码 / Token<span class="qi" data-tip="留空表示保留现有密码。删除凭据请用右侧删除按钮，不能用空密码表达删除。">?</span></label>
     <input type="password" id="crPass" autocomplete="new-password">
     <div class="saverow" style="margin-top:10px;flex-wrap:wrap">
-      <button class="btn primary" id="crSave">保存</button>
+      <button class="btn primary" id="crSave">保存凭据</button>
       <button class="btn danger" id="crDelete">删除</button>
       <button class="btn" id="crVerify">验证</button>
       <span class="hint" id="crFormMsg"></span>
     </div>
     <div class="hint">没有"查看密码"入口；密码与 Token 不会出现在列表、日志或错误信息里。</div>
+    </div>
   </div>
 
   <div class="sec">
-    <h2>GitHub Release Token<span class="qi" data-tip="用于加速 GitHub Release Asset 的摘要 API。留空=完全不调用，不耗配额；填入后加密保存，不回显。也可改用环境变量 github.token_env（优先）。">?</span></h2>
+    <div class="a1-h"><h2>GitHub Release Token<span class="qi" data-tip="用于加速 GitHub Release Asset 的摘要 API。留空=完全不调用，不耗配额；填入后加密保存，不回显。也可改用环境变量 github.token_env（优先）。">?</span></h2><span class="badge-mute" id="ghTokenBadge"><i></i>未配置</span></div>
     <div class="hint" id="ghTokenHint">检查状态中…</div>
     <label for="ghToken">Token（留空保持不变）</label>
     <input type="password" id="ghToken" autocomplete="new-password" placeholder="粘贴新的 GitHub Token，留空不改变">
@@ -347,6 +332,51 @@
 </div><!-- /.settings-shell -->
 
 <div class="toast" id="toast"></div>
+
+
+<div id="purgePanel" hidden>
+  <h3>缓存清理</h3>
+  <div class="accel-purge-actions">
+    <button type="button" class="btn" data-purge="raw">清空 Raw</button>
+    <button type="button" class="btn" data-purge="docker">清空 Docker</button>
+    <button type="button" class="btn danger" data-purge="all">清空全部</button>
+  </div>
+  <p class="hint" id="purgeMsg"></p>
+</div>
+
+<div id="racePanel" hidden>
+  <div class="hint" style="margin-bottom:8px">按 Host 独立开关；切换立即生效，不需要重启。</div>
+  <div class="tklist" id="raceList"></div>
+</div>
+
+<div id="tokenPanel" hidden>
+  <label for="tkName">新建 Token</label>
+  <div class="saverow">
+    <input type="text" id="tkName" placeholder="例如：我的笔记本" style="flex:1;min-width:0">
+    <button type="button" class="btn primary" id="btnToken">创建</button>
+  </div>
+  <div class="hint" id="tkMsg"></div>
+  <div class="tknew" id="tkNew" hidden><div class="hint">只显示这一次，复制走：</div><code id="tkPlain"></code></div>
+  <div class="tklist" id="tkList"></div>
+</div>
+
+<div class="sheet" id="schedSheet">
+  <div class="panel">
+    <div class="phead"><h2>设置前 3 个源</h2><button type="button" class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div id="schedOrderBody" style="padding:14px"></div>
+    <div style="padding:0 14px 16px;display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" class="btn ghost" data-close>取消</button>
+      <button type="button" class="btn primary" id="btnOrderGo">保存并切到手动</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="mgmtSheet">
+  <div class="panel">
+    <div class="phead"><h2 id="mgmtTitle">管理</h2><button type="button" class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div id="mgmtBody"></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -419,7 +449,7 @@ async function loadAudit(){
     box.innerHTML = d.events.map(function(e){
       var t = new Date(e.ts * 1000);
       var ts = (t.getMonth() + 1) + '-' + pad(t.getDate()) + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes());
-      return '<div class="kv" style="align-items:baseline">' +
+      return '<div class="kv audit-row" style="align-items:baseline">' +
         '<span style="opacity:.55;font-variant-numeric:tabular-nums;white-space:nowrap">' + ts + ' · ' + esc(e.ip) + '</span>' +
         '<span style="text-align:right">' + esc(e.action) + (e.target ? ' ' + esc(e.target) : '') +
         (e.detail ? ' · ' + esc(e.detail) : '') + (e.ok ? '' : ' <b style="color:#d33">失败</b>') + '</span></div>';
@@ -576,7 +606,7 @@ var ME = {};
     var a = await api('/api/accel/stats');
     renderAccel(a);
   }catch(e){}
-  loadMaxCand(); loadCross();
+  loadMaxCand(); loadCross(); loadRaceHosts();
   loadTokens();
 })();
 
@@ -638,17 +668,6 @@ function renderAccel(a){
     rows.push('<div class="schedRow"><b>' + esc(r.kind) + '</b><span>' + r.items.map(function(x){ return (x.preferred ? '★' : '') + esc(x.name); }).join(' → ') + '</span></div>');
   });
   $('#acSched').innerHTML = rows.length ? rows.join('') : '<span class="hint">仅官方源</span>';
-  /* 1:1 指标卡：命中率取今日 all；活跃请求取 recent 最近一分钟计数；可用来源取调度链去重 */
-  var all = (a.today && a.today.all) || {};
-  if ($('#mHit')) $('#mHit').textContent = all.hit_rate != null ? Math.round(all.hit_rate*100) + '%' : '—';
-  if ($('#mActive')) {
-    var rec = a.recent || []; var active = rec.length ? (rec[0].active != null ? rec[0].active : '—') : '—';
-    $('#mActive').textContent = active;
-  }
-  if ($('#mSources')) {
-    var uniq = {}; (a.scheduler || []).forEach(function(r){ (r.items || []).forEach(function(it){ uniq[it.name || it.host || it.id] = 1; }); });
-    var n = Object.keys(uniq).length; $('#mSources').textContent = n || '—';
-  }
 }
 document.querySelectorAll('[data-purge]').forEach(function(b){
   b.addEventListener('click', async function(){
@@ -679,8 +698,9 @@ async function loadTokens(){
   var box = $('#tkList');
   try{
     var d = await api('/api/tokens');
-    if (!d.tokens || !d.tokens.length){ box.innerHTML = '<div class="hint">还没有 Token，上面的输入框里起个名字就能建</div>'; return; }
-    box.innerHTML = d.tokens.map(function(t){
+    var live = (d.tokens || []).filter(function(t){ return !t.revoked; });
+    if (!live.length){ box.innerHTML = '<div class="hint">还没有 Token，上面的输入框里起个名字就能建</div>'; return; }
+    box.innerHTML = live.map(function(t){
       var state = t.revoked ? '已吊销' : (t.last_used ? '最近 ' + new Date(t.last_used*1000).toLocaleString() : '从未使用');
       return '<div class="tkrow"><div><b>' + esc(t.name) + '</b> <span class="hint">' + esc(t.prefix) + '</span></div>' +
              '<div class="hint">' + esc(state) + '</div>' +
@@ -1165,11 +1185,25 @@ var CR_KIND = {Ready:'ok', Pending:'warn', Quarantined:'bad', Error:'bad', Absen
 function crPick(host){
   var row = null;
   crRows.forEach(function(x){ if (x.host === host) row = x; });
-  if (!row) return;
-  $('#crUser').value = row.username || '';
-  if (row.mode) $('#crMode').value = row.mode;
+  if (!host) return;
+  var title = $('#crFormTitle');
+  if (title) title.textContent = row ? ('正在编辑：' + host) : ('配置凭据：' + host + '（尚未配置）');
+  if (row){
+    $('#crUser').value = row.username || '';
+    if (row.mode) $('#crMode').value = row.mode;
+    say($('#crFormMsg'), row.state === 'Ready' ? ('当前 gen=' + row.gen) : '', '');
+  } else {
+    $('#crUser').value = ''; $('#crPass').value = '';
+    say($('#crFormMsg'), '', '');
+  }
   $('#crPass').value = '';
-  say($('#crFormMsg'), row.state === 'Ready' ? ('当前 gen=' + row.gen) : '', '');
+  var f = $('#crForm');
+  if (f){
+    f.classList.remove('cr-flash');
+    void f.offsetWidth;
+    f.classList.add('cr-flash');
+    f.scrollIntoView({behavior:'smooth', block:'center'});
+  }
 }
 
 async function loadCreds(){
@@ -1185,6 +1219,11 @@ async function loadCreds(){
       sel.appendChild(o);
     });
     if (prev) sel.value = prev;
+    var hs = $('#crHosts');
+    if (hs) hs.textContent = (d.capable && d.capable.length)
+      ? ('当前仅支持：' + d.capable.join(' / ')) : '当前没有可配置的 Host';
+    var ft = $('#crFormTitle');
+    if (ft && !sel.value) ft.textContent = '配置凭据';
     var box = $('#crList');
     box.innerHTML = '';
     if (!crRows.length){
@@ -1324,16 +1363,74 @@ async function saveMaxCand(v){
   try{
     var o = {}; o['sources.max_candidates'] = v;
     await api('/api/config', {method:'PUT', body: JSON.stringify({values:o})});
-  }catch(e){}
+    toast('已保存，重启 Gateway 后生效');
+  }catch(e){ toast(e.message || '保存失败'); }
+}
+
+/* 徽标通用：on=绿(okText)，off=灰(offText) */
+function setBadge(el, on, okText, offText){
+  if (!el) return;
+  el.className = on ? 'badge-ok' : 'badge-mute';
+  el.innerHTML = '<i></i>' + esc(on ? okText : offText);
+}
+
+/* P0-1/P0-2: 站内竞速改为按 Host 开关（与首页 Manifest 竞速同一状态源） */
+var RACE_HOSTS = [];
+async function loadRaceHosts(){
+  try{
+    var d = await api('/api/star-race');
+    RACE_HOSTS = d.hosts || [];
+  }catch(e){ RACE_HOSTS = []; }
+  renderRaceHosts();
+}
+function renderRaceHosts(){
+  var onCount = RACE_HOSTS.filter(function(h){ return h.host_switch; }).length;
+  setBadge(byId('raceBadge'), onCount > 0, '已开启 ' + onCount + '/' + RACE_HOSTS.length, '未开启');
+  var hosts = byId('raceHosts');
+  if (hosts) hosts.textContent = onCount ? RACE_HOSTS.filter(function(h){ return h.host_switch; }).map(function(h){ return h.host; }).join('、') : '—';
+  var list = byId('raceList');
+  if (!list) return;
+  if (!RACE_HOSTS.length){ list.innerHTML = '<div class="hint">暂无可竞速的 Host。</div>'; return; }
+  list.innerHTML = RACE_HOSTS.map(function(h, i){
+    return '<div class="a1-row"><span>' + esc(h.host) + '</span>' +
+      '<label class="sw"><input type="checkbox" data-race-idx="' + i + '"' + (h.host_switch ? ' checked' : '') + '><span></span></label></div>';
+  }).join('');
+  list.querySelectorAll('input[data-race-idx]').forEach(function(cb){
+    cb.addEventListener('change', async function(){
+      var h = RACE_HOSTS[+cb.dataset.raceIdx], on = cb.checked;
+      try{
+        await api('/api/star-race/' + encodeURIComponent(h.host), {method:'PUT', body: JSON.stringify({enabled: !!on})});
+        toast((on ? '已开启 ' : '已关闭 ') + h.host);
+      }catch(e){ toast(e.message || '操作失败'); }
+      await loadRaceHosts();
+    });
+  });
 }
 
 var XCFG = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]};
+var SRC_LABEL = {};
+async function loadSrcLabels(){
+  try{
+    var d = await api('/api/sources');
+    var list = (d && d.sources) || [];
+    SRC_LABEL = {};
+    list.forEach(function(x){
+      // 与首页 dispName 一致：自定义名 > 站点名 > 纯域名
+      var domain = String(x.base_url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      var custom = (x.name || '').trim();
+      if (custom && custom === domain) custom = '';
+      SRC_LABEL[x.id] = custom || (x.site_name || '').trim() || domain || ('Source #' + x.id);
+    });
+  }catch(e){}
+}
 async function loadCross(){
   try{ XCFG = await api('/api/cross-registry'); }
   catch(e){ XCFG = {enabled:true, mode:'sequential', sort_mode:'fixed', selected:[], starred:[]}; }
+  if (!Object.keys(SRC_LABEL).length) await loadSrcLabels();
   renderCross();
 }
 function renderCross(){
+  setBadge(byId('crossBadge'), XCFG.enabled !== false, '已启用', '未启用');
   var m = XCFG.mode || 'sequential', sm = XCFG.sort_mode || 'fixed';
   document.querySelectorAll('[data-rmode]').forEach(function(b){ b.classList.toggle('sel', b.dataset.rmode === m); });
   document.querySelectorAll('[data-sortmode]').forEach(function(b){ b.classList.toggle('sel', b.dataset.sortmode === sm); });
@@ -1344,8 +1441,9 @@ function renderCross(){
     else{
       box.innerHTML = stars.map(function(id){
         var on = sel.indexOf(id) >= 0;
-        return '<label class="chk"><span class="cbox" data-sid="' + id + '">' + (on ? '✓' : '') + '</span>' +
-          '<span>Source #' + id + (on ? '（参与竞速）' : '') + '</span></label>';
+        var label = SRC_LABEL[id] || ('Source #' + id);
+        return '<label class="chk" title="Source #' + id + '"><span class="cbox" data-sid="' + id + '">' + (on ? '✓' : '') + '</span>' +
+          '<span>' + esc(label) + (on ? '（参与竞速）' : '') + '</span></label>';
       }).join('');
       box.querySelectorAll('.cbox').forEach(function(c){
         c.addEventListener('click', function(){
@@ -1387,12 +1485,45 @@ function renderCross(){
   });
 })();
 
-/* 管理按钮：跳到对应区块 */
-document.querySelectorAll('[data-scroll]').forEach(function(b){
-  b.addEventListener('click', function(){
-    var t = byId(b.dataset.scroll); if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+/* 管理按钮：直接弹窗，不导航到页面下方 */
+(function bindMgmtSheet(){
+  var sheet = byId('mgmtSheet'), body = byId('mgmtBody'), title = byId('mgmtTitle');
+  if (!sheet || !body) return;
+  var holder = null, ph = null, wasHidden = false;
+  function open(el, label){
+    if (!el) return;
+    holder = el; ph = document.createComment('mgmt'); wasHidden = !!el.hidden;
+    el.parentNode.insertBefore(ph, el);
+    el.hidden = false;
+    body.innerHTML = ''; body.appendChild(el);
+    title.textContent = label;
+    sheet.classList.add('on');
+  }
+  function close(){
+    if (holder && ph && ph.parentNode){
+      ph.parentNode.insertBefore(holder, ph);
+      ph.parentNode.removeChild(ph);
+      holder.hidden = wasHidden;
+    }
+    holder = null; ph = null; wasHidden = false; body.innerHTML = ''; sheet.classList.remove('on');
+  }
+  document.querySelectorAll('[data-scroll]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var id = b.dataset.scroll;
+      if (id === 'purge'){
+        open(byId('purgePanel'), '缓存管理');
+      } else if (id === 'token'){
+        open(byId('tokenPanel'), '访问令牌');
+      } else if (id === 'race'){
+        loadRaceHosts();
+        open(byId('racePanel'), '站内竞速');
+      }
+    });
   });
-});
+  sheet.addEventListener('click', function(ev){
+    if (ev.target === sheet || ev.target.closest('[data-close]')) close();
+  });
+})();
 
 
 
@@ -1415,6 +1546,12 @@ document.querySelectorAll('[data-scroll]').forEach(function(b){
     else if (isSet) hint.textContent='已配置 ✓（值不回显；换设备显示为已配置）';
     else hint.textContent='未配置 · 留空=完全不调用 Release API，不耗配额';
     if (clear) clear.hidden=!isSet && !memo;
+    var bd=byId('ghTokenBadge');
+    if (bd){
+      var on=isSet||!!memo;
+      bd.className = on ? 'badge-ok' : 'badge-mute';
+      bd.innerHTML = '<i></i>' + (on ? '已配置' : '未配置');
+    }
   }
   // 输入时实时预览脱敏串
   inp.addEventListener('input', function(){
@@ -1458,6 +1595,133 @@ document.querySelectorAll('[data-scroll]').forEach(function(b){
       showState();
     }catch(e){ msg.textContent=e.message||'清除失败'; }
     clear.disabled=false;
+  });
+})();
+
+/* 调度方式（从首页搬入）：自动按评分排；手动固定每种协议前 3 个源 */
+(function bindSched(){
+  var SOURCES = [], SORDER = {mode:'auto', orders:{}};
+  function badge(on){
+    var b = byId('schedBadge'); if (!b) return;
+    b.className = on ? 'badge-ok' : 'badge-mute';
+    b.innerHTML = '<i></i>' + (on ? '手动' : '自动');
+  }
+  function renderSched(){
+    var on = SORDER.mode === 'manual';
+    document.querySelectorAll('.a1-card [data-smode]').forEach(function(b){
+      var hit = (b.dataset.smode === 'manual') === on;
+      b.classList.toggle('on', hit); b.setAttribute('aria-pressed', hit ? 'true' : 'false');
+    });
+    var d = byId('schedDesc'); if (d) d.textContent = on ? '前 3 个源固定优先，其余按评分' : '按实时评分自动排';
+    var ob = byId('btnOrder'); if (ob) ob.style.display = on ? '' : 'none';
+    badge(on);
+  }
+  function orderOptions(kind, sel){
+    var h = '<option value="0">自动</option>';
+    SOURCES.filter(function(x){
+      return x.enabled && (kind === 'docker' ? x.docker_cap === 1 : x.github_cap === 1);
+    }).forEach(function(x){
+      h += '<option value="' + x.id + '"' + (sel === x.id ? ' selected' : '') + '>' + esc(dispName(x)) + '</option>';
+    });
+    return h;
+  }
+  function dispName(x){
+    // 与首页 dispName 一致：自定义名 > 站点名 > 纯域名
+    var domain = String(x.base_url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    var custom = (x.name || '').trim();
+    if (custom && custom === domain) custom = '';
+    return custom || (x.site_name || '').trim() || domain || '未知';
+  }
+  function renderOrder(){
+    var h = '', kinds = [{k:'docker', n:'Docker'}, {k:'github', n:'GitHub'}];
+    kinds.forEach(function(kd){
+      h += '<div class="a1-field">' + kd.n + ' 前 3 个源</div><div class="a1-row" style="flex-wrap:wrap;gap:6px">';
+      for (var i = 0; i < 3; i++){
+        var cur = ((SORDER.orders || {})[kd.k] || [])[i] || 0;
+        h += '<select data-okind="' + kd.k + '" data-opos="' + i + '" style="flex:1;min-width:90px;height:32px;border:1px solid var(--line2);border-radius:7px;background:var(--card);color:var(--ink);padding:0 6px">' + orderOptions(kd.k, cur) + '</select>';
+      }
+      h += '</div>';
+    });
+    h += '<p class="a1-note">按你选的顺序优先试；留「自动」的空位跳过。这 3 个之外的源仍按评分自动排。</p>';
+    byId('schedOrderBody').innerHTML = h;
+  }
+  function openSheet(){ byId('schedSheet').classList.add('on'); }
+  function closeSheet(){ byId('schedSheet').classList.remove('on'); }
+  document.querySelectorAll('.a1-card [data-smode]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      if (b.dataset.smode === 'manual'){
+        try{ SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'manual', orders: SORDER.orders || {}})}); }
+        catch(e){ toast(e.message); return; }
+        renderSched(); renderOrder(); openSheet(); return;
+      }
+      try{
+        SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'auto', orders: SORDER.orders || {}})});
+        toast('已切回自动调度'); renderSched();
+      }catch(e){ toast(e.message); }
+    });
+  });
+  var ob = byId('btnOrder');
+  if (ob) ob.addEventListener('click', function(){ renderOrder(); openSheet(); });
+  var go = byId('btnOrderGo');
+  if (go) go.addEventListener('click', async function(){
+    var orders = {docker: [], github: []};
+    document.querySelectorAll('#schedOrderBody select').forEach(function(sel){
+      var v = Number(sel.value); if (!v) return;
+      var arr = orders[sel.dataset.okind];
+      if (arr.indexOf(v) < 0 && arr.length < 3) arr.push(v);
+    });
+    if (!orders.docker.length && !orders.github.length){ toast('至少给一种协议选一个源'); return; }
+    try{
+      SORDER = await api('/api/sched-order', {method:'POST', body: JSON.stringify({mode:'manual', orders: orders})});
+      closeSheet(); toast('已切到手动调度'); renderSched();
+    }catch(e){ toast(e.message); }
+  });
+  byId('schedSheet').addEventListener('click', function(ev){
+    if (ev.target === this || (ev.target.closest && ev.target.closest('[data-close]'))) closeSheet();
+  });
+  (async function(){
+    try{ SORDER = await api('/api/sched-order'); }catch(e){}
+    try{ var d = await api('/api/sources'); SOURCES = (d && d.sources) || []; }catch(e){}
+    renderSched();
+  })();
+  window.__schedState = function(){ return {mode: SORDER.mode, orders: SORDER.orders, sheetOn: byId('schedSheet').classList.contains('on')}; };
+})();
+
+/* Realm 页多源 Host 开关：复用配置参数的同一份 config.yaml 键，不碰数据库 */
+(function bindPolMoh(){
+  var KEY = 'registry.multi_origin_hosts';
+  var cur = [];
+  function render(){
+    var box = byId('polMoh'); if (!box) return;
+    box.innerHTML = MOH_HOSTS.map(function(o){
+      var on = cur.indexOf(o.v) >= 0;
+      return '<label class="moh-item" title="' + esc(o.h) + '">'
+        + '<span class="moh-l"><b>' + esc(o.t) + '</b><small>' + esc(o.h.split('（')[0]) + '</small></span>'
+        + '<span class="sw"><input type="checkbox" data-pmoh="' + esc(o.v) + '"' + (on ? ' checked' : '') + '><span></span></span></label>';
+    }).join('');
+  }
+  (async function(){
+    try{
+      var d = await api('/api/config');
+      var val = '';
+      (d.sections || []).forEach(function(sec){
+        (sec.fields || []).forEach(function(f){ if (f.key === KEY) val = f.value || ''; });
+      });
+      cur = String(val).split('\n').map(function(x){ return x.trim(); }).filter(Boolean);
+      render();
+    }catch(e){ var m = byId('polMohMsg'); if (m) m.textContent = e.message || '读取失败'; }
+  })();
+  var save = byId('polMohSave');
+  if (save) save.addEventListener('click', async function(){
+    var vals = [];
+    document.querySelectorAll('#polMoh input[data-pmoh]').forEach(function(el){ if (el.checked) vals.push(el.dataset.pmoh); });
+    var msg = byId('polMohMsg'); msg.textContent = '保存中…'; save.disabled = true;
+    try{
+      var o = {}; o[KEY] = vals.join('\n');
+      await api('/api/config', {method:'PUT', body: JSON.stringify({values:o})});
+      cur = vals; msg.textContent = '已保存，需重启生效'; toast('多源开关已保存，重启生效');
+    }catch(e){ msg.textContent = e.message || '保存失败'; }
+    save.disabled = false;
   });
 })();
 

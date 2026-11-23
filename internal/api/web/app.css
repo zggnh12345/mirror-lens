@@ -219,7 +219,7 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.1px;white-space:nowra
 .sw span{position:absolute;inset:0;border-radius:999px;background:var(--line2);transition:background .18s}
 .sw span::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;
   background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.22);transition:transform .18s}
-.sw input:checked + span{background:var(--brand)}
+.sw input:checked + span{background:var(--ok)}
 .sw input:checked + span::after{transform:translateX(17px)}
 
 /* 优先源：点星标把某个源固定排到调度顺序最前 */
@@ -1588,7 +1588,7 @@ label { font-size: 11.5px; font-weight: 650; }
 .a1-card{background:var(--a1-card);border:1px solid var(--a1-line);border-radius:8px;padding:15px 18px 16px;box-shadow:0 1px 2px rgba(20,30,60,.04)}
 .a1-h{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .a1-h h2{font-size:13px;font-weight:600;color:#2A3142;margin:0}
-.a1-no{color:var(--a1-ink);font-weight:700;font-size:13px;min-width:18px}
+.a1-h h2::before{content:"";display:inline-block;width:3px;height:14px;border-radius:2px;background:var(--a1-blue);margin-right:8px;vertical-align:-2px}
 .badge-ok{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--a1-ok);background:var(--a1-ok-soft);border:1px solid #D8F0E1;border-radius:8px;padding:2px 9px;line-height:16px;margin-left:auto}
 .badge-ok i{width:6px;height:6px;border-radius:50%;background:var(--a1-ok);display:inline-block}
 
@@ -1626,11 +1626,12 @@ label { font-size: 11.5px; font-weight: 650; }
 /* 4/5 设置行 */
 .a1-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed var(--a1-divider);font-size:12px;color:#3A4354}
 .a1-row:last-of-type{border-bottom:0}
+
+/* 站内竞速：重启生效标签（.rtag 原本只在 .cfgrow 内定义，a1 面板需自带） */
+.a1-row .rtag{display:inline-block;margin-left:6px;font-size:10px;font-weight:600;color:#B7791F;background:#FFF8E6;border:1px solid #F3E1B0;border-radius:5px;padding:1px 6px;vertical-align:1px}
+.a1-row > span:first-child > .a1-subline{display:block;margin-left:0;margin-top:2px;font-size:10.5px;color:var(--a1-muted)}
 .a1-bluehint{display:flex;gap:8px;background:#F0F6FF;border:1px solid #DCE9FF;border-left:3px solid var(--a1-blue);border-radius:6px;padding:9px 11px;margin:9px 0;font-size:10.5px;color:#5A6B86;line-height:1.6}
-.sw input{position:absolute;opacity:0;width:0;height:0}
-.sw{display:inline-block;width:38px;height:21px;border-radius:999px;background:var(--a1-ok);position:relative;cursor:pointer;flex:none}
-.sw>span{position:absolute;top:2px;left:19px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.15);transition:left .15s}
-.sw input:not(:checked)+span{left:2px;background:#fff;border:1px solid #CFD6E0}
+/* 开关统一由文件上方的全局 .sw 定义，此处不再重复 */
 .stepper{display:flex;align-items:center;border:1px solid #E2E7EF;border-radius:6px;overflow:hidden;height:28px;background:#fff}
 .stepper input{width:34px;text-align:center;font-size:12px;color:#4B5568;font-weight:600;border:0;height:100%;-moz-appearance:textfield}
 .stepper input::-webkit-inner-spin-button{display:none}
@@ -1656,7 +1657,7 @@ label { font-size: 11.5px; font-weight: 650; }
 /* 6 信任站 */
 .a1-trust{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .a1-trust p{font-size:11px;color:var(--a1-sub);line-height:1.6;margin:0}
-.a1-management{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px;padding-top:13px;border-top:1px solid var(--a1-divider)}
+.a1-management{display:grid;grid-template-columns:1fr;gap:18px;margin-top:14px;padding-top:13px;border-top:1px solid var(--a1-divider)}
 .a1-subpanel h3{font-size:11.5px;color:#4B5568;margin:0 0 8px;font-weight:600}
 .accel-purge-actions{display:flex;gap:7px;flex-wrap:wrap}
 .accel-purge-actions .btn{border-radius:5px;font-size:10.5px;padding:6px 11px}
@@ -1691,3 +1692,26 @@ label { font-size: 11.5px; font-weight: 650; }
 .cfgrow .cf{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cfgrow .cf .rtag{margin-top:0}
 .cfgrow .cc{margin-top:6px}
+
+/* 私有仓库凭据：编辑定位高亮 */
+.cr-flash{animation:crflash 1.4s ease}
+@keyframes crflash{0%{background:#EAF2FF}100%{background:transparent}}
+
+/* GitHub Release Token 未配置徽标 */
+.badge-mute{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--a1-muted);background:#F2F4F8;border:1px solid #E2E7EF;border-radius:8px;padding:2px 9px;line-height:16px;margin-left:auto}
+.badge-mute i{width:6px;height:6px;border-radius:50%;background:var(--a1-muted);display:inline-block}
+
+/* 审计行：IPv6 长地址在窄屏换行，不挤压右侧动作 */
+@media (max-width:680px){
+  .audit-row{flex-wrap:wrap}
+  .audit-row > span:first-child{white-space:normal !important;word-break:break-all}
+  .audit-row > span:last-child{text-align:left !important;width:100%;margin-top:2px}
+}
+
+/* 移动端：长域名/长 URL 不撑破加速器卡片 */
+@media (max-width:760px){
+  .a1-card,.a1-frow,.a1-row,.a1-h,.a1-tbl .schedRow>*{min-width:0}
+  .a1-tbl .schedRow{grid-template-columns:64px minmax(0,1fr)}
+  .a1-tbl .schedRow span,.a1-checks .chk span{overflow-wrap:anywhere;word-break:break-word}
+  .a1-frow code{max-width:38%}
+}
