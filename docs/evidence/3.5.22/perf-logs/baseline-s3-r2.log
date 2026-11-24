@@ -1,0 +1,18 @@
+time=2026-11-24T13:06:41.514+08:00 level=INFO msg="mirror-lens 3.5.21 commit=03a5125d332248cd553c3f35ea7f85ae791676d9 built=2026-11-23T08:04:56Z"
+time=2026-11-24T13:06:41.514+08:00 level=INFO msg="探测已允许内网地址（probe.allow_private=true），仅限自建源场景"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="已补 2 个源的站点名"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=false 多源范围=8 禁用Host=0）"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="仓库凭据对账完成：变更 0 条，隔离 0 个 Host"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="代理路径匿名放行（auth.require_token=false），面板仍需登录"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"
+time=2026-11-24T13:06:41.681+08:00 level=INFO msg="多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"
+time=2026-11-24T13:06:41.682+08:00 level=INFO msg="缓存上限 10 GB"
+time=2026-11-24T13:06:41.682+08:00 level=INFO msg="入口限流已开: 全局 20/s 并发 200 | 每 IP 300/分 并发 8 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12 fd00::/8 127.0.0.1/32 ::1/128]"
+time=2026-11-24T13:06:41.683+08:00 level=INFO msg="Mirror Lens 已启动: http://:8080"
+time=2026-11-24T13:06:42.103+08:00 level=INFO msg=源返回错误，换下一个 request_id=57a9f068851f29d6 kind=docker cache_key=docker:b:1:sha256:c14a7542a8f219871ff26b839971b99af7ef5af26d09a9b7655a389269ac0d00 error_code=UPSTREAM_HTTP_ERROR source=perf-fastest-fail status=500
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg="换源候选：n=2 official_only=false sched=\"docker\" par_targets=false"
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg="换源跳过 perf-fast-206：本轮已试过"
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg="换源跳过 official：官方目标，不是星标源"
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg=单流判慢：没有可换的星标源
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg="中途并行跳过：分片未启用 workers=4 chunk=4194304"
+time=2026-11-24T13:06:52.215+08:00 level=INFO msg=中途并行没接上，继续当前连接

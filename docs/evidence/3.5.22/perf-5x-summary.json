@@ -1,0 +1,71 @@
+{
+  "s1": {
+    "baseline_n": 5,
+    "candidate_n": 5,
+    "baseline_median_s": 615.104,
+    "candidate_median_s": 45.048,
+    "reduction_pct": 92.68,
+    "baseline_switches": 0,
+    "candidate_switches": 5,
+    "baseline_sources": [
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200"
+    ],
+    "candidate_sources": [
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200",
+      "perf-slow-200"
+    ]
+  },
+  "s2": {
+    "baseline_n": 5,
+    "candidate_n": 5,
+    "baseline_median_s": 24.087,
+    "candidate_median_s": 24.087,
+    "reduction_pct": 0.0,
+    "baseline_switches": 0,
+    "candidate_switches": 0,
+    "baseline_sources": [
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206"
+    ],
+    "candidate_sources": [
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206",
+      "perf-medium-206"
+    ]
+  },
+  "s3": {
+    "baseline_n": 5,
+    "candidate_n": 5,
+    "baseline_median_s": 35.402,
+    "candidate_median_s": 35.404,
+    "reduction_pct": -0.01,
+    "baseline_switches": 0,
+    "candidate_switches": 0,
+    "baseline_sources": [
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206"
+    ],
+    "candidate_sources": [
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206",
+      "perf-fast-206"
+    ]
+  }
+}
