@@ -1,0 +1,70 @@
+# 3.5.22 生产部署证据（2026-11-24 10:50 CST）
+
+## 构建
+
+- 代码：`feat/3.5.18` HEAD `c47c12a68be96803c2aced09abc46c657b29acd6`
+- 镜像：`ghcr.io/zggnh12345/mirror-lens:3.5.22`
+- image ID：`sha256:abdf94b60ed003af68b1e130523ece490a5cc10925e15d1e7b437b0f974dbb18`
+- 镜像 label：`org.opencontainers.image.version=3.5.22`，revision `c47c12a68be9…`
+- 容器内版本：
+
+```
+mirror-lens 3.5.22 commit=c47c12a68be96803c2aced09abc46c657b29acd6 built=2026-11-24T02:48:03Z
+```
+
+## 部署前备份
+
+- 配置：`config/config.yaml.bak-pre-3.5.22-20261124-025004`（9370 B，1000:1000，600）
+- DB：`data/backup/pre-3.5.22-20261124-025004/mirror-lens.db`（51,351,552 B）+ `secret.key`
+- 旧镜像 tag：`mirror-lens:3.5.21-rollback`（`sha256:49e972242351…`）
+
+## 启动与迁移
+
+compose 重建后容器 `mirror-lens`：
+
+```
+mirror-lens:latest | sha256:abdf94b60ed0… | restarts=0
+```
+
+启动日志：
+
+```
+配置迁移完成：parallel.switch_min_mbps → parallel.switch_floor_mib_per_sec；备份 /config/config.yaml.bak-pre-3.5.22-1795488609
+mirror-lens 3.5.22 commit=c47c12a68be96803c2aced09abc46c657b29acd6 built=2026-11-24T02:48:03Z
+Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）
+Mirror Lens 已启动: http://:8080
+```
+
+迁移后配置：
+
+```
+switch_min_file_mib: 60
+switch_max_sent_mib: 48
+switch_max: 2
+switch_gap_sec: 30
+switch_floor_mib_per_sec: 1
+```
+
+迁移备份 `config.yaml.bak-pre-3.5.22-1795488609` 权限 `600`。
+
+## 外部入口验证（Traefik，Host: ml.xnat.cc）
+
+```
+GET /v2/ -> 200
+GET /v2/library/alpine/manifests/latest -> 200
+Docker-Content-Digest: sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+X-Ml-Source: docker.sparkcr.cn
+X-Ml-Cache: MISS
+```
+
+## 部署后只读核对
+
+- `preferred=1`：54 `docker.sparkcr.cn`、88 `凤凰城`、638 `春川`
+- docker 维度 7 天内 ≥16MiB 样本：638=18、88=11、54=3
+- `settings.sched_order`：`manual` / docker `[54,88]`（本轮未改动）
+
+## 未执行
+
+- GitHub / GHCR 推送
+- 生产自然换源复测
+- 5 次冷缓存性能对照
