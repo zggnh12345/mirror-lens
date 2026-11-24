@@ -16,3 +16,5 @@ ok  github.com/zggnh12345/mirror-lens/internal/unified  1.528s
 ```
 
 完整输出共 41 行，均为 `ok` 或 `[no test files]`；无 `DATA RACE`、无 `FAIL`。
+运行时 `/src` 还含临时测试工具 `tools/setsched`（仅用于本轮生产换源测试，已从仓库和容器删除），
+该包显示 `[no test files]`，不影响上述结果。
