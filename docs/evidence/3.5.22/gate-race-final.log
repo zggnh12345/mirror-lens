@@ -1,0 +1,18 @@
+# go test -race ./... -count=1（最终代码 c47c12a）
+
+环境：mlbuild（golang:1.27.3），/src 同步自 feat/3.5.18 c47c12a。
+结果：全部 ok，0 条 WARNING: DATA RACE。
+
+```
+ok  github.com/zggnh12345/mirror-lens  1.039s
+ok  github.com/zggnh12345/mirror-lens/cmd/db-migrate  31.132s
+ok  github.com/zggnh12345/mirror-lens/internal/api  121.460s
+ok  github.com/zggnh12345/mirror-lens/internal/auth  17.411s
+ok  github.com/zggnh12345/mirror-lens/internal/gateway  169.479s
+ok  github.com/zggnh12345/mirror-lens/internal/scheduler  25.937s
+ok  github.com/zggnh12345/mirror-lens/internal/store  65.705s
+ok  github.com/zggnh12345/mirror-lens/internal/store/schema  3.251s
+ok  github.com/zggnh12345/mirror-lens/internal/unified  1.528s
+```
+
+完整输出共 41 行，均为 `ok` 或 `[no test files]`；无 `DATA RACE`、无 `FAIL`。
