@@ -47,8 +47,8 @@ func eligSrv(t *testing.T, hits *int64) *httptest.Server {
 // eligGateway 用固定候选列表与固定速度样本构造 Gateway。
 func eligGateway(cands []fetchTarget, speeds map[int64]int64) *Gateway {
 	return &Gateway{
-		cli: &http.Client{Timeout: 3 * time.Second},
-		par: ParOptions{SwitchFloorMiBPerSec: 1},
+		cli:        &http.Client{Timeout: 3 * time.Second},
+		par:        ParOptions{SwitchFloorMiBPerSec: 1},
 		parTargets: func(*adapter.Plan) []fetchTarget { return cands },
 		speedProbe: func(id int64, _ string, _ int) []int64 {
 			if v, ok := speeds[id]; ok {
