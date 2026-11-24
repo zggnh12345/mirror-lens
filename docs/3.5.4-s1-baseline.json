@@ -609,8 +609,8 @@
     },
     {
       "id": 28,
-      "name": "docker-registry.nmqu.com",
-      "base_url": "https://docker-registry.nmqu.com",
+      "name": "registry-host-a.example.net",
+      "base_url": "https://registry-host-a.example.net",
       "repo_host": "",
       "origin": "discovered",
       "status": "pending",
@@ -623,8 +623,8 @@
     },
     {
       "id": 29,
-      "name": "docker.1panel.live",
-      "base_url": "https://docker.1panel.live",
+      "name": "registry-host-b.example.net",
+      "base_url": "https://registry-host-b.example.net",
       "repo_host": "",
       "origin": "discovered",
       "status": "dead",
