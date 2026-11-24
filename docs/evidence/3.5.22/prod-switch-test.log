@@ -7,20 +7,20 @@
 ## 测试条件（临时，已恢复）
 
 - 生产 `sched_order` 临时改为 `{"mode":"manual","orders":{"docker":[88],"github":[638,88]}}`，
-  让 `凤凰城`（88，HTTP 200、无 Range、实测约 0.3–0.5 MB/s）成为唯一调度源，
+  让 `Source-Alpha`（88，HTTP 200、无 Range、实测约 0.3–0.5 MB/s）成为唯一调度源，
   从而走单流而不是并行分片。
-- 临时把 `春川`（638）`preferred=0`，避免它用历史 7.8 MB/s 样本抬高 `P_i`，
+- 临时把 `Source-Beta`（638）`preferred=0`，避免它用历史 7.8 MB/s 样本抬高 `P_i`，
   也避免它作为 200-only 源被选中后触发 5s 回放预算。
-- 保留 `docker.sparkcr.cn`（54）`preferred=1` 作为候选；它有 3 条新鲜样本（约 5.2 MB/s），支持 Range。
+- 保留 `registry-upstream-a.example.net`（54）`preferred=1` 作为候选；它有 3 条新鲜样本（约 5.2 MB/s），支持 Range。
 - 测试 blob：`library/rust` amd64 层
   `sha256:2e66a70da0bec13fb3d492fcdef60fd8a5ef0a1a65c4e8a4909e26742852f0f2`，
   64,148,018 B（61.1 MiB），大于 `switch_min_file_mib=60`。
-- 测试前确认冷缓存：HEAD 返回 `X-Ml-Cache: MISS`、`X-Ml-Source: 凤凰城`、
+- 测试前确认冷缓存：HEAD 返回 `X-Ml-Cache: MISS`、`X-Ml-Source: Source-Alpha`、
   `Content-Length: 64148018`。
 
 ## 结果
 
-客户端（traefik 容器内 wget，经 `Host: ml.xnat.cc`）：
+客户端（traefik 容器内 wget，经 `Host: gateway.example.net`）：
 
 ```
 real 0m26.21s
@@ -35,8 +35,8 @@ sha256sum: 2e66a70da0bec13fb3d492fcdef60fd8a5ef0a1a65c4e8a4909e26742852f0f2
 
 ```
 11:12:48 换源候选：n=4 official_only=false sched="docker" par_targets=false
-11:12:48 换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过
-11:12:50 换源成功 docker.sparkcr.cn reason=switch_success sent=10739494 verified=false s_bps=5262000 p_bps=0 c_bps=1073152 threshold_bps=1287782
+11:12:48 换源拒绝 Source-Alpha reason=not_eligible detail=本轮已试过
+11:12:50 换源成功 registry-upstream-a.example.net reason=switch_success sent=10739494 verified=false s_bps=5262000 p_bps=0 c_bps=1073152 threshold_bps=1287782
 ```
 
 - 换源点：已发送 10,739,494 B（约 10.2 MiB），未超过 `switch_max_sent_mib=48`。
@@ -52,8 +52,8 @@ sha256sum: 2e66a70da0bec13fb3d492fcdef60fd8a5ef0a1a65c4e8a4909e26742852f0f2
 `library/node` 层 `sha256:8fcda2b4…e2fa`（64,396,988 B）：
 
 ```
-11:03:24 换源拒绝 docker.sparkcr.cn reason=speed_rejected s_bps=5262000 p_bps=7806000 c_bps=370688 threshold_bps=6004615
-11:03:25 换源成功 春川 reason=switch_success sent=3714854 verified=false s_bps=7806000 p_bps=5262000 c_bps=370688 threshold_bps=4047692
+11:03:24 换源拒绝 registry-upstream-a.example.net reason=speed_rejected s_bps=5262000 p_bps=7806000 c_bps=370688 threshold_bps=6004615
+11:03:25 换源成功 Source-Beta reason=switch_success sent=3714854 verified=false s_bps=7806000 p_bps=5262000 c_bps=370688 threshold_bps=4047692
 11:03:30 长度不符，丢弃：期望 64396988 实得 3714854
 ```
 

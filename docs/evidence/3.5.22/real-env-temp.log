@@ -27,23 +27,23 @@
 {"time":"2026-11-24T01:48:21.284659186Z","level":"INFO","msg":"discover: 1Panel 状态页 17 条候选"}
 {"time":"2026-11-24T01:48:31.999012768Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:48:35.908362286Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
-{"time":"2026-11-24T01:48:36.062593606Z","level":"INFO","msg":"并行填充：gp.suwa.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:48:36.062593606Z","level":"INFO","msg":"并行填充：registry-upstream-b.example.net 不参与分片（HTTP 200，Content-Range=\"\"）"}
 {"time":"2026-11-24T01:48:36.591947683Z","level":"INFO","msg":"并行填充：退回单流（星标源不支持分片，回落单流优先用它）"}
 {"time":"2026-11-24T01:49:01.999833454Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:49:11.428440825Z","level":"INFO","msg":"runner: tier2 done, 189 checks over 63 sources"}
 {"time":"2026-11-24T01:49:16.910699753Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
-{"time":"2026-11-24T01:49:17.218410811Z","level":"INFO","msg":"并行填充：gp.suwa.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:49:17.218410811Z","level":"INFO","msg":"并行填充：registry-upstream-b.example.net 不参与分片（HTTP 200，Content-Range=\"\"）"}
 {"time":"2026-11-24T01:49:17.218994277Z","level":"INFO","msg":"并行填充：退回单流（星标源不支持分片，回落单流优先用它）"}
 {"time":"2026-11-24T01:49:32.000572124Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
-{"time":"2026-11-24T01:49:37.220518626Z","level":"WARN","msg":"源连不上，换下一个","request_id":"ecbdb23f163e9b9a","kind":"docker","cache_key":"docker:b:1:sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5","error_code":"UPSTREAM_TIMEOUT","error":"Get \"https://gp.suwa.eu.org/v2/library/golang/blobs/sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5\": http2: timeout awaiting response headers","source":"春川"}
+{"time":"2026-11-24T01:49:37.220518626Z","level":"WARN","msg":"源连不上，换下一个","request_id":"ecbdb23f163e9b9a","kind":"docker","cache_key":"docker:b:1:sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5","error_code":"UPSTREAM_TIMEOUT","error":"Get \"https://registry-upstream-b.example.net/v2/library/golang/blobs/sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5\": http2: timeout awaiting response headers","source":"Source-Beta"}
 {"time":"2026-11-24T01:49:48.461462254Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
-{"time":"2026-11-24T01:49:48.461472136Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:49:48.461472136Z","level":"INFO","msg":"换源拒绝 Source-Alpha reason=not_eligible detail=本轮已试过"}
 {"time":"2026-11-24T01:49:48.461474396Z","level":"INFO","msg":"换源拒绝 docker.m.daocloud.io reason=not_eligible detail=未勾选星标"}
-{"time":"2026-11-24T01:49:48.461475967Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:49:48.461475967Z","level":"INFO","msg":"换源拒绝 registry-upstream-c.example.net reason=not_eligible detail=未勾选星标"}
 {"time":"2026-11-24T01:49:48.461477718Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
 {"time":"2026-11-24T01:49:48.461700232Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
-{"time":"2026-11-24T01:49:48.461747499Z","level":"INFO","msg":"中途并行：只有 docker.sparkcr.cn 支持分片，单源多连接"}
-{"time":"2026-11-24T01:49:49.018045968Z","level":"INFO","msg":"中途并行：从 23580454 字节处接入，17 段 × 1 源（[docker.sparkcr.cn]）"}
+{"time":"2026-11-24T01:49:48.461747499Z","level":"INFO","msg":"中途并行：只有 registry-upstream-a.example.net 支持分片，单源多连接"}
+{"time":"2026-11-24T01:49:49.018045968Z","level":"INFO","msg":"中途并行：从 23580454 字节处接入，17 段 × 1 源（[registry-upstream-a.example.net]）"}
 {"time":"2026-11-24T01:49:51.479919884Z","level":"INFO","msg":"分片响应异常: 源=gp.zzgg.eu.org range=40357670-44551973 status=200 content-range=\"\" content-length=92325002"}
 {"time":"2026-11-24T01:49:51.47996042Z","level":"INFO","msg":"分片放弃: range=40357670-44551973 尝试=2 台源 last=分段响应对不上：gp.zzgg.eu.org 返回 200 \"\""}
 {"time":"2026-11-24T01:49:51.480095409Z","level":"INFO","msg":"分片放弃: range=31969062-36163365 尝试=2 台源 last=认证策略不存在: 读取官方凭据代次: context canceled"}
@@ -87,7 +87,7 @@
 {"time":"2026-11-24T01:54:18.764335446Z","level":"INFO","msg":"discover: 1Panel 状态页 18 条候选"}
 {"time":"2026-11-24T01:54:31.261850554Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:54:39.260864843Z","level":"INFO","msg":"runner: tier2 done, 74 checks over 58 sources"}
-{"time":"2026-11-24T01:54:58.556071754Z","level":"INFO","msg":"并行填充完成：docker:b:1:sha256:d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877 92378832 字节，23 段 × 2 源，用时 1m18.245s（docker.1ms.run 0.1MB/s，docker.sparkcr.cn 2.6MB/s）"}
+{"time":"2026-11-24T01:54:58.556071754Z","level":"INFO","msg":"并行填充完成：docker:b:1:sha256:d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877 92378832 字节，23 段 × 2 源，用时 1m18.245s（registry-upstream-c.example.net 0.1MB/s，registry-upstream-a.example.net 2.6MB/s）"}
 {"time":"2026-11-24T01:55:01.26282966Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:55:19.602103754Z","level":"INFO","msg":"已退出"}
 {"time":"2026-11-24T01:55:25.242059845Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
@@ -106,9 +106,9 @@
 {"time":"2026-11-24T01:55:25.41386763Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:55:25.515345139Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
 {"time":"2026-11-24T01:55:43.743733218Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
-{"time":"2026-11-24T01:55:43.74376453Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
-{"time":"2026-11-24T01:55:43.744200669Z","level":"INFO","msg":"换源拒绝 docker.sparkcr.cn reason=speed_rejected detail=insufficient_samples kind=\"docker\" n=0 sp=[]"}
-{"time":"2026-11-24T01:55:43.744215627Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:55:43.74376453Z","level":"INFO","msg":"换源拒绝 Source-Alpha reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:55:43.744200669Z","level":"INFO","msg":"换源拒绝 registry-upstream-a.example.net reason=speed_rejected detail=insufficient_samples kind=\"docker\" n=0 sp=[]"}
+{"time":"2026-11-24T01:55:43.744215627Z","level":"INFO","msg":"换源拒绝 registry-upstream-c.example.net reason=not_eligible detail=未勾选星标"}
 {"time":"2026-11-24T01:55:43.744222581Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
 {"time":"2026-11-24T01:55:43.744587997Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
 {"time":"2026-11-24T01:55:43.744608344Z","level":"INFO","msg":"中途并行跳过：分片未启用 workers=4 chunk=4194304"}
@@ -140,9 +140,9 @@
 {"time":"2026-11-24T01:56:45.738122906Z","level":"INFO","msg":"janitor: 1 条索引指向的文件已不存在，已删索引"}
 {"time":"2026-11-24T01:56:45.840286299Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
 {"time":"2026-11-24T01:57:04.415212175Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
-{"time":"2026-11-24T01:57:04.415256014Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
-{"time":"2026-11-24T01:57:05.70124961Z","level":"INFO","msg":"换源拒绝 docker.sparkcr.cn reason=verifier_rejected status=206"}
-{"time":"2026-11-24T01:57:05.70130463Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:57:04.415256014Z","level":"INFO","msg":"换源拒绝 Source-Alpha reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:57:05.70124961Z","level":"INFO","msg":"换源拒绝 registry-upstream-a.example.net reason=verifier_rejected status=206"}
+{"time":"2026-11-24T01:57:05.70130463Z","level":"INFO","msg":"换源拒绝 registry-upstream-c.example.net reason=not_eligible detail=未勾选星标"}
 {"time":"2026-11-24T01:57:05.70131501Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
 {"time":"2026-11-24T01:57:05.701902992Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
 {"time":"2026-11-24T01:57:05.701935956Z","level":"INFO","msg":"中途并行跳过：分片未启用 workers=4 chunk=4194304"}
@@ -177,8 +177,8 @@
 {"time":"2026-11-24T01:58:56.167224242Z","level":"INFO","msg":"janitor: 1 条索引指向的文件已不存在，已删索引"}
 {"time":"2026-11-24T01:58:56.269130796Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
 {"time":"2026-11-24T01:59:10.28661521Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
-{"time":"2026-11-24T01:59:10.286654493Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
-{"time":"2026-11-24T01:59:11.428784516Z","level":"INFO","msg":"换源成功 docker.sparkcr.cn reason=switch_success sent=3403558 verified=false s_bps=2600000 p_bps=0 c_bps=339968 threshold_bps=1048576"}
+{"time":"2026-11-24T01:59:10.286654493Z","level":"INFO","msg":"换源拒绝 Source-Alpha reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:59:11.428784516Z","level":"INFO","msg":"换源成功 registry-upstream-a.example.net reason=switch_success sent=3403558 verified=false s_bps=2600000 p_bps=0 c_bps=339968 threshold_bps=1048576"}
 {"time":"2026-11-24T01:59:26.168921141Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
 {"time":"2026-11-24T01:59:41.724757648Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
 {"time":"2026-11-24T01:59:41.7262449Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}

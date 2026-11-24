@@ -15,8 +15,8 @@
     },
     {
       "id": 2,
-      "name": "docker.1ms.run",
-      "base_url": "https://docker.1ms.run",
+      "name": "registry-upstream-c.example.net",
+      "base_url": "https://registry-upstream-c.example.net",
       "status": "usable"
     },
     {
@@ -105,8 +105,8 @@
     },
     {
       "id": 54,
-      "name": "docker.sparkcr.cn",
-      "base_url": "https://docker.sparkcr.cn",
+      "name": "registry-upstream-a.example.net",
+      "base_url": "https://registry-upstream-a.example.net",
       "status": "usable"
     },
     {
@@ -147,14 +147,14 @@
     },
     {
       "id": 88,
-      "name": "凤凰城",
+      "name": "Source-Alpha",
       "base_url": "https://gp.zzgg.eu.org",
       "status": "usable"
     },
     {
       "id": 638,
-      "name": "春川",
-      "base_url": "https://gp.suwa.eu.org",
+      "name": "Source-Beta",
+      "base_url": "https://registry-upstream-b.example.net",
       "status": "usable"
     }
   ],
@@ -162,8 +162,8 @@
   "ghcr_candidates": [
     {
       "id": 54,
-      "name": "docker.sparkcr.cn",
-      "base_url": "https://docker.sparkcr.cn",
+      "name": "registry-upstream-a.example.net",
+      "base_url": "https://registry-upstream-a.example.net",
       "status": "usable"
     },
     {
@@ -186,7 +186,7 @@
     },
     {
       "id": 88,
-      "name": "凤凰城",
+      "name": "Source-Alpha",
       "base_url": "https://gp.zzgg.eu.org",
       "status": "usable"
     },
@@ -204,8 +204,8 @@
     },
     {
       "id": 638,
-      "name": "春川",
-      "base_url": "https://gp.suwa.eu.org",
+      "name": "Source-Beta",
+      "base_url": "https://registry-upstream-b.example.net",
       "status": "usable"
     }
   ],
@@ -245,8 +245,8 @@
     },
     {
       "id": 2,
-      "name": "docker.1ms.run",
-      "base_url": "https://docker.1ms.run",
+      "name": "registry-upstream-c.example.net",
+      "base_url": "https://registry-upstream-c.example.net",
       "repo_host": "",
       "origin": "seed",
       "status": "usable",
@@ -973,8 +973,8 @@
     },
     {
       "id": 54,
-      "name": "docker.sparkcr.cn",
-      "base_url": "https://docker.sparkcr.cn",
+      "name": "registry-upstream-a.example.net",
+      "base_url": "https://registry-upstream-a.example.net",
       "repo_host": "",
       "origin": "discovered",
       "status": "usable",
@@ -1449,7 +1449,7 @@
     },
     {
       "id": 88,
-      "name": "凤凰城",
+      "name": "Source-Alpha",
       "base_url": "https://gp.zzgg.eu.org",
       "repo_host": "",
       "origin": "manual",
@@ -1491,8 +1491,8 @@
     },
     {
       "id": 638,
-      "name": "春川",
-      "base_url": "https://gp.suwa.eu.org",
+      "name": "Source-Beta",
+      "base_url": "https://registry-upstream-b.example.net",
       "repo_host": "",
       "origin": "manual",
       "status": "usable",

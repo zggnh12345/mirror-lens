@@ -47,19 +47,19 @@ switch_floor_mib_per_sec: 1
 
 迁移备份 `config.yaml.bak-pre-3.5.22-1795488609` 权限 `600`。
 
-## 外部入口验证（Traefik，Host: ml.xnat.cc）
+## 外部入口验证（Traefik，Host: gateway.example.net）
 
 ```
 GET /v2/ -> 200
 GET /v2/library/alpine/manifests/latest -> 200
 Docker-Content-Digest: sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
-X-Ml-Source: docker.sparkcr.cn
+X-Ml-Source: registry-upstream-a.example.net
 X-Ml-Cache: MISS
 ```
 
 ## 部署后只读核对
 
-- `preferred=1`：54 `docker.sparkcr.cn`、88 `凤凰城`、638 `春川`
+- `preferred=1`：54 `registry-upstream-a.example.net`、88 `Source-Alpha`、638 `Source-Beta`
 - docker 维度 7 天内 ≥16MiB 样本：638=18、88=11、54=3
 - `settings.sched_order`：`manual` / docker `[54,88]`（本轮未改动）
 

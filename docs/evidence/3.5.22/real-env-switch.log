@@ -6,8 +6,8 @@
 
 ## 最终二进制单流换源（02:04:57 起）
 {"time":"2026-11-24T02:04:57.987685488Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
-{"time":"2026-11-24T02:04:57.987909751Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=speed_rejected detail=below_threshold kind=\"docker\" s_bps=1887000 p_bps=2600000 c_bps=339968 threshold_bps=2000000 sp=[1765 1887 3428 3069 1182]"}
-{"time":"2026-11-24T02:04:59.942141873Z","level":"INFO","msg":"换源成功 docker.sparkcr.cn reason=switch_success sent=3407654 verified=false s_bps=2600000 p_bps=1887000 c_bps=339968 threshold_bps=1451538"}
+{"time":"2026-11-24T02:04:57.987909751Z","level":"INFO","msg":"换源拒绝 Source-Alpha reason=speed_rejected detail=below_threshold kind=\"docker\" s_bps=1887000 p_bps=2600000 c_bps=339968 threshold_bps=2000000 sp=[1765 1887 3428 3069 1182]"}
+{"time":"2026-11-24T02:04:59.942141873Z","level":"INFO","msg":"换源成功 registry-upstream-a.example.net reason=switch_success sent=3407654 verified=false s_bps=2600000 p_bps=1887000 c_bps=339968 threshold_bps=1451538"}
 
 ## 下载耗时与 SHA256
 cold: 92378832 bytes, ELAPSED_MS=31380

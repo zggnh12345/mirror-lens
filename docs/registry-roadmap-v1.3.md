@@ -6,7 +6,7 @@
 - `docs/3.5.4-convergence-roadmap.md`（旧 A–D 顺序与架构债）
 - `mirror-lens-registry-roadmap-v1.2.1.md`（最新 Phase 0–4 规划）
 - `docs/3.5.10-source-realm-design`（Source 自有 Realm Draft）
-- 一源多 Host 通用问题（春川 K8S 只是首个实测样本）
+- 一源多 Host 通用问题（Source-Beta K8S 只是首个实测样本）
 
 > 本文只做版本安排与验收边界，不代表下列版本已经排期或实现。
 > 版本号是规划占位，不承诺发布日期；每个版本必须单独验收，未通过不得进入下一版本。
@@ -44,7 +44,7 @@
 - `repo_host` 是 Registry 归属的唯一持久化事实
 - UI 标签只能来自持久化能力与探测结果，不能从 URL 猜测
 
-## 3. 本次新增问题：一源多 Host（春川只是样本）
+## 3. 本次新增问题：一源多 Host（Source-Beta只是样本）
 
 ### 3.1 问题定义
 
@@ -54,7 +54,7 @@
 - 一个 Host 可以有多条 Source
 - 一条 Source 不能同时服务多个 Host
 
-但公共镜像站经常用**同一个 base URL 同时代理多个 Registry Host**。春川 `https://gp.suwa.eu.org` 就是一个已实测样本：
+但公共镜像站经常用**同一个 base URL 同时代理多个 Registry Host**。Source-Beta `https://registry-upstream-b.example.net` 就是一个已实测样本：
 
 - Docker Hub
 - GHCR
@@ -64,16 +64,16 @@
 实测：
 
 ```text
-GET https://gp.suwa.eu.org/v2/registry.k8s.io/pause/manifests/3.9
+GET https://registry-upstream-b.example.net/v2/registry.k8s.io/pause/manifests/3.9
 → 200
 → sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097
 ```
 
-**这不是 K8S 专属问题。** 只要一条 Source 同时支持多个 Host，当前模型都会只保留一个主 Host，其他能力无法显示、无法调度、无法独立探测。春川只是目前最先被实测确认的样本。
+**这不是 K8S 专属问题。** 只要一条 Source 同时支持多个 Host，当前模型都会只保留一个主 Host，其他能力无法显示、无法调度、无法独立探测。Source-Beta只是目前最先被实测确认的样本。
 
 ### 3.2 为什么首页没有 K8S
 
-生产库中的春川 Source 当前是：
+生产库中的Source-Beta Source 当前是：
 
 ```text
 repo_host             = docker.io
@@ -82,11 +82,11 @@ registry_path_mode    = ''
 registry_probe_at     = 0
 ```
 
-`registry_host_recovery` 和 `source_health_scope` 中也没有春川的 K8S 记录。
+`registry_host_recovery` 和 `source_health_scope` 中也没有Source-Beta的 K8S 记录。
 
 因此这不是 UI 漏读，而是：
 
-- 春川只被登记为 Docker 主源
+- Source-Beta只被登记为 Docker 主源
 - 没有 K8S 的 Host 归属
 - 没有 K8S 的探测结果
 - 当前 Schema 不支持一条 Source 多 Host
@@ -95,14 +95,14 @@ registry_probe_at     = 0
 
 ### 3.3 影响范围
 
-这个问题不只影响春川的 K8S，也影响任何“一源多 Host”的情况：
+这个问题不只影响Source-Beta的 K8S，也影响任何“一源多 Host”的情况：
 
 - 一个公共镜像站同时代理 Docker Hub / GHCR / GCR / K8S / Quay 等
 - 一个 Source 对不同 Host 使用不同 V2 前缀或路径模式
 - 一个 Source 对不同 Host 使用不同 Realm / Token 端点
 - 一个 Source 对不同 Host 有不同健康状态、冷却和失败原因
 
-因此 3.5.14 必须是**通用能力模型**，不能为春川或 K8S 写特判。
+因此 3.5.14 必须是**通用能力模型**，不能为Source-Beta或 K8S 写特判。
 
 注意区分两个概念：
 
@@ -115,7 +115,7 @@ registry_probe_at     = 0
 
 这个问题进入 **3.5.14：一源多 Host 通用能力模型**。
 
-3.5.12 只负责把 `registry.k8s.io` 作为独立 Host 验证通过；它不会让春川同时显示 K8S，也不会解决其他多 Host Source。
+3.5.12 只负责把 `registry.k8s.io` 作为独立 Host 验证通过；它不会让Source-Beta同时显示 K8S，也不会解决其他多 Host Source。
 
 
 ## 4. 后续版本总表
@@ -125,7 +125,7 @@ registry_probe_at     = 0
 | 3.5.11 | Source 自有 Realm 与认证隔离 | 3.5.10 | 旧 Source 行为不变 |
 | 3.5.12 | 第一批验证集：GCR / Artifact Registry / K8S | 3.5.11 | 新 Host 默认关闭 |
 | 3.5.13 | 第一批完整覆盖 + 同 Host 多 Source | 3.5.12 | 顺序回源 |
-| 3.5.14 | 一源多 Host 通用能力模型（春川等） | 3.5.13 | 旧单 Host Source 不变 |
+| 3.5.14 | 一源多 Host 通用能力模型（Source-Beta等） | 3.5.13 | 旧单 Host Source 不变 |
 | 3.5.15 | Gateway-CredStore 私有凭据闭环 | 3.5.14 | 匿名优先 |
 | 3.5.16 | Manifest 星标竞速 | 3.5.15 | 默认关闭 |
 | 3.5.17 | Blob 竞速评估 | 3.5.16 | 仅评估，不承诺实现 |
@@ -177,7 +177,7 @@ Host：
 不做：
 
 - 不让一条 Source 服务多个 Host
-- 不解决任何“一源多 Host”标签；春川 K8S 和其他同类 Source 都等 3.5.14
+- 不解决任何“一源多 Host”标签；Source-Beta K8S 和其他同类 Source 都等 3.5.14
 - 不启用第一批之外的 Host
 
 验收：
@@ -220,13 +220,13 @@ Host：
 
 ### 3.5.14 一源多 Host 通用能力模型
 
-**目标：** 让任意一条 Source 可以声明并服务多个 Registry Host；春川只是首个验收样本，不是特例。
+**目标：** 让任意一条 Source 可以声明并服务多个 Registry Host；Source-Beta只是首个验收样本，不是特例。
 
-这是旧路线图中的显式架构债，也是“春川 K8S 不显示”以及其他同类多 Host Source 问题的正式归属版本。
+这是旧路线图中的显式架构债，也是“Source-Beta K8S 不显示”以及其他同类多 Host Source 问题的正式归属版本。
 
 #### 3.5.14-A 能力盘点
 
-实现前先做一次全量审计，不预设只有春川：
+实现前先做一次全量审计，不预设只有Source-Beta：
 
 - 枚举所有 enabled Source
 - 对每个 Source 按 `host_prefix` 和 `native` 尝试候选 Host
@@ -236,14 +236,14 @@ Host：
 - 不从 `base_url` 推断，不从站点名称推断，不手工补标签
 - 产出“多 Host Source 清单”，作为 3.5.14 的输入
 
-春川是清单中的第一个已确认样本；其他公共镜像站是否支持多 Host，以审计结果为准。
+Source-Beta是清单中的第一个已确认样本；其他公共镜像站是否支持多 Host，以审计结果为准。
 
 审计输出至少包含：
 
 | source_id | base_url | host | cap | path_mode | probe_at | probe_error |
 |---|---|---|---|---|---|---|
-| 638 | `https://gp.suwa.eu.org` | `docker.io` | 1 | `native` | 已有 | — |
-| 638 | `https://gp.suwa.eu.org` | `registry.k8s.io` | 待探测 | `host_prefix` | 待探测 | — |
+| 638 | `https://registry-upstream-b.example.net` | `docker.io` | 1 | `native` | 已有 | — |
+| 638 | `https://registry-upstream-b.example.net` | `registry.k8s.io` | 待探测 | `host_prefix` | 待探测 | — |
 | … | … | … | … | … | … | … |
 
 表格只是格式示例，实际值必须由探测写入，不能手工填成能力事实。
@@ -273,11 +273,11 @@ source_host_caps
 - UI 标签只显示已探测通过的 Host，不根据 URL 猜测
 - `SourceCandidates("registry:<host>")` 按 Host 读取能力记录
 - 不改变 Manifest 缓存身份和 Blob 内容寻址语义
-- 代码中不得出现 `gp.suwa`、`春川` 或 `K8S` 的 Source 特判
+- 代码中不得出现 `gp.suwa`、`Source-Beta` 或 `K8S` 的 Source 特判
 
 #### 3.5.14-C 通用验收
 
-- 至少两条多 Host Source 通过验收：一条真实来源（春川）+ 一条独立 fixture 或第二条真实来源
+- 至少两条多 Host Source 通过验收：一条真实来源（Source-Beta）+ 一条独立 fixture 或第二条真实来源
 - 每条 Source 的多个 Host 可独立启停、独立探测、独立冷却
 - 每个 Host 的标签只在对应探测通过后显示
 - 每个 Host 的请求实际命中该 Source，而不是只显示标签
@@ -287,12 +287,12 @@ source_host_caps
 - 旧单 Host Source 的候选集、缓存和健康状态无回归
 - 迁移前后旧 Source 的候选集 diff 为空
 
-#### 3.5.14-D 春川样本验收
+#### 3.5.14-D Source-Beta样本验收
 
-- 春川可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
+- Source-Beta可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
 - 首页只显示实际探测通过的标签
-- K8S 请求实际命中春川，而不是只显示标签
-- 关闭春川 K8S 能力不影响 Docker/GHCR
+- K8S 请求实际命中Source-Beta，而不是只显示标签
+- 关闭Source-Beta K8S 能力不影响 Docker/GHCR
 - Docker/GHCR/K8S/GCR 的健康、冷却、失败互不污染
 
 明确不做：
@@ -364,7 +364,7 @@ source_host_caps
 | 3.5.4 B：多 Registry 正式启用 | 3.5.12 + 3.5.13 | 先验证集，再第一批完整覆盖 |
 | 3.5.4 C：Manifest star_race | 3.5.16 | 默认关闭，独立开关 |
 | 3.5.4 D：Blob 竞速 | 3.5.17 | 只评估，单独立项 |
-| 3.5.4 架构债：一源多 Host | 3.5.14 | 通用能力模型，春川 K8S 与其他多 Host Source 一并解决 |
+| 3.5.4 架构债：一源多 Host | 3.5.14 | 通用能力模型，Source-Beta K8S 与其他多 Host Source 一并解决 |
 | 3.5.10 Source Realm Draft | 3.5.11 | 3.5.10 已被标签修复占用 |
 
 ## 7. 版本门禁

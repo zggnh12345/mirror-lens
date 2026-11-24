@@ -1,8 +1,8 @@
-# 200-only 候选失败路径分析（638 春川，2026-11-24）
+# 200-only 候选失败路径分析（638 Source-Beta，2026-11-24）
 
 ## 现象
 
-生产受控实测中，临时把 638 春川放进 docker 换源候选后：
+生产受控实测中，临时把 638 Source-Beta放进 docker 换源候选后：
 
 1. 638 凭历史约 7.8MB/s 的样本通过 `replayCostOK`，同时把候选组中位速度抬高；
 2. 当前源 sparkcr（54，206、约 5MB/s）被 `speed_rejected`；
@@ -43,7 +43,7 @@
 
 生产只读核对（2026-11-24）：
 
-- `sources.range_cap`：54 `docker.sparkcr.cn` = 1；88 `凤凰城` = 0；638 `春川` = 0。
+- `sources.range_cap`：54 `registry-upstream-a.example.net` = 1；88 `Source-Alpha` = 0；638 `Source-Beta` = 0。
 - `settings.sched_order`：`manual`，docker `[54,88]`，github `[638,88]`。
 - 638 不在 docker 候选中；88 虽是 200-only，但最近 5 条 docker 样本中位约 0.75MB/s，
   10MB 前缀回放估算约 13s > 5s，会被 `replay_over_budget` 拒绝。

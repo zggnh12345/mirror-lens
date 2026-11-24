@@ -102,7 +102,7 @@ v1.5 相对 v1.4 的核心修正：
 
 ### 3.1 问题定义
 
-公共镜像站经常用同一个 base URL 同时代理多个 Registry Host。春川 `https://gp.suwa.eu.org` 是首个实测样本：
+公共镜像站经常用同一个 base URL 同时代理多个 Registry Host。Source-Beta `https://registry-upstream-b.example.net` 是首个实测样本：
 
 - Docker Hub
 - GHCR
@@ -112,7 +112,7 @@ v1.5 相对 v1.4 的核心修正：
 实测：
 
 ```text
-GET https://gp.suwa.eu.org/v2/registry.k8s.io/pause/manifests/3.9
+GET https://registry-upstream-b.example.net/v2/registry.k8s.io/pause/manifests/3.9
 → 200
 → sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097
 ```
@@ -121,7 +121,7 @@ GET https://gp.suwa.eu.org/v2/registry.k8s.io/pause/manifests/3.9
 
 ### 3.2 为什么首页没有 K8S
 
-生产库中的春川 Source 当前是：
+生产库中的Source-Beta Source 当前是：
 
 ```text
 repo_host             = docker.io
@@ -130,11 +130,11 @@ registry_path_mode    = ''
 registry_probe_at     = 0
 ```
 
-`registry_host_recovery` 和 `source_health_scope` 中也没有春川的 K8S 记录。
+`registry_host_recovery` 和 `source_health_scope` 中也没有Source-Beta的 K8S 记录。
 
 因此这不是 UI 漏读，而是：
 
-- 春川只被登记为 Docker 主源
+- Source-Beta只被登记为 Docker 主源
 - 没有 K8S 的 Host 归属
 - 没有 K8S 的探测结果
 - 当前 Schema 不支持一条 Source 多 Host
@@ -259,7 +259,7 @@ realm_policy_generation
 
 - 不重写 3.5.8 已完成的候选调度
 - 不让一条 Source 服务多个 Host
-- 不解决春川 K8S 标签
+- 不解决Source-Beta K8S 标签
 - 不启用第一批之外的 Host
 - 不把没有公共 Source 的 Host 标成“代码未实现”
 
@@ -533,12 +533,12 @@ JOIN sources src ON src.repo_host = g.host
 - 旧代次健康记录
 - 有 recovery 行和无 recovery 行
 
-#### 3.5.14b-F 春川样本验收
+#### 3.5.14b-F Source-Beta样本验收
 
-- 春川可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
+- Source-Beta可保存 `docker.io`、`ghcr.io`、`registry.k8s.io`、`gcr.io`
 - 首页只显示实际探测通过的标签
-- K8S 请求实际命中春川，而不是只显示标签
-- 关闭春川 K8S 能力不影响 Docker / GHCR
+- K8S 请求实际命中Source-Beta，而不是只显示标签
+- 关闭Source-Beta K8S 能力不影响 Docker / GHCR
 - Docker / GHCR / K8S / GCR 的健康、冷却、失败互不污染
 
 #### 3.5.14b-G 只读能力矩阵（P1）
@@ -546,7 +546,7 @@ JOIN sources src ON src.repo_host = g.host
 - UI 增加 Source × Host 的只读能力矩阵
 - 展示 `enabled`、`probe_status`、`registry_path_mode`、`last_supported_at`、`probe_error`
 - 只读，不提供手工改标签或手工改能力
-- 用于运维核对春川这类多 Host Source
+- 用于运维核对Source-Beta这类多 Host Source
 
 明确不做：
 
