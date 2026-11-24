@@ -47,7 +47,8 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 		// P0 反例：开放式 Range 只回到 total-2，且 chunked 无 Content-Length。
 		// 即使 HTTP 层合法，也不能接管，否则尾部永远缺一个字节。
 		{name: "206 短 Range 无 CL", status: 206, etag: `"v1"`, crTotal: total, crEnd: total - 2, bodyFrom: sent, noCL: true},
-		{name: "200 长度一致同版本", status: 200, etag: `"v1"`, crTotal: total, bodyFrom: 0, wantOK: true, wantVer: true},
+		// 3.5.23 F3：候选 200 即使长度一致也拒绝接管（旧行为放行）。
+		{name: "200 长度一致同版本仍拒绝", status: 200, etag: `"v1"`, crTotal: total, bodyFrom: 0},
 		{name: "200 长度不同", status: 200, etag: `"v1"`, crTotal: total + 1, bodyFrom: 0},
 	}
 
@@ -97,7 +98,7 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 				// 造一个够快的样本，否则 trySwitch 直接跳过这台源。
 				speedProbe: func(id int64, kind string, n int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 				parTargets: func(*adapter.Plan) []fetchTarget {
-					return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: sid, Name: "b", Preferred: true}}}
+					return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: sid, Name: "b", Preferred: true, RangeCap: 1}}}
 				},
 			}
 

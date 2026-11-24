@@ -84,7 +84,7 @@ func TestTrySwitchKeepsBodyAfterFirstByte(t *testing.T) {
 		switchBudget: 40 * time.Millisecond,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
-			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	plan := &adapter.Plan{Kind: "docker", Upstream: u}
@@ -133,7 +133,7 @@ func TestTrySwitchTimeoutBeforeFirstByte(t *testing.T) {
 		switchBudget: 30 * time.Millisecond,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
-			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	plan := &adapter.Plan{Kind: "docker", Upstream: u}
@@ -213,7 +213,7 @@ func TestTrySwitchLateResponseClosedOnce(t *testing.T) {
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
 			u, _ := url.Parse("http://127.0.0.1:1/never")
-			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+			return []fetchTarget{{u: u, c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	plan := &adapter.Plan{Kind: "docker", Upstream: fbURL(t, "http://127.0.0.1:1/never")}
@@ -265,7 +265,7 @@ func TestTrySwitchPropagatesFirstReadError(t *testing.T) {
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
-			return []fetchTarget{{u: fbURL(t, "http://127.0.0.1:1/x"), c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true}}}
+			return []fetchTarget{{u: fbURL(t, "http://127.0.0.1:1/x"), c: &scheduler.Candidate{ID: 2, Name: "b", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	plan := &adapter.Plan{Kind: "docker"}
@@ -382,7 +382,7 @@ func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
-			return []fetchTarget{{u: fbURL(t, srv.URL), c: &scheduler.Candidate{ID: id, Name: "blocked", Preferred: true}}}
+			return []fetchTarget{{u: fbURL(t, srv.URL), c: &scheduler.Candidate{ID: id, Name: "blocked", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4}))
@@ -526,7 +526,7 @@ func TestLeaseReclaimCancelsCtxBlockingBody(t *testing.T) {
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
-			return []fetchTarget{{u: &url.URL{Scheme: "http", Host: "ctxblocked.invalid", Path: "/x"}, c: &scheduler.Candidate{ID: id, Name: "ctxblocked", Preferred: true}}}
+			return []fetchTarget{{u: &url.URL{Scheme: "http", Host: "ctxblocked.invalid", Path: "/x"}, c: &scheduler.Candidate{ID: id, Name: "ctxblocked", Preferred: true, RangeCap: 1}}}
 		},
 	}
 	g.SetScheduler(scheduler.New(st, scheduler.Config{Enabled: true, MaxCandidates: 3, MaxPerSource: 4}))

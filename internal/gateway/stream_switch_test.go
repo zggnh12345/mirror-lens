@@ -163,7 +163,9 @@ func (f *swFixture) stream(t *testing.T, slow, fast *swSrc, expect string) ([]by
 	g.parTargets = func(*adapter.Plan) []fetchTarget {
 		return []fetchTarget{
 			{u: uSlow, c: &scheduler.Candidate{ID: 1, Name: "slow"}},
-			{u: uFast, c: &scheduler.Candidate{ID: 2, Name: "fast", Preferred: true}},
+			// 3.5.23 F4.1：fast 是预期被换源接管的合格候选，须显式声明
+			// RangeCap=1；否则会被 switchCandidates 的资格过滤挡掉。
+			{u: uFast, c: &scheduler.Candidate{ID: 2, Name: "fast", Preferred: true, RangeCap: 1}},
 		}
 	}
 	key := "docker:blob:sha256:" + f.sha
@@ -265,27 +267,26 @@ func TestStreamSwitchDropsPartialAfterVerifiedSwitch(t *testing.T) {
 	}
 }
 
-// 新源忽略 Range 返回 200，且首块大于已发送偏移：多出的部分必须写出，
-// 否则客户端少一截，长度与 SHA256 都对不上。
+// 3.5.23 F3：新源无视 Range 返回 200 时一律拒绝接管（即使长度一致）。
+// 旧的 200 接管回放路径已移除；本用例改为验证换源被拒后当前源未被替换、
+// 输出停在旧源已发的字节处，不得把 200 的候选当成合格接管源。
 func TestStreamSwitch200FirstBlockBeyondSent(t *testing.T) {
 	f := newSwFixture(t)
-	// 老源只发 512 字节就卡住，判慢时 sent 很小，换源首块必然大于它。
+	// 老源只发 512 字节就卡住，判慢时 sent 很小，触发一次换源尝试。
 	slow := newSwSrcFull(f.data, `"v1"`, false, 0, 512, false)
 	defer slow.srv.Close()
-	// 新源无视 Range，从 0 返回 200 全量。
+	// 新源无视 Range，从 0 返回 200 全量（即使长度一致也不得接管）。
 	fast := newSwSrcFull(f.data, `"v1"`, false, 0, 0, true)
 	defer fast.srv.Close()
 
 	out, plan := f.stream(t, slow, fast, f.sha)
-	if len(out) != len(f.data) {
-		t.Fatalf("响应长度 %d，期望 %d（少 %d 字节）", len(out), len(f.data), len(f.data)-len(out))
+	// F3 后 200 候选被拒，不能接管到新源，客户端只拿到老源卡住前的字节。
+	if len(out) == 0 || len(out) >= len(f.data) {
+		t.Fatalf("200 候选应被拒绝接管，输出应停在老源已发处（0 < len < %d），实际 %d 字节", len(f.data), len(out))
 	}
-	sum := sha256.Sum256(out)
-	if hex.EncodeToString(sum[:]) != f.sha {
-		t.Fatalf("200 换源后内容 SHA256 不一致")
-	}
-	if plan.Upstream.String() != fast.srv.URL {
-		t.Fatalf("plan.Upstream 未更新为新源: %s", plan.Upstream)
+	// 当前源未被替换：Upstream 必须仍指向老源。
+	if plan.Upstream.String() != slow.srv.URL {
+		t.Fatalf("200 候选不得接管，plan.Upstream 不应变成新源: %s", plan.Upstream)
 	}
 }
 

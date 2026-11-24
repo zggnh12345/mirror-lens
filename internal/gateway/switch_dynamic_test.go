@@ -52,8 +52,8 @@ func TestPeerMedianRejectsCandidateByP(t *testing.T) {
 		parTargets: func(*adapter.Plan) []fetchTarget {
 			return []fetchTarget{
 				{u: nil, c: &scheduler.Candidate{ID: 1, Name: "cur", Preferred: true}},
-				{u: nil, c: &scheduler.Candidate{ID: 2, Name: "cand", Preferred: true}},
-				{u: nil, c: &scheduler.Candidate{ID: 3, Name: "peer", Preferred: true}},
+				{u: nil, c: &scheduler.Candidate{ID: 2, Name: "cand", Preferred: true, RangeCap: 1}},
+				{u: nil, c: &scheduler.Candidate{ID: 3, Name: "peer", Preferred: true, RangeCap: 1}},
 			}
 		},
 		speedProbe: func(id int64, _ string, _ int) []int64 {
@@ -109,8 +109,8 @@ func TestPeerExclusionRecomputesAfterFailedCandidate(t *testing.T) {
 		par: ParOptions{SwitchFloorMiBPerSec: 1},
 		parTargets: func(*adapter.Plan) []fetchTarget {
 			return []fetchTarget{
-				{u: aURL, c: &scheduler.Candidate{ID: 1, Name: "A", Preferred: true}},
-				{u: bURL, c: &scheduler.Candidate{ID: 2, Name: "B", Preferred: true}},
+				{u: aURL, c: &scheduler.Candidate{ID: 1, Name: "A", Preferred: true, RangeCap: 1}},
+				{u: bURL, c: &scheduler.Candidate{ID: 2, Name: "B", Preferred: true, RangeCap: 1}},
 			}
 		},
 		speedProbe: func(id int64, _ string, _ int) []int64 {

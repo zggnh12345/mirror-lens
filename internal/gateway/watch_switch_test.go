@@ -102,8 +102,9 @@ func TestSwitchAcceptable(t *testing.T) {
 			status: 206, clen: 900,
 		},
 		{
-			name: "200 长度一致", cur: hdr("ETag", `"v1"`), newH: hdr("ETag", `"v1"`),
-			status: 200, clen: 1000, wantOK: true, verified: true,
+			// 3.5.23 F3：候选 HTTP 200 即使长度一致也拒绝接管（旧行为放行）。
+			name: "200 长度一致仍拒绝", cur: hdr("ETag", `"v1"`), newH: hdr("ETag", `"v1"`),
+			status: 200, clen: 1000,
 		},
 		{
 			name: "200 长度不同", cur: hdr("ETag", `"v1"`), newH: hdr("ETag", `"v1"`),

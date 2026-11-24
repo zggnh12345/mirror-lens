@@ -305,11 +305,32 @@ func (g *Gateway) recentProxySpeeds(id int64, kind string, n int) []int64 {
 }
 
 // switchCandidates 给换源挑候选源；测试可注入固定列表。
+//
+// 3.5.23 F1/F2：中途接管的统一资格过滤落点。候选必须已验证支持 Range
+// （RangeCap == 1），RangeCap 为 0（不支持）或 -1（未检测）一律排除。
+// peerMedianBps 与 trySwitchWithSpeed 都经由此函数，因此测速同伴集合与
+// 实际接管候选集合天然一致；候选失败后 excluded 重算也基于同一过滤集合。
+//
+// 过滤只能写在这里，不得下沉到 targets()/parTargets 注入层或 fetchTarget
+// 构造层：g.parTargets 是换源/并行填充/中途并行三路共享注入点，下沉会污染
+// 并行下载路径（并行有自己的 rangeKnownOff 门槛）。
 func (g *Gateway) switchCandidates(plan *adapter.Plan) []fetchTarget {
+	var cands []fetchTarget
 	if g.parTargets != nil {
-		return g.parTargets(plan)
+		cands = g.parTargets(plan)
+	} else {
+		cands = g.targets(plan, nil)
 	}
-	return g.targets(plan, nil)
+	// 新建切片，不复用 cands 底层数组：g.targets 可能返回缓存派生的列表，
+	// 原地过滤会污染共享缓存。
+	out := make([]fetchTarget, 0, len(cands))
+	for _, t := range cands {
+		if t.c == nil || t.c.RangeCap != 1 {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // switchAcceptable 判断新响应能否接在 sent 之后。
@@ -328,10 +349,11 @@ func switchAcceptable(curHdr, newHdr http.Header, status int, clen, sent, total 
 			return false, false
 		}
 	case http.StatusOK:
-		// 忽略 Range 时必须先证明长度一致，否则丢前缀就是拿未知版本拼接。
-		if clen != total {
-			return false, false
-		}
+		// 3.5.23 F3：中途接管只接受 HTTP 206。候选返回 200 意味着它忽略了
+		// Range 从 0 重发，回放 sent 字节依赖历史速度估算且旧源已关闭、无回退，
+		// 是已定位的客户端失败路径（见 3.5.22 §4.8 / 3.5.23 §一）。长度即使
+		// 一致也一律拒绝。此限制只作用于换源接管，不影响初始源/普通故障转移。
+		return false, false
 	default:
 		return false, false
 	}

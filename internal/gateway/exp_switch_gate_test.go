@@ -9,6 +9,13 @@ package gateway
 // 说明：现有代码的换源资格只看「候选样本中位数 >= SwitchMinMBps」，
 // 不看当前源实时速度 C（文档中的 C×1.2 尚未实现）。本实验用现有代码跑，
 // 就是为了实测「裸降门槛」的两个后果，作为是否实现动态门槛的依据。
+//
+// 3.5.23 更新：换源候选新增 RangeCap==1 资格门（watch.go:328），与门槛算法
+// 正交。本夹具为候选显式声明 RangeCap:1，纯粹是为隔离「门槛」变量、让本实验
+// 继续观测门槛行为；若缺此声明，候选会在资格门被排除，实验将永远观测到
+// 「不换源」而失真。三个实验已补断言，避免再次静默失真。
+// 另：3.5.22 已实现动态门槛 C×1.2，EXP2（当前快于候选）现应正确拒绝误换，
+// 原注释「true 表示误换更慢源」为旧预期，已按实测更新。
 
 import (
 	"crypto/sha256"
@@ -137,7 +144,7 @@ func (f *expFixture) run(t *testing.T, curRate, candSampleBps int64) bool {
 	g.parTargets = func(*adapter.Plan) []fetchTarget {
 		return []fetchTarget{
 			{u: uCur, c: &scheduler.Candidate{ID: 1, Name: "cur"}},
-			{u: uCand, c: &scheduler.Candidate{ID: 2, Name: "cand", Preferred: true}},
+			{u: uCand, c: &scheduler.Candidate{ID: 2, Name: "cand", Preferred: true, RangeCap: 1}},
 		}
 	}
 	key := "docker:blob:sha256:" + f.sha
@@ -168,14 +175,21 @@ func TestExp1_SlowCurrentFastCandidate(t *testing.T) {
 	f := newExpFixture(t, 0, 1, 2<<20)
 	switched := f.run(t, 100<<10, 1700)
 	t.Logf("EXP1 当前=100KB/s 候选样本=1.7MB/s 门槛=1MB/s → 换源=%v", switched)
+	if !switched {
+		t.Fatal("EXP1 期望换源=true（当前慢、候选快且达门槛），实得 false——门槛观测已失真")
+	}
 }
 
 // 实验2：当前 2.5MB/s，候选样本 1.7MB/s，门槛 1MB/s。
 // 判慢线设 3MB/s（低于 3 才判慢），让 2.5MB/s 进入换源评估。
+// 3.5.22 后动态门槛 C×1.2=3MB/s > 候选 1.7MB/s，应正确拒绝误换更慢源。
 func TestExp2_FastCurrentSlowerCandidate(t *testing.T) {
 	f := newExpFixture(t, 3, 1, 16<<20)
 	switched := f.run(t, 2500<<10, 1700)
-	t.Logf("EXP2 当前=2.5MB/s 候选样本=1.7MB/s 门槛=1MB/s → 换源=%v（true 表示误换更慢源）", switched)
+	t.Logf("EXP2 当前=2.5MB/s 候选样本=1.7MB/s 门槛=1MB/s → 换源=%v（false 表示未误换更慢源）", switched)
+	if switched {
+		t.Fatal("EXP2 期望换源=false（当前快于候选，C×1.2 门槛应拒绝误换），实得 true")
+	}
 }
 
 // 对照组：候选样本 0.9MB/s（低于门槛 1MB/s），当前 100KB/s。
@@ -183,4 +197,7 @@ func TestExp3_CandidateBelowFloor(t *testing.T) {
 	f := newExpFixture(t, 0, 1, 2<<20)
 	switched := f.run(t, 100<<10, 900)
 	t.Logf("EXP3 当前=100KB/s 候选样本=0.9MB/s 门槛=1MB/s → 换源=%v（应 false）", switched)
+	if switched {
+		t.Fatal("EXP3 期望换源=false（候选低于门槛），实得 true")
+	}
 }
