@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
+	"github.com/zggnh12345/mirror-lens/internal/config"
+	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 )
 
@@ -29,7 +31,7 @@ type streamWatch struct {
 	window    time.Duration
 	limitKB   int64
 	minFile   int64
-	maxSent   int64
+	maxSent   int64 // 绝对已发上限（配置项），与大文件下的 0.8×total 取 min
 	maxSwitch int
 	gap       time.Duration
 
@@ -49,7 +51,7 @@ func newStreamWatch(o ParOptions) *streamWatch {
 		window:    o.WatchWindow,
 		limitKB:   o.WatchMBps * 1024,
 		minFile:   o.SwitchMinFileMiB << 20,
-		maxSent:   o.SwitchMaxSentMiB << 20,
+		maxSent:   config.NormalizeMaxSentMiB(o.SwitchMaxSentMiB) << 20,
 		maxSwitch: o.SwitchMax,
 		gap:       o.SwitchGap,
 	}
@@ -130,7 +132,17 @@ func (w *streamWatch) windowStats() (int64, time.Duration) {
 
 // slow 判断是否该换源。窗口必须覆盖满真实时长，并且这次请求还有资格换。
 func (w *streamWatch) slow(sent, total int64) bool {
-	if w.giveUp || w.maxSwitch == 0 || total < w.minFile || sent <= 0 || sent > w.maxSent {
+	if w.giveUp || w.maxSwitch == 0 || total < w.minFile || sent <= 0 {
+		return false
+	}
+	// 进度闸门：已发字节不能超过 min(绝对上限, 0.8×total)。
+	// 0.8×total 用整数运算，避免 total×8 溢出；maxSent 已在构造时归一化，
+	// <=0 或 >150MiB 都按 150MiB 硬上限处理。
+	allow := total/10*8 + (total%10)*8/10 // floor(0.8×total)
+	if w.maxSent > 0 && allow > w.maxSent {
+		allow = w.maxSent
+	}
+	if sent > allow {
 		return false
 	}
 	if w.switches >= w.maxSwitch {
@@ -201,6 +213,21 @@ func hasStrongVerifier(h http.Header) bool {
 	return strongETag(h) != ""
 }
 
+// isFullSHA256 只认完整的 64 位十六进制 SHA-256。
+// 一侧有强 ETag、另一侧没有时，只有完整摘要才足以兜底；短摘要/占位值不放行。
+func isFullSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // switchSpeedOK 判断样本够不够快、能不能作为中途换源目标。
 // 少于 3 条不下结论：单条样本在慢启动/瞬时拥塞下偏差太大。
 func switchSpeedOK(sp []int64, minKBps int64) bool {
@@ -208,6 +235,52 @@ func switchSpeedOK(sp []int64, minKBps int64) bool {
 		return false
 	}
 	return medianInt64(sp) >= minKBps
+}
+
+// dynamicThresholdBps 返回候选 i 的动态准入门槛 T_i = max(F, P_i/1.3, C×1.2)，单位 B/s。
+//   - F：绝对速度下限（g.par.SwitchFloorMiBPerSec × 1024²，MiB/s→B/s），默认 1MiB/s
+//   - P_i：排除当前源与候选 i 自身后，其他合格候选样本中位数的中位数；无同伴取 0
+//   - C：当前供数源实时速度（B/s）
+//
+// P_i 用「/1.3」而非「×1.3」：后者会让候选被自己所在群体中位数淘汰。
+func (g *Gateway) dynamicThresholdBps(pBps, cBps int64) int64 {
+	fBps := g.par.SwitchFloorMiBPerSec * 1024 * 1024
+	pi := pBps * 10 / 13 // P_i / 1.3，整数运算避免浮点
+	cx := cBps * 12 / 10 // C × 1.2
+	t := fBps
+	if pi > t {
+		t = pi
+	}
+	if cx > t {
+		t = cx
+	}
+	return t
+}
+
+// peerMedianBps 计算候选 i 的同伴基线 P_i（B/s）：
+// 排除当前源、候选 i 自身，以及本次请求中已经尝试过的候选（excluded）。
+// 已尝试意味着 lease/连接/状态码等已证明其本轮不可用，不能再用历史高速样本
+// 抬高其他候选的门槛。历史样本是 b/ms（十进制 kB/s），这里统一 ×1000 转 B/s。
+func (g *Gateway) peerMedianBps(plan *adapter.Plan, cur *fetchTarget, excludeID int64, excluded map[int64]bool) int64 {
+	cands := g.switchCandidates(plan)
+	var peers []int64
+	for _, t := range cands {
+		if t.c == nil || !t.c.Preferred || t.c.ID == excludeID || excluded[t.c.ID] {
+			continue
+		}
+		if cur != nil && cur.c != nil && cur.c.ID == t.c.ID {
+			continue
+		}
+		sp := g.recentProxySpeeds(t.c.ID, plan.Kind, 5)
+		if len(sp) < 3 {
+			continue
+		}
+		peers = append(peers, medianInt64(sp)*1000)
+	}
+	if len(peers) == 0 {
+		return 0
+	}
+	return medianInt64(peers)
 }
 
 func medianInt64(v []int64) int64 {
@@ -220,7 +293,7 @@ func medianInt64(v []int64) int64 {
 	return (c[n/2-1] + c[n/2]) / 2
 }
 
-// recentProxySpeeds 查某台源最近的实测吞吐（KB/s），测试可注入。
+// recentProxySpeeds 查某台源最近的实测吞吐（b/ms，即十进制 kB/s），测试可注入。
 func (g *Gateway) recentProxySpeeds(id int64, kind string, n int) []int64 {
 	if g.speedProbe != nil {
 		return g.speedProbe(id, kind, n)
@@ -247,8 +320,8 @@ func switchAcceptable(curHdr, newHdr http.Header, status int, clen, sent, total 
 	}
 	switch status {
 	case http.StatusPartialContent:
-		start, tot, err := parseContentRange(newHdr.Get("Content-Range"))
-		if err != nil || start != sent || tot != total {
+		start, end, tot, err := parseContentRange(newHdr.Get("Content-Range"))
+		if err != nil || start != sent || end != total-1 || tot != total {
 			return false, false
 		}
 		if clen >= 0 && clen != total-sent {
@@ -270,9 +343,10 @@ func switchAcceptable(curHdr, newHdr http.Header, status int, clen, sent, total 
 		}
 		return true, true
 	}
-	// 没有可比的强 ETag：一侧有、另一侧没有，同样无法证明是同一版本。
+	// 一侧有强 ETag、另一侧没有：不能用 ETag 证明同版本。
+	// 只有完整 64 位 SHA-256 摘要才允许兜底（verified=false）；短摘要/占位值拒绝。
 	if hasStrongVerifier(curHdr) != hasStrongVerifier(newHdr) {
-		return false, false
+		return false, isFullSHA256(expectSHA)
 	}
 	// 双方都没有强验证器：只有可信摘要能兜底。
 	return false, expectSHA != ""
@@ -292,14 +366,24 @@ func skipReason(t fetchTarget, tried map[int64]bool, cur *fetchTarget) string {
 	return "未知"
 }
 
-// trySwitch 在旧连接不动的前提下，向下一台有快样本的星标发一次请求。
+// trySwitch 是 trySwitchWithSpeed 的兼容包装：当前源速度未知（C=0）。
+// 老测试与不需要当前速度的调用方用它；真实换源路径传 C。
+func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchTarget, curHdr http.Header, sent, total int64, tried map[int64]bool) (*http.Response, *fetchTarget, []byte, bool, error) {
+	return g.trySwitchWithSpeed(ctx, plan, cur, curHdr, sent, total, 0, tried)
+}
+
+// trySwitchWithSpeed 在旧连接不动的前提下，向下一台有快样本的星标发一次请求。
 // 只有 1 秒内读到第一块数据、并且能证明与旧源是同一版本，才算成功。
 // verified 为假表示没有可比验证器，只能靠 ExpectSHA 事后兜底。
-func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchTarget, curHdr http.Header, sent, total int64, tried map[int64]bool) (*http.Response, *fetchTarget, []byte, bool, error) {
+// curBps 是当前供数源实时速度（B/s），用于动态门槛 C×1.2。
+func (g *Gateway) trySwitchWithSpeed(ctx context.Context, plan *adapter.Plan, cur *fetchTarget, curHdr http.Header, sent, total, curBps int64, tried map[int64]bool) (*http.Response, *fetchTarget, []byte, bool, error) {
 	if sent <= 0 || total < 0 {
 		return nil, nil, nil, false, errors.New("没有可用的换源条件")
 	}
 	cands := g.switchCandidates(plan)
+	// 一旦开始尝试某候选，本轮就不再把它当作 P_i 的同伴；失败后下一个候选
+	// 立即用剩余有效同伴重算，避免被已证明不可用的高速源抬高门槛。
+	excluded := map[int64]bool{}
 	log.Printf("换源候选：n=%d official_only=%v sched=%q par_targets=%v",
 		len(cands), plan.OfficialOnly, plan.Sched(), g.parTargets != nil)
 	for _, t := range cands {
@@ -308,23 +392,32 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			if t.c != nil {
 				name = t.c.Name
 			}
-			log.Printf("换源跳过 %s：%s", name, skipReason(t, tried, cur))
+			log.Printf("换源拒绝 %s reason=not_eligible detail=%s", name, skipReason(t, tried, cur))
 			continue
 		}
 		// 只换到有真实快样本的源：没样本时赌它快，代价是几十秒空档，不划算。
 		// 取最近 5 条的中位数：生产样本 CV>1.4，最新一条的峰值会让慢源插队。
 		sp := g.recentProxySpeeds(t.c.ID, plan.Kind, 5)
-		if !switchSpeedOK(sp, g.par.SwitchMinMBps*1024) {
-			log.Printf("换源跳过 %s：样本不足/偏慢 kind=%q n=%d sp=%v 门限=%dKB/s",
-				t.c.Name, plan.Kind, len(sp), sp, g.par.SwitchMinMBps*1024)
+		if len(sp) < 3 {
+			log.Printf("换源拒绝 %s reason=speed_rejected detail=insufficient_samples kind=%q n=%d sp=%v",
+				t.c.Name, plan.Kind, len(sp), sp)
+			continue
+		}
+		pBps := g.peerMedianBps(plan, cur, t.c.ID, excluded)
+		thresholdBps := g.dynamicThresholdBps(pBps, curBps)
+		sBps := medianInt64(sp) * 1000
+		if sBps < thresholdBps {
+			log.Printf("换源拒绝 %s reason=speed_rejected detail=below_threshold kind=%q s_bps=%d p_bps=%d c_bps=%d threshold_bps=%d sp=%v",
+				t.c.Name, plan.Kind, sBps, pBps, curBps, thresholdBps, sp)
 			continue
 		}
 		tried[t.c.ID] = true
+		excluded[t.c.ID] = true
 
 		// 交接用预留名额：拿不到就放弃本次换源，绝不排队（I6）。
 		l, lerr := g.leaseFor(ctx, t, scheduler.KindHandover)
 		if lerr != nil {
-			log.Printf("换源跳过 %s：交接名额不可用 %v", t.c.Name, lerr)
+			log.Printf("换源拒绝 %s reason=lease_rejected err=%v", t.c.Name, logging.SafeErr(lerr))
 			continue
 		}
 
@@ -340,6 +433,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			unbind = l.BindCancel(cancel)
 			if rctx.Err() != nil {
 				// 名额在绑定前已失效，登记即取消：不允许继续拨号。
+				log.Printf("换源拒绝 %s reason=lease_rejected detail=expired_before_bind", t.c.Name)
 				unbind()
 				cancel()
 				releaseLease(l)
@@ -348,6 +442,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan), t.u.Scheme)
 		if err != nil {
+			log.Printf("换源拒绝 %s reason=request_failed stage=policy err=%v", t.c.Name, logging.SafeErr(err))
 			unbind()
 			cancel()
 			releaseLease(l)
@@ -355,6 +450,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		req, err := http.NewRequestWithContext(rctx, http.MethodGet, t.u.String(), nil)
 		if err != nil {
+			log.Printf("换源拒绝 %s reason=request_failed stage=new_request err=%v", t.c.Name, logging.SafeErr(err))
 			unbind()
 			cancel()
 			releaseLease(l)
@@ -388,12 +484,14 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			}()
 		})
 		if !ok {
+			log.Printf("换源拒绝 %s reason=request_failed stage=first_byte_budget", t.c.Name)
 			unbind()
 			releaseLease(l)
 			continue
 		}
 		resp, err := d.resp, d.err
 		if err != nil {
+			log.Printf("换源拒绝 %s reason=request_failed stage=do err=%v", t.c.Name, logging.SafeErr(err))
 			unbind()
 			cancel()
 			releaseLease(l)
@@ -402,6 +500,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 			// 先取消：Close 可能因为要读剩余数据而阻塞，届时 Reclaim 已
 			// 找不到取消函数，等于把名额锁死。
+			log.Printf("换源拒绝 %s reason=request_failed stage=bad_status status=%d", t.c.Name, resp.StatusCode)
 			cancel()
 			unbind()
 			resp.Body.Close()
@@ -410,6 +509,19 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		verified, vok := switchAcceptable(curHdr, resp.Header, resp.StatusCode, resp.ContentLength, sent, total, plan.ExpectSHA)
 		if !vok {
+			log.Printf("换源拒绝 %s reason=verifier_rejected status=%d", t.c.Name, resp.StatusCode)
+			cancel()
+			unbind()
+			resp.Body.Close()
+			releaseLease(l)
+			continue
+		}
+		// HTTP 200 = 候选忽略 Range 从 0 重发，必须回放 sent 字节。
+		// 回放预算独立设定（不继承首字节预算）：按候选样本速度估算，超预算直接拒绝，
+		// 避免为了省几十秒却卡在丢弃前缀上更久。回放过程本身由请求 ctx 取消。
+		if resp.StatusCode == http.StatusOK && !g.replayCostOK(sent, sBps) {
+			log.Printf("换源拒绝 %s reason=replay_over_budget sent=%d s_bps=%d budget=%v",
+				t.c.Name, sent, sBps, g.replayTimeout())
 			cancel()
 			unbind()
 			resp.Body.Close()
@@ -419,6 +531,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 
 		remaining := budget - time.Since(start)
 		if remaining <= 0 {
+			log.Printf("换源拒绝 %s reason=first_byte_timeout detail=budget_exhausted", t.c.Name)
 			cancel()
 			unbind()
 			resp.Body.Close()
@@ -441,6 +554,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 			cancel()
 		})
 		if !ok || rr.n <= 0 {
+			log.Printf("换源拒绝 %s reason=first_byte_timeout detail=no_first_byte n=%d", t.c.Name, rr.n)
 			cancel()
 			unbind()
 			resp.Body.Close()
@@ -449,6 +563,7 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		}
 		wrapped, werr := wrapLease(resp, l)
 		if werr != nil {
+			log.Printf("换源拒绝 %s reason=lease_rejected detail=wrap_failed err=%v", t.c.Name, logging.SafeErr(werr))
 			cancel()
 			unbind()
 			resp.Body.Close()
@@ -472,29 +587,85 @@ func (g *Gateway) trySwitch(ctx context.Context, plan *adapter.Plan, cur *fetchT
 		// 迟到的超时信号永远不能打断已经开始的读取。
 		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel, unbind: unbind}
 		holderFrom(ctx).set(l)
-		log.Printf("单流换源：%s 已接手（已发 %d MB，验证器=%v）", t.c.Name, sent>>20, verified)
+		log.Printf("换源成功 %s reason=switch_success sent=%d verified=%v s_bps=%d p_bps=%d c_bps=%d threshold_bps=%d",
+			t.c.Name, sent, verified, sBps, pBps, curBps, thresholdBps)
 		return resp, &t, buf[:rr.n], verified, nil
 	}
 	return nil, nil, nil, false, fmt.Errorf("没有可换的星标源")
 }
 
 // discardN 把新源从 0 开始的那段字节读掉，只留下 sent 之后的内容。
-func discardN(r io.Reader, n int64) error {
+// 回放过程可被 ctx 取消（客户端断开/预算回收），避免卡在丢弃前缀上。
+func discardN(ctx context.Context, r io.Reader, n int64) error {
 	if n <= 0 {
 		return nil
 	}
-	_, err := io.CopyN(io.Discard, r, n)
-	return err
+	buf := make([]byte, 32<<10)
+	var done int64
+	for done < n {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		want := int64(len(buf))
+		if remain := n - done; remain < want {
+			want = remain
+		}
+		got, err := r.Read(buf[:want])
+		if got > 0 {
+			done += int64(got)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// discardWithDeadline 在独立 deadline 内丢弃 n 字节。io.Reader 不认 context，
+// 超时/取消时必须 Close 底层 Body 才能让阻塞中的 Read 退出。
+func discardWithDeadline(ctx context.Context, body io.ReadCloser, n int64, d time.Duration) error {
+	replayCtx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	stop := context.AfterFunc(replayCtx, func() { _ = body.Close() })
+	defer stop()
+	return discardN(replayCtx, body, n)
 }
 
 // switchFirstByteBudget 是默认的首字节等待预算。
 const switchFirstByteBudget = 3 * time.Second
+
+// switchReplayBudget 是 HTTP 200 候选回放已发前缀的独立预算，不继承首字节预算。
+// 数值为保守初值，需按文档 §3.2 在真实环境校准；测试可通过 Gateway.switchReplayBudget 注入。
+const switchReplayBudget = 5 * time.Second
 
 func (g *Gateway) switchTimeout() time.Duration {
 	if g.switchBudget > 0 {
 		return g.switchBudget
 	}
 	return switchFirstByteBudget
+}
+
+func (g *Gateway) replayTimeout() time.Duration {
+	if g.switchReplayBudget > 0 {
+		return g.switchReplayBudget
+	}
+	return switchReplayBudget
+}
+
+// replayCostOK 估算 HTTP 200 回放 sent 字节的成本（按候选样本速度 sBps），
+// 超过独立回放预算则拒绝该候选。样本速度单位为 B/s。
+func (g *Gateway) replayCostOK(sent, sBps int64) bool {
+	if sent <= 0 {
+		return true
+	}
+	if sBps <= 0 {
+		return false // 速度未知，回放时间无法上界，保守拒绝
+	}
+	budget := g.replayTimeout()
+	// 预估回放秒数 = sent / sBps。用浮点只做阈值比较，不参与计费；
+	// 避免整数交叉相乘时 sent×1e9 溢出（大文件已发可到 GiB 级）。
+	seconds := float64(sent) / float64(sBps)
+	return seconds <= budget.Seconds()
 }
 
 // waitWithin 等待 ch 里的结果或超时。超时回调只投递信号、不直接产生副作用，

@@ -236,7 +236,7 @@ func (g *Gateway) tryParallel(w http.ResponseWriter, r *http.Request, plan *adap
 		g.parFalls.Add(1)
 		return false
 	}
-	if start, tot, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
+	if start, _, tot, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
 		perr != nil || start != 0 || tot != total {
 		resp0.Body.Close()
 		drop()
@@ -688,7 +688,7 @@ func (g *Gateway) probeTarget(ctx context.Context, plan *adapter.Plan, t fetchTa
 		}
 		return parProbe{}
 	}
-	start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
+	start, _, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
 	ctype := resp.Header.Get("Content-Type")
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	resp.Body.Close()
@@ -927,7 +927,7 @@ func (g *Gateway) parChunk(ctx context.Context, plan *adapter.Plan, src parSourc
 			cl.finish(resp.Body)
 			acancel()
 		}
-		start, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
+		start, _, tot, perr := parseContentRange(resp.Header.Get("Content-Range"))
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off || tot != total {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			finish()

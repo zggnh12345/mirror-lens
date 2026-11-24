@@ -139,8 +139,8 @@ func newSwFixture(t *testing.T) *swFixture {
 		g: &Gateway{
 			st: st, cache: cs, cli: http.DefaultClient, now: time.Now, maxSize: 1 << 40,
 			par: ParOptions{
-				Enabled:       false, // 只测单流换源，别让中途并行抢先
-				SwitchMinMBps: 1, WatchWindow: 2 * time.Second, WatchMBps: 3,
+				Enabled:              false, // 只测单流换源，别让中途并行抢先
+				SwitchFloorMiBPerSec: 1, WatchWindow: 2 * time.Second, WatchMBps: 3,
 				SwitchMinFileMiB: 1, SwitchMaxSentMiB: 48, SwitchMax: 2,
 			},
 		},

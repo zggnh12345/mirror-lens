@@ -1,0 +1,21 @@
+# 3.5.22 真实环境验收（临时实例，生产未动）
+2026-11-24T10:05:25+08:00
+
+## 配置迁移
+2026/11/24 01:47:31 配置迁移完成：parallel.switch_min_mbps → parallel.switch_floor_mib_per_sec；备份 /test/config/config.yaml.bak-pre-3.5.22-1795484851
+
+## 最终二进制单流换源（02:04:57 起）
+{"time":"2026-11-24T02:04:57.987685488Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
+{"time":"2026-11-24T02:04:57.987909751Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=speed_rejected detail=below_threshold kind=\"docker\" s_bps=1887000 p_bps=2600000 c_bps=339968 threshold_bps=2000000 sp=[1765 1887 3428 3069 1182]"}
+{"time":"2026-11-24T02:04:59.942141873Z","level":"INFO","msg":"换源成功 docker.sparkcr.cn reason=switch_success sent=3407654 verified=false s_bps=2600000 p_bps=1887000 c_bps=339968 threshold_bps=1451538"}
+
+## 下载耗时与 SHA256
+cold: 92378832 bytes, ELAPSED_MS=31380
+cache_hit: 92378832 bytes, HIT_MS=141
+d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877  /opt/data/cache/scratch/mltest/golang123-final.tgz
+d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877  /opt/data/cache/scratch/mltest/golang123-final-hit.tgz
+
+## 缓存文件
+92378832 /opt/data/cache/scratch/mltest/data/cache/blobs/d6/d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877
+
+## 残留 .part

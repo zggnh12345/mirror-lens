@@ -43,7 +43,7 @@ func (g *Gateway) tryOfficialParallel(w http.ResponseWriter, r *http.Request, pl
 	if err != nil {
 		return false
 	}
-	start, total, perr := parseContentRange(resp.Header.Get("Content-Range"))
+	start, _, total, perr := parseContentRange(resp.Header.Get("Content-Range"))
 	ctype := resp.Header.Get("Content-Type")
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	resp.Body.Close()
@@ -258,7 +258,7 @@ func (g *Gateway) fetchSeg(ctx context.Context, plan *adapter.Plan, off, ln int6
 			last = err
 			continue
 		}
-		start, _, perr := parseContentRange(resp.Header.Get("Content-Range"))
+		start, _, _, perr := parseContentRange(resp.Header.Get("Content-Range"))
 		if resp.StatusCode != http.StatusPartialContent || perr != nil || start != off {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()

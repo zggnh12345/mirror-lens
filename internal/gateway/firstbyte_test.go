@@ -80,7 +80,7 @@ func TestTrySwitchKeepsBodyAfterFirstByte(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	g := &Gateway{
 		cli:          srv.Client(),
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: 40 * time.Millisecond,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
@@ -129,7 +129,7 @@ func TestTrySwitchTimeoutBeforeFirstByte(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	g := &Gateway{
 		cli:          srv.Client(),
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: 30 * time.Millisecond,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
@@ -208,7 +208,7 @@ func TestTrySwitchLateResponseClosedOnce(t *testing.T) {
 	var closed atomic.Int32
 	g := &Gateway{
 		cli:          &http.Client{Transport: lateRT{closed: &closed, delay: 80 * time.Millisecond, body: []byte("late")}},
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: 20 * time.Millisecond,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
@@ -261,7 +261,7 @@ func TestTrySwitchPropagatesFirstReadError(t *testing.T) {
 	}
 	g := &Gateway{
 		cli:          &http.Client{Transport: staticRT{resp: resp}},
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
@@ -378,7 +378,7 @@ func TestLeaseReclaimCancelsBlockedSwitchRead(t *testing.T) {
 	cli.Transport = enterRT{base: cli.Transport, entered: entered, once: &once}
 	g := &Gateway{
 		cli:          cli,
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {
@@ -522,7 +522,7 @@ func TestLeaseReclaimCancelsCtxBlockingBody(t *testing.T) {
 	entered := make(chan struct{})
 	g := &Gateway{
 		cli:          &http.Client{Transport: ctxBlockingRT{entered: entered, first: []byte("X"), sent: sent, total: total}},
-		par:          ParOptions{SwitchMinMBps: 1},
+		par:          ParOptions{SwitchFloorMiBPerSec: 1},
 		switchBudget: time.Second,
 		speedProbe:   func(int64, string, int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 		parTargets: func(*adapter.Plan) []fetchTarget {

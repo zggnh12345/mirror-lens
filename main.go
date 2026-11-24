@@ -193,6 +193,17 @@ func main() {
 			path, required = "config.yaml", false
 		}
 	}
+	// 配置迁移必须在 Load 之前：Load 保持纯读取，迁移只在这里发生一次。
+	if rep, err := config.MigrateFile(path); err != nil {
+		log.Fatalf("配置迁移: %v", err)
+	} else {
+		if rep.Migrated {
+			log.Printf("配置迁移完成：parallel.switch_min_mbps → parallel.switch_floor_mib_per_sec；备份 %s", rep.BackupPath)
+		}
+		if rep.Warning != "" {
+			log.Printf("配置迁移警告: %s", rep.Warning)
+		}
+	}
 	cfg, err := config.Load(path, required)
 	if err != nil {
 		log.Fatalf("读配置: %v", err)
@@ -487,9 +498,9 @@ func main() {
 			DegradeHold:          time.Duration(cfg.Parallel.DegradeHoldMin) * time.Minute,
 			WatchMBps:            cfg.Parallel.WatchMBps,
 			WatchWindow:          time.Duration(cfg.Parallel.WatchSec) * time.Second,
-			SwitchMinMBps:        cfg.Parallel.SwitchMinMBps,
+			SwitchFloorMiBPerSec: cfg.Parallel.SwitchFloorMiBPerSec,
 			SwitchMinFileMiB:     cfg.Parallel.SwitchMinFileMiB,
-			SwitchMaxSentMiB:     cfg.Parallel.SwitchMaxSentMiB,
+			SwitchMaxSentMiB:     config.NormalizeMaxSentMiB(cfg.Parallel.SwitchMaxSentMiB),
 			SwitchMax:            cfg.Parallel.SwitchMax,
 			SwitchGap:            time.Duration(cfg.Parallel.SwitchGapSec) * time.Second,
 			ChunkSize:            cfg.Parallel.ChunkMB << 20,

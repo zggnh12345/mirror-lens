@@ -153,7 +153,7 @@ func (g *Gateway) midFill(out io.Writer, plan *adapter.Plan, part *os.File,
 		releaseLease(l0)
 		return false, false
 	}
-	if start, tot2, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
+	if start, _, tot2, perr := parseContentRange(resp0.Header.Get("Content-Range")); resp0.StatusCode != http.StatusPartialContent ||
 		perr != nil || start != sent || tot2 != total {
 		resp0.Body.Close()
 		releaseLease(l0)

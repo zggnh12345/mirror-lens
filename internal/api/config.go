@@ -270,17 +270,22 @@ var cfgSchema = []cfgField{
 		Hint: "作用：判断要不要换源时看多长的速率窗口。用法：秒；越短反应越快，也越容易误判", Get: func(c *config.Config) string { return i32(c.Parallel.WatchSec) }, Set: func(c *config.Config, v string) error {
 			return setIntI(&c.Parallel.WatchSec, v, 5, 120, true, true)
 		}},
-	{Section: "分片并行", Key: "parallel.switch_min_mbps", Label: "换源速度门槛", Kind: "int", Unit: "MB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
-		Hint: "备选星标要有这么快的历史样本才值得换，否则直接并行", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinMBps) }, Set: func(c *config.Config, v string) error {
-			return setInt(&c.Parallel.SwitchMinMBps, v, 1, 1024, true, true)
+	{Section: "分片并行", Key: "parallel.switch_floor_mib_per_sec", Label: "换源速度下限", Kind: "int", Unit: "MiB/s", Min: 1, Max: 1024, HasMin: true, HasMax: true, Restart: true,
+		Hint: "动态换源阈值的绝对下限 F；候选速度必须高于它才可能被选中", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchFloorMiBPerSec) }, Set: func(c *config.Config, v string) error {
+			return setInt(&c.Parallel.SwitchFloorMiBPerSec, v, 1, 1024, true, true)
 		}},
 	{Section: "分片并行", Key: "parallel.switch_min_file_mib", Label: "换源最小文件", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
 		Hint: "作用：小于这个大小的文件不做换源。用法：MB；小文件换源收益低，还多一次握手", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMinFileMiB) }, Set: func(c *config.Config, v string) error {
 			return setInt(&c.Parallel.SwitchMinFileMiB, v, 1, 102400, true, true)
 		}},
-	{Section: "分片并行", Key: "parallel.switch_max_sent_mib", Label: "换源已发上限", Kind: "int", Unit: "MB", Min: 1, Max: 102400, HasMin: true, HasMax: true, Restart: true,
-		Hint: "已发给客户端的字节超过此值就不再换源", Get: func(c *config.Config) string { return i64(c.Parallel.SwitchMaxSentMiB) }, Set: func(c *config.Config, v string) error {
-			return setInt(&c.Parallel.SwitchMaxSentMiB, v, 1, 102400, true, true)
+	{Section: "分片并行", Key: "parallel.switch_max_sent_mib", Label: "换源已发上限", Kind: "int", Unit: "MiB", Min: 1, Max: 150, HasMin: true, HasMax: true, Restart: true,
+		Hint: "已发给客户端的字节超过此值就不再换源；最大 150 MiB，0 或负数按 150 处理", Get: func(c *config.Config) string { return i64(config.NormalizeMaxSentMiB(c.Parallel.SwitchMaxSentMiB)) }, Set: func(c *config.Config, v string) error {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return fmt.Errorf("需要整数: %w", err)
+			}
+			c.Parallel.SwitchMaxSentMiB = config.NormalizeMaxSentMiB(n)
+			return nil
 		}},
 	{Section: "分片并行", Key: "parallel.switch_max", Label: "最多换源次数", Kind: "int", Unit: "次", Min: 0, Max: 10, HasMin: true, HasMax: true, Restart: true,
 		Hint: "作用：一个请求最多换几次源。用法：0 = 不换源；次数越多越能绕开坏源，也越慢", Get: func(c *config.Config) string { return i32(c.Parallel.SwitchMax) }, Set: func(c *config.Config, v string) error {

@@ -31,7 +31,9 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 		etag     string
 		lm       string
 		crTotal  int64
+		crEnd    int64
 		bodyFrom int64
+		noCL     bool
 		expect   string
 		wantOK   bool
 		wantVer  bool
@@ -42,6 +44,9 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 		{name: "206 无验证器无摘要", cur: hdr(), status: 206, crTotal: total, bodyFrom: sent},
 		{name: "206 无验证器有摘要", cur: hdr(), status: 206, crTotal: total, bodyFrom: sent, expect: "deadbeef", wantOK: true},
 		{name: "206 只有新源有 Last-Modified", status: 206, lm: "Wed, 01 Jan 2026 00:00:00 GMT", crTotal: total, bodyFrom: sent},
+		// P0 反例：开放式 Range 只回到 total-2，且 chunked 无 Content-Length。
+		// 即使 HTTP 层合法，也不能接管，否则尾部永远缺一个字节。
+		{name: "206 短 Range 无 CL", status: 206, etag: `"v1"`, crTotal: total, crEnd: total - 2, bodyFrom: sent, noCL: true},
 		{name: "200 长度一致同版本", status: 200, etag: `"v1"`, crTotal: total, bodyFrom: 0, wantOK: true, wantVer: true},
 		{name: "200 长度不同", status: 200, etag: `"v1"`, crTotal: total + 1, bodyFrom: 0},
 	}
@@ -55,15 +60,30 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 				if c.lm != "" {
 					w.Header().Set("Last-Modified", c.lm)
 				}
+				end := c.crEnd
+				if end == 0 {
+					end = c.crTotal - 1
+				}
 				if c.status == 206 {
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", c.bodyFrom, c.crTotal-1, c.crTotal))
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", c.bodyFrom, end, c.crTotal))
 				}
-				payload := body[c.bodyFrom:]
-				if c.status == 200 && c.crTotal != total {
-					// 200 的「长度不同」必须真的多给一个字节，否则测不到。
-					payload = append(append([]byte{}, payload...), 0)
+				var payload []byte
+				if c.status == 200 {
+					payload = body[c.bodyFrom:]
+					if c.crTotal != total {
+						// 200 的「长度不同」必须真的多给一个字节，否则测不到。
+						payload = append(append([]byte{}, payload...), 0)
+					}
+				} else {
+					hi := end + 1
+					if hi > int64(len(body)) {
+						hi = int64(len(body))
+					}
+					payload = body[c.bodyFrom:hi]
 				}
-				w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+				if !c.noCL {
+					w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+				}
 				w.WriteHeader(c.status)
 				w.Write(payload)
 			}))
@@ -73,7 +93,7 @@ func TestTrySwitchVersionBoundary(t *testing.T) {
 			const sid = int64(2)
 			g := &Gateway{
 				cli: srv.Client(),
-				par: ParOptions{SwitchMinMBps: 1},
+				par: ParOptions{SwitchFloorMiBPerSec: 1},
 				// 造一个够快的样本，否则 trySwitch 直接跳过这台源。
 				speedProbe: func(id int64, kind string, n int) []int64 { return []int64{128 << 10, 120 << 10, 140 << 10} },
 				parTargets: func(*adapter.Plan) []fetchTarget {

@@ -223,16 +223,29 @@ type Parallel struct {
 
 	// 单流下载中的实时判速与换源。
 	// WatchMBps/WatchSec：窗口内平均低于 WatchMBps 判为慢。
-	// SwitchMinMBps：备选星标要有这么快的历史样本才值得换（否则直接并行）。
+	// SwitchFloorMiBPerSec：绝对速度下限 F（动态门槛 T_i=max(F,P_i/1.3,C×1.2) 的一项）。
 	// SwitchMinFileMiB：小于此尺寸不参与换源，重下不划算。
-	// SwitchMaxSentMiB：已发给客户端的字节超过此值不再换源（空档代价太高）。
-	WatchMBps        int64 `yaml:"watch_mbps"`
-	WatchSec         int   `yaml:"watch_sec"`
-	SwitchMinMBps    int64 `yaml:"switch_min_mbps"`
-	SwitchMinFileMiB int64 `yaml:"switch_min_file_mib"`
-	SwitchMaxSentMiB int64 `yaml:"switch_max_sent_mib"`
-	SwitchMax        int   `yaml:"switch_max"`
-	SwitchGapSec     int   `yaml:"switch_gap_sec"`
+	// SwitchMaxSentMiB：已发字节的绝对上限；运行时再裁剪到 150MiB 硬上限，
+	// 实际 gate 为 min(min(本值,150MiB), 0.8×total)。
+	WatchMBps            int64 `yaml:"watch_mbps"`
+	WatchSec             int   `yaml:"watch_sec"`
+	SwitchFloorMiBPerSec int64 `yaml:"switch_floor_mib_per_sec"`
+	SwitchMinFileMiB     int64 `yaml:"switch_min_file_mib"`
+	SwitchMaxSentMiB     int64 `yaml:"switch_max_sent_mib"`
+	SwitchMax            int   `yaml:"switch_max"`
+	SwitchGapSec         int   `yaml:"switch_gap_sec"`
+}
+
+// MaxSwitchSentMiB 是已发字节上限的程序硬上限。
+const MaxSwitchSentMiB = 150
+
+// NormalizeMaxSentMiB 统一 UI、API 与运行时的已发上限语义：
+// <=0 视为使用 150MiB 硬上限，>150 裁剪到 150。
+func NormalizeMaxSentMiB(v int64) int64 {
+	if v <= 0 || v > MaxSwitchSentMiB {
+		return MaxSwitchSentMiB
+	}
+	return v
 }
 
 // Private 是带凭据（PAT）的私有请求的加速策略：凭据只发给显式信任的
@@ -419,14 +432,14 @@ func Default() *Config {
 			DegradeMBps:    4,
 			DegradeHoldMin: 30,
 			// 单流实时判速：10 秒窗口低于 3MB/s 视为慢。
-			// 小文件重下不划算，60MiB 起才考虑换源。
-			WatchMBps:        3,
-			WatchSec:         10,
-			SwitchMinMBps:    8,
-			SwitchMinFileMiB: 60,
-			SwitchMaxSentMiB: 48,
-			SwitchMax:        2,
-			SwitchGapSec:     30,
+			// 小文件重下不划算，30MiB 起才考虑换源；已发上限由 0.8×total 主导（绝对上限 150MiB）。
+			WatchMBps:            3,
+			WatchSec:             10,
+			SwitchFloorMiBPerSec: 1,
+			SwitchMinFileMiB:     30,
+			SwitchMaxSentMiB:     150,
+			SwitchMax:            2,
+			SwitchGapSec:         30,
 		},
 		GitHub:  GitHub{Enabled: true, TokenEnv: "MIRRORLENS_GITHUB_TOKEN"},
 		Network: Network{IPFamily: "auto"},

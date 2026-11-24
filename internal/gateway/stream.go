@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/adapter"
@@ -198,8 +199,8 @@ func (g *Gateway) fillStream(w http.ResponseWriter, r *http.Request, plan *adapt
 			continue
 
 		case http.StatusPartialContent:
-			start, total, err := parseContentRange(resp.Header.Get("Content-Range"))
-			if pm == nil || err != nil || start != pm.Have || total != pm.Size {
+			start, end, total, err := parseContentRange(resp.Header.Get("Content-Range"))
+			if pm == nil || err != nil || start != pm.Have || end != total-1 || total != pm.Size {
 				// 上游给的片段和我们的续传点对不上，宁可从头下
 				resp.Body.Close()
 				g.cache.DropPartial(plan.CacheKey)
@@ -476,8 +477,8 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	total := resp.ContentLength
 	have := int64(0)
 	if resp.StatusCode == http.StatusPartialContent {
-		start, t, err := parseContentRange(resp.Header.Get("Content-Range"))
-		if err != nil {
+		start, end, t, err := parseContentRange(resp.Header.Get("Content-Range"))
+		if err != nil || end != t-1 {
 			loggw(slog.LevelWarn, "上游 Content-Range 解析失败", r.Context(), plan, logging.UpstreamHTTPError, err)
 			http.Error(w, "502 上游分段响应不合法", http.StatusBadGateway)
 			return
@@ -635,6 +636,10 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 	// writeChunk 把一段上游字节写到客户端和 partial。
 	// 返回 errOverrun 表示上游多给了字节（继续收尾判失败），其它错误直接结束。
 	writeChunk := func(b []byte) error {
+		if total >= 0 && sent+int64(len(b)) > total {
+			// 先判超长再写：超出的字节绝不能进入客户端或 .part。
+			return errOverrun
+		}
 		tw := time.Now()
 		_, werr := out.Write(b)
 		win.blocked += time.Since(tw)
@@ -684,7 +689,9 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			// 耗尽后禁止换源/中途并行：不再发起任何新派发。
 			return
 		}
-		nresp, ntgt, first, verified, serr := g.trySwitch(r.Context(), plan, tgt, resp.Header, sent, total, tried)
+		curKB, _ := sw.sample() // 当前供数源实时速度（KiB/s）
+		curBps := curKB * 1024  // 动态门槛统一用 B/s
+		nresp, ntgt, first, verified, serr := g.trySwitchWithSpeed(r.Context(), plan, tgt, resp.Header, sent, total, curBps, tried)
 		if serr != nil {
 			sw.setGiveUp()
 			g.noteLive(tgt, plan.Kind, sw)
@@ -736,13 +743,16 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			n := int64(len(first))
 			switch {
 			case n < sent:
-				if derr := discardN(resp.Body, sent-n); derr != nil {
+				// 回放预算独立：超时必须真正中断阻塞中的 Read，不能只检查 ctx。
+				// 旧源已关闭，失败路径只能结束请求，绝不能回退。
+				derr := discardWithDeadline(r.Context(), resp.Body, sent-n, g.replayTimeout())
+				if derr != nil {
 					savePartial()
 					finished = true
 					return
 				}
 			case n > sent:
-				if ferr := writeChunk(first[sent:]); ferr != nil && !errors.Is(ferr, errOverrun) {
+				if ferr := writeChunk(first[sent:]); ferr != nil {
 					finished = true
 					return
 				}
@@ -750,12 +760,21 @@ func (g *Gateway) streamBody(w http.ResponseWriter, r *http.Request, plan *adapt
 			}
 		} else if len(first) > 0 {
 			if ferr := writeChunk(first); ferr != nil {
-				if !errors.Is(ferr, errOverrun) {
-					finished = true
-					return
-				}
+				finished = true
+				return
 			}
 			sw.add(int64(len(first)))
+		}
+		if resp.StatusCode == http.StatusPartialContent {
+			// 206 接管：剩余字节必须恰好是 total-sent。有 CL 读满即止；
+			// 无 CL/chunked 读满后再读 1 字节确认 EOF，超时不算 EOF。
+			need := total - sent
+			if need < 0 {
+				savePartial()
+				finished = true
+				return
+			}
+			resp.Body = newSwitchBody(resp.Body, need, resp.ContentLength < 0, switchBodyEOFTimeout)
 		}
 		restartReader()
 	}
@@ -1283,29 +1302,120 @@ func blobDigestFromPath(p string) string {
 }
 
 // parseContentRange 解析 "bytes 100-499/1234"，总长未知时返回 -1。
-func parseContentRange(s string) (start, total int64, err error) {
+func parseContentRange(s string) (start, end, total int64, err error) {
 	if !strings.HasPrefix(s, "bytes ") {
-		return 0, 0, fmt.Errorf("Content-Range 格式不对: %q", s)
+		return 0, 0, 0, fmt.Errorf("Content-Range 格式不对: %q", s)
 	}
 	s = strings.TrimPrefix(s, "bytes ")
 	slash := strings.LastIndex(s, "/")
 	if slash < 0 {
-		return 0, 0, fmt.Errorf("Content-Range 缺总长: %q", s)
+		return 0, 0, 0, fmt.Errorf("Content-Range 缺总长: %q", s)
 	}
 	rangePart, totalPart := s[:slash], s[slash+1:]
 	dash := strings.Index(rangePart, "-")
 	if dash < 0 {
-		return 0, 0, fmt.Errorf("Content-Range 缺区间: %q", s)
+		return 0, 0, 0, fmt.Errorf("Content-Range 缺区间: %q", s)
 	}
 	start, err = strconv.ParseInt(rangePart[:dash], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
+	}
+	end, err = strconv.ParseInt(rangePart[dash+1:], 10, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if end < start {
+		return 0, 0, 0, fmt.Errorf("Content-Range 区间倒置: %q", s)
 	}
 	if totalPart == "*" {
-		return start, -1, nil
+		return start, end, -1, nil
 	}
 	total, err = strconv.ParseInt(totalPart, 10, 64)
-	return start, total, err
+	return start, end, total, err
+}
+
+var errSwitchIncomplete = errors.New("换源响应未完整结束")
+
+// switchBodyEOFTimeout 是无 Content-Length 的 206 在读完预期字节后，
+// 再读 1 字节确认 EOF 的独立超时。超时不能当作 EOF。
+const switchBodyEOFTimeout = 2 * time.Second
+
+// switchBody 把换源接管的 206 Body 限制在 total-sent 字节内，并在结束时
+// 证明响应确实完整：
+//   - 有 Content-Length：读满即 EOF，不额外等待；
+//   - 无 Content-Length/chunked：读满后再读 1 字节，必须 EOF，读到字节算超长；
+//   - 二次读取超时/出错：完整性无法证明，返回错误。
+type switchBody struct {
+	rc       io.ReadCloser
+	remain   int64
+	checkEOF bool
+	timeout  time.Duration
+	err      error
+	once     sync.Once
+	closeErr error
+}
+
+func newSwitchBody(rc io.ReadCloser, remain int64, checkEOF bool, timeout time.Duration) *switchBody {
+	return &switchBody{rc: rc, remain: remain, checkEOF: checkEOF, timeout: timeout}
+}
+
+func (b *switchBody) Read(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
+	if b.remain > 0 {
+		if int64(len(p)) > b.remain {
+			p = p[:b.remain]
+		}
+		n, err := b.rc.Read(p)
+		b.remain -= int64(n)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if b.remain > 0 {
+					b.err = errSwitchIncomplete
+					return n, b.err
+				}
+				return n, io.EOF
+			}
+			b.err = err
+			return n, err
+		}
+		if n == 0 {
+			b.err = errSwitchIncomplete
+			return 0, b.err
+		}
+		return n, nil
+	}
+	if !b.checkEOF {
+		return 0, io.EOF
+	}
+	b.checkEOF = false
+	var one [1]byte
+	timer := time.AfterFunc(b.timeout, func() { _ = b.Close() })
+	n, err := b.rc.Read(one[:])
+	if !timer.Stop() {
+		// 超时已经触发 Close：阻塞的 Read 被解除，但不能把超时当成 EOF。
+		b.err = errSwitchIncomplete
+		return 0, b.err
+	}
+	if n > 0 {
+		b.err = errOverrun
+		return n, b.err
+	}
+	if errors.Is(err, io.EOF) {
+		return 0, io.EOF
+	}
+	if err == nil {
+		b.err = errSwitchIncomplete
+		return 0, b.err
+	}
+	b.err = err
+	return 0, err
+}
+
+func (b *switchBody) Close() error {
+	b.once.Do(func() { b.closeErr = b.rc.Close() })
+	return b.closeErr
 }
 
 func copyHeader(dst, src http.Header, keys ...string) {

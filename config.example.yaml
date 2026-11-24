@@ -189,12 +189,12 @@ parallel:
   # 单流下载中每 1 秒采样，watch_sec 秒窗口平均低于 watch_mbps 判为慢
   watch_mbps: 3
   watch_sec: 10
-  # 备选星标要有这么快的历史样本才值得换（否则直接并行）
-  switch_min_mbps: 8
+  # 动态换源阈值的绝对下限 F（MiB/s），默认 1
+  switch_floor_mib_per_sec: 1
   # 小于该尺寸不换源，重下不划算
-  switch_min_file_mib: 60
-  # 已发给客户端超过该字节数就不再换源
-  switch_max_sent_mib: 48
+  switch_min_file_mib: 30
+  # 已发给客户端超过该字节数就不再换源；最大 150 MiB，0 或负数按 150 处理
+  switch_max_sent_mib: 150
   # 单请求最多换源次数与最小间隔
   switch_max: 2
   switch_gap_sec: 30

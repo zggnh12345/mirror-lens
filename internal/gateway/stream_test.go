@@ -461,24 +461,24 @@ func TestHTTP404(t *testing.T) {
 
 func TestParseContentRange(t *testing.T) {
 	cases := []struct {
-		in    string
-		start int64
-		total int64
-		ok    bool
+		in         string
+		start, end int64
+		total      int64
+		ok         bool
 	}{
-		{"bytes 0-99/1000", 0, 1000, true},
-		{"bytes 100-999/1000", 100, 1000, true},
-		{"bytes 5-9/*", 5, -1, true},
-		{"bytes */1000", 0, 0, false},
-		{"nonsense", 0, 0, false},
+		{"bytes 0-99/1000", 0, 99, 1000, true},
+		{"bytes 100-999/1000", 100, 999, 1000, true},
+		{"bytes 5-9/*", 5, 9, -1, true},
+		{"bytes */1000", 0, 0, 0, false},
+		{"nonsense", 0, 0, 0, false},
 	}
 	for _, c := range cases {
-		s, tt, err := parseContentRange(c.in)
+		s, e, tt, err := parseContentRange(c.in)
 		if c.ok != (err == nil) {
 			t.Fatalf("%q: err=%v", c.in, err)
 		}
-		if err == nil && (s != c.start || tt != c.total) {
-			t.Fatalf("%q: 得到 %d/%d", c.in, s, tt)
+		if err == nil && (s != c.start || e != c.end || tt != c.total) {
+			t.Fatalf("%q: 得到 %d-%d/%d", c.in, s, e, tt)
 		}
 	}
 }

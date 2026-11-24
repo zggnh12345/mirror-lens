@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,8 @@ func TestConfigViewGroupsAndFields(t *testing.T) {
 	wantKeys := map[string]string{
 		"parallel.degrade_mbps": "4", "parallel.degrade_hold_min": "30",
 		"parallel.watch_mbps": "3", "parallel.watch_sec": "10",
-		"parallel.switch_min_mbps": "8", "parallel.switch_min_file_mib": "60",
-		"parallel.switch_max_sent_mib": "48", "parallel.switch_max": "2",
+		"parallel.switch_floor_mib_per_sec": "1", "parallel.switch_min_file_mib": "30",
+		"parallel.switch_max_sent_mib": "150", "parallel.switch_max": "2",
 		"parallel.switch_gap_sec": "30",
 	}
 	for _, s := range secs {
@@ -329,5 +330,45 @@ func TestCfgSchemaHasHintAndUnit(t *testing.T) {
 		if f.Kind == "duration" && !strings.Contains(f.Hint, "时间格式") && !strings.Contains(f.Hint, "秒") {
 			t.Errorf("%s (%s) 时间类要写明格式或单位", f.Key, f.Label)
 		}
+	}
+}
+
+// 已发上限的 UI 归一化必须与运行时一致：<=0 或 >150 都显示/保存为 150。
+func TestSwitchMaxSentUINormalization(t *testing.T) {
+	var field, watch *cfgField
+	for i := range cfgSchema {
+		switch cfgSchema[i].Key {
+		case "parallel.switch_max_sent_mib":
+			field = &cfgSchema[i]
+		case "parallel.watch_mbps":
+			watch = &cfgSchema[i]
+		}
+	}
+	if field == nil || watch == nil {
+		t.Fatal("配置项缺失")
+	}
+	c := config.Default()
+	cases := []struct{ in, want string }{
+		{"-5", "150"}, {"0", "150"}, {"1", "1"}, {"150", "150"}, {"200", "150"}, {"102400", "150"},
+	}
+	for _, tc := range cases {
+		if err := field.Set(c, tc.in); err != nil {
+			t.Fatalf("Set(%s): %v", tc.in, err)
+		}
+		if got := field.Get(c); got != tc.want {
+			t.Fatalf("Set(%s) 后 Get = %s，期望 %s", tc.in, got, tc.want)
+		}
+		if got := fmt.Sprint(c.Parallel.SwitchMaxSentMiB); got != tc.want {
+			t.Fatalf("Set(%s) 后存储值 = %s，期望 %s", tc.in, got, tc.want)
+		}
+	}
+
+	// 磁盘旧值 200：GET 必须裁剪为 150，且不影响其他字段保存。
+	c.Parallel.SwitchMaxSentMiB = 200
+	if got := field.Get(c); got != "150" {
+		t.Fatalf("旧值 200 的 GET = %s，期望 150", got)
+	}
+	if err := watch.Set(c, "3"); err != nil {
+		t.Fatalf("保存其他配置项不应失败: %v", err)
 	}
 }

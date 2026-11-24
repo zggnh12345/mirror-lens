@@ -1,0 +1,190 @@
+2026/11/24 01:47:31 配置迁移完成：parallel.switch_min_mbps → parallel.switch_floor_mib_per_sec；备份 /test/config/config.yaml.bak-pre-3.5.22-1795484851
+{"time":"2026-11-24T01:47:31.849814457Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
+{"time":"2026-11-24T01:47:31.85338171Z","level":"INFO","msg":"已加载设置页保存的 GitHub Token（Release 摘要 API 可用）"}
+{"time":"2026-11-24T01:47:31.995092456Z","level":"INFO","msg":"已补 52 个源的站点名"}
+{"time":"2026-11-24T01:47:31.995104579Z","level":"INFO","msg":"Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）"}
+{"time":"2026-11-24T01:47:31.99524196Z","level":"INFO","msg":"仓库凭据对账完成：变更 0 条，隔离 0 个 Host"}
+{"time":"2026-11-24T01:47:31.995437846Z","level":"INFO","msg":"私有分片内存窗口","并发文件":2,"worker":4,"段大小MB":4,"最坏MB":32}
+{"time":"2026-11-24T01:47:31.995448919Z","level":"INFO","msg":"代理路径匿名放行（auth.require_token=false），面板仍需登录"}
+{"time":"2026-11-24T01:47:31.995462173Z","level":"INFO","msg":"成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"}
+{"time":"2026-11-24T01:47:31.995466435Z","level":"INFO","msg":"sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行"}
+{"time":"2026-11-24T01:47:31.995556656Z","level":"INFO","msg":"多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"}
+{"time":"2026-11-24T01:47:31.995786555Z","level":"INFO","msg":"缓存上限 10 GB"}
+{"time":"2026-11-24T01:47:31.995812506Z","level":"INFO","msg":"入口限流已开: 全局 20/s 并发 200 | 每 IP 600/分 并发 32 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12]"}
+{"time":"2026-11-24T01:47:31.997930731Z","level":"INFO","msg":"Mirror Lens 已启动: http://127.0.0.1:39999"}
+{"time":"2026-11-24T01:47:31.998055577Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:47:32.006961614Z","level":"INFO","msg":"janitor: 295 条索引指向的文件已不存在，已删索引"}
+{"time":"2026-11-24T01:47:32.111516314Z","level":"INFO","msg":"janitor: 过期 0、缺文件 295、孤儿 0、半截 0、临时 0，释放 0 MB"}
+{"time":"2026-11-24T01:47:57.521945525Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:47:59.24080216Z","level":"INFO","msg":"并行填充：退回单流（星标源不支持分片，回落单流优先用它）"}
+{"time":"2026-11-24T01:48:02.000249635Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:48:17.414957009Z","level":"INFO","msg":"discover: hunshcn/gh-proxy 2 条候选"}
+{"time":"2026-11-24T01:48:17.415077675Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}
+{"time":"2026-11-24T01:48:17.41512497Z","level":"INFO","msg":"discover: DaoCloud/public-image-mirror 1 条候选"}
+{"time":"2026-11-24T01:48:17.417210762Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
+{"time":"2026-11-24T01:48:17.493244447Z","level":"INFO","msg":"discover: eryajf/Thanks-Mirror 4 条候选"}
+{"time":"2026-11-24T01:48:17.889563348Z","level":"INFO","msg":"discover: AnyE 状态页 16 条候选"}
+{"time":"2026-11-24T01:48:21.284659186Z","level":"INFO","msg":"discover: 1Panel 状态页 17 条候选"}
+{"time":"2026-11-24T01:48:31.999012768Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:48:35.908362286Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:48:36.062593606Z","level":"INFO","msg":"并行填充：gp.suwa.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:48:36.591947683Z","level":"INFO","msg":"并行填充：退回单流（星标源不支持分片，回落单流优先用它）"}
+{"time":"2026-11-24T01:49:01.999833454Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:49:11.428440825Z","level":"INFO","msg":"runner: tier2 done, 189 checks over 63 sources"}
+{"time":"2026-11-24T01:49:16.910699753Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:49:17.218410811Z","level":"INFO","msg":"并行填充：gp.suwa.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:49:17.218994277Z","level":"INFO","msg":"并行填充：退回单流（星标源不支持分片，回落单流优先用它）"}
+{"time":"2026-11-24T01:49:32.000572124Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:49:37.220518626Z","level":"WARN","msg":"源连不上，换下一个","request_id":"ecbdb23f163e9b9a","kind":"docker","cache_key":"docker:b:1:sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5","error_code":"UPSTREAM_TIMEOUT","error":"Get \"https://gp.suwa.eu.org/v2/library/golang/blobs/sha256:3b7f19923e1501f025b9459750b20f5df37af452482f75b91205f345d1c0e1b5\": http2: timeout awaiting response headers","source":"春川"}
+{"time":"2026-11-24T01:49:48.461462254Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
+{"time":"2026-11-24T01:49:48.461472136Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:49:48.461474396Z","level":"INFO","msg":"换源拒绝 docker.m.daocloud.io reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:49:48.461475967Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:49:48.461477718Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
+{"time":"2026-11-24T01:49:48.461700232Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
+{"time":"2026-11-24T01:49:48.461747499Z","level":"INFO","msg":"中途并行：只有 docker.sparkcr.cn 支持分片，单源多连接"}
+{"time":"2026-11-24T01:49:49.018045968Z","level":"INFO","msg":"中途并行：从 23580454 字节处接入，17 段 × 1 源（[docker.sparkcr.cn]）"}
+{"time":"2026-11-24T01:49:51.479919884Z","level":"INFO","msg":"分片响应异常: 源=gp.zzgg.eu.org range=40357670-44551973 status=200 content-range=\"\" content-length=92325002"}
+{"time":"2026-11-24T01:49:51.47996042Z","level":"INFO","msg":"分片放弃: range=40357670-44551973 尝试=2 台源 last=分段响应对不上：gp.zzgg.eu.org 返回 200 \"\""}
+{"time":"2026-11-24T01:49:51.480095409Z","level":"INFO","msg":"分片放弃: range=31969062-36163365 尝试=2 台源 last=认证策略不存在: 读取官方凭据代次: context canceled"}
+{"time":"2026-11-24T01:49:51.480215891Z","level":"INFO","msg":"分片放弃: range=27774758-31969061 尝试=2 台源 last=认证策略不存在: 读取官方凭据代次: context canceled"}
+{"time":"2026-11-24T01:49:51.480319136Z","level":"INFO","msg":"分片放弃: range=36163366-40357669 尝试=2 台源 last=认证策略不存在: 读取官方凭据代次: context canceled"}
+{"time":"2026-11-24T01:49:51.494170286Z","level":"INFO","msg":"中途并行失败：已交付 27774758/92325002 字节，将中止连接"}
+{"time":"2026-11-24T01:50:01.999834312Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:50:31.999844721Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:50:39.640490942Z","level":"INFO","msg":"runner: tier3 done, 104 checks over 68 sources"}
+{"time":"2026-11-24T01:51:02.000135299Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:51:31.999782789Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:51:59.522471664Z","level":"INFO","msg":"runner: tier3 done, 101 checks over 68 sources"}
+{"time":"2026-11-24T01:52:01.999877378Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:52:31.999566751Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:53:01.999007901Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:53:09.014665962Z","level":"INFO","msg":"runner: tier1 done, 131 checks over 58 sources"}
+{"time":"2026-11-24T01:53:30.751130733Z","level":"INFO","msg":"已退出"}
+{"time":"2026-11-24T01:53:31.083210002Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
+{"time":"2026-11-24T01:53:31.087552745Z","level":"INFO","msg":"已加载设置页保存的 GitHub Token（Release 摘要 API 可用）"}
+{"time":"2026-11-24T01:53:31.258211189Z","level":"INFO","msg":"已补 52 个源的站点名"}
+{"time":"2026-11-24T01:53:31.258222976Z","level":"INFO","msg":"Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）"}
+{"time":"2026-11-24T01:53:31.25838847Z","level":"INFO","msg":"仓库凭据对账完成：变更 0 条，隔离 0 个 Host"}
+{"time":"2026-11-24T01:53:31.258512883Z","level":"INFO","msg":"私有分片内存窗口","并发文件":2,"worker":4,"段大小MB":4,"最坏MB":32}
+{"time":"2026-11-24T01:53:31.258520401Z","level":"INFO","msg":"代理路径匿名放行（auth.require_token=false），面板仍需登录"}
+{"time":"2026-11-24T01:53:31.258532788Z","level":"INFO","msg":"成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"}
+{"time":"2026-11-24T01:53:31.258535646Z","level":"INFO","msg":"sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行"}
+{"time":"2026-11-24T01:53:31.258608839Z","level":"INFO","msg":"多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"}
+{"time":"2026-11-24T01:53:31.258875825Z","level":"INFO","msg":"缓存上限 10 GB"}
+{"time":"2026-11-24T01:53:31.258904856Z","level":"INFO","msg":"入口限流已开: 全局 20/s 并发 200 | 每 IP 600/分 并发 32 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12]"}
+{"time":"2026-11-24T01:53:31.259854808Z","level":"INFO","msg":"Mirror Lens 已启动: http://127.0.0.1:39999"}
+{"time":"2026-11-24T01:53:31.260303584Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:53:38.600019667Z","level":"INFO","msg":"并行填充：gp.zzgg.eu.org 不参与分片（HTTP 200，Content-Range=\"\"）"}
+{"time":"2026-11-24T01:53:39.41867084Z","level":"INFO","msg":"并行填充：星标源最近 3 次单流都低于 4MB/s，临时改走并行"}
+{"time":"2026-11-24T01:54:01.262445372Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:54:16.786983164Z","level":"INFO","msg":"discover: hunshcn/gh-proxy 2 条候选"}
+{"time":"2026-11-24T01:54:16.809442208Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
+{"time":"2026-11-24T01:54:16.810331579Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}
+{"time":"2026-11-24T01:54:16.996427909Z","level":"INFO","msg":"discover: AnyE 状态页 16 条候选"}
+{"time":"2026-11-24T01:54:17.069528749Z","level":"INFO","msg":"discover: eryajf/Thanks-Mirror 4 条候选"}
+{"time":"2026-11-24T01:54:17.086539046Z","level":"INFO","msg":"discover: DaoCloud/public-image-mirror 1 条候选"}
+{"time":"2026-11-24T01:54:18.764335446Z","level":"INFO","msg":"discover: 1Panel 状态页 18 条候选"}
+{"time":"2026-11-24T01:54:31.261850554Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:54:39.260864843Z","level":"INFO","msg":"runner: tier2 done, 74 checks over 58 sources"}
+{"time":"2026-11-24T01:54:58.556071754Z","level":"INFO","msg":"并行填充完成：docker:b:1:sha256:d64c83132511ab5226f18a66abc03228a24fffcaf1ab1b4e9c9cdb64d16ad877 92378832 字节，23 段 × 2 源，用时 1m18.245s（docker.1ms.run 0.1MB/s，docker.sparkcr.cn 2.6MB/s）"}
+{"time":"2026-11-24T01:55:01.26282966Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:55:19.602103754Z","level":"INFO","msg":"已退出"}
+{"time":"2026-11-24T01:55:25.242059845Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
+{"time":"2026-11-24T01:55:25.245517647Z","level":"INFO","msg":"已加载设置页保存的 GitHub Token（Release 摘要 API 可用）"}
+{"time":"2026-11-24T01:55:25.412099826Z","level":"INFO","msg":"已补 52 个源的站点名"}
+{"time":"2026-11-24T01:55:25.412113021Z","level":"INFO","msg":"Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）"}
+{"time":"2026-11-24T01:55:25.412264474Z","level":"INFO","msg":"仓库凭据对账完成：变更 0 条，隔离 0 个 Host"}
+{"time":"2026-11-24T01:55:25.412369862Z","level":"INFO","msg":"代理路径匿名放行（auth.require_token=false），面板仍需登录"}
+{"time":"2026-11-24T01:55:25.412377952Z","level":"INFO","msg":"成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"}
+{"time":"2026-11-24T01:55:25.412380577Z","level":"INFO","msg":"sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行"}
+{"time":"2026-11-24T01:55:25.412440822Z","level":"INFO","msg":"多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"}
+{"time":"2026-11-24T01:55:25.412572178Z","level":"INFO","msg":"缓存上限 10 GB"}
+{"time":"2026-11-24T01:55:25.412599268Z","level":"INFO","msg":"入口限流已开: 全局 20/s 并发 200 | 每 IP 600/分 并发 32 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12]"}
+{"time":"2026-11-24T01:55:25.413559604Z","level":"INFO","msg":"Mirror Lens 已启动: http://127.0.0.1:39999"}
+{"time":"2026-11-24T01:55:25.413669264Z","level":"INFO","msg":"janitor: 1 条索引指向的文件已不存在，已删索引"}
+{"time":"2026-11-24T01:55:25.41386763Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:55:25.515345139Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
+{"time":"2026-11-24T01:55:43.743733218Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
+{"time":"2026-11-24T01:55:43.74376453Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:55:43.744200669Z","level":"INFO","msg":"换源拒绝 docker.sparkcr.cn reason=speed_rejected detail=insufficient_samples kind=\"docker\" n=0 sp=[]"}
+{"time":"2026-11-24T01:55:43.744215627Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:55:43.744222581Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
+{"time":"2026-11-24T01:55:43.744587997Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
+{"time":"2026-11-24T01:55:43.744608344Z","level":"INFO","msg":"中途并行跳过：分片未启用 workers=4 chunk=4194304"}
+{"time":"2026-11-24T01:55:43.744614985Z","level":"INFO","msg":"中途并行没接上，继续当前连接"}
+{"time":"2026-11-24T01:55:55.416096173Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:56:04.789992718Z","level":"INFO","msg":"runner: tier2 done, 74 checks over 58 sources"}
+{"time":"2026-11-24T01:56:10.771202834Z","level":"INFO","msg":"discover: hunshcn/gh-proxy 2 条候选"}
+{"time":"2026-11-24T01:56:10.785149488Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
+{"time":"2026-11-24T01:56:10.831686049Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}
+{"time":"2026-11-24T01:56:10.842347371Z","level":"INFO","msg":"discover: DaoCloud/public-image-mirror 1 条候选"}
+{"time":"2026-11-24T01:56:10.917064583Z","level":"INFO","msg":"discover: eryajf/Thanks-Mirror 4 条候选"}
+{"time":"2026-11-24T01:56:10.925976357Z","level":"INFO","msg":"discover: AnyE 状态页 16 条候选"}
+{"time":"2026-11-24T01:56:13.837219068Z","level":"INFO","msg":"discover: 1Panel 状态页 18 条候选"}
+{"time":"2026-11-24T01:56:25.415556112Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:56:44.750783958Z","level":"INFO","msg":"已退出"}
+{"time":"2026-11-24T01:56:45.595308841Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
+{"time":"2026-11-24T01:56:45.598828847Z","level":"INFO","msg":"已加载设置页保存的 GitHub Token（Release 摘要 API 可用）"}
+{"time":"2026-11-24T01:56:45.73609848Z","level":"INFO","msg":"已补 52 个源的站点名"}
+{"time":"2026-11-24T01:56:45.736110584Z","level":"INFO","msg":"Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）"}
+{"time":"2026-11-24T01:56:45.736270025Z","level":"INFO","msg":"仓库凭据对账完成：变更 0 条，隔离 0 个 Host"}
+{"time":"2026-11-24T01:56:45.73639007Z","level":"INFO","msg":"代理路径匿名放行（auth.require_token=false），面板仍需登录"}
+{"time":"2026-11-24T01:56:45.736402186Z","level":"INFO","msg":"成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"}
+{"time":"2026-11-24T01:56:45.736404712Z","level":"INFO","msg":"sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行"}
+{"time":"2026-11-24T01:56:45.73646265Z","level":"INFO","msg":"多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"}
+{"time":"2026-11-24T01:56:45.736602151Z","level":"INFO","msg":"缓存上限 10 GB"}
+{"time":"2026-11-24T01:56:45.736771189Z","level":"INFO","msg":"入口限流已开: 全局 20/s 并发 200 | 每 IP 600/分 并发 32 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12]"}
+{"time":"2026-11-24T01:56:45.737778263Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:56:45.7380063Z","level":"INFO","msg":"Mirror Lens 已启动: http://127.0.0.1:39999"}
+{"time":"2026-11-24T01:56:45.738122906Z","level":"INFO","msg":"janitor: 1 条索引指向的文件已不存在，已删索引"}
+{"time":"2026-11-24T01:56:45.840286299Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
+{"time":"2026-11-24T01:57:04.415212175Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
+{"time":"2026-11-24T01:57:04.415256014Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:57:05.70124961Z","level":"INFO","msg":"换源拒绝 docker.sparkcr.cn reason=verifier_rejected status=206"}
+{"time":"2026-11-24T01:57:05.70130463Z","level":"INFO","msg":"换源拒绝 docker.1ms.run reason=not_eligible detail=未勾选星标"}
+{"time":"2026-11-24T01:57:05.70131501Z","level":"INFO","msg":"换源拒绝 official reason=not_eligible detail=官方目标，不是星标源"}
+{"time":"2026-11-24T01:57:05.701902992Z","level":"INFO","msg":"单流判慢：没有可换的星标源"}
+{"time":"2026-11-24T01:57:05.701935956Z","level":"INFO","msg":"中途并行跳过：分片未启用 workers=4 chunk=4194304"}
+{"time":"2026-11-24T01:57:05.701947629Z","level":"INFO","msg":"中途并行没接上，继续当前连接"}
+{"time":"2026-11-24T01:57:15.739459341Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:57:31.057146971Z","level":"INFO","msg":"discover: hunshcn/gh-proxy 2 条候选"}
+{"time":"2026-11-24T01:57:31.057201992Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}
+{"time":"2026-11-24T01:57:31.06972712Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
+{"time":"2026-11-24T01:57:31.111904297Z","level":"INFO","msg":"discover: DaoCloud/public-image-mirror 1 条候选"}
+{"time":"2026-11-24T01:57:31.122132674Z","level":"INFO","msg":"discover: eryajf/Thanks-Mirror 4 条候选"}
+{"time":"2026-11-24T01:57:31.47578584Z","level":"INFO","msg":"discover: AnyE 状态页 16 条候选"}
+{"time":"2026-11-24T01:57:33.212567664Z","level":"INFO","msg":"discover: 1Panel 状态页 18 条候选"}
+{"time":"2026-11-24T01:57:38.986208946Z","level":"INFO","msg":"runner: tier2 done, 74 checks over 58 sources"}
+{"time":"2026-11-24T01:57:45.739496295Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:58:15.739648531Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:58:45.739159659Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:58:53.084622039Z","level":"INFO","msg":"runner: tier3 done, 100 checks over 68 sources"}
+{"time":"2026-11-24T01:58:55.014072675Z","level":"INFO","msg":"已退出"}
+{"time":"2026-11-24T01:58:56.004663464Z","level":"INFO","msg":"mirror-lens 3.5.21 commit=unknown built=unknown"}
+{"time":"2026-11-24T01:58:56.008678927Z","level":"INFO","msg":"已加载设置页保存的 GitHub Token（Release 摘要 API 可用）"}
+{"time":"2026-11-24T01:58:56.165001271Z","level":"INFO","msg":"已补 52 个源的站点名"}
+{"time":"2026-11-24T01:58:56.165012897Z","level":"INFO","msg":"Registry 加速已开: /v2/ → registry-1.docker.io（docker=true ghcr=true 多源范围=8 禁用Host=0）"}
+{"time":"2026-11-24T01:58:56.165166466Z","level":"INFO","msg":"仓库凭据对账完成：变更 0 条，隔离 0 个 Host"}
+{"time":"2026-11-24T01:58:56.165291167Z","level":"INFO","msg":"代理路径匿名放行（auth.require_token=false），面板仍需登录"}
+{"time":"2026-11-24T01:58:56.16530309Z","level":"INFO","msg":"成功结论有效期 24h0m0s（ML_RECOVERY_TTL）"}
+{"time":"2026-11-24T01:58:56.165305456Z","level":"INFO","msg":"sources.dynamic 在 3.0 已失效（容量改由 headroom 决定），本实例按固定配额运行"}
+{"time":"2026-11-24T01:58:56.165369867Z","level":"INFO","msg":"多源调度已开：每个协议最多试 3 个源，速度饱和点 12000 KB/s"}
+{"time":"2026-11-24T01:58:56.165487991Z","level":"INFO","msg":"缓存上限 10 GB"}
+{"time":"2026-11-24T01:58:56.16565452Z","level":"INFO","msg":"入口限流已开: 全局 20/s 并发 200 | 每 IP 600/分 并发 32 | 每 Token 1200/分 并发 32 | 可信代理 [172.16.0.0/12]"}
+{"time":"2026-11-24T01:58:56.166984826Z","level":"INFO","msg":"Mirror Lens 已启动: http://127.0.0.1:39999"}
+{"time":"2026-11-24T01:58:56.167178779Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:58:56.167224242Z","level":"INFO","msg":"janitor: 1 条索引指向的文件已不存在，已删索引"}
+{"time":"2026-11-24T01:58:56.269130796Z","level":"INFO","msg":"janitor: 过期 0、缺文件 1、孤儿 0、半截 0、临时 0，释放 0 MB"}
+{"time":"2026-11-24T01:59:10.28661521Z","level":"INFO","msg":"换源候选：n=4 official_only=false sched=\"docker\" par_targets=false"}
+{"time":"2026-11-24T01:59:10.286654493Z","level":"INFO","msg":"换源拒绝 凤凰城 reason=not_eligible detail=本轮已试过"}
+{"time":"2026-11-24T01:59:11.428784516Z","level":"INFO","msg":"换源成功 docker.sparkcr.cn reason=switch_success sent=3403558 verified=false s_bps=2600000 p_bps=0 c_bps=339968 threshold_bps=1048576"}
+{"time":"2026-11-24T01:59:26.168921141Z","level":"INFO","msg":"Host 探测缺少仓库配置，已跳过这些 Host: [gcr.io mcr.microsoft.com quay.io registry.k8s.io]（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）"}
+{"time":"2026-11-24T01:59:41.724757648Z","level":"INFO","msg":"discover: dongyubin/DockerHub 48 条候选"}
+{"time":"2026-11-24T01:59:41.7262449Z","level":"INFO","msg":"discover: kubesre/docker-registry-mirrors 3 条候选"}
+{"time":"2026-11-24T01:59:41.726998992Z","level":"INFO","msg":"discover: hunshcn/gh-proxy 2 条候选"}
+{"time":"2026-11-24T01:59:41.962968428Z","level":"INFO","msg":"discover: DaoCloud/public-image-mirror 1 条候选"}
+{"time":"2026-11-24T01:59:41.988902105Z","level":"INFO","msg":"discover: eryajf/Thanks-Mirror 4 条候选"}
+{"time":"2026-11-24T01:59:42.1614282Z","level":"INFO","msg":"discover: AnyE 状态页 16 条候选"}
+{"time":"2026-11-24T01:59:42.810034365Z","level":"INFO","msg":"runner: tier2 done, 73 checks over 58 sources"}
+{"time":"2026-11-24T01:59:43.632385563Z","level":"INFO","msg":"discover: 1Panel 状态页 18 条候选"}

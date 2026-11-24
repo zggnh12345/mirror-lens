@@ -81,44 +81,45 @@ type Gateway struct {
 	semOnce        sync.Once
 	hedge          HedgeOptions
 	// race 是 3.5.16 Registry Manifest 竞速的运行时参数；零值用 hedge.After。
-	race          RaceOptions
-	raceCfg       atomic.Value // *starRaceSnapshot（Host 级 star_race 开关快照）
-	raceMu        sync.Mutex
-	switchBudget  time.Duration                              // 测试注入用，0 时走 3s 默认
-	parTargets    func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
-	speedProbe    func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
-	requireToken  bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）
-	cdn           CDNOptions                                 // 边缘缓存策略（阶段 8）
-	dockerOff     bool                                       // /v2/ 的 Docker Hub 通道关闭
-	ghcrOff       bool                                       // /v2/ 的 GHCR 通道关闭
-	disabledHosts map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
-	scopePool     *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
-	scopeCfg      unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
-	unifiedOff    bool                                       // 3.5.17 部署期全局回退（T62）
-	replica       string                                     // 3.5.17 跨 Registry 副本模式：""/off/sequential/race（部署期基线）
-	replicaCfg    atomic.Value                               // *replicaModeSnapshot（UI 跨站模式快照，10s TTL）
-	githubOff     bool                                       // /gh/ /raw/ /git/ 关闭
-	priv          PrivateOptions                             // 私有请求的中转与回退策略
-	privAuth      PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
-	privNeg       *negCache                                  // 认证失败负缓存
-	cacheEpoch    int64                                      // Registry 缓存命名空间代次
-	trusted       atomic.Value                               // []TrustedRelay，面板热更新
-	privMu        sync.Mutex
-	privFails     map[string]int
-	privUntil     map[string]time.Time
-	pinClients    sync.Map // "id|v4|v6" -> *http.Client（只拨钉住地址）
-	pinMu         sync.Mutex
-	pinWarnAt     map[int64]time.Time
-	privClient    *http.Client
-	privSem       chan struct{} // 回退官方时限制同时下载的文件数
-	parFills      atomic.Int64  // 真正走了并行分片的次数
-	parBytes      atomic.Int64  // 并行分片下下来的字节
-	parFalls      atomic.Int64  // 试过但退回单流（不支持 Range、源不够等）
-	tasks         *taskReg
-	crossRuns     *crossRunRing // 18f：跨 Registry 运行时状态有界环形缓冲
-	degradeMu     sync.Mutex
-	degradeAt     map[int64]time.Time
-	probeAt       map[int64]time.Time // 面板活跃任务表（内存）
+	race               RaceOptions
+	raceCfg            atomic.Value // *starRaceSnapshot（Host 级 star_race 开关快照）
+	raceMu             sync.Mutex
+	switchBudget       time.Duration                              // 测试注入用，0 时走 3s 默认
+	switchReplayBudget time.Duration                              // 测试注入用，0 时走 5s 默认回放预算
+	parTargets         func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
+	speedProbe         func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
+	requireToken       bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）
+	cdn                CDNOptions                                 // 边缘缓存策略（阶段 8）
+	dockerOff          bool                                       // /v2/ 的 Docker Hub 通道关闭
+	ghcrOff            bool                                       // /v2/ 的 GHCR 通道关闭
+	disabledHosts      map[string]bool                            // /v2/ Foreign Host 访问拒绝列表
+	scopePool          *unified.Pool                              // 3.5.17 RequestScope 全局容量池（G）
+	scopeCfg           unified.ScopeConfig                        // 测试夹具可注入；生产保持零值（冻结默认）
+	unifiedOff         bool                                       // 3.5.17 部署期全局回退（T62）
+	replica            string                                     // 3.5.17 跨 Registry 副本模式：""/off/sequential/race（部署期基线）
+	replicaCfg         atomic.Value                               // *replicaModeSnapshot（UI 跨站模式快照，10s TTL）
+	githubOff          bool                                       // /gh/ /raw/ /git/ 关闭
+	priv               PrivateOptions                             // 私有请求的中转与回退策略
+	privAuth           PrivateAuthOptions                         // 3.5.15 私有认证（默认关闭）
+	privNeg            *negCache                                  // 认证失败负缓存
+	cacheEpoch         int64                                      // Registry 缓存命名空间代次
+	trusted            atomic.Value                               // []TrustedRelay，面板热更新
+	privMu             sync.Mutex
+	privFails          map[string]int
+	privUntil          map[string]time.Time
+	pinClients         sync.Map // "id|v4|v6" -> *http.Client（只拨钉住地址）
+	pinMu              sync.Mutex
+	pinWarnAt          map[int64]time.Time
+	privClient         *http.Client
+	privSem            chan struct{} // 回退官方时限制同时下载的文件数
+	parFills           atomic.Int64  // 真正走了并行分片的次数
+	parBytes           atomic.Int64  // 并行分片下下来的字节
+	parFalls           atomic.Int64  // 试过但退回单流（不支持 Range、源不够等）
+	tasks              *taskReg
+	crossRuns          *crossRunRing // 18f：跨 Registry 运行时状态有界环形缓冲
+	degradeMu          sync.Mutex
+	degradeAt          map[int64]time.Time
+	probeAt            map[int64]time.Time // 面板活跃任务表（内存）
 }
 
 type ParOptions struct {
@@ -136,15 +137,15 @@ type ParOptions struct {
 	DegradeHold time.Duration
 
 	// 单流实时判速与换源。窗口内平均低于 WatchMBps 判慢；
-	// 备选源要有 SwitchMinMBps 的历史样本才值得换；已发超过
+	// 备选源要有 SwitchFloorMiBPerSec 的历史样本才值得换；已发超过
 	// SwitchMaxSentMiB 不再换；SwitchMax/SwitchGap 限制次数与间隔。
-	WatchMBps        int64
-	WatchWindow      time.Duration
-	SwitchMinMBps    int64
-	SwitchMinFileMiB int64
-	SwitchMaxSentMiB int64
-	SwitchMax        int
-	SwitchGap        time.Duration
+	WatchMBps            int64
+	WatchWindow          time.Duration
+	SwitchFloorMiBPerSec int64
+	SwitchMinFileMiB     int64
+	SwitchMaxSentMiB     int64
+	SwitchMax            int
+	SwitchGap            time.Duration
 
 	// B 档与预检的独立配额（3.0）。0 表示用默认值 4。
 	PreflightConcurrency int
