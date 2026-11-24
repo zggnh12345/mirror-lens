@@ -1,14 +1,14 @@
 # 执行环境：NAS 宿主 Docker 28.5.2，2026-11-20
-# 生产容器：mirror-lens (mirror-lens:3.5.16)，数据目录 /vol1/1000/docker/mirror-lens/data
+# 生产容器：mirror-lens (mirror-lens:3.5.16)，数据目录 /path/to/mirror-lens/data
 # 所有对生产目录的挂载均为 :ro；写入只发生在独立 docker volume ml-schema-check。
 
 # 1) 只读查看生产数据目录
-docker run --rm -v /vol1/1000/docker/mirror-lens/data:/src:ro alpine:3.22 sh -c 'ls -la /src'
+docker run --rm -v /path/to/mirror-lens/data:/src:ro alpine:3.22 sh -c 'ls -la /src'
 # RC=0
 
 # 2) 用 SQLite backup API 取一致性副本（读源库，写独立卷）
 docker volume create ml-schema-check
-docker run --rm -v /vol1/1000/docker/mirror-lens/data:/src:ro -v ml-schema-check:/dst alpine:3.22 \
+docker run --rm -v /path/to/mirror-lens/data:/src:ro -v ml-schema-check:/dst alpine:3.22 \
   sh -c 'apk add --no-cache sqlite >/dev/null 2>&1 && sqlite3 /src/mirror-lens.db ".backup /dst/prod-clean.db"'
 # RC=0，副本 43,442,176 字节
 
