@@ -303,15 +303,29 @@ console.log(JSON.stringify(out));
 	}
 }
 
-// extractScript 取 index.html 里最后一个 <script> 块（面板逻辑）。
+// extractScript 取 index.html 里含面板渲染函数的主 <script> 块。
+// 页面末尾还有主题/快捷键等小脚本，不能简单取最后一个块。
 func extractScript(t *testing.T, src string) string {
 	t.Helper()
-	i := strings.LastIndex(src, "<script>")
-	j := strings.LastIndex(src, "</script>")
-	if i < 0 || j < i {
-		t.Fatal("未找到面板脚本块")
+	rest := src
+	for {
+		i := strings.Index(rest, "<script>")
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len("<script>"):]
+		j := strings.Index(rest, "</script>")
+		if j < 0 {
+			break
+		}
+		block := rest[:j]
+		if strings.Contains(block, "function rowHtml(") {
+			return block
+		}
+		rest = rest[j+len("</script>"):]
 	}
-	return src[i+len("<script>") : j]
+	t.Fatal("未找到含 rowHtml 的面板脚本块")
+	return ""
 }
 
 // DOM 壳：面板脚本末尾会自启动（拉 /api/me、/api/sources），
