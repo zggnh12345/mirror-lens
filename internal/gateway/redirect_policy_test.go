@@ -90,16 +90,25 @@ func TestRecheckRedirectPolicySameHost(t *testing.T) {
 	})
 }
 
-// 跨 Host 不重新认证：这里不重解析策略，Authorization 由 RedirectPolicy 清除。
-func TestRecheckRedirectPolicyCrossHostSkips(t *testing.T) {
+// 跨 Host 不再跳过：每一跳都必须解析目标策略；解析失败即拒绝。
+func TestRecheckRedirectPolicyCrossHostRechecks(t *testing.T) {
 	from := redirectURL(t, "https://quay.io/v2/library/alpine/manifests/1")
 	to := redirectURL(t, "https://cdn.example/blob")
-	r := &redirectResolver{policy: v2auth.PolicySnapshot{Official: false}}
+	r := &redirectResolver{policy: v2auth.PolicySnapshot{Official: false, CredGen: 1, CredGenKnown: true}}
 	if err := recheckRedirectPolicy(redirectContext(t), r, from, to); err != nil {
-		t.Fatalf("跨 Host 不应在这里拒绝: %v", err)
+		t.Fatalf("目标策略可解析时应放行: %v", err)
 	}
-	if r.calls != 0 {
-		t.Fatalf("跨 Host 不应重解析策略，实际 %d", r.calls)
+	if r.calls != 1 {
+		t.Fatalf("跨 Host 必须重解析目标策略，实际 %d", r.calls)
+	}
+}
+
+func TestRecheckRedirectPolicyCrossHostMissingPolicyRejects(t *testing.T) {
+	from := redirectURL(t, "https://quay.io/v2/library/alpine/manifests/1")
+	to := redirectURL(t, "https://cdn.example/blob")
+	r := &redirectResolver{err: v2auth.ErrPolicyMissing}
+	if err := recheckRedirectPolicy(redirectContext(t), r, from, to); !errors.Is(err, v2auth.ErrPolicyMissing) {
+		t.Fatalf("目标策略缺失必须拒绝，得到 %v", err)
 	}
 }
 
@@ -149,8 +158,12 @@ func TestApplyRedirectPolicyCDNRejectsUnsafe(t *testing.T) {
 func TestApplyRedirectPolicyRegistryCrossHostStripsAuth(t *testing.T) {
 	from := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/x/manifests/1", nil)
 	to := httptest.NewRequest(http.MethodGet, "https://mirror.example/v2/x/manifests/1", nil)
+	to = to.WithContext(v2auth.WithPolicy(to.Context(), v2auth.PolicySnapshot{
+		SourceID: 0, LogicalHost: "registry.example", Official: true, CredGen: 1, CredGenKnown: true,
+	}))
 	to.Header.Set("Authorization", "Basic secret")
-	if err := applyRedirectPolicy(to, []*http.Request{from}, false, nil); err != nil {
+	r := &redirectResolver{policy: v2auth.PolicySnapshot{Official: true, CredGen: 1, CredGenKnown: true}}
+	if err := applyRedirectPolicy(to, []*http.Request{from}, false, r); err != nil {
 		t.Fatalf("跨 Host Registry 重定向应放行: %v", err)
 	}
 	if got := to.Header.Get("Authorization"); got != "" {

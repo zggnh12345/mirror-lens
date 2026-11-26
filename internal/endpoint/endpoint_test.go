@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"net/url"
 	"testing"
 )
 
@@ -130,6 +131,37 @@ func TestEqualAndZero(t *testing.T) {
 	}
 	if a.IsZero() {
 		t.Fatal("非零值不应报告 IsZero")
+	}
+}
+
+// TestFromURLEffectivePort 确认默认端口与省略端口等价，非默认端口不等价。
+func TestFromURLEffectivePort(t *testing.T) {
+	parse := func(raw string) Endpoint {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", raw, err)
+		}
+		ep, err := FromURL(u)
+		if err != nil {
+			t.Fatalf("FromURL(%q): %v", raw, err)
+		}
+		return ep
+	}
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		{"https://h.example/x", "https://h.example:443/y", true},
+		{"https://h.example:443", "https://h.example", true},
+		{"https://h.example:8443", "https://h.example", false},
+		{"http://h.example:80", "http://h.example", true},
+		{"http://h.example:8080", "http://h.example:80", false},
+		{"https://[2001:db8::10]:443/x", "https://[2001:db8::10]/y", true},
+	}
+	for _, tc := range cases {
+		if got := parse(tc.a).Equal(parse(tc.b)); got != tc.same {
+			t.Fatalf("%q vs %q: Equal=%v, 期望 %v", tc.a, tc.b, got, tc.same)
+		}
 	}
 }
 

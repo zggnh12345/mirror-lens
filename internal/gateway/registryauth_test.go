@@ -250,7 +250,7 @@ func TestGatewayStorePolicyMissingFailsClosed(t *testing.T) {
 	g := New(st, Options{Policies: store.NewStorePolicy(st)})
 	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{
 		Registry: true, LogicalHost: "quay.io", Upstream: &url.URL{Scheme: "https"},
-	}, 42, "", "https")
+	}, 42, "", &url.URL{Scheme: "https", Host: "quay.io"})
 	if !errors.Is(err, v2auth.ErrPolicyMissing) {
 		t.Fatalf("无策略 Source 必须返回 ErrPolicyMissing，实际 %v", err)
 	}
@@ -268,7 +268,7 @@ func TestGatewayStorePolicyResolvesSource(t *testing.T) {
 	g := New(st, Options{Policies: store.NewStorePolicy(st)})
 	ctx, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{
 		Registry: true, LogicalHost: "quay.io", Upstream: &url.URL{Scheme: "https"},
-	}, id, "", "https")
+	}, id, "", &url.URL{Scheme: "https", Host: "quay.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestScopeFromPathStripsHostPrefix(t *testing.T) {
 }
 
 func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
-	_, err := (&Gateway{}).withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true}, 7, "", "")
+	_, err := (&Gateway{}).withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true}, 7, "", nil)
 	if err == nil || !errors.Is(err, v2auth.ErrPolicyMissing) {
 		t.Fatalf("Registry plan 缺少 LogicalHost 应返回 ErrPolicyMissing，实际 %v", err)
 	}
@@ -306,7 +306,7 @@ func TestWithRegistryPolicyRejectsRegistryPlanWithoutLogicalHost(t *testing.T) {
 
 func TestWithRegistryPolicyNilPlan(t *testing.T) {
 	ctx := context.Background()
-	got, err := (&Gateway{}).withRegistryPolicy(ctx, nil, 0, "", "")
+	got, err := (&Gateway{}).withRegistryPolicy(ctx, nil, 0, "", nil)
 	if err != nil || got != ctx {
 		t.Fatalf("nil plan 应原样返回 context: got=%v err=%v", got, err)
 	}
@@ -323,29 +323,63 @@ func (failingPolicy) Resolve(context.Context, int64, string) (v2auth.PolicySnaps
 
 func TestWithRegistryPolicyResolverError(t *testing.T) {
 	g := &Gateway{policies: failingPolicy{}}
-	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true, LogicalHost: "registry.example"}, 3, "", "")
+	_, err := g.withRegistryPolicy(context.Background(), &adapter.Plan{Registry: true, LogicalHost: "registry.example"}, 3, "", nil)
 	if !errors.Is(err, v2auth.ErrPolicyMissing) {
 		t.Fatalf("resolver 失败必须包装成 ErrPolicyMissing，实际 %v", err)
 	}
 }
 
-func TestWithRegistryPolicyUsesTargetScheme(t *testing.T) {
+func TestWithRegistryPolicyUsesLogicalSchemeAndSourceOrigin(t *testing.T) {
 	g := &Gateway{policies: testGatewayPolicy}
-	plan := &adapter.Plan{LogicalHost: "docker.io", Upstream: &url.URL{Scheme: "http"}}
-	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "https")
+	plan := &adapter.Plan{LogicalHost: "docker.io", Upstream: &url.URL{Scheme: "http", Host: "docker.io"}}
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", &url.URL{Scheme: "http", Host: "docker.io"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, ok := v2auth.PolicyFromContext(ctx)
 	if !ok || p.Scheme != "https" {
-		t.Fatalf("策略 scheme 应取实际 target 的 https，得到 %+v ok=%v", p, ok)
+		t.Fatalf("策略 scheme 应保持逻辑 https，得到 %+v ok=%v", p, ok)
+	}
+	if !p.AllowPlainHTTP {
+		t.Fatalf("sources.base_url=http 应派生 AllowPlainHTTP=true，得到 %+v", p)
+	}
+	if got := p.SourceOrigin.Origin(); got != "http://docker.io:80" {
+		t.Fatalf("SourceOrigin=%q，期望 http://docker.io:80", got)
+	}
+}
+
+func TestWithRegistryPolicyUsesActualTargetOrigin(t *testing.T) {
+	// P0 回归：SourceOrigin/AllowPlainHTTP 必须来自本次实际回源目标，
+	// 不能读逻辑 plan.Upstream，否则 HTTP 镜像源的 Realm 例外永远不生效。
+	g := &Gateway{policies: testGatewayPolicy}
+	plan := &adapter.Plan{
+		LogicalHost: "docker.io",
+		Upstream:    &url.URL{Scheme: "https", Host: "docker.io"},
+	}
+	target := &url.URL{Scheme: "http", Host: "mirror.internal:5000"}
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := v2auth.PolicyFromContext(ctx)
+	if !ok {
+		t.Fatal("缺少策略快照")
+	}
+	if p.Scheme != "https" {
+		t.Fatalf("逻辑 Scheme 应保持 https，得到 %q", p.Scheme)
+	}
+	if !p.AllowPlainHTTP {
+		t.Fatalf("实际目标为 http 时应 AllowPlainHTTP=true，得到 %+v", p)
+	}
+	if got := p.SourceOrigin.Origin(); got != "http://mirror.internal:5000" {
+		t.Fatalf("SourceOrigin=%q，期望 http://mirror.internal:5000", got)
 	}
 }
 
 func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
 	g := &Gateway{policies: testGatewayPolicy}
 	plan := &adapter.Plan{LogicalHost: "docker.io"}
-	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", "")
+	ctx, err := g.withRegistryPolicy(context.Background(), plan, 9, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +387,7 @@ func TestWithRegistryPolicyCarriesSourceAndLogicalHost(t *testing.T) {
 	if !ok || p.SourceID != 9 || p.LogicalHost != "docker.io" || p.Official {
 		t.Fatalf("策略身份不对: %+v ok=%v", p, ok)
 	}
-	ctx, err = g.withRegistryPolicy(context.Background(), plan, 9, "ghcr.io", "")
+	ctx, err = g.withRegistryPolicy(context.Background(), plan, 9, "ghcr.io", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

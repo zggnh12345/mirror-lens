@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 )
 
 // IdentityKind 是请求身份的唯一权威分类。
@@ -214,8 +216,10 @@ type RedirectDecision struct {
 
 // RedirectPolicy 是唯一的重定向裁决入口。
 //
-// 规则：
-//   - Registry：最多 5 跳，只允许 HTTPS，Host/Scheme 变化时清 Authorization；
+// 规则（3.5.24 冻结矩阵）：
+//   - 任何 HTTPS→HTTP 降级一律拒绝；
+//   - Registry：HTTP→HTTP 允许（同源保留凭据，跨源清除后由目标 Policy 决定），
+//     HTTP→HTTPS 允许升级但清除旧凭据，HTTPS→HTTPS 按完整 Origin 决定是否清除；
 //   - Token：最多 3 跳，只允许同源 HTTPS，跨源直接拒绝；
 //   - CDN：最多 5 跳，只允许 GET/HEAD + HTTPS，不携带 Authorization。
 func RedirectPolicy(kind RedirectKind, method string, from, to *url.URL, hop int) (RedirectDecision, error) {
@@ -239,28 +243,39 @@ func RedirectPolicy(kind RedirectKind, method string, from, to *url.URL, hop int
 	if to.User != nil {
 		return RedirectDecision{}, errors.New("重定向目标带 userinfo")
 	}
-	if !strings.EqualFold(to.Scheme, "https") {
-		return RedirectDecision{}, fmt.Errorf("重定向目标不是 HTTPS: %s", to.Scheme)
+	fromEP, err := endpoint.FromURL(from)
+	if err != nil {
+		return RedirectDecision{}, fmt.Errorf("重定向来源无效: %w", err)
 	}
-	if !strings.EqualFold(from.Scheme, "https") {
-		// 上游本来就不是 HTTPS（测试/内网）时不做降级判断，但也只允许 https 目标。
+	toEP, err := endpoint.FromURL(to)
+	if err != nil {
+		return RedirectDecision{}, fmt.Errorf("重定向目标无效: %w", err)
 	}
-	if strings.EqualFold(from.Scheme, "https") && !strings.EqualFold(to.Scheme, "https") {
+	// 降级门禁必须先判，不能被下面的 HTTPS-only 分支遮蔽。
+	if fromEP.Scheme() == endpoint.HTTPS && toEP.Scheme() == endpoint.HTTP {
 		return RedirectDecision{}, errors.New("拒绝 HTTPS 降级重定向")
 	}
-	sameOrigin := strings.EqualFold(from.Scheme, to.Scheme) && strings.EqualFold(from.Host, to.Host)
+	sameOrigin := fromEP.Equal(toEP)
 	switch kind {
 	case RedirectToken:
+		if toEP.Scheme() != endpoint.HTTPS {
+			return RedirectDecision{}, fmt.Errorf("Token 端点必须 HTTPS: %s", to.Scheme)
+		}
 		if !sameOrigin {
-			return RedirectDecision{}, fmt.Errorf("Token 端点只允许同源重定向: %s -> %s", from.Host, to.Host)
+			return RedirectDecision{}, fmt.Errorf("Token 端点只允许同源重定向: %s -> %s", fromEP.Origin(), toEP.Origin())
 		}
 		return RedirectDecision{StripAuth: false, RecheckPolicy: false}, nil
 	case RedirectCDN:
 		if method != "" && !strings.EqualFold(method, "GET") && !strings.EqualFold(method, "HEAD") {
 			return RedirectDecision{}, fmt.Errorf("CDN 重定向只允许 GET/HEAD，实际 %s", method)
 		}
+		if toEP.Scheme() != endpoint.HTTPS {
+			return RedirectDecision{}, fmt.Errorf("CDN 重定向目标必须 HTTPS: %s", to.Scheme)
+		}
 		return RedirectDecision{StripAuth: true, RecheckPolicy: false}, nil
 	default:
+		// HTTP→HTTP 同源：保留凭据；跨源（含同 Host 不同端口）清除凭据。
+		// HTTP→HTTPS：sameOrigin=false，自动清除旧凭据。
 		return RedirectDecision{StripAuth: !sameOrigin, RecheckPolicy: true}, nil
 	}
 }

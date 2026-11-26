@@ -998,7 +998,7 @@ func (g *Gateway) rangeReq(ctx context.Context, plan *adapter.Plan, u *url.URL, 
 		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
 	}
 	ctx = withScopeCancel(ctx)
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u)
 	if err != nil {
 		return nil, err
 	}

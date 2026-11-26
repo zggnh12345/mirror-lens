@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 )
 
 // ErrPolicyMissing 表示 Registry 请求没有可用的认证策略。
@@ -29,6 +31,14 @@ type PolicySnapshot struct {
 	AllowSameHost bool
 	Scheme        string
 	Realms        []string
+
+	// AllowPlainHTTP 是 3.5.24 的运行时字段（不是 DB 字段），默认 false。
+	// 仅由对应 Source 的 sources.base_url Scheme=http 派生。
+	AllowPlainHTTP bool
+	// SourceOrigin 是该 Source 的实际连接 Origin（sources.base_url 的
+	// Scheme + CanonicalHost + EffectivePort），用于 HTTP Realm 窄例外。
+	// 零值表示未知，此时 HTTP Realm 一律拒绝。
+	SourceOrigin endpoint.Endpoint
 }
 
 // PolicyResolver 把 (source_id, host) 解析成策略快照。
@@ -70,6 +80,13 @@ func (OfficialPolicy) Resolve(_ context.Context, sourceID int64, host string) (P
 // internal/v2auth/v2authtest 保留同等语义，供注入式测试使用。
 
 // Allows 校验 Challenge 的 Realm 是否属于本策略。
+//
+// 3.5.24 起按 Origin 解析后比较：
+//   - HTTPS 同 Host：按 CanonicalHost（去端口）+ Realm Scheme 比较；
+//   - HTTP 同 Host：窄例外，必须 AllowPlainHTTP 且 Realm 与 SourceOrigin
+//     的完整 Origin（Scheme/CanonicalHost/EffectivePort）完全一致；
+//   - 显式白名单：HTTPS 按 CanonicalHost（去端口）+ Scheme 比较，
+//     保留跨 Host 兼容能力；HTTP 白名单仍按完整 Origin 比较。
 func (p PolicySnapshot) Allows(realm *url.URL) error {
 	if realm == nil || realm.Scheme == "" || realm.Host == "" {
 		return ErrNoRealm
@@ -77,23 +94,57 @@ func (p PolicySnapshot) Allows(realm *url.URL) error {
 	if realm.User != nil {
 		return fmt.Errorf("%w: Realm 带 userinfo", ErrRealmDenied)
 	}
-	got := strings.ToLower(realm.Scheme + "://" + realm.Host)
-	if p.AllowSameHost && p.LogicalHost != "" {
+	re, err := endpoint.FromURL(realm)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRealmDenied, err)
+	}
+	logical, haveLogical := canonicalPolicyHost(p.LogicalHost)
+	if p.AllowSameHost && haveLogical && strings.EqualFold(re.Host(), logical) {
+		if re.Scheme() == endpoint.HTTP {
+			// HTTP Realm 窄例外：只对该 Source 的完整 Origin 生效。
+			if !p.AllowPlainHTTP || p.SourceOrigin.IsZero() || !re.Equal(p.SourceOrigin) {
+				return fmt.Errorf("%w: HTTP Realm 未被 SourceEndpoint 完整 Origin 授权", ErrRealmDenied)
+			}
+			return nil
+		}
 		scheme := p.Scheme
 		if scheme == "" {
 			scheme = "https"
 		}
-		if strings.EqualFold(realm.Host, p.LogicalHost) && strings.EqualFold(realm.Scheme, scheme) {
+		if strings.EqualFold(string(re.Scheme()), scheme) {
 			return nil
 		}
 	}
 	for _, allow := range p.Realms {
-		want := strings.ToLower(strings.TrimSuffix(allow, "/"))
-		if got == want {
+		ae, err := endpoint.Parse(allow)
+		if err != nil {
+			continue
+		}
+		if re.Scheme() == endpoint.HTTP || ae.Scheme() == endpoint.HTTP {
+			if re.Equal(ae) {
+				return nil
+			}
+			continue
+		}
+		// HTTPS Realm 身份按 CanonicalHost 比较，端口忽略（冻结裁定 ②）。
+		if strings.EqualFold(re.Host(), ae.Host()) && strings.EqualFold(string(re.Scheme()), string(ae.Scheme())) {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: %s 的 Realm %s", ErrRealmDenied, p.LogicalHost, got)
+	return fmt.Errorf("%w: %s 的 Realm %s", ErrRealmDenied, p.LogicalHost, re.Origin())
+}
+
+// canonicalPolicyHost 把策略里的 LogicalHost 收敛成 CanonicalHost。
+// 官方测试/内网 Host 可能带端口，先按 https://authority 解析。
+func canonicalPolicyHost(raw string) (string, bool) {
+	h := strings.TrimSpace(raw)
+	if h == "" {
+		return "", false
+	}
+	if ep, err := endpoint.ParseOrigin("https://" + h); err == nil {
+		return ep.Host(), true
+	}
+	return strings.ToLower(h), false
 }
 
 type policyCtxKey struct{}

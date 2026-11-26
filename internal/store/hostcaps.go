@@ -394,7 +394,15 @@ func (s *Store) AddSourceHost(sourceID int64, rawHost string, primary string, ex
 	if err != nil {
 		return err
 	}
-	primary, extra, err = normalizePolicyRealms(primary, extra)
+	var baseURL string
+	if err := s.db.QueryRow(`SELECT base_url FROM sources WHERE id=?`, sourceID).Scan(&baseURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSourceNotFound
+		}
+		return err
+	}
+	allowPlain, origin := sourcePlainOrigin(baseURL)
+	primary, extra, err = normalizePolicyRealms(primary, extra, allowPlain, origin)
 	if err != nil {
 		return err
 	}

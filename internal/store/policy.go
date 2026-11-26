@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
@@ -150,21 +152,24 @@ func (s *Store) SetRealmPolicy(sourceID int64, rawHost, primary string, extra []
 	if err != nil {
 		return err
 	}
-	primary, extra, err = normalizePolicyRealms(primary, extra)
-	if err != nil {
-		return err
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var one int
-	var status string
-	if err := tx.QueryRow(`SELECT 1, status FROM sources WHERE id=?`, sourceID).Scan(&one, &status); err != nil {
+	var status, baseURL string
+	if err := tx.QueryRow(`SELECT 1, status, base_url FROM sources WHERE id=?`, sourceID).Scan(&one, &status, &baseURL); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSourceNotFound
 		}
+		return err
+	}
+	// HTTP Realm 窄例外：只有该 Source 的 sources.base_url 明确是 HTTP，
+	// 且 Realm 与它完整 Origin 全等时才允许持久化。
+	allowPlain, origin := sourcePlainOrigin(baseURL)
+	primary, extra, err = normalizePolicyRealms(primary, extra, allowPlain, origin)
+	if err != nil {
 		return err
 	}
 	if status == "archived" {
@@ -347,8 +352,8 @@ func normalizePolicyHost(raw string) (string, error) {
 	return h, nil
 }
 
-func normalizePolicyRealms(primary string, extra []string) (string, []string, error) {
-	primary, err := normalizeRealm(primary)
+func normalizePolicyRealms(primary string, extra []string, allowPlain bool, origin endpoint.Endpoint) (string, []string, error) {
+	primary, err := normalizeRealm(primary, allowPlain, origin)
 	if err != nil {
 		return "", nil, err
 	}
@@ -358,7 +363,7 @@ func normalizePolicyRealms(primary string, extra []string) (string, []string, er
 	seen := map[string]bool{primary: true}
 	out := make([]string, 0, len(extra))
 	for _, raw := range extra {
-		r, err := normalizeRealm(raw)
+		r, err := normalizeRealm(raw, allowPlain, origin)
 		if err != nil {
 			return "", nil, err
 		}
@@ -376,21 +381,69 @@ func validatePolicyRealms(primary, extraJSON string) (string, []string, error) {
 	if err := json.Unmarshal([]byte(extraJSON), &extra); err != nil {
 		return "", nil, fmt.Errorf("extra_realms 不是 JSON 数组: %w", err)
 	}
-	return normalizePolicyRealms(primary, extra)
+	// 读模式：允许读取已持久化的 HTTP Realm（写入路径已做过 Origin 校验）。
+	return normalizePolicyRealms(primary, extra, true, endpoint.Endpoint{})
 }
 
-func normalizeRealm(raw string) (string, error) {
+// sourcePlainOrigin 从 sources.base_url 派生 HTTP Realm 窄例外所需上下文。
+// 非 HTTP 或解析失败时 allowPlain=false，HTTP Realm 一律拒绝。
+func sourcePlainOrigin(baseURL string) (bool, endpoint.Endpoint) {
+	ep, err := endpoint.Parse(baseURL)
+	if err != nil || ep.Scheme() != endpoint.HTTP {
+		return false, endpoint.Endpoint{}
+	}
+	return true, ep
+}
+
+func normalizeRealm(raw string, allowPlain bool, sourceOrigin endpoint.Endpoint) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", fmt.Errorf("Realm 无法解析: %w", err)
 	}
-	if u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("Realm 必须是 https origin，不能带 userinfo/query/fragment: %q", raw)
 	}
 	if u.Path != "" && u.Path != "/" {
 		return "", fmt.Errorf("Realm 不能带 path: %q", raw)
 	}
-	host, err := registryhost.Normalize(u.Hostname())
+	ep, err := endpoint.FromURL(u)
+	if err != nil {
+		return "", fmt.Errorf("Realm 无法解析: %w", err)
+	}
+	if ep.Scheme() != endpoint.HTTPS && ep.Scheme() != endpoint.HTTP {
+		return "", fmt.Errorf("Realm 必须是 http(s) origin: %q", raw)
+	}
+	// 读模式（allowPlain 且无 SourceOrigin）：允许读回已持久化的值。
+	if allowPlain && sourceOrigin.IsZero() {
+		if ep.Scheme() == endpoint.HTTP {
+			return ep.Origin(), nil
+		}
+		return "https://" + ep.Host(), nil
+	}
+
+	// HTTP 窄例外：只有该 Source 的 base_url 是 HTTP，且 Realm 与它
+	// 完整 Origin（Scheme/Host/EffectivePort）全等时才放行。
+	// 不同端口不会自动获得授权。
+	if ep.Scheme() == endpoint.HTTP {
+		if !allowPlain {
+			return "", fmt.Errorf("Realm 必须是 https origin，不能带 userinfo/query/fragment: %q", raw)
+		}
+		if !ep.Equal(sourceOrigin) {
+			return "", fmt.Errorf("HTTP Realm 必须与 SourceEndpoint 完整 Origin 一致: %q", raw)
+		}
+		return ep.Origin(), nil
+	}
+
+	// HTTPS Realm 身份按 CanonicalHost 比较，端口忽略（冻结裁定 ②）。
+	// IP 字面量不参与 DNS 规范化，只允许精确匹配 SourceEndpoint 的 Host，
+	// 防止同网段其它 IP 借 Realm 白名单获得凭据。
+	if net.ParseIP(ep.Host()) != nil {
+		if sourceOrigin.IsZero() || !strings.EqualFold(ep.Host(), sourceOrigin.Host()) {
+			return "", fmt.Errorf("IP Realm 必须精确匹配 SourceEndpoint Host: %q", raw)
+		}
+		return "https://" + ep.Host(), nil
+	}
+	host, err := registryhost.Normalize(ep.Host())
 	if err != nil {
 		return "", err
 	}

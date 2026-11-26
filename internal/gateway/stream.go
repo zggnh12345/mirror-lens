@@ -346,7 +346,7 @@ func (g *Gateway) doUpstream(ctx context.Context, plan *adapter.Plan, pm *cache.
 		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
 	}
 	ctx = withScopeCancel(ctx)
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u)
 	if err != nil {
 		return nil, err
 	}
@@ -1094,7 +1094,7 @@ func (g *Gateway) passThrough(w http.ResponseWriter, r *http.Request, plan *adap
 	for i, t := range targets {
 		tt := t
 		start := time.Now()
-		rctx, perr := g.withRegistryPolicy(r.Context(), plan, sourceIDFor(t), logicalHostFor(t, plan), t.u.Scheme)
+		rctx, perr := g.withRegistryPolicy(r.Context(), plan, sourceIDFor(t), logicalHostFor(t, plan), t.u)
 		if perr != nil {
 			err = perr
 			continue

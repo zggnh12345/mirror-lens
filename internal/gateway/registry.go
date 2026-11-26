@@ -459,7 +459,7 @@ func (g *Gateway) writeHeadStatus(w http.ResponseWriter, hdr http.Header, code i
 
 // headOnce 发一次原生 HEAD：只到响应头，读完（最多 4K）并关闭 Body。
 func (g *Gateway) headOnce(ctx context.Context, plan *adapter.Plan, u *url.URL, sourceID int64, logicalHost string) (int, http.Header, error) {
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u.Scheme)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, logicalHost, u)
 	if err != nil {
 		return 0, nil, err
 	}

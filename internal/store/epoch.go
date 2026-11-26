@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 )
 
 // MetaCacheEpoch 是 Registry 缓存键命名空间代次的 meta 键。
@@ -115,6 +117,20 @@ func RegistryCacheKey(epoch int64, kind, rest string) string {
 		short = "b"
 	}
 	return "docker:" + short + ":" + strconv.FormatInt(epoch, 10) + ":" + rest
+}
+
+// ManifestCacheKey 统一构造 Manifest 缓存键。
+//
+// 身份只取规划期 RegistryEndpoint（Scheme + CanonicalHost + EffectivePort），
+// 不包含调度期 SourceEndpoint；默认端口显式规范化，IPv6 Host 带方括号。
+// 前缀与 Epoch 解析体系保持不变，只改 Rest。
+func ManifestCacheKey(epoch int64, scheme, host string, port int, repo, ref, accept string) string {
+	ep, err := endpoint.New(endpoint.Scheme(scheme), host, port)
+	if err != nil {
+		// 调用方已通过 registryhost 校验；这里保守退化为显式拼接，保证键仍可区分。
+		return RegistryCacheKey(epoch, "manifest", scheme+"://"+host+"/"+repo+":"+ref+"|accept="+accept)
+	}
+	return RegistryCacheKey(epoch, "manifest", ep.Origin()+"/"+repo+":"+ref+"|accept="+accept)
 }
 
 // RegistryCacheKind 从键里解析 Registry 缓存类型（manifest/blob）。

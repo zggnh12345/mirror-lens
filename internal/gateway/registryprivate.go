@@ -558,7 +558,7 @@ func (g *Gateway) VerifyCredential(ctx context.Context, host string) VerifyResul
 		LogicalHost: host,
 		Upstream:    &url.URL{Scheme: "https", Host: host},
 	}
-	vctx, err := g.withRegistryPolicy(ctx, plan, 0, host, "https")
+	vctx, err := g.withRegistryPolicy(ctx, plan, 0, host, nil)
 	if err != nil {
 		return VerifyResult{Status: http.StatusServiceUnavailable, Code: authCodeFor(err)}
 	}

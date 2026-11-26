@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/config"
 	"github.com/zggnh12345/mirror-lens/internal/discover"
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 	"github.com/zggnh12345/mirror-lens/internal/gateway"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/janitor"
@@ -690,12 +692,18 @@ func normalizeURL(raw string) (string, error) {
 	if !strings.HasPrefix(low, "https://") && !strings.HasPrefix(low, "http://") {
 		return "", fmt.Errorf("只支持 http/https 地址")
 	}
-	hostPart := strings.TrimPrefix(strings.TrimPrefix(low, "https://"), "http://")
-	if hostPart == "" || !strings.Contains(hostPart, ".") {
-		return "", fmt.Errorf("看起来不是一个域名：%s", raw)
-	}
 	if len(v) > 300 {
 		return "", fmt.Errorf("地址太长")
+	}
+	// 3.5.24：用统一地址模型解析，支持 IPv6 方括号、非默认端口；
+	// 这里不套用 registry 的纯域名 Normalize 规则，保留 sources.base_url 既有能力。
+	ep, err := endpoint.Parse(v)
+	if err != nil {
+		return "", fmt.Errorf("地址无效：%w", err)
+	}
+	// 既有产品约束：域名至少包含一个点；IPv4/IPv6 字面量放行。
+	if _, ierr := netip.ParseAddr(ep.Host()); ierr != nil && !strings.Contains(ep.Host(), ".") {
+		return "", fmt.Errorf("看起来不是一个域名：%s", raw)
 	}
 	return v, nil
 }

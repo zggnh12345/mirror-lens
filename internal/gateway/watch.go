@@ -462,7 +462,7 @@ func (g *Gateway) trySwitchWithSpeed(ctx context.Context, plan *adapter.Plan, cu
 				continue
 			}
 		}
-		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan), t.u.Scheme)
+		rctx, err := g.withRegistryPolicy(rctx, plan, sourceIDFor(t), logicalHostFor(t, plan), t.u)
 		if err != nil {
 			log.Printf("换源拒绝 %s reason=request_failed stage=policy err=%v", t.c.Name, logging.SafeErr(err))
 			unbind()

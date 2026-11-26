@@ -119,28 +119,38 @@ func parse(raw string, allowPath bool) (Endpoint, error) {
 	if err != nil {
 		return Endpoint{}, fmt.Errorf("地址解析失败: %w", err)
 	}
-	if u.Scheme == "" {
-		return Endpoint{}, errors.New("地址缺少 Scheme（只支持 http/https）")
-	}
-	if u.User != nil {
-		return Endpoint{}, errors.New("地址不允许包含用户信息")
+	if !allowPath && u.Path != "" && u.Path != "/" {
+		return Endpoint{}, errors.New("Origin 不允许包含路径")
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return Endpoint{}, errors.New("地址不允许包含 query 或 fragment")
 	}
-	if !allowPath && u.Path != "" && u.Path != "/" {
-		return Endpoint{}, errors.New("Origin 不允许包含路径")
+	return FromURL(u)
+}
+
+// FromURL 从已解析的 URL 提取 Origin，忽略 Path/Query/Fragment。
+// 用于重定向与 Realm 比较：只关心 Scheme + CanonicalHost + EffectivePort。
+func FromURL(u *url.URL) (Endpoint, error) {
+	if u == nil {
+		return Endpoint{}, errors.New("URL 为空")
 	}
-	// 裸 IPv6：authority 里出现多个冒号且没有以 [ 开头，说明用户漏了方括号。
-	// 单冒号是 host:port，交给下面的 Port() 解析。
+	if u.Scheme == "" {
+		return Endpoint{}, errors.New("URL 缺少 Scheme（只支持 http/https）")
+	}
+	if u.User != nil {
+		return Endpoint{}, errors.New("URL 不允许包含用户信息")
+	}
+	if u.Host == "" {
+		return Endpoint{}, errors.New("URL 缺少 Host")
+	}
+	// 裸 IPv6：authority 里出现多个冒号且没有以 [ 开头。
 	if strings.Count(u.Host, ":") > 1 && !strings.HasPrefix(u.Host, "[") {
 		return Endpoint{}, errors.New("IPv6 地址必须使用方括号")
 	}
 	host := u.Hostname()
 	if host == "" {
-		return Endpoint{}, errors.New("地址缺少 Host")
+		return Endpoint{}, errors.New("URL 缺少 Host")
 	}
-	// 显式空端口：https://host:
 	if strings.HasSuffix(u.Host, ":") {
 		return Endpoint{}, errors.New("端口不能为空")
 	}

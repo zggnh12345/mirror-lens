@@ -340,8 +340,8 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 			// 缓存键里的 Accept 固定按客户端原样归一（foreign=false），
 			// 不能跟着回源站点补 OCI 类型：否则同一个 tag 在「官方/镜像」
 			// 两条路径上算出两个键，换源就丢命中。
-			CacheKey: store.RegistryCacheKey(a.epoch(), "manifest",
-				origin+"/"+name+":"+ref+"|accept="+UpstreamAccept(r.Header.Get("Accept"), false)),
+			CacheKey: store.ManifestCacheKey(a.epoch(), scheme, origin, 0, name, ref,
+				UpstreamAccept(r.Header.Get("Accept"), false)),
 			Cacheable: true,
 			TTL:       a.TagTTL,
 		}

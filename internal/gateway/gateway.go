@@ -29,6 +29,7 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter"
 	"github.com/zggnh12345/mirror-lens/internal/auth"
 	"github.com/zggnh12345/mirror-lens/internal/cache"
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 	"github.com/zggnh12345/mirror-lens/internal/gc"
 	"github.com/zggnh12345/mirror-lens/internal/ghapi"
 	"github.com/zggnh12345/mirror-lens/internal/keymutex"
@@ -707,17 +708,13 @@ func applyRedirectPolicy(r *http.Request, via []*http.Request, cdn bool, resolve
 	return nil
 }
 
-// recheckRedirectPolicy 在 Registry 重定向时重新校验目标 Host 的策略。
+// recheckRedirectPolicy 在 Registry 每一跳重新校验目标 Host 的策略。
 //
-// 只对同 Host/同 Scheme 的跳转做完整重解析；跨 Host 跳转不重新认证，
-// Authorization 已由 RedirectPolicy 清除，凭据 transport 也会因
-// targetHost != policy.LogicalHost 拒绝发送凭据。
+// 3.5.24 起不再对跨 Host/跨 Scheme 提前放行：必须解析目标 CanonicalHost
+// 的策略；解析失败即拒绝。同 Host 时还要求 LogicalHost/Official 不变。
 func recheckRedirectPolicy(ctx context.Context, resolver v2auth.PolicyResolver, from, to *url.URL) error {
 	if from == nil || to == nil {
 		return v2auth.ErrPolicyMissing
-	}
-	if !strings.EqualFold(from.Scheme, to.Scheme) || !strings.EqualFold(from.Host, to.Host) {
-		return nil
 	}
 	p, ok := v2auth.PolicyFromContext(ctx)
 	if !ok {
@@ -726,14 +723,25 @@ func recheckRedirectPolicy(ctx context.Context, resolver v2auth.PolicyResolver, 
 	if resolver == nil {
 		return v2auth.ErrPolicyMissing
 	}
-	np, err := resolver.Resolve(ctx, p.SourceID, to.Host)
+	fromEP, err := endpoint.FromURL(from)
+	if err != nil {
+		return fmt.Errorf("%w: 重定向来源无效: %v", v2auth.ErrPolicyMissing, err)
+	}
+	toEP, err := endpoint.FromURL(to)
+	if err != nil {
+		return fmt.Errorf("%w: 重定向目标无效: %v", v2auth.ErrPolicyMissing, err)
+	}
+	np, err := resolver.Resolve(ctx, p.SourceID, toEP.Host())
 	if err != nil {
 		return err
 	}
-	if np.SourceID != p.SourceID || np.Official != p.Official ||
-		!strings.EqualFold(np.LogicalHost, p.LogicalHost) ||
-		np.CredGen != p.CredGen || np.CredGenKnown != p.CredGenKnown {
+	if np.SourceID != p.SourceID || np.CredGen != p.CredGen || np.CredGenKnown != p.CredGenKnown {
 		return fmt.Errorf("%w: 重定向目标策略发生变化", v2auth.ErrPolicyMissing)
+	}
+	if fromEP.Host() == toEP.Host() {
+		if np.Official != p.Official || !strings.EqualFold(np.LogicalHost, p.LogicalHost) {
+			return fmt.Errorf("%w: 重定向目标策略发生变化", v2auth.ErrPolicyMissing)
+		}
 	}
 	return nil
 }
@@ -743,7 +751,7 @@ func recheckRedirectPolicy(ctx context.Context, resolver v2auth.PolicyResolver, 
 // Registry plan 必须显式带 LogicalHost；缺失时在发请求前失败关闭，
 // 不能靠路由标记兜底成 503。Git/Private/Raw 不写。
 // 解析失败必须 fail closed，不能退回按 Host 查表。
-func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost, scheme string) (context.Context, error) {
+func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, sourceID int64, logicalHost string, target *url.URL) (context.Context, error) {
 	if plan == nil {
 		return ctx, nil
 	}
@@ -764,10 +772,20 @@ func (g *Gateway) withRegistryPolicy(ctx context.Context, plan *adapter.Plan, so
 		return nil, fmt.Errorf("%w: %v", v2auth.ErrPolicyMissing, err)
 	}
 	p.LogicalHost = host
-	if scheme == "" && plan.Upstream != nil {
-		scheme = plan.Upstream.Scheme
+	if p.Scheme == "" {
+		// 逻辑 RegistryEndpoint 默认 HTTPS；不能回填 SourceEndpoint 的 http。
+		p.Scheme = "https"
 	}
-	p.Scheme = scheme
+	// RegistryEndpoint 的逻辑 Scheme 保持策略值（默认 https），
+	// 不随 SourceEndpoint 的 http 改变；HTTP 例外由 AllowPlainHTTP 单独承载。
+	// AllowPlainHTTP 只能由本次实际回源目标的 Scheme 派生；不能读逻辑
+	// plan.Upstream，否则镜像源是 HTTP 时这里永远看不到。
+	if target != nil {
+		if se, serr := endpoint.FromURL(target); serr == nil {
+			p.SourceOrigin = se
+			p.AllowPlainHTTP = se.Scheme() == endpoint.HTTP
+		}
+	}
 	// 身份只能在这里构造：sourceID=0 是官方直连，>0 是候选源。
 	// 两者用不同构造函数，普通调用方无法字面量造出 Official。
 	var id v2auth.Identity
@@ -1578,7 +1596,7 @@ func (g *Gateway) openUpstreamAs(ctx context.Context, plan *adapter.Plan, prev *
 	if sc := unified.FromContext(ctx); sc != nil && sc.Exhausted() {
 		return nil, &unified.ExhaustedError{Kind: "P", Max: unified.PMax}
 	}
-	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, policyHost, u.Scheme)
+	ctx, err := g.withRegistryPolicy(ctx, plan, sourceID, policyHost, u)
 	if err != nil {
 		return nil, err
 	}
