@@ -1,0 +1,55 @@
+{
+  "_note": "阶段末独立复核报告（由独立复核 Agent 基于 HEAD 真实代码产出，实施 Agent 原样归档，未经修改）。基线提交 efc9626。用户裁定选择 1：修复 2 个 P1 与全部 P2。",
+  "verdict": "CHANGES_REQUIRED",
+  "head": "efc962684649b084067e6bfe0c222c256ca902e1",
+  "items": [
+    {"id":1,"status":"PASS","severity":"NONE","evidence":"diff 未新增网络客户端：probe/tlsInfo 改用 currentGuard().Dialer() 并吃 ctx（probe.go:145-165）；api.addSource 在 normalizeURL 后仍调用 probe.CheckURL 做 Guard 校验（api.go:611-621）；新包 internal/endpoint 无网络代码。全量 go test ./... exit 0。","note":"既有 3.5.23 信任中转 pinnedClient 仍用裸 net.Dialer 且不走 Guard（gateway/pin.go:64-95），属 diff 之外既有路径，仅作残余风险记录。"},
+    {"id":2,"status":"PASS","severity":"NONE","evidence":"registryhost.checkHost（registryhost.go:54-75）与 Allowed（:169-177）本次均未改动；IP 仍不能作为 RegistryIdentity（Normalize/Check 均拒 IP），IP 只允许出现在 sources.base_url。","note":"未发现 IP 准入被拆成两套语义。addSource 对 IP 源默认 repo_host=docker.io 的身份默认问题另见第 16 项。"},
+    {"id":3,"status":"PASS","severity":"P2","evidence":"safehttp.CheckIP（safehttp.go:107-128）对私网/回环/链路本地/组播/未指定/CGNAT 及 198.51.100/24、203.0.113/24、2001:db8::/32 等保留段拒绝；实测 198.51.100.10、203.0.113.10、2001:db8::1、64:ff9b::/96 均 blocked=true。","note":"既有缺口（非本次引入）：192.0.2.0/24、198.18.0.0/15、2001:2::/48、100::/64 未列入 safehttp.go:58-72，实测 192.0.2.10 blocked=false。"},
+    {"id":4,"status":"PASS","severity":"NONE","evidence":"策略 Host 仍走 registryhost.Normalize，显式拒绝端口（store/policy.go:344-353、registryhost.go:56-59）；normalizeRealm 对 HTTPS Realm 返回 https://+host 去端口（policy.go:446-453）；凭据 AAD 仍只绑定 host（secret/creds.go:324）；git diff 无 schema/secret 变更。","note":"端口只进入运行时 SourceOrigin 与 Manifest CacheKey。"},
+    {"id":5,"status":"PASS","severity":"NONE","evidence":"withRegistryPolicy 把逻辑 host 与本次实际 target 的 Origin 分开写入（gateway.go:758-788）；Allows 同 Host 分支用 CanonicalHost（v2auth/policy.go:101-117），HTTP 窄例外用完整 Origin（:103-109）；ManifestCacheKey 只接收裸 host 字符串（registryadapter/registry.go:343）。","note":"未发现把 Origin 当 RegistryIdentity 的调用点。"},
+    {"id":6,"status":"FAIL","severity":"P1","evidence":"HTTP 窄门禁写在 if p.AllowSameHost 内（v2auth/policy.go:102-108），而 StorePolicy.Resolve 对 sourceID>0 恒置 AllowSameHost=false（store/policy.go:85），实际授权走 p.Realms 精确 Origin 分支（policy.go:123-126），该分支完全不检查 AllowPlainHTTP/SourceOrigin。复现：PolicySnapshot{AllowSameHost:false,Scheme:\"https\",AllowPlainHTTP:false,Realms:[\"http://mirror.example:5000\"]}.Allows(http://mirror.example:5000/v2/token) 返回 nil；:8080 拒绝（R2 通过）。","note":"当前无 base_url 编辑入口，写入层 normalizeRealm 要求 HTTP Realm 与 base_url 完整 Origin 全等（store/policy.go:427-434），暂不可直接利用；但 §2.3 要求补编辑能力，一旦补齐即成可达的明文凭据泄漏。"},
+    {"id":7,"status":"PASS","severity":"NONE","evidence":"sameOrigin 用完整 Origin 比较（v2auth/identity.go:246-258），跨 Origin 必 StripAuth；applyRedirectPolicy 实际删除 Authorization（gateway.go:699-701）；认证层再次以 targetHost 对比 policy.LogicalHost 拒绝跨 Host 重加凭据（registryprivate.go:376-382、617-636）。","note":"HTTPS→HTTPS 同 Host 不同端口会清 Authorization；HTTP→HTTPS 升级也清旧头。"},
+    {"id":8,"status":"PASS","severity":"NONE","evidence":"Realm 授权走 PolicySnapshot.Allows（v2auth/policy.go:90-135），Token 3xx 走 RedirectPolicy(RedirectToken)（identity.go:260-267），Token 请求使用独立 http.Client 与独立 CheckRedirect（gateway/registryauth.go:236-248），两套判断未共用同一布尔开关。","note":"Token 请求使用 ch.Realm 原样 URL，端口保留（registryauth.go:199-204）。"},
+    {"id":9,"status":"PASS","severity":"NONE","evidence":"applyRedirectPolicy 先按决策清头，再在 RecheckPolicy=true 时调用 recheckRedirectPolicy（gateway.go:699-707）；recheck 已删除跨 Host/Scheme 直接 return nil 的旧短路（gateway.go:715-746）；safehttp 在 Dialer.Control 对每跳实际 IP 复查（safehttp.go:142-152）。","note":"Blob CDN 分支 RecheckPolicy=false，但仅 GET/HEAD+HTTPS、强制清 Authorization，SSRF 仍由拨号层每跳拦截。"},
+    {"id":10,"status":"PASS","severity":"NONE","evidence":"tlsInfo 改为接收完整 SourceEndpoint：ep.Host()/ep.Port() 分离（probe.go:134-142），target=JoinHostPort(host,port)（:150-157），ServerName=host（:159），verifyChain DNSName=host（:121-124、181）；HTTP 源不探测 TLS（docker.go:94-98、github.go:32-36）；tls_endpoint_test.go 覆盖 443/5443/IPv6 方括号。","note":"HTTP 源把 TLSOK 置 true 语义上表示不适用，可能被面板误读为证书正常（见 P2）。"},
+    {"id":11,"status":"PASS","severity":"NONE","evidence":"verifyChain 使用 x509.VerifyOptions{DNSName:host}（probe.go:121-124），host 为裸 IP 时 x509 按 IP SAN 匹配；ServerName 为 IP 时 Go 不发送 DNS SNI。","note":"仓库没有 IP SAN / 仅 DNS SAN / 错误 IP SAN 的证书级测试，真实环境 §4.4 B 矩阵未执行，真实证书验收仍为 UNVERIFIED/NOT_RUN。"},
+    {"id":12,"status":"PASS","severity":"P2","evidence":"ManifestCacheKey 用 endpoint.New 生成 scheme://host:port（store/epoch.go:127-134），默认端口显式化、IPv6 带方括号；manifest_key_test.go 覆盖 443/5443/http/IPv6/epoch=7。","note":"P2：PlanParsed 传入的 origin 是 parseRepo 结果（registry.go:306），Docker Hub 实测 key=docker:manifest:https://registry-1.docker.io:443/...，设计 §5.6 要求 CanonicalHost=docker.io（逻辑身份），parseRepo 未调用 registryhost.Normalize。"},
+    {"id":13,"status":"PASS","severity":"NONE","evidence":"全仓 grep：生产代码只有 registry.go:343 一处调用 store.ManifestCacheKey；blob 仍走 RegistryCacheKey(...,\"blob\",ref)（registry.go:376）；referrers 由 registry.go:98-101 直接返回空索引，不生成 Manifest Key。","note":"Tag、Digest、latest 均经同一 PlanParsed 分支，无第二构造点。"},
+    {"id":14,"status":"PASS","severity":"NONE","evidence":"Blob Key 仍为纯 digest（registry.go:376）；epoch.go 未改 RegistryCacheKey/Epoch 解析；RegistryCacheKind/Epoch 用固定前缀与 SplitN(key,\":\",4)（epoch.go:138-169）；单测覆盖 epoch=0/7。","note":"未发现 epoch bump、全量清理或 Blob 前缀变更。"},
+    {"id":15,"status":"PASS","severity":"NONE","evidence":"git diff 88f3db2..HEAD 无 internal/store/schema、migration、internal/secret 文件；SchemaVersion 仍 3.5.17；凭据 AAD 仍为 mirror-lens/registry-creds/v1|+host（secret/creds.go:324）。","note":"HTTP Realm 只是把既有 realm 字符串写成 http://host:port，不涉及 Schema 或凭据格式变更。"},
+    {"id":16,"status":"FAIL","severity":"P1","evidence":"本次 diff 无任何 internal/api/web 变更。UI 新增节点仍是单一 URL 输入（web/index.html:258），POST 只提交 url/name（:1416）；无 HTTP/HTTPS 选择、无独立 Host/端口字段、无 HTTP 明文警告；addSource 对未传 host 的未知域名/IP 仍默认 docker.io（api.go:644-646），与 §2.3 相反；PATCH 只接受 enabled/name/note/preferred/group_id/status（api.go:855-865），不能编辑协议/Host/端口。","note":"API 侧 normalizeURL 已能持久化 IPv6/端口/HTTP；但 §2.3、§4.3、§12 的协议选择、明文警告、归属 Registry 选择、编辑链路均未交付。"},
+    {"id":17,"status":"FAIL","severity":"P2","evidence":"probe.hostOf 改为 url.Parse 后仅被测试引用（probe.go:194-200），生产死代码；allows_origin_test.go 的 R1/R2/R3 用 AllowSameHost=true 的非生产快照（:34-40），掩盖第 6 项门禁失效；docs 仅新增 4 个 gate 日志，缺 §9 要求的 release notes、升级/回滚、HTTP 风险、Schema 指纹、race、性能与真实环境证据。","note":"未发现无关模块重构或删除既有测试。"}
+  ],
+  "p0": [],
+  "p1": [
+    {"title":"HTTP Realm 运行时门禁未接入实际授权路径","evidence":"v2auth/policy.go:102-108 的 AllowPlainHTTP/SourceOrigin 检查被 if p.AllowSameHost 包住；store/policy.go:85 对 sourceID>0 恒置 AllowSameHost=false，实际走 p.Realms 分支（policy.go:123-126）不看 AllowPlainHTTP。","fix":"把 HTTP Realm 的 AllowPlainHTTP+SourceOrigin 全等检查移到 p.Realms 分支之前；补 AllowSameHost=false 的端到端 RED 测试；base_url 编辑时同步失效旧 HTTP Realm。"},
+    {"title":"UI/API 未实现 §2.3 的协议选择、HTTP 明文警告、归属 Registry 与编辑链路","evidence":"web/index.html:258 单一 URL 输入、:1416 只 POST url/name；无明文警告；api.go:644-646 未知 Host/IP 默认 docker.io；api.go:855-865 PATCH 不能改 base_url/host。","fix":"按 §2.3 增加协议选择（默认 HTTPS）、Host/端口字段、HTTP 保存前与详情页明文警告、独立归属 Registry 选择并随 POST 提交 host；未知身份拒绝新增；补创建/编辑/重启恢复的 API+UI 测试。"}
+  ],
+  "p2": [
+    {"title":"Docker Hub Manifest Key 使用 registry-1.docker.io 而非 CanonicalHost docker.io","evidence":"registryadapter/registry.go:306 origin:=host（parseRepo 结果），未调用 registryhost.Normalize；设计 §5.6 要求 CanonicalHost=docker.io。","fix":"在 CacheKey 构造点对 ParsedPath.Host 调用 Normalize 生成 CanonicalHost，不写回 Adapter.Upstream/Plan.LogicalHost；补三入口同键测试。"},
+    {"title":"safehttp 保留网段清单缺 192.0.2.0/24 等，保留 IP 可被放行","evidence":"safehttp.go:58-72 未列 192.0.2.0/24、198.18.0.0/15、2001:2::/48、100::/64；实测 192.0.2.10/198.18.0.1 blocked=false。","fix":"系统审查非公网可路由地址段及 DNS Rebinding/重定向/Dial IP 全链路，补表驱动测试。"},
+    {"title":"Realm 单测使用生产不会出现的 AllowSameHost=true 快照","evidence":"v2auth/allows_origin_test.go:34-40 均传 allowSame=true，而 store/policy.go:85 对 source 恒 false。","fix":"增加 AllowSameHost=false 的 R1/R2/R3 用例与 store 端到端测试。"},
+    {"title":"HTTP Realm 例外下 Token 端点自身的 3xx 仍被 HTTPS-only 拒绝","evidence":"v2auth/identity.go:260-263 RedirectToken 要求 toEP.Scheme()==HTTPS，HTTP Realm 的 token 端点同源 3xx 被拒。","fix":"目标与来源同 Origin 且来源允许明文时放行 HTTP→HTTP，仍拒绝 HTTPS→HTTP；补用例。"},
+    {"title":"死代码与诊断语义问题：hostOf 死代码、HTTP 源 TLSOK=true、大小写 Scheme 误判","evidence":"probe.go:194-200 hostOf 生产无调用；docker.go:95/github.go:33 对 HTTP 源置 TLSOK=true；isPlainHTTP（probe.go:209-211）区分大小写而 normalizeURL 接受 HTTP://。","fix":"删除或改测试辅助；HTTP 源用不适用状态；isPlainHTTP 改 EqualFold 解析 Scheme。"},
+    {"title":"文档与证据未达任务书 §9 要求","evidence":"docs/evidence/3.5.24 仅 4 个 gate 日志；缺 release notes、配置/HTTP 风险/IP 准入/TLS/重定向说明、升级回滚、Schema 前后指纹、Cache Epoch 前后值、Blob Key 抽样、RED/GREEN 记录、race 与性能数据。","fix":"按 §9 补齐证据与文档。"}
+  ],
+  "tests_run": [
+    "git log --oneline 88f3db2..HEAD（efc9626/5518739/c17780b）",
+    "git diff --stat 88f3db2..HEAD（31 文件，+907/-102）",
+    "go test -count=1 ./...（EXIT=0）",
+    "gofmt -l .（无输出）", "go vet ./...（0）", "go build ./...（0）",
+    "go test -race -count=1 ./internal/v2auth ./internal/endpoint ./internal/probe ./internal/store（全部 ok）",
+    "review-probe 副本定向测试：Allows(AllowSameHost=false, AllowPlainHTTP=false, Realms=[http://mirror.example:5000]) → nil（复现 P1）",
+    "review-probe 副本定向测试：同一快照 :8080 → 拒绝（R2 通过）",
+    "review-probe 副本定向测试：Manifest Key 实测 registry-1.docker.io / ghcr.io / 自定义 upstream",
+    "review-probe 副本定向测试：safehttp.CheckIP 保留段（192.0.2.10/198.18.0.1 未拦）"
+  ],
+  "residual_risks": [
+    "既有信任中转路径（gateway/pin.go:64-95）用裸 net.Dialer 拨钉住 IP，不经 safehttp.CheckIP；属 3.5.23 既有显式信任能力。",
+    "真实环境 TLS B 矩阵（DNS SAN/IP SAN/错误 IP SAN/非默认端口握手失败）未执行，保持 UNVERIFIED/NOT_RUN。",
+    "Manifest Key 格式变化后旧缓存首次 Miss 回源，重建成本与热缓存对照未提供实测数据。",
+    "HTTP Realm 例外配合未来 base_url 编辑能力会使第 6 项 P1 从不可达变可达，需先修门禁。",
+    "未执行完整 go test -race ./...（仅 4 个关键包）。"
+  ]
+}
