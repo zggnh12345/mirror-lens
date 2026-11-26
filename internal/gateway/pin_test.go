@@ -4,11 +4,32 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 )
+
+// allowPinnedAddrsForTest 仅在这几个“验证连接语义”的存量测试里放宽 checker，
+// 让 127.0.0.1 / 127.0.0.2 / ::1 / 192.0.2.1 这些本地 listener 地址能被拨到；
+// 其余地址仍拒绝，且 t.Cleanup 恢复生产严格 checker，不污染 RED 测试。
+func allowPinnedAddrsForTest(t *testing.T) {
+	t.Helper()
+	old := pinIPChecker
+	allowed := map[string]bool{
+		"127.0.0.1": true, "127.0.0.2": true, "::1": true, "192.0.2.1": true,
+	}
+	pinIPChecker = func(ip netip.Addr) error {
+		if allowed[ip.Unmap().String()] {
+			return nil
+		}
+		return safehttp.ErrBlocked
+	}
+	t.Cleanup(func() { pinIPChecker = old })
+}
 
 func TestPinUsableStates(t *testing.T) {
 	future := time.Now().Add(time.Hour)
@@ -39,6 +60,7 @@ func TestPinUsableStates(t *testing.T) {
 
 // 钉住后必须只拨钉住的 IP，域名本身不参与解析。
 func TestPinnedClientDialsPinnedIP(t *testing.T) {
+	allowPinnedAddrsForTest(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skip("无本地监听:", err)
@@ -77,6 +99,7 @@ func TestPinnedClientRejectsOtherHost(t *testing.T) {
 
 // IPv4 连不上时按顺序试已钉的 IPv6，不重新解析。
 func TestPinnedClientV4FailFallsToV6(t *testing.T) {
+	allowPinnedAddrsForTest(t)
 	l, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
 		t.Skip("环境无 IPv6 回环:", err)
@@ -123,6 +146,7 @@ func TestSetTrustedDropsPinnedClients(t *testing.T) {
 // 钉住的多个 IP 必须一起竞速：串行拨号会被一个丢包的 IP 拖住（实测 v4 卡 1.1s 才轮到 v6）。
 // 这里第一个 IP 指向不可路由的 TEST-NET，正常应毫秒级由第二个 IP 接管。
 func TestPinnedClientRacesIPs(t *testing.T) {
+	allowPinnedAddrsForTest(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

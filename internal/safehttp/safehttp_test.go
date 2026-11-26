@@ -13,6 +13,9 @@ func TestCheckIPBlocksInternal(t *testing.T) {
 		"192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
 		"::1", "fc00::1", "fd12:3456::1", "fe80::1", "::ffff:127.0.0.1",
 		"255.255.255.255",
+		// 198.18.0.0/15 是特殊用途段（基准测试/FakeIP），默认 Guard 必须拒绝。
+		// discover 的 FakeIP 例外由该信任域自己的测试覆盖，不在这里放行。
+		"198.18.0.4", "198.19.255.255",
 	}
 	for _, s := range blocked {
 		ip := netip.MustParseAddr(s)
@@ -20,9 +23,8 @@ func TestCheckIPBlocksInternal(t *testing.T) {
 			t.Errorf("%s 应该被拦下", s)
 		}
 	}
-	// 198.18.0.0/15 是本机 sing-box 的 fakeip 段，必须放行，
-	// 否则所有走 fakeip 解析的上游都会被自己拦死。
-	for _, s := range []string{"1.1.1.1", "140.82.121.3", "2606:4700:4700::1111", "198.18.0.4"} {
+	// 常规公网地址必须放行。
+	for _, s := range []string{"1.1.1.1", "140.82.121.3", "2606:4700:4700::1111"} {
 		ip := netip.MustParseAddr(s)
 		if err := g.CheckIP(ip); err != nil {
 			t.Errorf("%s 应该放行，却报 %v", s, err)

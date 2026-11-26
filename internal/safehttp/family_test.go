@@ -70,8 +70,8 @@ func TestDialAutoHostnameRespectsGuard(t *testing.T) {
 	}()
 	addr := ln.Addr().String()
 
-	// 放开内网例外：auto 拨 localhost 应能连上（v6 若无监听，竞速会落到 v4）。
-	ok := New(Options{AllowPrivate: true, DialTimeout: 3 * time.Second})
+	// 放开回环例外：auto 拨 localhost 应能连上（v6 若无监听，竞速会落到 v4）。
+	ok := New(Options{AllowLoopback: true, DialTimeout: 3 * time.Second})
 	c, err := ok.dialContext(context.Background(), "tcp", "localhost:"+strings.Split(addr, ":")[1])
 	if err != nil {
 		t.Fatalf("auto 拨 localhost 失败: %v", err)
@@ -94,7 +94,7 @@ func TestDialRaceManual(t *testing.T) {
 	if target == "" {
 		t.Skip("设置 RACE_TARGET 后手动实测")
 	}
-	g := New(Options{AllowPrivate: true, DialTimeout: 10 * time.Second})
+	g := New(Options{AllowLoopback: true, DialTimeout: 10 * time.Second})
 	start := time.Now()
 	c, err := g.dialContext(context.Background(), "tcp", target)
 	if err != nil {

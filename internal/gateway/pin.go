@@ -7,7 +7,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
@@ -16,6 +20,48 @@ import (
 
 // errRelayUnpinned：既没有钉住地址，也不在 24h 过渡窗口内，禁止拨号。
 var errRelayUnpinned = errors.New("信任中转没有可用的钉住地址")
+
+// pinIPChecker 是 Pin 严格地址检查的测试缝：生产恒 nil（走 CheckIPStrict）。
+// 测试可注入较宽的 checker，在回环 listener 上验证“只拨钉住 IP / 竞速 / 回落”
+// 等连接语义，而不必在生产代码里给回环、TEST-NET 留任何例外。
+var pinIPChecker func(netip.Addr) error
+
+func checkPinIP(ip netip.Addr) error {
+	if pinIPChecker != nil {
+		return pinIPChecker(ip)
+	}
+	return safehttp.Default().CheckIPStrict(ip)
+}
+
+// sameOrigin 比较完整 Origin = Scheme + 规范化 Host + EffectivePort。
+// 任一变化都视为 Origin 变化，Pin 场景默认拒绝（不做升级例外）。
+func sameOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Scheme != b.Scheme {
+		return false
+	}
+	ha := strings.TrimSuffix(strings.ToLower(a.Hostname()), ".")
+	hb := strings.TrimSuffix(strings.ToLower(b.Hostname()), ".")
+	if ha == "" || ha != hb {
+		return false
+	}
+	return effectivePort(a) == effectivePort(b)
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
 
 // pinUsable 判断这个中转现在能不能拨，以及要不要退回旧版系统解析。
 // pinned=false 时走 g.privClient（系统解析），这是升级过渡期的唯一让步。
@@ -35,12 +81,29 @@ func (g *Gateway) pinUsable(t TrustedRelay) (pinned bool, err error) {
 	return true, nil
 }
 
+// fallbackClient 返回未钉住中转的回落客户端：继承本机 Guard 的 SafeHTTP
+// （拨号层逐 IP 检查 + 每跳重定向检查），绝不复用完全裸的 privClient。
+// AllowPrivate 收窄后只放 RFC1918/ULA、不含回环；AllowLoopback 仍由本机 Guard
+// 显式控制——这正是既有集成测试用 AllowLoopback 配本地桩的方式。生产默认
+// Guard 无这些开关，回落即严格 public-only，满足 Pin 的 public-only 裁定。
+func (g *Gateway) fallbackClient() *http.Client {
+	g.relayFallbackOnce.Do(func() {
+		if g.guard != nil {
+			g.relayFallbackHTTP = g.guard.Client()
+		} else {
+			g.relayFallbackHTTP = safehttp.Default().StrictClient()
+		}
+	})
+	return g.relayFallbackHTTP
+}
+
 // clientFor 返回该中转应当使用的客户端：已钉住就只拨钉住的 IP，
-// 过渡期/未初始化仍用旧客户端。按 ID+地址缓存，地址变了自然换新的。
+// 未钉住则走 g.fallbackClient()（继承本机 Guard 的 SafeHTTP），
+// 绝不复用完全裸的 privClient。按 ID+地址缓存，地址变了自然换新的。
 func (g *Gateway) clientFor(t TrustedRelay) *http.Client {
 	pinned, _ := g.pinUsable(t)
 	if !pinned {
-		return g.privClient
+		return g.fallbackClient()
 	}
 	key := fmt.Sprintf("%d|%s|%s", t.ID, t.PinIPv4, t.PinIPv6)
 	if v, ok := g.pinClients.Load(key); ok {
@@ -69,8 +132,26 @@ func pinnedClient(t TrustedRelay) *http.Client {
 		if !strings.EqualFold(strings.TrimSuffix(strings.ToLower(host), "."), pinHost) {
 			return nil, fmt.Errorf("拨号目标 %q 与钉住的域名 %q 不符，拒绝", host, pinHost)
 		}
-		if len(ips) == 0 {
-			return nil, errRelayUnpinned
+		// 每个候选拨号前先解析并严格检查（public-only）；非法候选不拨。
+		// 不依赖 store.RelayPinIPs 的写入校验作为唯一防线——DB 篡改/缓存污染
+		// 都可能让非法地址走到这里（PIN-10/11/12）。
+		type candidate struct {
+			raw string
+		}
+		var cands []candidate
+		for _, s := range ips {
+			a, err := netip.ParseAddr(s)
+			if err != nil {
+				continue
+			}
+			a = a.Unmap()
+			if err := checkPinIP(a); err != nil {
+				continue
+			}
+			cands = append(cands, candidate{raw: a.String()})
+		}
+		if len(cands) == 0 {
+			return nil, safehttp.ErrBlocked
 		}
 		// 钉住的 IP 也一视同仁竞速：每 1ms 放一条，谁先握手成功用谁。
 		// 串行拨号会被一个丢包的 IP 拖住（实测 v4 卡 1.1s 才轮到 v6）。
@@ -79,22 +160,38 @@ func pinnedClient(t TrustedRelay) *http.Client {
 			c   net.Conn
 			err error
 		}
-		ch := make(chan out, len(ips))
-		for i, ip := range ips {
+		ch := make(chan out, len(cands))
+		for i, cand := range cands {
 			if i > 0 {
 				select {
 				case <-cctx.Done():
 				case <-time.After(time.Millisecond):
 				}
 			}
-			go func(ip string) {
-				d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-				c, err := d.DialContext(cctx, "tcp", net.JoinHostPort(ip, port))
+			go func(cand candidate) {
+				// Control 在连接建立前再查一次实际地址，堵住任何
+				// 由解析/代理引入的地址漂移（DNS Rebinding 闭合）。
+				d := &net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+					Control: func(network, address string, _ syscall.RawConn) error {
+						host, _, err := net.SplitHostPort(address)
+						if err != nil {
+							return err
+						}
+						actual, err := netip.ParseAddr(host)
+						if err != nil {
+							return err
+						}
+						return checkPinIP(actual.Unmap())
+					},
+				}
+				c, err := d.DialContext(cctx, "tcp", net.JoinHostPort(cand.raw, port))
 				ch <- out{c: c, err: err}
-			}(ip)
+			}(cand)
 		}
 		var firstErr error
-		for i := 0; i < len(ips); i++ {
+		for i := 0; i < len(cands); i++ {
 			var r out
 			select {
 			case <-ctx.Done():
@@ -134,15 +231,31 @@ func pinnedClient(t TrustedRelay) *http.Client {
 		ResponseHeaderTimeout: 8 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
-	return &http.Client{
+	var origin atomic.Value // 保存首次请求的 *url.URL（完整 Origin 基准）
+	cli := &http.Client{
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("重定向超过 5 次")
 			}
-			return safehttp.Default().Check(req.URL)
+			if len(via) == 0 {
+				return errors.New("CheckRedirect 收到空的重定向链")
+			}
+			base, ok := origin.Load().(*url.URL)
+			if !ok {
+				base = via[0].URL
+				origin.Store(base)
+			}
+			// 完整 Origin（Scheme + 规范化 Host + EffectivePort）任一变化，
+			// 在第二次拨号之前拒绝，统一返回 ErrBlocked → 上层 403。
+			if !sameOrigin(base, req.URL) {
+				return fmt.Errorf("%w: 重定向目标 %q 与钉住 Origin 不符", safehttp.ErrBlocked, req.URL)
+			}
+			// 同 Origin 仍逐跳重查目标 URL（字面量 IP 等）。
+			return safehttp.Default().CheckStrict(req.URL)
 		},
 	}
+	return cli
 }
 
 // pinWarn 给「不能拨」的中转限速告警：一个站挂了不该把日志刷爆。

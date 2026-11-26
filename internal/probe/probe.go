@@ -87,7 +87,13 @@ func Configure(allowPrivate bool, ipFamily ...string) {
 		fam = ipFamily[0]
 	}
 	guardMu.Lock()
-	guard = safehttp.New(safehttp.Options{MaxRedirects: 8, AllowPrivate: allowPrivate, IPFamily: fam})
+	guard = safehttp.New(safehttp.Options{
+		MaxRedirects: 8, AllowPrivate: allowPrivate,
+		// probe 的 allowPrivate 语义一直含“允许探测本机回环端点”
+		// （测试桩、用户自建局域网源）。AllowPrivate 收窄为只放 RFC1918/ULA 后，
+		// 回环改由 AllowLoopback 独立控制；这里把两者一起打开以保持既有语义。
+		AllowLoopback: allowPrivate, IPFamily: fam,
+	})
 	guardMu.Unlock()
 }
 

@@ -20,31 +20,13 @@ var relayLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
 	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 }
 
-// 这些网段不是“能不能连”的问题，而是“这个地址根本不是这台机器的公网地址”：
-// fakeip 的 198.18.0.0/15 / fc00::/7、CGNAT、保留段、文档段、组播、链路本地。
-// 钉住它们等于把中转永久钉死在一个假地址上，比不钉更糟，所以解析阶段就丢掉。
-var bogusPinNets = func() []netip.Prefix {
-	raw := []string{
-		"0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
-		"192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24",
-		"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
-		"::/128", "::1/128", "64:ff9b::/96", "100::/64", "2001:db8::/32",
-		"fc00::/7", "fe80::/10", "ff00::/8",
-	}
-	out := make([]netip.Prefix, 0, len(raw))
-	for _, r := range raw {
-		out = append(out, netip.MustParsePrefix(r))
-	}
-	return out
-}()
-
-// bogusPinAddr 判断解析结果是否属于“不可能是这台机器真实地址”的段，返回原因。
+// bogusPinAddr 只用于错误原因展示；安全判定只认 safehttp.CheckIPStrict。
+// 刻意不维护第二套网段清单，避免与 safehttp 内置清单漂移（PIN-02..08）：
+// 创建阶段放行、拨号阶段才拒的“半开”状态必须由单一事实源消除。
 func bogusPinAddr(a netip.Addr) string {
 	a = a.Unmap()
-	for _, p := range bogusPinNets {
-		if p.Contains(a) {
-			return p.String()
-		}
+	if err := safehttp.Default().CheckIPStrict(a); err != nil {
+		return err.Error()
 	}
 	return ""
 }
@@ -137,10 +119,9 @@ func checkPinList(v string, want4 bool) error {
 		if ip.Unmap().Is4() != want4 {
 			return fmt.Errorf("%s 与地址族不符", s)
 		}
-		if r := bogusPinAddr(ip); r != "" {
-			return fmt.Errorf("%s 属于保留/伪造网段 %s，不能作为拨号地址", s, r)
-		}
-		if err := guard.CheckIP(ip); err != nil {
+		// 创建阶段与拨号阶段共用同一严格判定（public-only），
+		// 不因 AllowPrivate/AllowLoopback 等配置放行任何非公网地址。
+		if err := guard.CheckIPStrict(ip); err != nil {
 			return fmt.Errorf("%s 不能作为拨号地址：%v", s, err)
 		}
 	}
@@ -160,7 +141,7 @@ func resolveRelayHost(hostport string, timeout time.Duration) (v4, v6 []string, 
 	}
 	guard := safehttp.Default()
 	if ip, e := netip.ParseAddr(host); e == nil {
-		if e := guard.CheckIP(ip); e != nil {
+		if e := guard.CheckIPStrict(ip); e != nil {
 			return nil, nil, e
 		}
 		if ip.Unmap().Is4() {
@@ -181,11 +162,8 @@ func resolveRelayHost(hostport string, timeout time.Duration) (v4, v6 []string, 
 		if !a.IsValid() || seen[a.String()] {
 			continue
 		}
-		if r := bogusPinAddr(a); r != "" {
-			log.Printf("信任中转 %s 的解析结果 %s 属于保留/伪造网段 %s，拒绝钉住", host, a, r)
-			continue
-		}
-		if e := guard.CheckIP(a); e != nil {
+		// 解析结果同样走严格 public-only；bogusPinAddr 仅用于日志原因展示。
+		if e := guard.CheckIPStrict(a); e != nil {
 			log.Printf("信任中转 %s 的解析结果被拒绝：%v", host, e)
 			continue
 		}

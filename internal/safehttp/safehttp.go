@@ -18,8 +18,10 @@ import (
 )
 
 // Options 控制超时与例外。
-// AllowLoopback 只给测试；AllowPrivate 给「探测局域网源」这类场景。
-// 两者默认关，打开等于关掉整层防护，别在公网部署上开。
+// AllowLoopback 只给测试；AllowPrivate 只放行 RFC1918 与 IPv6 ULA。
+// 两者默认关，打开等于关掉对应层防护，别在公网部署上开。
+// FakeIP、CGNAT、文档段、基准测试段、链路本地、组播等特殊用途地址
+// 不属于 AllowPrivate 的放行范围，始终拒绝。
 type Options struct {
 	DialTimeout   time.Duration
 	HeaderTimeout time.Duration
@@ -54,21 +56,34 @@ func New(o Options) *Guard {
 	if o.MaxRedirects <= 0 {
 		o.MaxRedirects = 5
 	}
-	// netip 已覆盖内网与回环段，这里补它不管的几段。
+	// 这些是无论 AllowPrivate/AllowLoopback 如何配置都必须拒绝的特殊用途段。
+	// RFC1918 与 IPv6 ULA 不在此列，它们由 AllowPrivate 单独控制。
 	var extra = []string{
-		"0.0.0.0/8",       // 本网络
-		"100.64.0.0/10",   // CGNAT，运营商内网
-		"192.0.0.0/24",    // IETF 协议分配
-		"192.88.99.0/24",  // 6to4 中继任播
-		"198.51.100.0/24", // 文档示例
-		"203.0.113.0/24",  // 文档示例
-		"240.0.0.0/4",     // 保留
-		"255.255.255.255/32",
-		"fe80::/10",     // 链路本地
-		"fec0::/10",     // 站点本地（已废弃，仍不该连）
-		"ff00::/8",      // 组播
-		"64:ff9b::/96",  // NAT64，可能映射到内网
-		"2001:db8::/32", // 文档示例
+		"0.0.0.0/8",          // 本网络
+		"100.64.0.0/10",      // CGNAT，运营商内网
+		"169.254.0.0/16",     // IPv4 链路本地 / 云元数据
+		"192.0.0.0/24",       // IETF 协议分配
+		"192.0.2.0/24",       // TEST-NET-1
+		"192.88.99.0/24",     // 6to4 中继任播
+		"198.18.0.0/15",      // 基准测试 / FakeIP
+		"198.51.100.0/24",    // 文档示例
+		"203.0.113.0/24",     // 文档示例
+		"224.0.0.0/4",        // 组播
+		"240.0.0.0/4",        // 保留
+		"255.255.255.255/32", // 广播
+		"::/128",             // 未指定
+		"64:ff9b::/96",       // NAT64，可能映射到内网
+		"64:ff9b:1::/48",     // 本地 NAT64
+		"100::/64",           // 丢弃前缀
+		"2001::/23",          // IETF 协议分配（含 Teredo、基准测试）
+		"2001:2::/48",        // 基准测试
+		"2001:db8::/32",      // 文档示例
+		"2002::/16",          // 6to4
+		"3fff::/20",          // 文档示例（RFC 9637）
+		"5f00::/16",          // SRv6 SID
+		"fe80::/10",          // 链路本地
+		"fec0::/10",          // 站点本地（已废弃，仍不该连）
+		"ff00::/8",           // 组播
 	}
 	g := &Guard{o: o}
 	for _, c := range extra {
@@ -83,7 +98,12 @@ func Default() *Guard { return New(Options{}) }
 
 // Check 校验 URL 本身：协议、凭据、IP 字面量主机。
 // 域名不在这里解析，把关在拨号层。
-func (g *Guard) Check(u *url.URL) error {
+func (g *Guard) Check(u *url.URL) error { return g.checkURL(u, g.CheckIP) }
+
+// CheckStrict 与 Check 相同，但忽略 AllowPrivate/AllowLoopback。
+func (g *Guard) CheckStrict(u *url.URL) error { return g.checkURL(u, g.CheckIPStrict) }
+
+func (g *Guard) checkURL(u *url.URL, check func(netip.Addr) error) error {
 	if u == nil {
 		return errors.New("空 URL")
 	}
@@ -98,38 +118,59 @@ func (g *Guard) Check(u *url.URL) error {
 		return errors.New("缺少主机名")
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		return g.CheckIP(ip)
+		return check(ip)
 	}
 	return nil
 }
 
-// CheckIP 判断地址能否连接。
+// CheckIP 判断地址能否连接。拒绝顺序：
+//  1. 无论任何开关都拒绝的特殊用途段；
+//  2. 回环：只由 AllowLoopback 放行；
+//  3. RFC1918 / ULA：只由 AllowPrivate 放行；
+//  4. 其余未指定/组播/链路本地一律拒绝。
 func (g *Guard) CheckIP(ip netip.Addr) error {
+	return g.checkIP(ip, g.o.AllowPrivate, g.o.AllowLoopback)
+}
+
+// CheckIPStrict 忽略 AllowPrivate/AllowLoopback，供 Pin 等严格路径使用。
+func (g *Guard) CheckIPStrict(ip netip.Addr) error { return g.checkIP(ip, false, false) }
+
+func (g *Guard) checkIP(ip netip.Addr, allowPrivate, allowLoopback bool) error {
 	ip = ip.Unmap()
 	if !ip.IsValid() {
 		return errBlocked
-	}
-	if g.o.AllowPrivate {
-		return nil
-	}
-	if g.o.AllowLoopback && ip.IsLoopback() {
-		return nil
-	}
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
-		return fmt.Errorf("%w: %s 属于内网/回环/链路本地", errBlocked, ip)
 	}
 	for _, p := range g.nets {
 		if p.Contains(ip) {
 			return fmt.Errorf("%w: %s 属于保留网段 %s", errBlocked, ip, p)
 		}
 	}
+	if ip.IsLoopback() {
+		if allowLoopback {
+			return nil
+		}
+		return fmt.Errorf("%w: %s 属于回环地址", errBlocked, ip)
+	}
+	if ip.IsPrivate() {
+		if allowPrivate {
+			return nil
+		}
+		return fmt.Errorf("%w: %s 属于内网地址", errBlocked, ip)
+	}
+	if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("%w: %s 属于未指定/组播/链路本地", errBlocked, ip)
+	}
 	return nil
 }
 
 // Dialer 返回带地址检查的拨号器。TLS 探测这类自己握手的场景也得用它，
 // 否则就是绕过 Guard 的另一条路。
-func (g *Guard) Dialer() *net.Dialer {
+func (g *Guard) Dialer() *net.Dialer { return g.dialerFor(g.CheckIP) }
+
+// StrictDialer 与 Dialer 相同，但忽略 AllowPrivate/AllowLoopback。
+func (g *Guard) StrictDialer() *net.Dialer { return g.dialerFor(g.CheckIPStrict) }
+
+func (g *Guard) dialerFor(check func(netip.Addr) error) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   g.o.DialTimeout,
 		KeepAlive: 30 * time.Second,
@@ -148,7 +189,7 @@ func (g *Guard) Dialer() *net.Dialer {
 			if err != nil {
 				return fmt.Errorf("%w: 无法识别的地址 %q", errBlocked, host)
 			}
-			return g.CheckIP(ip)
+			return check(ip)
 		},
 	}
 }
@@ -192,13 +233,21 @@ func (g *Guard) OrderIPs(ips []netip.Addr) []netip.Addr { return g.orderIPs(ips)
 // dialContext：auto 交给标准库做 Happy Eyeballs（两族同时起跑，先握手成功的赢），
 // v4/v6 强制档才自己解析、过滤、顺序拨。两条路都保留 Control 里的内网校验。
 func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return g.dialContextFor(ctx, network, addr, g.CheckIP)
+}
+
+func (g *Guard) strictDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return g.dialContextFor(ctx, network, addr, g.CheckIPStrict)
+}
+
+func (g *Guard) dialContextFor(ctx context.Context, network, addr string, check func(netip.Addr) error) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
-	d := g.Dialer()
+	d := g.dialerFor(check)
 	if ip, err := netip.ParseAddr(host); err == nil {
-		if err := g.CheckIP(ip); err != nil {
+		if err := check(ip); err != nil {
 			return nil, err
 		}
 		return d.DialContext(ctx, network, addr)
@@ -233,8 +282,18 @@ func (g *Guard) dialContext(ctx context.Context, network, addr string) (net.Conn
 // Client 返回带防护的客户端：超时留在 Transport 上、整体 Timeout 设 0，
 // 否则大文件会被整体超时切断。
 func (g *Guard) Client() *http.Client {
+	return g.clientFor(g.dialContext, g.Check)
+}
+
+// StrictClient 与 Client 相同，但拨号与重定向都忽略 AllowPrivate/AllowLoopback。
+// 调用方（Pin 等）不得再用裸 http.Client 代替它。
+func (g *Guard) StrictClient() *http.Client {
+	return g.clientFor(g.strictDialContext, g.CheckStrict)
+}
+
+func (g *Guard) clientFor(dial func(context.Context, string, string) (net.Conn, error), check func(*url.URL) error) *http.Client {
 	tr := &http.Transport{
-		DialContext:           g.dialContext,
+		DialContext:           dial,
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: g.o.HeaderTimeout,
@@ -248,7 +307,7 @@ func (g *Guard) Client() *http.Client {
 				return fmt.Errorf("重定向超过 %d 次", g.o.MaxRedirects)
 			}
 			// 每跳都重新校验：内网 IP 字面量在这里拦，域名交给拨号层。
-			return g.Check(req.URL)
+			return check(req.URL)
 		},
 	}
 }
