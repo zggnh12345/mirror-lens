@@ -78,3 +78,44 @@ func TestManifestCacheKeyDockerHubDigestCanonicalHost(t *testing.T) {
 		t.Errorf("CacheKey=%q 含非规范回源 Host", p.CacheKey)
 	}
 }
+
+// TestLocalUpstreamWithCacheOrigin 锁定 3.5.24 测试缝：本地 httptest 上游
+// （127.0.0.1:port）不能作为逻辑缓存身份（registryhost.Normalize 会拒绝
+// IP+端口）；测试专用字段 CacheOrigin 提供合法域名身份给 cache-key，
+// 回源 host 与调度身份保持本地地址原样。
+//
+// 这是 gateway 34 个基准失败的根因修复规格：修复前 PlanParsed 直接
+// Normalize(127.0.0.1:port) 报 ErrBadPath，RED；修复后规划成功、回源 host
+// 仍是本地地址、cache-key 用 CacheOrigin 规范域名身份，GREEN。
+func TestLocalUpstreamWithCacheOrigin(t *testing.T) {
+	const localHost = "127.0.0.1:38241"
+	const cacheOrigin = "registry.test"
+
+	// 不注入 CacheOrigin 时，本地地址作逻辑身份必须被拒绝（冻结地址模型）。
+	a0 := New(localHost, 0, time.Minute)
+	a0.Scheme = "http"
+	r, _ := http.NewRequest(http.MethodGet, "http://gw/v2/library/alpine/manifests/latest", nil)
+	r.Header.Set("Accept", dhTestAccept)
+	if p, err := a0.Plan(r); err == nil {
+		t.Fatalf("未注入 CacheOrigin 时本地地址应被拒，却规划成功：%+v", p)
+	}
+
+	// 注入 CacheOrigin 后：规划成功、回源 host 不变、cache-key 用合法域名身份。
+	a := New(localHost, 0, time.Minute)
+	a.Scheme = "http"
+	a.CacheOrigin = cacheOrigin
+	p, err := a.Plan(r)
+	if err != nil {
+		t.Fatalf("注入 CacheOrigin 后应规划成功: %v", err)
+	}
+	if p.Upstream.Host != localHost {
+		t.Errorf("回源 Host=%q，期望保持本地地址 %q", p.Upstream.Host, localHost)
+	}
+	wantPrefix := "docker:manifest:http://registry.test:80/library/alpine:latest|"
+	if !strings.HasPrefix(p.CacheKey, wantPrefix) {
+		t.Errorf("CacheKey=%q，期望规范域名身份前缀 %q", p.CacheKey, wantPrefix)
+	}
+	if strings.Contains(p.CacheKey, localHost) {
+		t.Errorf("CacheKey=%q 不应含本地回源地址 %q", p.CacheKey, localHost)
+	}
+}

@@ -135,6 +135,7 @@ func newMOFixture(t *testing.T) *moFixture {
 	f.officialURL = official.URL
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = f.host // 默认 quay.io；后续 setHost 切换时同步更新
 	ad.MultiOriginHosts = []string{f.host}
 
 	f.gw = New(st, Options{
@@ -202,6 +203,14 @@ func (f *moFixture) officialTargetLog() []string {
 	out := make([]string, len(f.officialTargets))
 	copy(out, f.officialTargets)
 	return out
+}
+
+// setHost 切换夹具的逻辑 Host，同时同步 cache-key 身份。必须在测试
+// 发起请求前调用（构造期或 host 切换点），不要在并发请求路径中调用——
+// Adapter.CacheOrigin 是普通字段，请求路径只读，并发写会触发 DATA RACE。
+func (f *moFixture) setHost(host string) {
+	f.host = host
+	f.ad.CacheOrigin = host
 }
 
 func (f *moFixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
@@ -294,7 +303,7 @@ func TestMultiOriginFirstBatchCandidateHit(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			srv := httptest.NewServer(&moMirror{
 				path: "/v2/foo/bar/manifests/latest",
@@ -325,7 +334,7 @@ func TestMultiOriginFirstBatchHostPrefixHit(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			path := "/v2/" + host + "/foo/bar/manifests/latest"
 			srv := httptest.NewServer(&moMirror{
@@ -356,7 +365,7 @@ func TestMultiOriginFirstBatchCandidate401FallsBackOfficial(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			srv := httptest.NewServer(&moMirror{
 				path: "/v2/foo/bar/manifests/latest", status: http.StatusUnauthorized,
@@ -387,7 +396,7 @@ func TestMultiOriginFirstBatchCandidateNetworkFailureFallsBackOfficial(t *testin
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			srv := httptest.NewServer(&moMirror{
 				path: "/v2/foo/bar/manifests/latest", hits: &f.nativeHits,
@@ -443,7 +452,7 @@ func TestMultiOriginNoSourceOfficialTargets(t *testing.T) {
 	f := newMOFixture(t)
 	f.ad.MultiOriginHosts = hosts
 	for _, host := range hosts {
-		f.host = host
+		f.setHost(host)
 		w := f.get(t, "/v2/"+host+"/foo/bar/manifests/latest")
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"official":true`) {
 			t.Fatalf("%s 空范围应回官方: status=%d body=%q", host, w.Code, w.Body.String())
@@ -548,7 +557,7 @@ func TestMultiOriginFailureKeepsDockerHealthClean(t *testing.T) {
 // Phase 1 目标 Host：候选失败仍要能回官方，且不会被当成 Docker 通道。
 func TestMultiOriginGcrFallsBackOfficial(t *testing.T) {
 	f := newMOFixture(t)
-	f.host = "gcr.io"
+	f.setHost("gcr.io")
 	f.ad.MultiOriginHosts = []string{"gcr.io"}
 
 	n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
@@ -576,7 +585,7 @@ func TestMultiOriginNoSourceFallsBackOfficial(t *testing.T) {
 		"gcr.io", "registry.k8s.io", "us-docker.pkg.dev", "quay.io",
 		"mcr.microsoft.com", "registry.gitlab.com", "public.ecr.aws", "cgr.dev",
 	} {
-		f.host = host
+		f.setHost(host)
 		w := f.get(t, "/v2/foo/bar/manifests/latest")
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"official":true`) {
 			t.Fatalf("%s 无 Source 时应回官方: status=%d body=%q", host, w.Code, w.Body.String())
@@ -595,7 +604,7 @@ func TestMultiOriginFirstBatchCandidateFailureFallsBackOfficial(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
 			srv := httptest.NewServer(n)
@@ -621,7 +630,7 @@ func TestMultiOriginFirstBatchFailureIsolation(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			f := newMOFixture(t)
-			f.host = host
+			f.setHost(host)
 			f.ad.MultiOriginHosts = []string{host}
 			n := &moMirror{path: "/v2/foo/bar/manifests/latest", status: 500, hits: &f.nativeHits}
 			srv := httptest.NewServer(n)

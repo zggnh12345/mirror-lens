@@ -182,6 +182,7 @@ func TestPassThroughMissFailsOver(t *testing.T) {
 
 	ad := registryadapter.New(strings.TrimPrefix(osrv.URL, "http://"), 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 	g := New(st, Options{
 		Policies: testGatewayPolicy,
 		Cache:    cs,

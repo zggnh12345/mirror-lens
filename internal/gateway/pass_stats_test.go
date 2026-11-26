@@ -48,6 +48,7 @@ func TestPassThroughRecords429AndFailsOver(t *testing.T) {
 	host := strings.TrimPrefix(osrv.URL, "http://")
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 
 	g := New(st, Options{
 		Policies: testGatewayPolicy,
@@ -132,6 +133,7 @@ func TestPassThroughAllSources429KeepsRetryAfter(t *testing.T) {
 	host := strings.TrimPrefix(osrv.URL, "http://")
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 
 	g := New(st, Options{
 		Policies: testGatewayPolicy,

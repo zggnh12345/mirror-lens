@@ -35,7 +35,7 @@ type raceFixture struct {
 func newRaceFixture(t *testing.T, host string) *raceFixture {
 	t.Helper()
 	f := newMOFixture(t)
-	f.host = host
+	f.setHost(host)
 	f.ad.MultiOriginHosts = []string{host}
 	// 竞速启动延迟压到 10ms：测试不该为耐心预算等一秒。
 	f.gw.race.After = 10 * time.Millisecond

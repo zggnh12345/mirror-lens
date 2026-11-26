@@ -37,10 +37,26 @@
 - `go build ./...`：PASS（exit 0）
 - `go vet ./...`：PASS（exit 0）
 - `go test -race ./internal/probe ./internal/api ./internal/runner`：全部 PASS，无 DATA RACE
-- `go test -race ./internal/gateway`：无 DATA RACE（0 个）；失败仅为已知基准遗留（race 模式超时放大）
-- `go test ./internal/gateway -count=1`：34 个失败，与 e8a10e1 基准 34 个基准集合**完全一致，新增失败集合为空**；3 个 P2-2 RED 用例已转 GREEN
-- `go test ./... -count=1`：34 个包 OK，仅 gateway 因上述 34 个基准遗留失败，无其他包失败
+- `gofmt -l`（改动文件）：无输出，PASS
 - RED→修复→GREEN：F1/F2/F3 三个 RED 修复前失败、修复后通过；未通过只改测试使其通过
+
+## 34 个 gateway 基准失败的根因修复（2026-11-26）
+- **根因**：测试夹具用本地 httptest 地址（`127.0.0.1:port`）作 Registry 逻辑身份，
+  而 `registryhost.Normalize` 依冻结契约拒绝 IP+端口（`ErrBadPath`）。
+  与 P2-2 安全改动无关，属 `e8a10e1` 基准即存在的失败。
+- **修复（RED→GREEN）**：新增 `internal/adapter/registryadapter/registry_canonical_key_test.go:
+  TestLocalUpstreamWithCacheOrigin`——修复前因字段不存在编译失败（RED），
+  修复后规划成功、回源 host 保持本地地址、cache-key 用规范域名身份（GREEN）。
+- **实现**：`Adapter.CacheOrigin` 测试专用字段（`registry.go`），非空时只替代 cache-key
+  的规范化身份；回源 host / foreign 判定 / 调度身份全部保持原值。生产零值 = 冻结原语义，
+  不新增用户可见配置项，不改拨号/安全链。多源夹具 `moFixture.get` 每请求把 CacheOrigin
+  同步为当前逻辑 Host `f.host`，避免 8 个 Host 共用一个 cache-key 互相吃缓存。
+- **差分（旧基准日志 `gateway-current2.log` vs 修复后 `gw-after2.log`）**：
+  旧基准 34 个失败；修复后 0 个；`新增失败集合 = []`（无新增），`已消除 = 34`。
+  34 个失败名清单见 `docs/evidence/3.5.24/gateway-baseline-diff.json`。
+- `go test ./internal/gateway -count=1`：PASS（0 失败，112.9s）
+- `go test ./... -count=1`：PASS（35 个包 OK，0 失败）
+- `go test -race ./... -count=1`：PASS（35 包 OK，0 个 DATA RACE，见 `race-all-final.log`；修复过程中曾暴露 3 个由夹具并发写 CacheOrigin 引起的竞态，已改为构造期 setHost setter 消除）
 
 ## 门禁结果（上一阶段）
 - `go build ./...`：PASS（日志 `gate-p2-2-build-vet.log`，exit 0）
@@ -52,11 +68,14 @@
 - `go test ./... -count=1`：34 个包 OK，1 个包（gateway）34 个测试失败
 
 ## 未验证 / 已知 BLOCKED（不得据此标 RELEASE_READY）
-- **gateway 34 个失败**：全部为 `逻辑 Registry Host "127.0.0.1:port" 无法规范化：不允许带端口` 及同类的 URL 规范化错误，属 `e8a10e1` 基准即存在的失败（git stash 对比确认：基准 37 失败、20 个"不允许带端口"，本阶段无新增此类回归）。与 P2-2 安全改动无关，但整包未全绿。
+- **gateway 34 个失败：已修复（2026-11-26）**。根因为测试夹具本地地址作逻辑身份、
+  经 `CacheOrigin` 测试缝修复；差分 `新增失败集合=[]`、`已消除=34`，
+  `go test ./internal/gateway -count=1` 与 `go test ./... -count=1` 均 PASS。
+  详见上节与 `gateway-baseline-diff.json`；原始日志 `gw-after.log`/`gw-after2.log`/`test-all-after.log`。
 - **FakeIP 独立信任域**：NOT_IMPLEMENTED（discover 专用 Guard、Canary 三态、专用 Resolver、viaDomain 拨号决策）。
 - **DNS Rebinding / Redirect 完整 Origin 的五组边界（BND）**：仅完成了 Pin 侧 Redirect，其余未测。
 - **wiring（gateway/probe/pin 不接 FakeIP Resolver）**：待 FakeIP 实施后统一验证。
-- **全量 `go test -race ./...`**：NOT_RUN（仅跑了关键包）。
+- **全量 `go test -race ./...`**：PASS（35 包 OK，0 DATA RACE）。
 - **独立复核**：**PASS**。新独立复核 Agent（deleg_daa74ffa）对最终 HEAD `403ddf692cbb59b74a07e870f463f184557d58cd` 只读复核，7 项检查全 PASS，`new_failures=[]`，`data_races=0`，实施者不自签；结果原文见 `review-f1f2f3-final.json`。三个前期 Agent 的独立复核结果见 `review-agents-prefix.json`。
 - **P1-2 / P2-5 / P2-6**：NOT_STARTED（用户要求 P2-2 完成后再进入）。
 
@@ -66,4 +85,4 @@
 - 原始日志：`docs/evidence/3.5.24/gate-p2-2-fulltest.log`、`gate-p2-2-build-vet.log`、`gate-p2-2-race-*.log`。
 
 ## 结论
-P2-2 的 **AllowPrivate 收窄 + Pin 三层严格 + 兼容性迁移** 子部分已实施并通过定向门禁；P2-2 整体因 FakeIP/Canary/BND/wiring 未完成、gateway 基准失败未消除、独立复核未跑，**保持 NOT_CLOSED**。不标 RELEASE_READY，不进入 P1-2，等待后续授权与推进。
+P2-2 的 **AllowPrivate 收窄 + Pin 三层严格 + 兼容性迁移** 子部分已实施并通过定向门禁与全量门禁（gateway 34 基准失败已消除、新增失败集合为空、全量 build/vet/test/race 通过）；独立复核已跑且 PASS。但 P2-2 整体因 FakeIP/Canary/BND/wiring 未完成，**保持 NOT_CLOSED**。不标 RELEASE_READY，不进入 P1-2，等待后续授权与推进。

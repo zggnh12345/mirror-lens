@@ -1,0 +1,130 @@
+2026/11/26 08:04:05 中途并行跳过：当前连接无法异常终止（HTTP/2 或不支持 Hijack）
+2026/11/26 08:04:05 分片请求失败: 源=mirror.invalid range=0-65535 err=Get "http://mirror.invalid/blob": context canceled
+2026/11/26 08:04:05 分片放弃: range=0-65535 尝试=1 台源 last=Get "http://mirror.invalid/blob": context canceled
+2026/11/26 08:04:05 分片短读: 源=mirror.invalid range=0-65535 got=1024 want=65536 err=attempt cancelled
+2026/11/26 08:04:05 分片放弃: range=0-65535 尝试=1 台源 last=attempt cancelled
+2026/11/26 08:04:05 分片短读: 源=mirror.invalid range=0-65535 got=10 want=65536 err=<nil>
+2026/11/26 08:04:05 分片响应异常: 源=mirror.invalid range=0-32767 status=200 content-range="" content-length=0
+2026/11/26 08:04:05 分片放弃: range=0-32767 尝试=1 台源 last=分段响应对不上：mirror.invalid 返回 200 ""
+2026/11/26 08:04:06 WARN 本地写入失败，转透传 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=CACHE_COMMIT_FAILED error="创建临时文件失败: open /tmp/TestDiskFailureNotBlamedOnSource1530747913/001/cache/tmp/dl-3494895433: not a directory"
+2026/11/26 08:04:06 WARN 源不可用，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 500" source=bad
+2026/11/26 08:04:06 WARN 本地写入失败，转透传 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=CACHE_COMMIT_FAILED error="提交缓存失败: rename /tmp/TestCacheCommitFailureServesWithoutIndex3180631486/001/cache/tmp/dl-46948246 /tmp/TestCacheCommitFailureServesWithoutIndex3180631486/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: file exists"
+2026/11/26 08:04:06 缓存落盘失败: rename /tmp/TestCacheCommitFailureServesWithoutIndex3180631486/001/cache/partial/88a3828d1455920543554654441c5792aa25f714.part /tmp/TestCacheCommitFailureServesWithoutIndex3180631486/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: file exists
+2026/11/26 08:04:06 WARN 缓存文件丢失 cache_key=raw:o/r/main/a.txt sha256=2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824 error="open /tmp/TestCacheMissingBlobDropsIndexAndRefetches3390320637/001/cache/blobs/2c/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824: no such file or directory" error_code=CACHE_READ_FAILED
+2026/11/26 08:04:06 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error="读取上游中断: unexpected EOF"
+--- FAIL: TestDigestMismatchOnMirrorNeverCached (0.02s)
+    digest_consensus_test.go:126: 第二次应成功，实际 400
+2026/11/26 08:04:07 WARN 源不可用，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error=内容与上游声明的摘要不符：http://127.0.0.1:41859/o/r/main/a.txt source=mirror
+2026/11/26 08:04:07 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 500"
+2026/11/26 08:04:07 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error=内容与上游声明的摘要不符：http://127.0.0.1:40739/o/r/main/a.txt
+2026/11/26 08:04:07 缓存盘剩余 656090 MB 低于底线 4398046511104 MB，暂停落盘、改为直通
+2026/11/26 08:04:08 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:08 换源成功 cand reason=switch_success sent=131072 verified=true s_bps=1700000 p_bps=0 c_bps=131072 threshold_bps=1048576
+2026/11/26 08:04:10 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:10 换源拒绝 cand reason=speed_rejected detail=below_threshold kind="docker" s_bps=1700000 p_bps=0 c_bps=2555904 threshold_bps=3067084 sp=[1700 1700 1700]
+2026/11/26 08:04:10 单流判慢：没有可换的星标源
+2026/11/26 08:04:10 中途并行跳过：连接不支持异常终止（HTTP/2 或不支持 Hijack）
+2026/11/26 08:04:10 中途并行跳过：当前连接无法异常终止（HTTP/2 或不支持 Hijack）
+2026/11/26 08:04:10 中途并行没接上，继续当前连接
+2026/11/26 08:04:17 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:17 换源拒绝 cand reason=speed_rejected detail=below_threshold kind="docker" s_bps=900000 p_bps=0 c_bps=163840 threshold_bps=1048576 sp=[900 900 900]
+2026/11/26 08:04:17 单流判慢：没有可换的星标源
+2026/11/26 08:04:17 中途并行跳过：连接不支持异常终止（HTTP/2 或不支持 Hijack）
+2026/11/26 08:04:17 中途并行跳过：当前连接无法异常终止（HTTP/2 或不支持 Hijack）
+2026/11/26 08:04:17 中途并行没接上，继续当前连接
+2026/11/26 08:04:36 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:36 换源成功 b reason=switch_success sent=262144 verified=true s_bps=131072000 p_bps=0 c_bps=0 threshold_bps=1048576
+2026/11/26 08:04:36 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:36 换源拒绝 b reason=first_byte_timeout detail=no_first_byte n=0
+2026/11/26 08:04:36 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:36 换源拒绝 b reason=request_failed stage=first_byte_budget
+2026/11/26 08:04:36 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:36 换源成功 b reason=switch_success sent=262144 verified=true s_bps=131072000 p_bps=0 c_bps=0 threshold_bps=1048576
+2026/11/26 08:04:37 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:37 换源成功 blocked reason=switch_success sent=262144 verified=true s_bps=131072000 p_bps=0 c_bps=0 threshold_bps=1048576
+2026/11/26 08:04:37 换源候选：n=1 official_only=false sched="docker" par_targets=true
+2026/11/26 08:04:37 换源成功 ctxblocked reason=switch_success sent=262144 verified=true s_bps=131072000 p_bps=0 c_bps=0 threshold_bps=1048576
+2026/11/26 08:04:37 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_CONNECT_FAILED error="Get \"http://127.0.0.1:41835/o/r/main/a.txt\": 目标地址不允许访问: 127.0.0.1 属于回环地址"
+2026/11/26 08:04:37 INFO 源未命中，换下一个 request_id="" kind=raw cache_key=raw:o/r/main/a.txt source=127.0.0.1:45663 status=404
+2026/11/26 08:04:37 WARN 回源失败 request_id="" kind=raw cache_key=raw:o/r/main/a.txt error_code=UPSTREAM_HTTP_ERROR error="上游返回 404"
+2026/11/26 08:04:39 单流 60ms 无进展，回收名额（源 91）
+--- FAIL: TestPassThroughMissFailsOver (0.04s)
+    miss_test.go:201: 镜像 404 后应换源成功，实际 400
+--- FAIL: TestPassThroughRecords429AndFailsOver (0.05s)
+    pass_stats_test.go:76: 镜像 429 后应换源成功，实际 400
+--- FAIL: TestPassThroughAllSources429KeepsRetryAfter (0.13s)
+    pass_stats_test.go:151: 全 429 时应返回 429，实际 400
+--- FAIL: TestPrivateAuthDirectBasicBypassesCache (0.05s)
+    privateauth_test.go:238: 期望 200，实际 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:38401" 无法规范化: Registry Host 不合法（127.0.0.1:38401）：不允许带端口
+--- FAIL: TestPrivateAuthBearerTokenBasic (0.05s)
+    privateauth_test.go:274: 期望 200，实际 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:44517" 无法规范化: Registry Host 不合法（127.0.0.1:44517）：不允许带端口
+--- FAIL: TestPrivateAuthTokenRefreshOnce (0.03s)
+    privateauth_test.go:296: 401 后应刷新并成功，实际 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:36699" 无法规范化: Registry Host 不合法（127.0.0.1:36699）：不允许带端口
+--- FAIL: TestPrivateAuthWrongPasswordNegativeCache (0.02s)
+    privateauth_test.go:313: 错误密码应 401，实际 400
+--- FAIL: TestPrivateAuthFailsClosedWithoutToken (0.03s)
+    privateauth_test.go:341: Access Token 关闭时私有认证必须 fail closed，实际 400
+--- FAIL: TestPrivateAuthCredentialStateErrorCode (0.03s)
+    privateauth_test.go:388: Pending 凭据应 503，实际 400
+--- FAIL: TestPrivateAuthStaleGenerationFailsClosed (0.04s)
+    privateauth_test.go:446: gen 不一致应 503，实际 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:41201" 无法规范化: Registry Host 不合法（127.0.0.1:41201）：不允许带端口
+--- FAIL: TestPrivateAuthDisabledKeepsAnonymousCaching (0.02s)
+    privateauth_test.go:463: 匿名应 200，实际 400
+--- FAIL: TestPrivateAuthResponseIsNoStore (0.28s)
+    privateauth_test.go:602: status=400
+--- FAIL: TestPrivateAuthInvalidateOnCredentialChange (0.02s)
+    privateauth_test.go:621: 错误密码应 401，实际 400
+--- FAIL: TestPrivateAuthNonChallengeStatusDoesNotAuthenticate (0.08s)
+    --- FAIL: TestPrivateAuthNonChallengeStatusDoesNotAuthenticate/Forbidden (0.02s)
+        privateauth_test.go:714: 应原样返回 403，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:33591" 无法规范化: Registry Host 不合法（127.0.0.1:33591）：不允许带端口
+            ）
+    --- FAIL: TestPrivateAuthNonChallengeStatusDoesNotAuthenticate/Not_Found (0.02s)
+        privateauth_test.go:714: 应原样返回 404，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:35371" 无法规范化: Registry Host 不合法（127.0.0.1:35371）：不允许带端口
+            ）
+    --- FAIL: TestPrivateAuthNonChallengeStatusDoesNotAuthenticate/Too_Many_Requests (0.04s)
+        privateauth_test.go:714: 应原样返回 429，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:40385" 无法规范化: Registry Host 不合法（127.0.0.1:40385）：不允许带端口
+            ）
+--- FAIL: TestPrivateAuthBlobBypassesCache (0.04s)
+    privateauth_test.go:742: 私有 Blob 应 200，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:40075" 无法规范化: Registry Host 不合法（127.0.0.1:40075）：不允许带端口
+        ）
+--- FAIL: TestPrivateAndPublicConcurrentDoNotShareCache (0.04s)
+    privateauth_test.go:785: 公共预热应 MISS/200，实际 400 cache="" body=400 路径不合法: 逻辑 Registry Host "127.0.0.1:39629" 无法规范化: Registry Host 不合法（127.0.0.1:39629）：不允许带端口
+--- FAIL: TestPrivateAuthHeadKeepsIdentityAndBypass (0.04s)
+    privateauth_test.go:833: 私有 HEAD 应 200，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:39483" 无法规范化: Registry Host 不合法（127.0.0.1:39483）：不允许带端口
+        ）
+--- FAIL: TestPrivateAuthRangeKeepsIdentityAndBypass (0.03s)
+    privateauth_test.go:857: 私有 Range 应 200/206，实际 400（400 路径不合法: 逻辑 Registry Host "127.0.0.1:33415" 无法规范化: Registry Host 不合法（127.0.0.1:33415）：不允许带端口
+        ）
+--- FAIL: TestMultiOriginNoSourceFallsBackOfficial (0.05s)
+    registry_multi_origin_test.go:582: gcr.io 无 Source 时应回官方: status=400 body="400 路径不合法: 逻辑 Registry Host \"127.0.0.1:34397\" 无法规范化: Registry Host 不合法（127.0.0.1:34397）：不允许带端口\n"
+--- FAIL: TestRegistryBlobRangePassthrough (0.04s)
+    registry_test.go:193: 构造 plan: 路径不合法: 逻辑 Registry Host "127.0.0.1:33611" 无法规范化: Registry Host 不合法（127.0.0.1:33611）：不允许带端口
+--- FAIL: TestRegistryBlobRangeSynthesizesDigest (0.05s)
+    registry_test.go:223: 期望 200，实际 400
+--- FAIL: TestRegistryManifestMissThenHit (0.02s)
+    registry_test.go:259: 首次 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:34895" 无法规范化: Registry Host 不合法（127.0.0.1:34895）：不允许带端口
+--- FAIL: TestRegistryVerifyState (0.03s)
+    registry_test.go:289: 按 tag 拉: 400
+--- FAIL: TestRegistryManifestAcceptSeparated (0.03s)
+    registry_test.go:338: 两种 Accept 拿到了同样的内容，说明上游桩没生效
+--- FAIL: TestRegistryBlobStreamAndHit (0.04s)
+    registry_test.go:358: 首次 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:43469" 无法规范化: Registry Host 不合法（127.0.0.1:43469）：不允许带端口
+--- FAIL: TestRegistryBlobDigestMismatchNotCached (0.04s)
+    registry_test.go:390: 字节已经发出去了，状态应是 200，实际 400
+--- FAIL: TestRegistryHeadBlobDoesNotFillCache (0.04s)
+    registry_test.go:407: HEAD 400
+--- FAIL: TestRegistryBearerChallenge (0.03s)
+    registry_test.go:437: 换 token 后应 200，实际 400: 400 路径不合法: 逻辑 Registry Host "127.0.0.1:36649" 无法规范化: Registry Host 不合法（127.0.0.1:36649）：不允许带端口
+--- FAIL: TestRegistryOldEpochNotHit (0.03s)
+    registry_test.go:510: 路径不合法: 逻辑 Registry Host "127.0.0.1:37041" 无法规范化: Registry Host 不合法（127.0.0.1:37041）：不允许带端口
+--- FAIL: TestRegistryRequestMetersP (0.04s)
+    scope_budget_test.go:20: manifest 请求应 200，得到 400 400 路径不合法: 逻辑 Registry Host "127.0.0.1:35951" 无法规范化: Registry Host 不合法（127.0.0.1:35951）：不允许带端口
+--- FAIL: TestRegistryBudgetExhaustedIs503 (0.04s)
+    scope_budget_test.go:36: 预算耗尽应 503，得到 400 400 路径不合法: 逻辑 Registry Host "127.0.0.1:34775" 无法规范化: Registry Host 不合法（127.0.0.1:34775）：不允许带端口
+--- FAIL: TestRegistryScopesArePerRequest (0.04s)
+    scope_budget_test.go:54: 第 1 次请求应 200（每请求独立 Scope），得到 400 400 路径不合法: 逻辑 Registry Host "127.0.0.1:40253" 无法规范化: Registry Host 不合法（127.0.0.1:40253）：不允许带端口
+--- FAIL: TestScopeCapacityHardLimitWithLimitsDisabled (0.04s)
+    scope_capacity_limits_off_test.go:107: 第 1 个请求应最终 200（排队后处理），得到 400
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	111.258s
+FAIL

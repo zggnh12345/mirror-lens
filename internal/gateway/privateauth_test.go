@@ -188,6 +188,7 @@ func newPrivFixture(t testing.TB, up *privUpstream, view CredentialView, enabled
 	host := strings.TrimPrefix(srv.URL, "http://")
 	ad := registryadapter.New(host, 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 
 	opts := PrivateAuthOptions{Enabled: enabled, Hosts: map[string]bool{host: true}, RequireToken: requireToken}
 	var fc *fakeCreds
@@ -767,6 +768,7 @@ func TestPrivateAndPublicConcurrentDoNotShareCache(t *testing.T) {
 	pubHost := strings.TrimPrefix(pubUp.URL, "http://")
 	pubAd := registryadapter.New(pubHost, 256<<20, 5*time.Minute)
 	pubAd.Scheme = "http"
+	pubAd.CacheOrigin = "registry.test"
 	pubGW := New(f.st, Options{
 		Policies: privPolicy{gen: 1}, Cache: f.cs, MaxBytes: 256 << 20,
 		Registry: pubAd, Guard: safehttp.New(safehttp.Options{AllowLoopback: true}),

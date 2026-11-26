@@ -60,6 +60,7 @@ func TestScopeCapacityHardLimitWithLimitsDisabled(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	ad := registryadapter.New(host, 1<<20, time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 
 	// G=1：容量远小于并发请求数，任何绕过都会立刻体现在 maxInflight 上。
 	gw := New(st, Options{

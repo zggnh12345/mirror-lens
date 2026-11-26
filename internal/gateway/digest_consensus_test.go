@@ -76,6 +76,7 @@ func newConsensusFixture(t *testing.T) (*Gateway, *store.Store, *regUpstream, *b
 
 	ad := registryadapter.New(srv.URL[len("http://"):], 4<<30, 5*time.Minute)
 	ad.Scheme = "http"
+	ad.CacheOrigin = "registry.test"
 
 	g := New(st, Options{
 		Policies: testGatewayPolicy,

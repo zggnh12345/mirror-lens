@@ -43,6 +43,12 @@ type Adapter struct {
 	TagTTL   time.Duration   // tag 的重新验证间隔；digest 永久
 	Hosts    map[string]bool // 额外的精确 Host 限制；nil 表示只依赖 registryhost 全局白名单
 
+	// CacheOrigin 仅供测试夹具注入：本地 httptest 上游（127.0.0.1:port）
+	// 不能作为逻辑缓存身份（registryhost.Normalize 会拒绝 IP+端口）。
+	// 非空时用它替代回源 host 作为 cache-key 的规范化身份；回源 host、
+	// foreign 判定、调度身份全部保持原值。生产必须留零值，零值即冻结原语义。
+	CacheOrigin string
+
 	// MultiOriginHosts 是允许进入 registry:<host> 的范围；空表示没有
 	// Foreign Host 使用多源。
 	MultiOriginHosts []string
@@ -304,6 +310,12 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 	// 记住的镜像站点漂移；缓存身份只认它，否则同一 tag 会因为这次
 	// 命中南京大学、下次命中凤凰城而算出两个 key，反复回源。
 	origin := host
+	// CacheOrigin 仅供本地 httptest 夹具注入合法域名身份：回源 host 仍是
+	// 127.0.0.1:port，但缓存身份不能是 IP+端口（registryhost.Normalize 会拒）。
+	// 生产零值时空字符串，行为与冻结前完全一致。
+	if a.CacheOrigin != "" {
+		origin = a.CacheOrigin
+	}
 	// P2-1 / §5.6：缓存身份必须是规范化后的 CanonicalHost。Docker Hub 的
 	// 三种逻辑别名（docker.io / registry-1.docker.io / index.docker.io）
 	// 统一成 docker.io，避免同一 tag 换入口写出两个 Manifest key 而丢命中。
