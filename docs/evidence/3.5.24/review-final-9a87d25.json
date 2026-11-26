@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "review_type": "independent_final_review",
+  "reviewer": "independent-subagent (frozen code review; no self-signoff)",
+  "head": "9a87d25fd9f770149297afc020322c1be9f662a6",
+  "verdict": "PASS",
+  "checks": [
+    {
+      "item": "代码冻结边界 9a87d25..HEAD 无生产代码改动",
+      "result": "PASS",
+      "evidence": "review-wt HEAD=1cf214e6cd832d8e19df7a868432003e9a8d55f5。git diff --name-status 9a87d25..HEAD 仅 docs/3.5.24-acceptance.md(M) 与 docs/evidence/3.5.24/gate-release-{build,vet,test,race}.log(A) 共 5 个文档/日志文件；git diff --stat 9a87d25..HEAD -- '*.go' 为空。tag 3.5.24 解引用 = 9a87d25fd9f770149297afc020322c1be9f662a6（本地 annotated，未推远程）。"
+    },
+    {
+      "item": "提交链完整、无 amend/rebase/重写",
+      "result": "PASS",
+      "evidence": "git log --oneline 371cdbf..HEAD: 403ddf6(F1/F2/F3) → 0e46307 → 1f0cdc5 → 10429b2 → b7a7d5a(P1-2) → 30cc6e0 → 030ae7e → 9a87d25(G3/G4, tag) → c5f2a9a(审计回退) → 1cf214e(tag 语义固定)。403ddf6 与 b7a7d5a 均为 9a87d25 的祖先，修复全部进入冻结代码。"
+    },
+    {
+      "item": "F1/F2/F3 边界（403ddf6 引入，冻结代码内确认）",
+      "result": "PASS",
+      "evidence": "F1: internal/probe/probe.go:84-85 Configure 调用 configure(allowPrivate,false,...)，永不隐式开 AllowLoopback；ConfigureForTest 仅测试用；生产唯一调用者 main.go:246。F2: internal/gateway/pin.go:87-89 fallbackClient() 无分支强制 safehttp.Default().StrictClient()，g.guard.Client() 继承分支已删；setFallbackClientForTest 仅 _test.go 调用。F3: pin.go 无 atomic.Value 跨请求 Origin 状态，CheckRedirect(238-251) 每次取当前 via[0].URL，sameOrigin(37-50) 完整比较 Scheme+Hostname+EffectivePort。定向测试 TestConfigureTrueDoesNotImplicitlyAllowLoopbackRED / TestLoopbackOnlyViaExplicitTestGuardRED / TestFallbackClientIgnoresGuardRelaxationRED / TestPinnedClientOriginPerRequestRED 全部 PASS。"
+    },
+    {
+      "item": "P1-2 关闭（b7a7d5a 引入，冻结代码内确认）",
+      "result": "PASS",
+      "evidence": "review-final-10429b2.json 时点 P1-2 OPEN，已在 b7a7d5a 修复且 b7a7d5a 是 9a87d25 祖先。冻结代码确认：internal/api/web/index.html:260/277/293/306 有 HTTP/HTTPS 协议选择、明文警告与 confirm；addSource(api.go:599-706) 对未知域名/IP 无 host 返回 400，裸 docker.io 自动归属；PATCH(api.go:910-975) 支持 base_url/scheme/port/repo_host 编辑并经 store.SetBaseURL 单事务清理旧 Realm 授权。定向测试 TestAddSourceRejectsUnknownIdentityWithoutHost / TestAddSourceExplicitHTTPAndPort / TestAddSourceBareDockerHubAutoAttribute / TestPatchSourceEndpoint 全部 PASS。"
+    },
+    {
+      "item": "G2 17 项复核口径（基于最终冻结代码，不采信实施者自述）",
+      "result": "PASS_WITH_NOTED_RESIDUALS",
+      "evidence": "逐项静态核对：无新增绕过 safehttp 调用路径；IP 准入 checkHost/Allowed 边界一致、保留网段与 Unmap 完整；端口未入 RegistryIdentity/DB Host/凭据 AAD；Origin 与 RegistryIdentity 分离（gateway.go withRegistryPolicy 用 LogicalHost 与 target 分离）；HTTPS→HTTP 降级拒绝有效且 Token 跳转独立；跨 Origin StripAuth 且每跳重查策略与 safehttp；TLS tlsInfo 双参数与 IP SAN 代码语义正确；Manifest Key 单一构造点且含 Scheme/CanonicalHost/EffectivePort；Blob Key 纯 Digest、Cache Epoch 未 bump；无 Schema/凭据格式变更。第 16 项 UI/API 与第 17 项文档一致性在冻结代码均为 PASS（P1-2 已修、§9 文档已归档）。残留 P2 与风险见 notes，均为发布/真实环境层面，非冻结代码缺陷。"
+    },
+    {
+      "item": "发布状态口径（不属本代码复核 PASS 范围）",
+      "result": "NOT_IN_SCOPE",
+      "evidence": "docs/3.5.24-acceptance.md 结论为 BLOCKED：G3/G4 为本地 fixture SIMULATED_PASS、性能阈值观察后固定、IPv6/TLS SAN 真实矩阵/外部账号/冷缓存并发 NOT_RUN 或 BLOCKED、无镜像产物；生产部署/push/合并 main/发布镜像均 NOT_AUTHORIZED。本复核仅判定冻结代码的独立复核门禁，不把发布状态升级为 RELEASE_READY。"
+    }
+  ],
+  "go_gates": {
+    "environment": "golang:1.27.4 linux/amd64 via /opt/data/cache/scratch/go-run.sh; 8 cores; worktree /opt/data/cache/scratch/review-wt",
+    "basis": "9a87d25..HEAD 生产代码零差异，故门禁结果适用于冻结 commit 9a87d25；归档 gate-release-*.log 在 9a87d25 本体的复测结果与此一致。",
+    "gofmt_l": "PASS (exit 0, 0 lines)",
+    "go_vet": "PASS (exit 0, 0 output)",
+    "go_build": "PASS (exit 0)",
+    "go_test": "PASS (exit 0, 35 packages ok, 0 FAIL, 6 no-test-files)",
+    "go_test_race": "PASS (exit 0, 35 packages ok, 0 FAIL, 0 DATA RACE)",
+    "targeted": "P1-2 四用例与 F1/F2/F3 四 RED 回归均 PASS"
+  },
+  "p1_2_closed": true,
+  "new_failures": [],
+  "notes": "最终独立只读复核：代码冻结 commit 9a87d25（tag 3.5.24 指向，本地未推），当前 HEAD 1cf214e 仅文档差异、无生产代码改动；F1/F2/F3 与 P1-2 修复均已在冻结代码中确认且定向回归全绿；实跑 gofmt/vet/build/test/race 五门禁全部 PASS（35 包 OK、0 FAIL、0 DATA RACE），new_failures=[]。verdict=PASS 为冻结代码独立复核结论，不等同发布放行：验收文档结论仍为 BLOCKED（G3/G4 SIMULATED_PASS、阈值观察后固定、真实环境项 NOT_RUN/BLOCKED、无镜像产物），生产/push/tag/发布未授权。复核期间 worktree 出现外部进程新增的未跟踪文件 docs/evidence/3.5.24/g4-thresholds-frozen.yaml（18:54 写入），本复核未创建或修改它；唯一写操作为本文件。全程未碰生产/容器/网络，未 commit/push/tag。"
+}

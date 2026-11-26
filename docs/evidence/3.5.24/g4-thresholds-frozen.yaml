@@ -1,0 +1,12 @@
+# G4 阈值冻结（测前写入）
+# 冻结时间: 2026-11-26T10:54:42.465847
+# 依据: 本地 fixture 亚毫秒级噪声 + §8.4 口径
+# 一旦写入不得在看到结果后修改；测试样本数 30 >= 20 才报 P95
+
+threshold:
+  hot_cache_p95_ms: 2.0        # 预热后热缓存 P95 上限
+  hot_cache_error_rate: 0      # 错误率必须为 0
+  cold_ab_p95_ratio_max: 1.5   # 候选冷缓存 P95 / 基线冷缓存 P95 上限
+  concurrent_success_rate: 1.0 # 并发 Pull 成功率
+  concurrent_p95_ms: 50.0      # 并发 Pull P95 上限
+  sample_min: 20
