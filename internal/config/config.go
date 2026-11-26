@@ -632,14 +632,21 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.Registry.Enabled {
-		u := c.Registry.Upstream
+		u := strings.TrimSpace(c.Registry.Upstream)
 		if u == "" {
 			return fmt.Errorf("registry.upstream 不能为空")
 		}
-		// 只写主机名，不带 https:// 和路径
-		if strings.Contains(u, "://") || strings.Contains(u, "/") {
-			return fmt.Errorf("registry.upstream 只写主机名，比如 registry-1.docker.io")
+		// 3.5.24：严格纯主机名。只借 registryhost.Normalize 的语法规则做校验，
+		// 不采用它的 docker.io 别名回写——registry-1.docker.io 必须保留为实际路由 Host；
+		// Normalize 的返回值只用于生成 RegistryEndpoint.CanonicalHost。
+		h := strings.ToLower(strings.TrimRight(u, "."))
+		if h == "" {
+			return fmt.Errorf("registry.upstream 不能为空")
 		}
+		if _, err := registryhost.Normalize(h); err != nil {
+			return fmt.Errorf("registry.upstream 只写纯主机名（不含 Scheme/端口/路径/凭据/IP），比如 registry-1.docker.io：%w", err)
+		}
+		c.Registry.Upstream = h
 		if err := c.normalizeHostPolicy(); err != nil {
 			return err
 		}
