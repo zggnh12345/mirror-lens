@@ -65,6 +65,30 @@ func TestAddSourceExplicitHTTPAndPort(t *testing.T) {
 	}
 }
 
+// TestAddSourceBareDockerHubAutoAttribute 锁定 §2.3：裸 docker.io 属已知身份，
+// 无显式 host 时也应自动归属 docker.io（非 400）。
+func TestAddSourceBareDockerHubAutoAttribute(t *testing.T) {
+	st, h := newTestServer(t)
+	ck := setupPanel(t, h)
+	rec := postJSON(h, "/api/sources", `{"url":"https://docker.io","name":"dh"}`, ck)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("裸 docker.io 应自动归属并成功，得到 %d %s", rec.Code, rec.Body.String())
+	}
+	list, _ := st.ListSources()
+	found := false
+	for _, x := range list {
+		if x.BaseURL == "https://docker.io" {
+			found = true
+			if x.RepoHost != "docker.io" {
+				t.Fatalf("RepoHost=%q，期望 docker.io", x.RepoHost)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("裸 docker.io 源未落库")
+	}
+}
+
 // TestPatchSourceEndpoint 锁定 §2.3 编辑链路：PATCH 可改 base_url 与归属，
 // 且改协议/端口后 SetBaseURL 原子清旧 Realm 授权（独立测试覆盖 Realm 清理）。
 func TestPatchSourceEndpoint(t *testing.T) {

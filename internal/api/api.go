@@ -678,7 +678,7 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 				githubCap, dockerCap = store.CapYes, store.CapNo
 			case "ghcr.io":
 				host = "ghcr.io"
-			case "hub.docker.com", "registry-1.docker.io", "index.docker.io":
+			case "docker.io", "hub.docker.com", "registry-1.docker.io", "index.docker.io":
 				host = "docker.io"
 			}
 		}
