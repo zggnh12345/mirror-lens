@@ -1,0 +1,12 @@
+{
+  "git_history_intact": true,
+  "security_boundary_intact": true,
+  "cacheorigin_production_zero": true,
+  "test_changes_legitimate": true,
+  "baseline_diff_correct": true,
+  "full_gates_pass": true,
+  "data_races": 0,
+  "overall": "PASS",
+  "reason": "git log --oneline -6 显示 371cdbf 原样位于第 4 位（371cdbffac407b95d25a74f9ac8e45af2137aba5）、parent 链 1f0cdc5→0e46307→403ddf6→371cdbf→e8a10e1 完整且无 amend/rebase；1f0cdc5 非测试源码仅改 registry.go 的 CacheOrigin 测试缝，未触碰 F1/F2/F3 的 probe.Configure/AllowPrivate 独立性/回落严格策略/请求级 via[0].URL Origin 隔离，CacheOrigin 仅改 cache-key 身份且生产零值、非配置项、不碰拨号安全链，测试无删除或放宽断言、setHost 仅在构造/切换点调用；差分 JSON 的 34 个失败名与 gate-gateway-baseline.log 及外部 gateway-current2.log 完全一致、after 为 0、new_failures=[]；独立实跑 go build ./...、go vet ./...、go test ./... -count=1、go test -race ./... -count=1 均 exit 0（35 包 OK，0 FAIL，0 DATA RACE）。",
+  "evidence_file": "/opt/data/cache/scratch/review-wt/docs/evidence/3.5.24/review-cacheorigin-final.json"
+}
