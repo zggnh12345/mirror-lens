@@ -57,7 +57,7 @@
 - **DNS Rebinding / Redirect 完整 Origin 的五组边界（BND）**：仅完成了 Pin 侧 Redirect，其余未测。
 - **wiring（gateway/probe/pin 不接 FakeIP Resolver）**：待 FakeIP 实施后统一验证。
 - **全量 `go test -race ./...`**：NOT_RUN（仅跑了关键包）。
-- **独立复核**：本轮 F1/F2/F3 修复完成后，须由**新的独立复核 Agent** 对最终新 HEAD 复核，实施 Agent 不自签 PASS（详见 `review-f1f2f3-final.json`）。三个前期 Agent 的独立复核结果见 `review-agents-prefix.json`。
+- **独立复核**：**PASS**。新独立复核 Agent（deleg_daa74ffa）对最终 HEAD `403ddf692cbb59b74a07e870f463f184557d58cd` 只读复核，7 项检查全 PASS，`new_failures=[]`，`data_races=0`，实施者不自签；结果原文见 `review-f1f2f3-final.json`。三个前期 Agent 的独立复核结果见 `review-agents-prefix.json`。
 - **P1-2 / P2-5 / P2-6**：NOT_STARTED（用户要求 P2-2 完成后再进入）。
 
 ## 时间序列基线证据

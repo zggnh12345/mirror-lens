@@ -1,0 +1,52 @@
+{
+  "_note": "新一轮独立复核 Agent 对最终修复 HEAD 403ddf6 的复核结果，原样归档。复核 Agent 为独立 leaf subagent（deleg_daa74ffa / sa-0-f4c2274c，dispatched 2026-11-26 16:10:39，duration 306.94s，api_calls 22），实施者不自签。以下 verdict/checks 为复核 Agent 原文，未改写。",
+  "verdict": "PASS",
+  "head": "403ddf692cbb59b74a07e870f463f184557d58cd",
+  "checks": [
+    {
+      "item": "F1 probe 权限隔离",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "internal/probe/probe.go:84-86 Configure(allowPrivate,ipFamily...) 调用 configure(allowPrivate,false,ipFamily...)，永不打开 AllowLoopback；内部 configure:100-103 中 AllowLoopback 由独立参数赋值（旧实现 AllowLoopback: allowPrivate 已删除）。唯一生产调用者 main.go:246 probe.Configure(cfg.Probe.AllowPrivate,cfg.Network.IPFamily)，无隐式回环、无新配置字段。ConfigureForTest (probe.go:90-92) 仅供测试显式放行回环，非生产调用。git diff 371cdbf..403ddf6 internal/config main.go 为空。测试证据 probe/f1_loopback_red_test.go:14-31，实测 go test ./internal/probe -run 'TestConfigureTrueDoesNotImplicitlyAllowLoopbackRED|TestLoopbackOnlyViaExplicitTestGuardRED' -count=1 -v：两用例均 --- PASS，exit 0。"
+    },
+    {
+      "item": "F2 Pin 回落强制严格",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "internal/gateway/pin.go:87-92 fallbackClient() 无分支地 g.relayFallbackHTTP = safehttp.Default().StrictClient()，旧代码 if g.guard != nil { g.relayFallbackHTTP = g.guard.Client() } 继承 g.guard 的分支已删除；clientFor():105-108 回落只走 fallbackClient()。safehttp.go:290-292 StrictClient 使用 strictDialContext + CheckStrict，safehttp.go:135-136 CheckIPStrict 调用 checkIP(ip,false,false) 忽略 AllowPrivate/AllowLoopback，127.0.0.1 与 10/8 拨号前被拦。测试缝 setFallbackClientForTest (pin.go:98-100) 仅在 private_test.go:39、private_relay_test.go:45、private_race_test.go:39 三个 _test.go 中调用，生产无调用。测试证据 gateway/f2f3_red_test.go:19-54，实测 go test ./internal/gateway -run 'TestFallbackClientIgnoresGuardRelaxationRED|TestPinnedClientOriginPerRequestRED' -count=1 -v：TestFallbackClientIgnoresGuardRelaxationRED --- PASS，exit 0。"
+    },
+    {
+      "item": "F3 Origin 按请求隔离",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "internal/gateway/pin.go 已删除 import sync/atomic 及 var origin atomic.Value（git diff 371cdbf..403ddf6 pin.go）。pinnedClient 的 CheckRedirect:245-255 每次重定向都取 base := via[0].URL（当前请求首链），sameOrigin():37-50 完整比较 Scheme + strings.ToLower/去尾点的 Hostname + effectivePort()（52-63，http=80/https=443），无客户端实例级 Origin 状态。grep atomic.Value 于 internal/gateway 仅见 gateway.go:86,103,109（starRace/replica/trusted 快照）与测试文件，pin.go 无跨请求 Origin 状态。测试证据 gateway/f2f3_red_test.go:58-105（同 Client 两个不同初始端口请求），实测 TestPinnedClientOriginPerRequestRED --- PASS，exit 0。"
+    },
+    {
+      "item": "git 基线完整性",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "git rev-parse HEAD=403ddf692cbb59b74a07e870f463f184557d58cd；git rev-list --parents -n 1 403ddf6 = '403ddf6... 371cdbffac407b95d25a74f9ac8e45af2137aba5'，单亲即 371cdbf；git merge-base --is-ancestor 371cdbf 403ddf6 exit 0；git status --short 为空。基线未被 amend/重写。"
+    },
+    {
+      "item": "gofmt / build / vet",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "go-run.sh 实测：gofmt -l . 无输出（exit 0）；go build ./... exit 0；go vet ./... exit 0。"
+    },
+    {
+      "item": "race 检测",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "实测 go test -race ./internal/probe ./internal/api ./internal/runner：ok internal/probe 1.825s、ok internal/api 114.395s、ok internal/runner 10.279s，race_exit=0，无 DATA RACE 报告（日志 /opt/data/cache/scratch/race-review.log）。data_races=0。"
+    },
+    {
+      "item": "gateway 失败集合回归",
+      "result": "PASS",
+      "severity": "none",
+      "evidence": "实测 go test ./internal/gateway -count=1（日志 /opt/data/cache/scratch/gateway-review-current.log）共 34 个 --- FAIL。与 /opt/data/cache/scratch/baseline-fails.txt（37 行，含 3 个 P2-2 RED：TestPinnedClientRejectsLoopbackPin、TestPinnedClientRejectsSameHostDifferentPortRedirect、TestPinnedClientRejectsOtherHostRedirect，排除后 34）做集合比较：current == baseline_excl 为 True，new failures=[]，removed=[]，当前集合不含 3 个 RED。提供的 /opt/data/cache/scratch/gateway-current2.log 同样为 34 且与 baseline_excl 集合相等。"
+    }
+  ],
+  "new_failures": [],
+  "data_races": 0,
+  "summary": "独立只读复核最终 HEAD 403ddf6：F1/F2/F3 三项修复均真实、完整、符合冻结规格，裁定 PASS。F1：Configure(true,...) 不再隐式开启回环，生产唯一调用者 main.go:246 无回环权限，测试回环须经显式 ConfigureForTest，无新增用户可见配置；F2：回落客户端无分支强制 safehttp.Default().StrictClient()，不继承 g.guard，StrictClient 的 CheckIPStrict 忽略 AllowPrivate/AllowLoopback，注入缝仅测试使用；F3：跨请求 origin atomic.Value 已删除，每次 Redirect 用 via[0].URL，Scheme+Hostname+EffectivePort 完整比较保留。额外核验全通过：403ddf6 为 371cdbf 直接子且基线未改写；gofmt -l 无输出；go build ./...、go vet ./... 均 exit 0；race 测试三包全 ok、0 DATA RACE；go test ./internal/gateway -count=1 失败集合与基线 34 完全一致、新增失败为空。全部结论基于真实执行输出，未修改仓库。"
+}
