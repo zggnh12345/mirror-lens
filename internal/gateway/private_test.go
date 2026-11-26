@@ -27,12 +27,16 @@ func privGateway(t *testing.T, priv PrivateOptions, trusted ...TrustedRelay) *Ga
 	if err != nil {
 		t.Fatal(err)
 	}
+	guard := safehttp.New(safehttp.Options{AllowLoopback: true})
 	g := New(st, Options{
 		Policies: testGatewayPolicy,
 		Cache:    cs,
-		Guard:    safehttp.New(safehttp.Options{AllowLoopback: true}),
+		Guard:    guard,
 		Private:  priv,
 	})
+	// 本地 127.0.0.1 中转桩：测试专用注入可回环的回落客户端。
+	// 生产 fallbackClient 仍强制严格 public-only（F2）。
+	g.setFallbackClientForTest(guard.Client())
 	if len(trusted) > 0 {
 		g.SetTrusted(trusted)
 	}

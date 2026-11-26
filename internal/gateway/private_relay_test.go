@@ -38,8 +38,11 @@ func relayGateway(t *testing.T, relayURL string) (*Gateway, *adapter.Plan) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	guard := safehttp.New(safehttp.Options{AllowLoopback: true})
 	g := New(st, Options{
-		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+		Policies: testGatewayPolicy, Cache: cs, Guard: guard})
+	// 本地中转桩：测试专用注入可回环的回落客户端，生产回落仍严格 public-only（F2）。
+	g.setFallbackClientForTest(guard.Client())
 	g.SetTrusted([]TrustedRelay{{ID: 1, Name: "自建站", URL: relayURL}})
 	u, _ := url.Parse("https://github.com/o/r/releases/download/v1/big.bin")
 	return g, &adapter.Plan{

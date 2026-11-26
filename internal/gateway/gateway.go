@@ -90,7 +90,7 @@ type Gateway struct {
 	parTargets         func(*adapter.Plan) []fetchTarget          // 测试注入用，nil 时走 targets()
 	speedProbe         func(id int64, kind string, n int) []int64 // 测试注入用，nil 时查 store
 	relayFallbackOnce  sync.Once                                  // 回落客户端惰性构造
-	relayFallbackHTTP  *http.Client                               // 未钉住中转的回落客户端（继承本机 Guard）
+	relayFallbackHTTP  *http.Client                               // 未钉住中转的回落客户端（强制严格 public-only）
 	requireToken       bool                                       // 代理路径是否强制 Access Token（false = 匿名放行）
 	cdn                CDNOptions                                 // 边缘缓存策略（阶段 8）
 	dockerOff          bool                                       // /v2/ 的 Docker Hub 通道关闭

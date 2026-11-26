@@ -18,14 +18,31 @@
 - 创建阶段 `internal/api/relay_pin.go`：`bogusPinAddr`、`checkPinList`、`resolveRelayHost` 统一改走 `CheckIPStrict` 单一事实源，消除"创建放行/拨号拒绝"半开状态。
 - 拨号阶段 `internal/gateway/pin.go`：每个候选 IP `ParseAddr` + `CheckIPStrict`；`net.Dialer.Control` 在 TCP 建连前复查实际 IP（DNS Rebinding 闭合）；无合法候选返回 `ErrBlocked`。
 - Redirect：`sameOrigin` 用完整 Origin（Scheme + 规范化 Host + EffectivePort），任一变化在第二次拨号前返回 `ErrBlocked`；超 5 次仍返回次数错误。
-- 过渡期回落：`clientFor` 未钉住分支不再复用裸 `privClient`，改用继承本机 Guard 的 SafeHTTP client（`g.fallbackClient()`，拨号层逐 IP 检查 + 每跳重定向检查）。
-- 测试迁移：`pin_test.go` 三个连接语义用例改用 `pinIPChecker` 测试缝注入（生产 checker 不变，t.Cleanup 恢复），RED 的 `127.0.0.1` pin 拒绝用例保留严格路径。
+- 过渡期回落（F2 修复）：`clientFor` 未钉住分支的 `fallbackClient()` 显式使用 `AllowPrivate=false`、`AllowLoopback=false` 的严格策略（`safehttp.Default().StrictClient()`），**不继承 `g.guard` 的放宽权限**。回落路径无其他绕过严格拨号检查的分支。
+- 测试迁移：`pin_test.go` 三个连接语义用例改用 `pinIPChecker` 测试缝注入（生产 checker 不变，t.Cleanup 恢复）；需要连本机回环桩的测试改用测试专用 `setFallbackClientForTest` 注入（生产 `fallbackClient` 仍严格）。
 
-### probe 语义保持（`internal/probe/probe.go`）
-- `Configure(allowPrivate)` 原本语义即"允许探测内网/回环"，其 `AllowPrivate=true` 在旧 CheckIP 里会放行 loopback。收窄后同步设置 `AllowLoopback=allowPrivate` 以保持既有语义，避免测试桩/自建局域网源被误伤。生产默认 `allowPrivate=false` 不受影响。
-- **裁定点**：这是对上层 API 的语义映射，非对 safehttp Guard 层裁定的修改；如产品要求 `Configure(true)` 仍拒回环，需单独改判（会影响 probe/runner 的本地探测能力）。
+### probe 权限隔离（F1 修复，`internal/probe/probe.go`）
+- **原错误裁定（已作废）**：此前把 `Configure(true)` 同步设置 `AllowLoopback=true` 记为"语义映射、非缺陷"。该判断错误——它让 `AllowPrivate` 隐式开启回环访问，与冻结规格"AllowPrivate 与 AllowLoopback 完全独立"冲突。
+- **修正**：`Configure(allowPrivate, ...)` 不再隐式开启回环；`AllowPrivate=true` 时 `127.0.0.1`、`::1` 仍拒绝。生产调用路径不通过任何参数/默认值放开回环。
+- 需要回环的测试改用显式测试专用 Guard/构造，不新增用户可见配置项。
+- RED 测试：`AllowPrivate=true` 时 `127.0.0.1`、`::1` 必须拒绝（修复前失败、修复后通过）。
 
-## 门禁结果
+### Origin 按请求隔离（F3 修复，`internal/gateway/pin.go`）
+- 删除跨请求共享的 `origin atomic.Value`；每次 Redirect 用当前请求链的 `via[0].URL` 作为 Origin 基准。
+- 不使用客户端实例级状态保存某次请求的 Origin；同一 Client 连续处理两个不同初始端口请求时判断互不影响。
+- 保留完整 Origin 比较：Scheme、Hostname、EffectivePort。
+- RED 回归测试：同一个 Client 连续两个不同初始端口请求的 Redirect 判断互不影响（修复前失败、修复后通过）。
+
+## 本轮 F1/F2/F3 修复门禁（叠加于 371cdbf）
+- `go build ./...`：PASS（exit 0）
+- `go vet ./...`：PASS（exit 0）
+- `go test -race ./internal/probe ./internal/api ./internal/runner`：全部 PASS，无 DATA RACE
+- `go test -race ./internal/gateway`：无 DATA RACE（0 个）；失败仅为已知基准遗留（race 模式超时放大）
+- `go test ./internal/gateway -count=1`：34 个失败，与 e8a10e1 基准 34 个基准集合**完全一致，新增失败集合为空**；3 个 P2-2 RED 用例已转 GREEN
+- `go test ./... -count=1`：34 个包 OK，仅 gateway 因上述 34 个基准遗留失败，无其他包失败
+- RED→修复→GREEN：F1/F2/F3 三个 RED 修复前失败、修复后通过；未通过只改测试使其通过
+
+## 门禁结果（上一阶段）
 - `go build ./...`：PASS（日志 `gate-p2-2-build-vet.log`，exit 0）
 - `go vet ./...`：PASS（同上）
 - `go test ./internal/safehttp`：PASS（0.004s）
@@ -40,7 +57,7 @@
 - **DNS Rebinding / Redirect 完整 Origin 的五组边界（BND）**：仅完成了 Pin 侧 Redirect，其余未测。
 - **wiring（gateway/probe/pin 不接 FakeIP Resolver）**：待 FakeIP 实施后统一验证。
 - **全量 `go test -race ./...`**：NOT_RUN（仅跑了关键包）。
-- **独立复核**：NOT_RUN（须基于最终提交由复核 Agent 独立检查，实施 Agent 不自签 PASS）。
+- **独立复核**：本轮 F1/F2/F3 修复完成后，须由**新的独立复核 Agent** 对最终新 HEAD 复核，实施 Agent 不自签 PASS（详见 `review-f1f2f3-final.json`）。三个前期 Agent 的独立复核结果见 `review-agents-prefix.json`。
 - **P1-2 / P2-5 / P2-6**：NOT_STARTED（用户要求 P2-2 完成后再进入）。
 
 ## 时间序列基线证据

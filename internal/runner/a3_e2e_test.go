@@ -25,7 +25,7 @@ import (
 func TestA3RealChainEndToEnd(t *testing.T) {
 	// 真实探测默认拒绝内网/回环地址（SSRF 防护）；本用例的 registry 跑在
 	// 本机 httptest 上，所以只在测试进程内放开，结束后恢复。
-	probe.Configure(true)
+	probe.ConfigureForTest(true, true)
 	defer probe.Configure(false)
 
 	t.Run("真实 HTTP 探测成功后写回并可入选", func(t *testing.T) {

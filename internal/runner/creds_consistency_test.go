@@ -393,7 +393,7 @@ type credFixture struct {
 func newCredFixture(t *testing.T, reg *credRegistry) *credFixture {
 	t.Helper()
 	dir := t.TempDir()
-	probe.Configure(true, "v4") // 测试端点在本机回环，生产默认仍拒绝内网
+	probe.ConfigureForTest(true, true, "v4") // 测试端点在本机回环，生产默认仍拒绝内网
 	t.Cleanup(func() { probe.Configure(false) })
 
 	st, err := store.Open(filepath.Join(dir, "cred.db"))

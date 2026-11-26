@@ -32,8 +32,11 @@ func relayGatewayMulti(t *testing.T, urls []string) (*Gateway, *adapter.Plan) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	guard := safehttp.New(safehttp.Options{AllowLoopback: true})
 	g := New(st, Options{
-		Policies: testGatewayPolicy, Cache: cs, Guard: safehttp.New(safehttp.Options{AllowLoopback: true})})
+		Policies: testGatewayPolicy, Cache: cs, Guard: guard})
+	// 本地中转桩：测试专用注入可回环的回落客户端，生产回落仍严格 public-only（F2）。
+	g.setFallbackClientForTest(guard.Client())
 	list := make([]TrustedRelay, 0, len(urls))
 	for i, u := range urls {
 		list = append(list, TrustedRelay{ID: int64(i + 1), Name: fmt.Sprintf("站%d", i+1), URL: u})

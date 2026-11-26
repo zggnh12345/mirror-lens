@@ -1,0 +1,74 @@
+{
+  "_note": "F1/F2/F3 修复证据归档。基线 HEAD=371cdbf（原样保留、未 amend/未重写）。实施 Agent 归档，独立复核见 review-f1f2f3-final.json。",
+  "base_head": "371cdbffac407b95d25a74f9ac8e45af2137aba5",
+  "authorization": "方案1：仅修复 F1/F2/F3 + 必要测试 + 证据归档 + 独立复核；FakeIP/Canary BLOCKED 不新增配置字段；P2-2 NOT_CLOSED；P1-2/P2-5/P2-6 NOT_STARTED；RELEASE_READY=false；推送/合并/部署/发布未授权",
+  "findings": [
+    {
+      "id": "F1",
+      "title": "probe AllowPrivate 隐式开启回环",
+      "conflict": "冻结规格要求 AllowPrivate 与 AllowLoopback 完全独立；原实现 Configure(true,...) 同步设置 AllowLoopback=true，使 AllowPrivate=true 放行 127.0.0.1/::1",
+      "code_evidence": "internal/probe/probe.go Configure()：修复前 AllowLoopback=allowPrivate 隐式联动",
+      "fix": "Configure(allowPrivate,...) 不再隐式开启回环；生产路径不通过参数/默认值放开回环；测试需要回环用显式测试专用 Guard/构造；未新增用户可见配置项",
+      "red_test": "internal/probe/f1_loopback_red_test.go：AllowPrivate=true 时 127.0.0.1、::1 必须拒绝（修复前 FAIL，修复后 PASS）",
+      "status": "FIXED_GREEN"
+    },
+    {
+      "id": "F2",
+      "title": "Pin 回落继承 g.guard 放宽权限",
+      "conflict": "冻结规格要求回落 Client 显式 AllowPrivate=false、AllowLoopback=false；原 fallbackClient 继承本机 Guard（含 AllowLoopback）",
+      "code_evidence": "internal/gateway/gateway.go + pin.go：修复前 fallbackClient 用 g.guard.Client()（继承放宽）",
+      "fix": "fallbackClient() 显式 safehttp.Default().StrictClient()（public-only），不继承 g.guard；无其他绕过严格拨号检查的分支；本地回环桩测试改用测试专用 setFallbackClientForTest 注入，生产严格不变",
+      "red_test": "internal/gateway/f2f3_red_test.go：Guard 开启 AllowPrivate+AllowLoopback 时，Pin 回落仍拒绝 127.0.0.1、10.0.0.0/8（修复前 FAIL，修复后 PASS）",
+      "status": "FIXED_GREEN"
+    },
+    {
+      "id": "F3",
+      "title": "Redirect Origin 跨请求状态污染",
+      "conflict": "跨请求共享 atomic.Value 缓存首个请求的 Origin，同一 Client 处理后续请求时被污染；属真实逻辑缺陷而非仅记录项",
+      "code_evidence": "internal/gateway/pin.go：修复前 CheckRedirect 用 var origin atomic.Value 缓存 via[0].URL",
+      "fix": "删除 atomic.Value；每次 Redirect 用当前请求链 via[0].URL 作为 Origin 基准；无客户端实例级状态；保留 Scheme+Hostname+EffectivePort 完整比较",
+      "red_test": "internal/gateway/f2f3_red_test.go：同一 Client 连续两个不同初始端口请求的 Redirect 判断互不影响（修复前 FAIL，修复后 PASS）",
+      "status": "FIXED_GREEN"
+    }
+  ],
+  "gates": {
+    "go_build_all": "PASS (exit 0)",
+    "go_vet_all": "PASS (exit 0)",
+    "race_probe_api_runner": "PASS, 0 DATA RACE",
+    "race_gateway": "0 DATA RACE; failures only known baseline leftovers (amplified by race timeouts)",
+    "gateway_normal": "34 failures, set-identical to e8a10e1 baseline; new-failure-set = EMPTY; 3 P2-2 RED cases turned GREEN",
+    "gateway_diff": {
+      "baseline_total": 37,
+      "baseline_red_excluded": 3,
+      "baseline_benchmark_set": 34,
+      "current_failures": 34,
+      "new_failures": [],
+      "disappeared_failures": [],
+      "set_identical": true,
+      "note": "中途曾出现 18 个新增失败（Trusted/Relay 本地桩连不上），根因为 F2 严格 fallback 拒绝 127.0.0.1 桩；已通过测试专用 setFallbackClientForTest 注入修复，最终新增集合为空"
+    },
+    "go_test_all": "34 packages OK; only gateway fails with the 34 baseline leftovers; no other package failures"
+  },
+  "files_changed": [
+    "docs/evidence/3.5.24/p2-2-implementation-progress.md",
+    "internal/gateway/gateway.go",
+    "internal/gateway/pin.go",
+    "internal/gateway/f2f3_red_test.go (new)",
+    "internal/gateway/private_race_test.go",
+    "internal/gateway/private_relay_test.go",
+    "internal/gateway/private_test.go",
+    "internal/probe/probe.go",
+    "internal/probe/probe_test.go",
+    "internal/probe/f1_loopback_red_test.go (new)",
+    "internal/runner/a3_e2e_test.go",
+    "internal/runner/creds_consistency_test.go"
+  ],
+  "constraints_honored": {
+    "371cdbf_preserved": true,
+    "no_amend_no_rewrite": true,
+    "red_then_fix_then_green": true,
+    "no_user_visible_config_added": true,
+    "no_push_merge_deploy_release": true,
+    "no_fakeip_canary_fields": true
+  }
+}

@@ -78,10 +78,20 @@ var (
 	guard   = safehttp.New(safehttp.Options{MaxRedirects: 8})
 )
 
-// Configure 设置探测的拨号策略。allowPrivate 打开后允许探测内网/回环地址，
-// 只给「源在自己局域网里」的场景用；公网部署保持 false。
+// Configure 设置探测的生产拨号策略。allowPrivate 只放行 RFC1918 + IPv6 ULA，
+// 与回环完全独立：本函数永不打开 AllowLoopback，生产路径不存在任何隐式回环权限。
 // ipFamily 必须和回源一致：探测走 v4、下载走 v6 时，源会被判成「能连」但实际拉不动。
 func Configure(allowPrivate bool, ipFamily ...string) {
+	configure(allowPrivate, false, ipFamily...)
+}
+
+// ConfigureForTest 仅供测试：显式打开回环以连本地 listener 桩。
+// 生产代码（main.go）不得调用本函数；它不新增任何用户可见配置字段。
+func ConfigureForTest(allowPrivate, allowLoopback bool, ipFamily ...string) {
+	configure(allowPrivate, allowLoopback, ipFamily...)
+}
+
+func configure(allowPrivate, allowLoopback bool, ipFamily ...string) {
 	fam := "auto"
 	if len(ipFamily) > 0 && ipFamily[0] != "" {
 		fam = ipFamily[0]
@@ -89,10 +99,7 @@ func Configure(allowPrivate bool, ipFamily ...string) {
 	guardMu.Lock()
 	guard = safehttp.New(safehttp.Options{
 		MaxRedirects: 8, AllowPrivate: allowPrivate,
-		// probe 的 allowPrivate 语义一直含“允许探测本机回环端点”
-		// （测试桩、用户自建局域网源）。AllowPrivate 收窄为只放 RFC1918/ULA 后，
-		// 回环改由 AllowLoopback 独立控制；这里把两者一起打开以保持既有语义。
-		AllowLoopback: allowPrivate, IPFamily: fam,
+		AllowLoopback: allowLoopback, IPFamily: fam,
 	})
 	guardMu.Unlock()
 }

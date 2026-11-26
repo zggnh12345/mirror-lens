@@ -10,7 +10,6 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,20 +80,23 @@ func (g *Gateway) pinUsable(t TrustedRelay) (pinned bool, err error) {
 	return true, nil
 }
 
-// fallbackClient 返回未钉住中转的回落客户端：继承本机 Guard 的 SafeHTTP
-// （拨号层逐 IP 检查 + 每跳重定向检查），绝不复用完全裸的 privClient。
-// AllowPrivate 收窄后只放 RFC1918/ULA、不含回环；AllowLoopback 仍由本机 Guard
-// 显式控制——这正是既有集成测试用 AllowLoopback 配本地桩的方式。生产默认
-// Guard 无这些开关，回落即严格 public-only，满足 Pin 的 public-only 裁定。
+// fallbackClient 返回未钉住中转的回落客户端：强制严格 public-only。
+// 拨号与每跳重定向都忽略 AllowPrivate/AllowLoopback，绝不继承 g.guard 的放宽权限
+// （生产 Guard 开了内网/回环也不影响 Pin 回落）。这是 Pin 的 public-only 裁定要求。
+// 用 Default().StrictClient() 双保险：Default 无放宽开关，StrictClient 又忽略放宽。
 func (g *Gateway) fallbackClient() *http.Client {
 	g.relayFallbackOnce.Do(func() {
-		if g.guard != nil {
-			g.relayFallbackHTTP = g.guard.Client()
-		} else {
-			g.relayFallbackHTTP = safehttp.Default().StrictClient()
-		}
+		g.relayFallbackHTTP = safehttp.Default().StrictClient()
 	})
 	return g.relayFallbackHTTP
+}
+
+// setFallbackClientForTest 仅供测试注入连本机回环桩的回落客户端。
+// 生产路径绝不调用；它不新增任何用户可见配置或参数，只是把测试 Guard
+// （含 AllowLoopback）装进回落槽并提前消费 sync.Once，使 fallbackClient()
+// 不再用严格 public-only 客户端覆盖它。生产强制严格见 fallbackClient()。
+func (g *Gateway) setFallbackClientForTest(cli *http.Client) {
+	g.relayFallbackOnce.Do(func() { g.relayFallbackHTTP = cli })
 }
 
 // clientFor 返回该中转应当使用的客户端：已钉住就只拨钉住的 IP，
@@ -231,7 +233,6 @@ func pinnedClient(t TrustedRelay) *http.Client {
 		ResponseHeaderTimeout: 8 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
-	var origin atomic.Value // 保存首次请求的 *url.URL（完整 Origin 基准）
 	cli := &http.Client{
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -241,11 +242,10 @@ func pinnedClient(t TrustedRelay) *http.Client {
 			if len(via) == 0 {
 				return errors.New("CheckRedirect 收到空的重定向链")
 			}
-			base, ok := origin.Load().(*url.URL)
-			if !ok {
-				base = via[0].URL
-				origin.Store(base)
-			}
+			// Origin 基准按请求链隔离：始终取当前请求的 via[0].URL，
+			// 绝不用客户端实例级状态缓存——同一个 Client 处理多个请求时，
+			// 首次请求的端口不得污染后续请求的 Origin 判断（F3）。
+			base := via[0].URL
 			// 完整 Origin（Scheme + 规范化 Host + EffectivePort）任一变化，
 			// 在第二次拨号之前拒绝，统一返回 ErrBlocked → 上层 403。
 			if !sameOrigin(base, req.URL) {

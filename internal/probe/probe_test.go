@@ -16,7 +16,7 @@ import (
 
 // 探测的族偏好必须跟回源一致，否则「探测能连、下载连不上」会互相打脸。
 func TestConfigureIPFamily(t *testing.T) {
-	defer Configure(true) // 恢复 TestMain 的内网放行，否则后面的假源全被拦
+	defer ConfigureForTest(true, true) // 恢复 TestMain 的内网+回环放行，否则后面的假源全被拦
 	v4 := netip.MustParseAddr("93.184.216.34")
 	v6 := netip.MustParseAddr("2606:2800:220:1:248:1893:25c8:1946")
 
@@ -35,8 +35,9 @@ func TestConfigureIPFamily(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	// 测试里的假源都在 127.0.0.1 上。
-	Configure(true)
+	// 测试里的假源都在 127.0.0.1 上：显式用测试构造放开回环。
+	// 生产 Configure 永不隐式放开回环（见 F1 RED 用例）。
+	ConfigureForTest(true, true)
 	m.Run()
 	Configure(false)
 }
@@ -209,7 +210,7 @@ func TestProbeBlocksPrivateByDefault(t *testing.T) {
 	defer srv.Close()
 
 	Configure(false)
-	defer Configure(true)
+	defer ConfigureForTest(true, true)
 
 	res := Docker(context.Background(), srv.URL, 1, "")
 	if res.OK {
