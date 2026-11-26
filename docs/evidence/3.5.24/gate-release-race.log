@@ -1,43 +1,43 @@
 $ go test -race ./... -count=1
-# commit: 9a87d25fd9f770149297afc020322c1be9f662a6
-ok  	github.com/zggnh12345/mirror-lens	1.040s
-ok  	github.com/zggnh12345/mirror-lens/cmd/db-migrate	31.953s
+# commit: 039a7147ff57aa3542b4b0ae0c72df9963ad79b7
+ok  	github.com/zggnh12345/mirror-lens	1.038s
+ok  	github.com/zggnh12345/mirror-lens/cmd/db-migrate	31.656s
 ?   	github.com/zggnh12345/mirror-lens/internal/adapter	[no test files]
-ok  	github.com/zggnh12345/mirror-lens/internal/adapter/ghadapter	1.013s
-ok  	github.com/zggnh12345/mirror-lens/internal/adapter/gitadapter	1.012s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/ghadapter	1.008s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/gitadapter	1.017s
 ok  	github.com/zggnh12345/mirror-lens/internal/adapter/httpadapter	1.009s
-ok  	github.com/zggnh12345/mirror-lens/internal/adapter/raw	1.010s
-ok  	github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter	1.011s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/raw	1.007s
+ok  	github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter	1.010s
 ok  	github.com/zggnh12345/mirror-lens/internal/alert	1.007s
-ok  	github.com/zggnh12345/mirror-lens/internal/api	131.249s
-ok  	github.com/zggnh12345/mirror-lens/internal/auth	17.721s
-ok  	github.com/zggnh12345/mirror-lens/internal/cache	1.015s
-ok  	github.com/zggnh12345/mirror-lens/internal/config	1.215s
-ok  	github.com/zggnh12345/mirror-lens/internal/dblock	1.024s
-ok  	github.com/zggnh12345/mirror-lens/internal/discover	1.012s
-ok  	github.com/zggnh12345/mirror-lens/internal/endpoint	1.009s
-ok  	github.com/zggnh12345/mirror-lens/internal/gateway	174.046s
-ok  	github.com/zggnh12345/mirror-lens/internal/gc	2.434s
-ok  	github.com/zggnh12345/mirror-lens/internal/ghapi	1.353s
-ok  	github.com/zggnh12345/mirror-lens/internal/janitor	6.672s
-ok  	github.com/zggnh12345/mirror-lens/internal/keymutex	1.079s
-ok  	github.com/zggnh12345/mirror-lens/internal/limits	1.041s
-ok  	github.com/zggnh12345/mirror-lens/internal/logging	1.011s
-ok  	github.com/zggnh12345/mirror-lens/internal/metrics	1.295s
-ok  	github.com/zggnh12345/mirror-lens/internal/probe	2.157s
-ok  	github.com/zggnh12345/mirror-lens/internal/registryhost	1.019s
-ok  	github.com/zggnh12345/mirror-lens/internal/runner	14.139s
-ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	1.023s
-ok  	github.com/zggnh12345/mirror-lens/internal/scheduler	25.182s
-ok  	github.com/zggnh12345/mirror-lens/internal/secret	7.374s
-ok  	github.com/zggnh12345/mirror-lens/internal/store	61.725s
-ok  	github.com/zggnh12345/mirror-lens/internal/store/schema	2.559s
+ok  	github.com/zggnh12345/mirror-lens/internal/api	130.217s
+ok  	github.com/zggnh12345/mirror-lens/internal/auth	17.539s
+ok  	github.com/zggnh12345/mirror-lens/internal/cache	1.011s
+ok  	github.com/zggnh12345/mirror-lens/internal/config	1.224s
+ok  	github.com/zggnh12345/mirror-lens/internal/dblock	1.022s
+ok  	github.com/zggnh12345/mirror-lens/internal/discover	1.011s
+ok  	github.com/zggnh12345/mirror-lens/internal/endpoint	1.011s
+ok  	github.com/zggnh12345/mirror-lens/internal/gateway	173.070s
+ok  	github.com/zggnh12345/mirror-lens/internal/gc	1.991s
+ok  	github.com/zggnh12345/mirror-lens/internal/ghapi	1.356s
+ok  	github.com/zggnh12345/mirror-lens/internal/janitor	5.385s
+ok  	github.com/zggnh12345/mirror-lens/internal/keymutex	1.082s
+ok  	github.com/zggnh12345/mirror-lens/internal/limits	1.036s
+ok  	github.com/zggnh12345/mirror-lens/internal/logging	1.012s
+ok  	github.com/zggnh12345/mirror-lens/internal/metrics	1.192s
+ok  	github.com/zggnh12345/mirror-lens/internal/probe	1.963s
+ok  	github.com/zggnh12345/mirror-lens/internal/registryhost	1.018s
+ok  	github.com/zggnh12345/mirror-lens/internal/runner	15.033s
+ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	1.017s
+ok  	github.com/zggnh12345/mirror-lens/internal/scheduler	25.806s
+ok  	github.com/zggnh12345/mirror-lens/internal/secret	7.517s
+ok  	github.com/zggnh12345/mirror-lens/internal/store	63.815s
+ok  	github.com/zggnh12345/mirror-lens/internal/store/schema	2.556s
 ok  	github.com/zggnh12345/mirror-lens/internal/sums	1.010s
 ?   	github.com/zggnh12345/mirror-lens/internal/tuning	[no test files]
-ok  	github.com/zggnh12345/mirror-lens/internal/unified	1.535s
-ok  	github.com/zggnh12345/mirror-lens/internal/v2auth	1.017s
+ok  	github.com/zggnh12345/mirror-lens/internal/unified	1.534s
+ok  	github.com/zggnh12345/mirror-lens/internal/v2auth	1.022s
 ?   	github.com/zggnh12345/mirror-lens/internal/v2auth/v2authtest	[no test files]
-ok  	github.com/zggnh12345/mirror-lens/internal/version	1.007s
+ok  	github.com/zggnh12345/mirror-lens/internal/version	1.010s
 ?   	github.com/zggnh12345/mirror-lens/tools/baseline	[no test files]
 ?   	github.com/zggnh12345/mirror-lens/tools/migcheck	[no test files]
 ?   	github.com/zggnh12345/mirror-lens/tools/mkunit	[no test files]
