@@ -304,6 +304,18 @@ func (a *Adapter) PlanParsed(r *http.Request, parsed ParsedPath) (*adapter.Plan,
 	// 记住的镜像站点漂移；缓存身份只认它，否则同一 tag 会因为这次
 	// 命中南京大学、下次命中凤凰城而算出两个 key，反复回源。
 	origin := host
+	// P2-1 / §5.6：缓存身份必须是规范化后的 CanonicalHost。Docker Hub 的
+	// 三种逻辑别名（docker.io / registry-1.docker.io / index.docker.io）
+	// 统一成 docker.io，避免同一 tag 换入口写出两个 Manifest key 而丢命中。
+	// 注意只规范缓存用的 origin；host（实际回源路由 Host）保持原值，不能
+	// 影响 rememberedHost / GHCR fallback 的调度，也不复用为 cache key 身份。
+	// 必须复用 registryhost.Normalize，不在 adapter 内重写别名映射。
+	canonicalOrigin, err := registryhost.Normalize(origin)
+	if err != nil {
+		// 逻辑 Host 不能规范化成合法身份时拒绝规划，而不是退回非规范 key。
+		return nil, fmt.Errorf("%w: 逻辑 Registry Host %q 无法规范化: %v", adapter.ErrBadPath, origin, err)
+	}
+	origin = canonicalOrigin
 	// foreign 表示路径里真的带了别家站点前缀（ghcr.io 之类），不是默认上游。
 	def := a.Upstream
 	if def == "" {

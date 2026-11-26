@@ -44,8 +44,15 @@ func TestPlanRoutesRegistryHostPrefix(t *testing.T) {
 		if got.official != official {
 			t.Fatalf("%s 的 OfficialOnly=%v，不对", c.path, got.official)
 		}
-		if got.key != "" && !contains(got.key, c.host) {
-			t.Fatalf("%s 的缓存键没带站点：%s", c.path, got.key)
+		// §5.6 / P2-1：Manifest 缓存键用逻辑规范身份（Docker Hub 为 docker.io），
+		// 不是实际回源路由 Host registry-1.docker.io；路由 Host 由上面的 got.host 单独断言。
+		keyHost := c.host
+		if keyHost == "registry-1.docker.io" {
+			keyHost = "docker.io"
+		}
+		// 用 ://host: 精确匹配，避免 registry-1.docker.io 因包含 docker.io 子串而误判通过。
+		if got.key != "" && !contains(got.key, "://"+keyHost+":") {
+			t.Fatalf("%s 的缓存键没带规范站点 %s：%s", c.path, keyHost, got.key)
 		}
 	}
 }
