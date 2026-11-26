@@ -1,0 +1,10 @@
+=== RUN   TestBogusPinAddrCoversSpecialPurposeRanges
+    relay_pin_p2_2_red_test.go:26: 2001:2::10 应被判为不可用，实际放行
+    relay_pin_p2_2_red_test.go:26: 2002::1 应被判为不可用，实际放行
+    relay_pin_p2_2_red_test.go:26: 3fff::1 应被判为不可用，实际放行
+    relay_pin_p2_2_red_test.go:26: 5f00::1 应被判为不可用，实际放行
+    relay_pin_p2_2_red_test.go:26: 64:ff9b:1::1 应被判为不可用，实际放行
+--- FAIL: TestBogusPinAddrCoversSpecialPurposeRanges (0.00s)
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/api	0.002s
+FAIL

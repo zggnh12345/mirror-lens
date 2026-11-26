@@ -1,0 +1,44 @@
+=== RUN   TestAllowPrivateDoesNotAllowSpecialPurpose
+    p2_2_red_test.go:36: 198.18.0.4 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 198.19.255.255 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 192.0.2.10 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 2001:2::10 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 100::10 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 169.254.169.254 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 100.64.0.1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: fe80::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 224.0.0.1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: ff02::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 0.0.0.0 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: :: 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 255.255.255.255 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 2001:db8::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 2001::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 2002::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 3fff::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 5f00::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: 64:ff9b:1::1 不应被 AllowPrivate 放行，实际 <nil>
+    p2_2_red_test.go:36: ::ffff:198.18.0.4 不应被 AllowPrivate 放行，实际 <nil>
+--- FAIL: TestAllowPrivateDoesNotAllowSpecialPurpose (0.00s)
+=== RUN   TestAllowPrivateStillAllowsRFC1918AndULA
+--- PASS: TestAllowPrivateStillAllowsRFC1918AndULA (0.00s)
+=== RUN   TestLoopbackNeedsItsOwnSwitch
+    p2_2_red_test.go:60: 127.0.0.1 应只由 AllowLoopback 放行，实际 <nil>
+    p2_2_red_test.go:60: ::1 应只由 AllowLoopback 放行，实际 <nil>
+    p2_2_red_test.go:60: ::ffff:127.0.0.1 应只由 AllowLoopback 放行，实际 <nil>
+--- FAIL: TestLoopbackNeedsItsOwnSwitch (0.00s)
+=== RUN   TestCheckURLRejectsFakeIPLiteral
+    p2_2_red_test.go:85: http://198.18.0.4/ 应被拒，实际 <nil>
+    p2_2_red_test.go:85: https://198.19.1.1/x 应被拒，实际 <nil>
+    p2_2_red_test.go:85: http://[::ffff:198.18.0.4]/ 应被拒，实际 <nil>
+--- FAIL: TestCheckURLRejectsFakeIPLiteral (0.00s)
+=== RUN   TestFakeIPRangeBoundaries
+    p2_2_red_test.go:105: 198.18.0.0 blocked=false，期望 true（err=<nil>）
+    p2_2_red_test.go:105: 198.19.255.255 blocked=false，期望 true（err=<nil>）
+--- FAIL: TestFakeIPRangeBoundaries (0.00s)
+=== RUN   TestDefaultStillBlocksPrivateAndFakeIP
+    p2_2_red_test.go:115: 198.18.0.4 应被默认 Guard 拒绝，实际 <nil>
+--- FAIL: TestDefaultStillBlocksPrivateAndFakeIP (0.00s)
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/safehttp	0.002s
+FAIL

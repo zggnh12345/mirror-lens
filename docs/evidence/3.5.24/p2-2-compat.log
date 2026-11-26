@@ -1,0 +1,6 @@
+=== RUN   TestCompatAllowPrivateKeepsRFC1918AndULA
+--- PASS: TestCompatAllowPrivateKeepsRFC1918AndULA (0.00s)
+=== RUN   TestCompatAllowLoopbackIsIndependent
+--- PASS: TestCompatAllowLoopbackIsIndependent (0.00s)
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	0.002s

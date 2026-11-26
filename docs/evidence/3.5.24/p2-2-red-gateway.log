@@ -1,0 +1,12 @@
+=== RUN   TestPinnedClientRejectsLoopbackPin
+    pin_p2_2_red_test.go:36: 回环 pin 应返回 ErrBlocked，实际 <nil>
+--- FAIL: TestPinnedClientRejectsLoopbackPin (0.00s)
+=== RUN   TestPinnedClientRejectsSameHostDifferentPortRedirect
+    pin_p2_2_red_test.go:75: 同 Host 异端口重定向应返回 ErrBlocked，实际 <nil>
+--- FAIL: TestPinnedClientRejectsSameHostDifferentPortRedirect (0.00s)
+=== RUN   TestPinnedClientRejectsOtherHostRedirect
+    pin_p2_2_red_test.go:101: 跨 Host 重定向应返回 ErrBlocked，实际 Get "http://other.test/next": 拨号目标 "other.test" 与钉住的域名 "relay.test" 不符，拒绝
+--- FAIL: TestPinnedClientRejectsOtherHostRedirect (0.00s)
+FAIL
+FAIL	github.com/zggnh12345/mirror-lens/internal/gateway	0.010s
+FAIL
