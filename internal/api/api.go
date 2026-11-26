@@ -601,14 +601,60 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		URL  string `json:"url"`
 		Name string `json:"name"`
 		// Host 可选：显式声明源归属的 Registry Host（如 ghcr.io、quay.io）。
-		// 不传时按 Canonical 语义默认 Docker Hub（docker.io），不再落空 Host。
+		// 不传时按 Canonical 语义：只有已知 Hub/GitHub 域名可自动归属；
+		// 未知域名/IP 必须显式选择 host，否则 400（§2.3）。
 		Host string `json:"host"`
+		// 3.5.24 §2.3：协议/Host/端口三字段显式构造 SourceEndpoint。
+		// scheme 默认 https；port 为空用协议默认端口。
+		Scheme      string `json:"scheme"`
+		Port        string `json:"port"`
+		RepoHost    string `json:"repo_host"`
+		ConnectHost string `json:"connect_host"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 		return
 	}
-	base, err := normalizeURL(in.URL)
+	// 归属 Registry：优先 host，其次 repo_host（UI 三字段表单）。
+	// host/repo_host 始终只表示归属（RegistryIdentity），不参与连接地址构造。
+	host := strings.TrimSpace(in.Host)
+	if host == "" {
+		host = strings.TrimSpace(in.RepoHost)
+	}
+	// 构造 SourceEndpoint：显式 connect_host + scheme + port 优先；
+	// 否则复用 url 字段（旧 API 调用兼容）。
+	var rawURL string
+	if strings.TrimSpace(in.ConnectHost) != "" || strings.TrimSpace(in.Scheme) != "" || strings.TrimSpace(in.Port) != "" {
+		epHost := strings.TrimSpace(in.ConnectHost)
+		if epHost == "" {
+			// 没有 connect_host 但给了 scheme/port：从 url 字段解析出 Host。
+			if u, perr := url.Parse(strings.TrimSpace(in.URL)); perr == nil && u.Hostname() != "" {
+				epHost = u.Hostname()
+			}
+		}
+		scheme := strings.TrimSpace(in.Scheme)
+		if scheme == "" {
+			scheme = "https"
+		}
+		port := 0
+		if p := strings.TrimSpace(in.Port); p != "" {
+			n, err := strconv.Atoi(p)
+			if err != nil || n < 1 || n > 65535 {
+				writeJSON(w, 400, map[string]string{"error": "端口不合法"})
+				return
+			}
+			port = n
+		}
+		ep, err := endpoint.New(endpoint.Scheme(strings.ToLower(scheme)), epHost, port)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error()})
+			return
+		}
+		rawURL = ep.Origin()
+	} else {
+		rawURL = in.URL
+	}
+	base, err := normalizeURL(rawURL)
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -623,10 +669,7 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 	}
-	// 显式 Host 优先。未传 Host 时，至少要识别出「纯 GitHub 仓库」：
-	// AddSource 的默认分支是 Docker Hub，若不在这里把 GitHub 能力标出来，
-	// 一个 github.com 源会被错标成 docker.io/identified。
-	host := strings.TrimSpace(in.Host)
+	// 显式 Host 优先；未传时只自动归属"已知身份"域名，未知域名/IP 拒绝（§2.3）。
 	dockerCap, githubCap := store.CapUnknown, store.CapUnknown
 	if host == "" {
 		if u, perr := url.Parse(base); perr == nil {
@@ -639,17 +682,18 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 				host = "docker.io"
 			}
 		}
-		// 手工新增入口保留“未写 Host 即 Docker Hub 镜像”的产品默认；
-		// 这是 api 层显式决定，不把未知类型的默认归属下沉到 store。
 		if host == "" && githubCap != store.CapYes {
-			host = "docker.io"
+			writeJSON(w, 400, map[string]string{"error": "未知连接地址，请选择归属 Registry（host）"})
+			return
 		}
 	}
 	if host != "" {
-		if _, err := registryhost.Check(host); err != nil {
+		h, err := registryhost.Check(host)
+		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
+		host = h
 	}
 	id, err := s.st.AddSource(store.Source{
 		BaseURL: base, Name: name,
@@ -862,10 +906,75 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			GroupID *int64 `json:"group_id"`
 			// Status 只接受 archived/blocked/pending；usable 得靠探测。
 			Status *string `json:"status"`
+			// 3.5.24 §2.3 编辑链路：可改连接地址与归属 Registry。
+			BaseURL  *string `json:"base_url"`
+			RepoHost *string `json:"repo_host"`
+			Scheme   *string `json:"scheme"`
+			Port     *string `json:"port"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 			return
+		}
+		// 编辑 Endpoint：base_url 或 scheme/host/port 任一给出即重建 SourceEndpoint。
+		// 统一经 normalizeURL + SetBaseURL（后者原子清旧 Realm 授权，§2.3）。
+		if in.BaseURL != nil || in.Scheme != nil || in.Port != nil || in.RepoHost != nil {
+			cur, err := s.st.GetSource(id)
+			if err != nil || cur == nil {
+				writeJSON(w, 404, map[string]string{"error": "源不存在"})
+				return
+			}
+			newBase := cur.BaseURL
+			if in.BaseURL != nil && strings.TrimSpace(*in.BaseURL) != "" {
+				newBase = strings.TrimSpace(*in.BaseURL)
+			} else if in.Scheme != nil || in.Port != nil {
+				ep, err := endpoint.Parse(newBase)
+				if err != nil {
+					writeJSON(w, 400, map[string]string{"error": "当前地址无效：" + err.Error()})
+					return
+				}
+				scheme := ep.Scheme()
+				if in.Scheme != nil {
+					scheme = endpoint.Scheme(strings.ToLower(strings.TrimSpace(*in.Scheme)))
+				}
+				port := ep.Port()
+				if in.Port != nil && strings.TrimSpace(*in.Port) != "" {
+					n, err := strconv.Atoi(strings.TrimSpace(*in.Port))
+					if err != nil || n < 1 || n > 65535 {
+						writeJSON(w, 400, map[string]string{"error": "端口不合法"})
+						return
+					}
+					port = n
+				}
+				ep2, err := endpoint.New(scheme, ep.Host(), port)
+				if err != nil {
+					writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error()})
+					return
+				}
+				newBase = ep2.Origin()
+			}
+			newBase, err = normalizeURL(newBase)
+			if err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+			if newBase != cur.BaseURL {
+				if err := s.st.SetBaseURL(id, newBase); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+				if err := s.st.TouchProbe0(id); err != nil {
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+				go s.eng.RunSource(id)
+			}
+			if in.RepoHost != nil {
+				if err := s.st.SetRepoHost(id, strings.TrimSpace(*in.RepoHost)); err != nil {
+					writeJSON(w, 400, map[string]string{"error": err.Error()})
+					return
+				}
+			}
 		}
 		// 先落状态再落开关：恢复归档源必须同请求给 status=pending，
 		// 否则 store 拒绝启用（ErrArchived）。

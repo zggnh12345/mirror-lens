@@ -1,6 +1,20 @@
 package probe
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
+
+// hostOfForTest 是测试辅助：锁定"DNS/ServerName/verifyChain 只用裸 Host"契约。
+// 生产中该职责已由 endpoint.Endpoint.Host() 承担，仅在测试内保留断言，
+// 避免生产包留下无调用者的死代码（round1 P2-5）。
+func hostOfForTest(base string) string {
+	u, err := url.Parse(trimBase(base))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
 
 // TestHostOfStripsPortAndBrackets 锁定三值契约：
 // DNS/ServerName/verifyChain 只能用裸 Host，不能带端口或方括号。
@@ -14,7 +28,7 @@ func TestHostOfStripsPortAndBrackets(t *testing.T) {
 		{"registry.example.com", "registry.example.com"},
 	}
 	for _, tc := range cases {
-		if got := hostOf(tc.in); got != tc.want {
+		if got := hostOfForTest(tc.in); got != tc.want {
 			t.Fatalf("hostOf(%q)=%q，期望 %q", tc.in, got, tc.want)
 		}
 	}

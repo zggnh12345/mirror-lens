@@ -92,7 +92,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 	res := Result{DigestOK: -1, BlobOK: -1}
 
 	if isPlainHTTP(base) {
-		res.TLSOK = true // HTTP 源不做 TLS 探测，视为不适用
+		// HTTP 源不做 TLS 握手：TLSOK=true 仅表示"不适用/无需校验"，
+		// 不代表证书正常（CertDays 保持 0）。UI 对 HTTP 源显示"明文连接，无 TLS"。
+		res.TLSOK = true
 	} else {
 		ok, days, _ := tlsInfo(ctx, base)
 		res.TLSOK, res.CertDays = ok, days

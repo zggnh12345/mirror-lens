@@ -87,3 +87,37 @@
 
 ## 结论
 P2-2 的 **AllowPrivate 收窄 + Pin 三层严格 + 兼容性迁移** 子部分已实施并通过定向门禁与全量门禁（gateway 34 基准失败已消除、新增失败集合为空、全量 build/vet/test/race 通过）；独立复核已跑且 PASS。但 P2-2 整体因 FakeIP/Canary/BND/wiring 未完成，**保持 NOT_CLOSED**。不标 RELEASE_READY，不进入 P1-2，等待后续授权与推进。
+
+
+## P1-2 UI/API 连接地址字段与端口身份隔离（2026-11-26，叠加于 371cdbf）
+
+> 授权边界：方案1 仅修复 F1/F2/F3 + 必要测试 + P1-2 UI/API + 证据归档 + 独立复核。
+> FakeIP/Canary BLOCKED 不新增配置字段；真实环境验收 G4 性能门禁、生产部署、推送、合并 main、发布均 **NOT_AUTHORIZED**。
+
+### 实现（§2.3「连接地址 / 归属 Registry 分离」）
+- `internal/api/api.go addSource()`：新增 `scheme`/`port`/`connect_host`/`repo_host` 入参；
+  已知 Hub 域名（`docker.io`/`registry-1.docker.io`/`index.docker.io`/`ghcr.io` 等）无 host 时自动归属，
+  **未知域名无 host 返回 400**（不再静默默认 docker.io）；显式 host 原样交给 store；
+  HTTP 方案返回明文警告；`port` 按方案推导默认端口并入 base_url。
+- `internal/store/host.go`：`ParseRepoBaseURL` 严格拒绝 `user:pass@host` 内嵌凭据与 URL 查询参数/片段，
+  防止凭据经连接地址进入缓存键/日志。
+- `internal/api/web/index.html`：新增表单拆分协议/连接地址/端口/归属 Registry 四字段 + HTTP 明文警告与确认；
+  新增「编辑地址/协议/归属」入口（复用的 sheetEdit，PATCH base_url+repo_host）；
+  详情区对 HTTP 源显示「⚠ 明文 HTTP」标记。
+- `internal/api/add_source_test.go`：`TestAddSourceDefaultsToDockerHubIdentity` 更新为
+  未知身份无 host→400、已知 Hub 域名自动归属、显式 host 成功三项语义。
+- 静态资源内联 JS 经 `node --check` 语法校验 PASS；无用户可见配置项新增。
+
+### 本轮门禁（最终提交前）
+- `go build ./...`：PASS（exit 0，见 `gate-p1-2-build.log`）
+- `go vet ./...`：PASS（exit 0，见 `gate-p1-2-vet.log`）
+- `go test ./...`：PASS（35 包 OK，0 失败，见 `gate-p1-2-fulltest.log`）
+- `go test -race -count=1 ./internal/api ./internal/safehttp ./internal/gateway ./internal/ghapi ./internal/auth ./internal/probe`：
+  PASS，0 DATA RACE（见 `gate-p1-2-race.log`）
+- `gofmt -l`（改动 Go 文件）：无输出，PASS
+- 未跳过/删除/放宽任何用例；未改 DB Schema；未碰 safehttp/Realm/Redirect/Origin 安全边界。
+
+### 未关闭 / 未完成（不伪报）
+- P1-2 独立复核：待新 Agent 基于最终 Commit 只读复核（G2）。
+- 真实环境验收（G3）、性能对照（G4）：**NOT_RUN / NOT_AUTHORIZED**，无生产变更授权。
+- 生产部署、推送、合并 main、发布：**NOT_AUTHORIZED**；`RELEASE_READY=false`。

@@ -185,6 +185,26 @@ ON CONFLICT(source_id, family, scope) DO UPDATE SET
 	})
 }
 
+// SetBaseURL 修改源的实际连接地址（SourceEndpoint：scheme://host:port）。
+// 3.5.24 §2.3：协议/Host/端口变化时，旧 Origin 的 HTTP Realm 授权必须失效，
+// 否则 HTTPS→HTTP 切换后旧明文授权仍可能被命中。必须与 policy_gen bump
+// 和 source_realm_policy 清理在同一事务内完成。
+func (s *Store) SetBaseURL(id int64, baseURL string) error {
+	return s.withSourceLive(id, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE sources SET base_url=? WHERE id=?`, baseURL, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE source_realm_policy SET policy_gen=policy_gen+1, updated_at=? WHERE source_id=?`, time.Now().Unix(), id); err != nil {
+			return err
+		}
+		// 旧 Realm 记录绑定旧 Origin/scheme，清空让重新探测按新 Endpoint 重建。
+		if _, err := tx.Exec(`DELETE FROM source_realm_policy WHERE source_id=?`, id); err != nil {
+			return err
+		}
+		return recordPolicyChangeTx(tx, id)
+	})
+}
+
 // withSourceLive 在事务里确认源存在且未归档，再执行修改。
 // 归档是用户明确决定，任何后台写入都不能覆盖它。
 func (s *Store) withSourceLive(id int64, fn func(*sql.Tx) error) error {

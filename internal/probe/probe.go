@@ -198,18 +198,19 @@ func tlsInfo(ctx context.Context, base string) (ok bool, days int, err error) {
 func trimBase(base string) string {
 	base = strings.TrimSpace(base)
 	base = strings.TrimSuffix(base, "/")
-	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
-		base = "https://" + base
+	// 3.5.24：Scheme 大小写不敏感。不得用小写前缀判断后误补 https://，
+	// 否则 HTTP:// 大写形式的明文源会被错当 HTTPS 并执行 TLS 探测（§2.6）。
+	if _, err := parseScheme(base); err == nil {
+		return base
 	}
-	return base
+	return "https://" + base
 }
 
-func hostOf(base string) string {
-	u, err := url.Parse(trimBase(base))
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
+// parseScheme 用统一地址模型识别 Scheme，大小写不敏感。
+// 仅用于判断"是否显式带 http/https scheme"，不解析 Host；
+// 无 scheme 的裸域名返回错误，由 trimBase 补默认值。
+func parseScheme(base string) (endpoint.Endpoint, error) {
+	return endpoint.Parse(base)
 }
 
 // tlsEndpoint 把 sources.base_url 解析成 SourceEndpoint：
@@ -219,8 +220,10 @@ func tlsEndpoint(base string) (endpoint.Endpoint, error) {
 }
 
 // isPlainHTTP 判断 SourceEndpoint 是否显式 HTTP；HTTP 源不做 TLS 探测。
+// 3.5.24：改用统一地址模型判定 Scheme，消除 HTTP:// 大写形式绕过。
 func isPlainHTTP(base string) bool {
-	return strings.HasPrefix(trimBase(base), "http://")
+	ep, err := parseScheme(trimBase(base))
+	return err == nil && ep.Scheme() == endpoint.HTTP
 }
 
 func readCapped(r io.Reader, max int64) ([]byte, error) {

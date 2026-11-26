@@ -1,0 +1,7 @@
+$ go test -race -count=1 ./internal/api ./internal/safehttp ./internal/gateway ./internal/ghapi ./internal/auth ./internal/probe
+ok  	github.com/zggnh12345/mirror-lens/internal/api	122.726s
+ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	1.015s
+ok  	github.com/zggnh12345/mirror-lens/internal/gateway	168.907s
+ok  	github.com/zggnh12345/mirror-lens/internal/ghapi	1.351s
+ok  	github.com/zggnh12345/mirror-lens/internal/auth	14.603s
+ok  	github.com/zggnh12345/mirror-lens/internal/probe	1.812s
