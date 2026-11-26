@@ -39,48 +39,45 @@ func TestCandidateRegistryTokenUsesSourceIdentity(t *testing.T) {
 	f := newMOFixture(t)
 
 	var tokenHits atomic.Int32
-	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/token" {
-			http.NotFound(w, r)
-			return
-		}
-		tokenHits.Add(1)
-		if got := r.URL.Query().Get("service"); got != "registry" {
-			t.Errorf("token service=%q", got)
-		}
-		if got := r.URL.Query().Get("scope"); got != "repository:library/alpine:pull" {
-			t.Errorf("token scope=%q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"token":"candidate-token"}`)
-	}))
-	defer tokenSrv.Close()
-
 	var mirrorHits atomic.Int32
 	var mu sync.Mutex
 	var auths []string
-	mirrorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mirrorHits.Add(1)
-		if r.URL.Path != "/v2/library/alpine/manifests/latest" {
+	// 3.5.24：HTTP Token Realm 必须与真实回源 SourceEndpoint 同 Origin，
+	// 否则运行时门禁会拒绝。token 与 manifest 由同一个 httptest.Server 提供，
+	// Realm 指向 srv.URL/token，与 addRegistrySource 的 BaseURL 同源。
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			tokenHits.Add(1)
+			if got := r.URL.Query().Get("service"); got != "registry" {
+				t.Errorf("token service=%q", got)
+			}
+			if got := r.URL.Query().Get("scope"); got != "repository:library/alpine:pull" {
+				t.Errorf("token scope=%q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"token":"candidate-token"}`)
+		case "/v2/library/alpine/manifests/latest":
+			mirrorHits.Add(1)
+			if r.Header.Get("Authorization") == "" {
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry",scope="repository:library/alpine:pull"`, srv.URL))
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			mu.Lock()
+			auths = append(auths, r.Header.Get("Authorization"))
+			mu.Unlock()
+			w.Header().Set("Content-Type", manifestsAccept)
+			fmt.Fprint(w, mirrorManifest)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if r.Header.Get("Authorization") == "" {
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry",scope="repository:library/alpine:pull"`, tokenSrv.URL))
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		mu.Lock()
-		auths = append(auths, r.Header.Get("Authorization"))
-		mu.Unlock()
-		w.Header().Set("Content-Type", manifestsAccept)
-		fmt.Fprint(w, mirrorManifest)
 	}))
-	defer mirrorSrv.Close()
+	defer srv.Close()
 
-	id := f.addRegistrySource(t, mirrorSrv, "native")
-	// 这个测试的 Realm 是本机 token server，显式挂到 quay.io 的过渡策略里。
-	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{f.host: {tokenSrv.URL}}, false)}
+	id := f.addRegistrySource(t, srv, "native")
+	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{f.host: {srv.URL}}, false)}
 	f.gw.policies = policy
 	f.gw.cli = &http.Client{Transport: &bearerTransport{base: http.DefaultTransport, tokens: newTokenCache()}}
 

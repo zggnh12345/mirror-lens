@@ -258,8 +258,14 @@ func RedirectPolicy(kind RedirectKind, method string, from, to *url.URL, hop int
 	sameOrigin := fromEP.Equal(toEP)
 	switch kind {
 	case RedirectToken:
-		if toEP.Scheme() != endpoint.HTTPS {
-			return RedirectDecision{}, fmt.Errorf("Token 端点必须 HTTPS: %s", to.Scheme)
+		// 冻结 §4.5：Token 3xx 默认只允许 HTTPS 同源；但来源本身已是
+		// 显式授权 HTTP Realm（已过 PolicySnapshot.Allows 完整 Origin 门禁）时，
+		// 允许同源 HTTP→HTTP 跳转。HTTPS→HTTP 降级已在 :254 门禁先行拒绝，
+		// 因此这里能走到 toEP.Scheme()==HTTP 且 sameOrigin=true 的，
+		// from 必然也是同一完整 Origin 的 HTTP，不构成降级。
+		// 跨 Host / 同 Host 不同端口：sameOrigin=false → 仍拒绝。
+		if toEP.Scheme() != endpoint.HTTPS && !(sameOrigin && toEP.Scheme() == endpoint.HTTP) {
+			return RedirectDecision{}, fmt.Errorf("Token 端点重定向只允许同源 HTTPS（或已授权同源 HTTP）: %s", to.Scheme)
 		}
 		if !sameOrigin {
 			return RedirectDecision{}, fmt.Errorf("Token 端点只允许同源重定向: %s -> %s", fromEP.Origin(), toEP.Origin())

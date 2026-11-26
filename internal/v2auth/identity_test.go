@@ -133,8 +133,10 @@ func TestRedirectTokenRules(t *testing.T) {
 	if _, err := RedirectPolicy(RedirectToken, "GET", from, u(t, "https://quay.io/token2"), 4); err == nil {
 		t.Fatal("Token 最多 3 跳")
 	}
+	// 旧语义「Token 一律 HTTPS」已按冻结 §4.5 收紧为：仅拒绝 HTTPS→HTTP
+	// 降级；HTTP→HTTP 同源由 redirect_origin_test.go 的矩阵用例覆盖。
 	if _, err := RedirectPolicy(RedirectToken, "GET", from, u(t, "http://quay.io/token"), 1); err == nil {
-		t.Fatal("Token 端点必须 HTTPS")
+		t.Fatal("HTTPS→HTTP 降级必须拒绝")
 	}
 }
 

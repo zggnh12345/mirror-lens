@@ -71,6 +71,28 @@ func TestRedirectPolicyOriginMatrix(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// 冻结 §4.5 HTTP→HTTP 同 Host：来源已是已授权 HTTP Realm（过 Allows
+			// 完整 Origin 门禁），Token 3xx 同源跳转不得再被 HTTPS-only 拒绝。
+			name: "Token HTTP→HTTP 同源允许", kind: RedirectToken, method: "GET",
+			from: "http://h:5000/token", to: "http://h:5000/token2",
+			wantStrip: false, wantRecheck: false,
+		},
+		{
+			name: "Token HTTP→HTTP 同 Host 不同端口拒绝", kind: RedirectToken, method: "GET",
+			from: "http://h:5000/token", to: "http://h:8080/token",
+			wantErr: true,
+		},
+		{
+			name: "Token HTTP→HTTP 跨 Host 拒绝", kind: RedirectToken, method: "GET",
+			from: "http://h:5000/token", to: "http://other:5000/token",
+			wantErr: true,
+		},
+		{
+			name: "Token HTTPS→HTTP 降级拒绝", kind: RedirectToken, method: "GET",
+			from: "https://h:5000/token", to: "http://h:5000/token",
+			wantErr: true,
+		},
+		{
 			name: "CDN HTTP 拒绝", kind: RedirectCDN, method: "GET",
 			from: "https://h/blob", to: "http://cdn.example/blob",
 			wantErr: true,

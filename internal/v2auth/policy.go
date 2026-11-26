@@ -99,14 +99,17 @@ func (p PolicySnapshot) Allows(realm *url.URL) error {
 		return fmt.Errorf("%w: %v", ErrRealmDenied, err)
 	}
 	logical, haveLogical := canonicalPolicyHost(p.LogicalHost)
-	if p.AllowSameHost && haveLogical && strings.EqualFold(re.Host(), logical) {
-		if re.Scheme() == endpoint.HTTP {
-			// HTTP Realm 窄例外：只对该 Source 的完整 Origin 生效。
-			if !p.AllowPlainHTTP || p.SourceOrigin.IsZero() || !re.Equal(p.SourceOrigin) {
-				return fmt.Errorf("%w: HTTP Realm 未被 SourceEndpoint 完整 Origin 授权", ErrRealmDenied)
-			}
-			return nil
+	// P1 修复：HTTP Realm 窄例外必须在所有授权分支之前统一生效。
+	// 任何 HTTP Realm（无论同 Host 分支还是白名单命中）都必须满足
+	// AllowPlainHTTP 且 Realm 与 SourceOrigin 完整 Origin 全等；
+	// 否则 Source 从 HTTP 改为 HTTPS 后，旧 HTTP Realm 仍会拿到授权。
+	if re.Scheme() == endpoint.HTTP {
+		if !p.AllowPlainHTTP || p.SourceOrigin.IsZero() || !re.Equal(p.SourceOrigin) {
+			return fmt.Errorf("%w: HTTP Realm 未被 SourceEndpoint 完整 Origin 授权: %s", ErrRealmDenied, re.Origin())
 		}
+		return nil
+	}
+	if p.AllowSameHost && haveLogical && strings.EqualFold(re.Host(), logical) {
 		scheme := p.Scheme
 		if scheme == "" {
 			scheme = "https"
@@ -120,10 +123,9 @@ func (p PolicySnapshot) Allows(realm *url.URL) error {
 		if err != nil {
 			continue
 		}
-		if re.Scheme() == endpoint.HTTP || ae.Scheme() == endpoint.HTTP {
-			if re.Equal(ae) {
-				return nil
-			}
+		// HTTP 白名单条目已在上面统一门禁处理到：只有与 SourceOrigin 全等
+		// 才可能走到这里；此处 re 已是 HTTPS，HTTP 条目不可能再命中。
+		if ae.Scheme() == endpoint.HTTP {
 			continue
 		}
 		// HTTPS Realm 身份按 CanonicalHost 比较，端口忽略（冻结裁定 ②）。

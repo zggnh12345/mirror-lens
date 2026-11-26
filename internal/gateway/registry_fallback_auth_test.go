@@ -25,51 +25,49 @@ func TestFallbackToGhcrCarriesCandidateIdentity(t *testing.T) {
 	f.ad.Scheme = "http"
 
 	var tokenHits atomic.Int32
-	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/token" {
-			http.NotFound(w, r)
-			return
-		}
-		tokenHits.Add(1)
-		if got := r.URL.Query().Get("scope"); got != "repository:foo/bar:pull" {
-			t.Errorf("token scope=%q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"token":"ghcr-token"}`)
-	}))
-	defer tokenSrv.Close()
-
 	var mirrorHits atomic.Int32
 	var mu sync.Mutex
 	var auths []string
-	mirrorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mirrorHits.Add(1)
-		if r.URL.Path != "/v2/foo/bar/manifests/latest" {
+	// 3.5.24：HTTP Token Realm 必须与真实回源 SourceEndpoint 同 Origin。
+	// token 与 manifest 由同一个 httptest.Server 提供，Realm 指向 srv.URL/token，
+	// 与 ghcr 候选源 BaseURL 同源。
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			tokenHits.Add(1)
+			if got := r.URL.Query().Get("scope"); got != "repository:foo/bar:pull" {
+				t.Errorf("token scope=%q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"token":"ghcr-token"}`)
+		case "/v2/foo/bar/manifests/latest":
+			mirrorHits.Add(1)
+			if r.Header.Get("Authorization") == "" {
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry",scope="repository:foo/bar:pull"`, srv.URL))
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			mu.Lock()
+			auths = append(auths, r.Header.Get("Authorization"))
+			mu.Unlock()
+			w.Header().Set("Content-Type", manifestsAccept)
+			fmt.Fprint(w, mirrorManifest)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if r.Header.Get("Authorization") == "" {
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry",scope="repository:foo/bar:pull"`, tokenSrv.URL))
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		mu.Lock()
-		auths = append(auths, r.Header.Get("Authorization"))
-		mu.Unlock()
-		w.Header().Set("Content-Type", manifestsAccept)
-		fmt.Fprint(w, mirrorManifest)
 	}))
-	defer mirrorSrv.Close()
+	defer srv.Close()
 
 	id, err := f.st.AddSource(store.Source{
-		BaseURL: mirrorSrv.URL, Name: "ghcr-candidate", Status: "usable", Enabled: true,
+		BaseURL: srv.URL, Name: "ghcr-candidate", Status: "usable", Enabled: true,
 		RepoHost: "ghcr.io", GhcrCap: store.CapYes, GhcrPrefix: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{"ghcr.io": {tokenSrv.URL}}, false)}
+	policy := &recordingPolicy{base: v2authtest.New(map[string][]string{"ghcr.io": {srv.URL}}, false)}
 	f.gw.policies = policy
 	f.gw.cli = &http.Client{Transport: &bearerTransport{
 		base: roundTripFunc(func(r *http.Request) (*http.Response, error) {

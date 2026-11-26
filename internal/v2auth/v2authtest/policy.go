@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 	"github.com/zggnh12345/mirror-lens/internal/v2auth"
 )
 
@@ -28,11 +29,24 @@ func (p *Policy) Resolve(_ context.Context, sourceID int64, host string) (v2auth
 	if len(allows) == 0 {
 		allows = v2auth.DefaultRealmsFor(host)
 	}
-	return v2auth.PolicySnapshot{
+	snap := v2auth.PolicySnapshot{
 		SourceID:      sourceID,
 		LogicalHost:   host,
 		Official:      sourceID == 0,
 		AllowSameHost: p.AllowSameHost,
 		Realms:        append([]string(nil), allows...),
-	}, nil
+	}
+	// 复刻生产 gateway 的运行时派生：白名单里登记 HTTP Realm 说明被测
+	// Source 回源地址是 HTTP，其 token Realm 位于同源。让注入式测试与
+	// 生产语义一致，避免缺 SourceOrigin 把合法 Token 机制测试拒掉。
+	for _, a := range allows {
+		ep, err := endpoint.ParseOrigin(a)
+		if err != nil || ep.Scheme() != endpoint.HTTP {
+			continue
+		}
+		snap.AllowPlainHTTP = true
+		snap.SourceOrigin = ep
+		break
+	}
+	return snap, nil
 }

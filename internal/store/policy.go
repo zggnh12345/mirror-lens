@@ -76,15 +76,33 @@ func (p *StorePolicy) Resolve(ctx context.Context, sourceID int64, host string) 
 	if err := p.s.db.QueryRowContext(ctx, `SELECT gen FROM registry_host_gen WHERE host=?`, logical).Scan(&credGen); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return v2auth.PolicySnapshot{}, err
 	}
+	// 3.5.24 HTTP Realm 窄例外的运行时上下文：AllowPlainHTTP/SourceOrigin
+	// 只能由该 Source 的 sources.base_url 派生（冻结 §4，非 DB 字段，
+	// 不得从凭据 Map 或逻辑 RegistryIdentity 推断）。
+	// 每次 Resolve 都重读 base_url：因此把 base_url 从 HTTP 改成 HTTPS 后，
+	// 旧 HTTP Realm 即使仍留在策略白名单里也不会再获得明文授权。
+	// gateway 请求路径会用本次实际回源 target 覆盖这两个字段，但 probe /
+	// RealmAllowed 等直接 Resolve→Allows 的路径依赖这里的派生结果。
+	var baseURL string
+	if err := p.s.db.QueryRowContext(ctx, `SELECT base_url FROM sources WHERE id=?`, sourceID).Scan(&baseURL); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return v2auth.PolicySnapshot{}, err
+		}
+		// 源不存在：不给明文上下文，HTTP Realm 一律拒绝（fail closed）。
+		baseURL = ""
+	}
+	allowPlain, sourceOrigin := sourcePlainOrigin(baseURL)
 	return v2auth.PolicySnapshot{
-		SourceID:      sourceID,
-		LogicalHost:   logical,
-		PolicyGen:     policyGen,
-		CredGen:       credGen,
-		Official:      false,
-		AllowSameHost: false,
-		Scheme:        "https",
-		Realms:        append([]string{primary}, extras...),
+		SourceID:       sourceID,
+		LogicalHost:    logical,
+		PolicyGen:      policyGen,
+		CredGen:        credGen,
+		Official:       false,
+		AllowSameHost:  false,
+		Scheme:         "https",
+		Realms:         append([]string{primary}, extras...),
+		AllowPlainHTTP: allowPlain,
+		SourceOrigin:   sourceOrigin,
 	}, nil
 }
 
