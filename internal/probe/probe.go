@@ -15,10 +15,12 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 	"github.com/zggnh12345/mirror-lens/internal/safehttp"
 )
 
@@ -126,7 +128,18 @@ func verifyChain(cs tls.ConnectionState, host string) error {
 // tlsInfo dials the host and reads its leaf certificate without
 // aborting on verification errors: an expired or self-signed cert
 // is reported as untrusted, not silently "unreachable".
-func tlsInfo(ctx context.Context, host string) (ok bool, days int, err error) {
+//
+// 3.5.24：地址必须来自结构化 SourceEndpoint，拨号端口用 EffectivePort，
+// ServerName/verifyChain 只用裸 Host（不带端口/方括号）。
+func tlsInfo(ctx context.Context, base string) (ok bool, days int, err error) {
+	ep, err := tlsEndpoint(base)
+	if err != nil {
+		return false, 0, err
+	}
+	if ep.Scheme() != endpoint.HTTPS {
+		return false, 0, errors.New("HTTP SourceEndpoint 不做 TLS 探测")
+	}
+	host, port := ep.Host(), ep.Port()
 	// 走 Guard 的拨号器，并且吃调用方的 ctx：证书探测不能成为绕过检查、
 	// 或者在取消后继续占着连接的口子。
 	g := currentGuard()
@@ -134,11 +147,11 @@ func tlsInfo(ctx context.Context, host string) (ok bool, days int, err error) {
 	d.Timeout = 8 * time.Second
 	// 和回源用同一套 IP 族偏好：只按域名交给系统解析，v6 半通的源会被测成
 	// 「连不上」，白白冤枉一个源。
-	target := net.JoinHostPort(host, "443")
+	target := net.JoinHostPort(host, strconv.Itoa(port))
 	if _, err := netip.ParseAddr(host); err != nil {
 		if ips, lerr := net.DefaultResolver.LookupNetIP(ctx, "ip", host); lerr == nil {
 			if ordered := g.OrderIPs(ips); len(ordered) > 0 {
-				target = net.JoinHostPort(ordered[0].String(), "443")
+				target = net.JoinHostPort(ordered[0].String(), strconv.Itoa(port))
 			}
 		}
 	}
@@ -179,13 +192,22 @@ func trimBase(base string) string {
 }
 
 func hostOf(base string) string {
-	b := trimBase(base)
-	b = strings.TrimPrefix(b, "https://")
-	b = strings.TrimPrefix(b, "http://")
-	if i := strings.IndexAny(b, "/"); i >= 0 {
-		b = b[:i]
+	u, err := url.Parse(trimBase(base))
+	if err != nil {
+		return ""
 	}
-	return b
+	return u.Hostname()
+}
+
+// tlsEndpoint 把 sources.base_url 解析成 SourceEndpoint：
+// Scheme + CanonicalHost + EffectivePort（https 默认 443，http 默认 80）。
+func tlsEndpoint(base string) (endpoint.Endpoint, error) {
+	return endpoint.Parse(trimBase(base))
+}
+
+// isPlainHTTP 判断 SourceEndpoint 是否显式 HTTP；HTTP 源不做 TLS 探测。
+func isPlainHTTP(base string) bool {
+	return strings.HasPrefix(trimBase(base), "http://")
 }
 
 func readCapped(r io.Reader, max int64) ([]byte, error) {

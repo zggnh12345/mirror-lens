@@ -27,11 +27,14 @@ const (
 // with hash check and throughput.
 func GitHub(ctx context.Context, base string, tier int, expectedHash string) Result {
 	base = trimBase(base)
-	host := hostOf(base)
 	res := Result{DigestOK: -1, BlobOK: -1}
 
-	ok, days, _ := tlsInfo(ctx, host)
-	res.TLSOK, res.CertDays = ok, days
+	if isPlainHTTP(base) {
+		res.TLSOK = true // HTTP 源不做 TLS 探测，视为不适用
+	} else {
+		ok, days, _ := tlsInfo(ctx, base)
+		res.TLSOK, res.CertDays = ok, days
+	}
 
 	client := newClient(30 * time.Second)
 	t0 := time.Now()

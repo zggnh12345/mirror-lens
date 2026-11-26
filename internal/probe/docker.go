@@ -89,11 +89,14 @@ func Ghcr(ctx context.Context, base string, tier int) Result {
 // DockerWithImage 用指定镜像做探针（ghcr 镜像源用 ghcr 上的公共镜像）。
 func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest string, image string) Result {
 	base = trimBase(base)
-	host := hostOf(base)
 	res := Result{DigestOK: -1, BlobOK: -1}
 
-	ok, days, _ := tlsInfo(ctx, host)
-	res.TLSOK, res.CertDays = ok, days
+	if isPlainHTTP(base) {
+		res.TLSOK = true // HTTP 源不做 TLS 探测，视为不适用
+	} else {
+		ok, days, _ := tlsInfo(ctx, base)
+		res.TLSOK, res.CertDays = ok, days
+	}
 
 	client := newClient(25 * time.Second)
 	t0 := time.Now()
