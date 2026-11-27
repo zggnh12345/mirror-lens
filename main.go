@@ -127,46 +127,6 @@ func mustSecretKey(dir string) []byte {
 	return key
 }
 
-// hostProbeScanInterval 是捞到期恢复任务的节拍，同时是恢复延迟上界。
-// 可用 ML_HOSTPROBE_SCAN 覆盖。
-func hostProbeScanInterval() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("ML_HOSTPROBE_SCAN")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-		log.Printf("ML_HOSTPROBE_SCAN=%q 无效，用默认 30s", v)
-	}
-	return 30 * time.Second
-}
-
-// hostProbeInterval 默认 6 小时；失败源靠 Runner 内部退避重试，不受这个
-// 周期约束。可用 ML_HOSTPROBE_INTERVAL 覆盖。
-func hostProbeInterval() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("ML_HOSTPROBE_INTERVAL")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-		log.Printf("ML_HOSTPROBE_INTERVAL=%q 无效，用默认 6h", v)
-	}
-	return 6 * time.Hour
-}
-
-// parseHostProbeRepos 解析 ML_HOSTPROBE_REPOS="quay.io=org/repo,..."。
-func parseHostProbeRepos(v string) map[string]string {
-	out := map[string]string{}
-	for _, part := range strings.Split(v, ",") {
-		host, repo, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			continue
-		}
-		host, repo = strings.TrimSpace(host), strings.TrimSpace(repo)
-		if host != "" && repo != "" {
-			out[host] = repo
-		}
-	}
-	return out
-}
-
 func main() {
 	// 只留四个开关，其余参数在配置文件里（见 config.example.yaml）
 	cfgPath := flag.String("config", "", "配置文件路径（默认找当前目录的 config.yaml）")
@@ -598,10 +558,10 @@ func main() {
 		go runner.NewHostProbeRunner(runner.HostProbeOptions{
 			Store:        st,
 			Creds:        hostCreds,
-			Repos:        parseHostProbeRepos(os.Getenv("ML_HOSTPROBE_REPOS")),
+			Repos:        cfg.Probe.HostProbeRepos,
 			AllowedHosts: cfg.Registry.MultiOriginHosts,
-			Interval:     hostProbeInterval(),
-			ScanInterval: hostProbeScanInterval(),
+			Interval:     time.Duration(cfg.Probe.HostProbeIntervalSec) * time.Second,
+			ScanInterval: time.Duration(cfg.Probe.HostProbeScanSec) * time.Second,
 			Timeout:      time.Duration(cfg.Probe.TimeoutSec) * time.Second,
 			Concurrency:  cfg.Probe.Concurrency,
 			RecoveryTTL:  st.RecoveryTTL(),

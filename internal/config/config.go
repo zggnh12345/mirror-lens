@@ -362,6 +362,15 @@ type Probe struct {
 	Concurrency int `yaml:"concurrency"`
 	TimeoutSec  int `yaml:"timeout_sec"`
 	SampleMiB   int `yaml:"sample_mib"`
+
+	// HostProbeRepos 是 Foreign Host 探测仓库映射的唯一正式来源。
+	// 键为 Host（唯一受限通配键 "*.pkg.dev" 除外），值为该 Host 上真实存在的代表仓库。
+	HostProbeRepos map[string]string `yaml:"host_probe_repos"`
+	// HostProbeIntervalSec 是 Host 能力全量对账周期（默认 21600 秒）。
+	// 与上面的通用 IntervalSec 语义不同，不得互相替代。
+	HostProbeIntervalSec int `yaml:"host_probe_interval_sec"`
+	// HostProbeScanSec 是到期任务扫描周期（默认 30 秒）。
+	HostProbeScanSec int `yaml:"host_probe_scan_sec"`
 }
 
 // Default 是没有配置文件时的默认值。
@@ -399,6 +408,7 @@ func Default() *Config {
 				"registry.gitlab.com",
 				"public.ecr.aws",
 				"cgr.dev",
+				"lscr.io",
 			},
 		},
 		Sources: Sources{
@@ -454,7 +464,21 @@ func Default() *Config {
 		},
 		Hedge: Hedge{Enabled: true, AfterMS: 1000, GraceMS: 300},
 		Probe: Probe{AllowPrivate: false,
-			IntervalSec: 30, Concurrency: 8, TimeoutSec: 45, SampleMiB: 4},
+			IntervalSec: 30, Concurrency: 8, TimeoutSec: 45, SampleMiB: 4,
+			HostProbeRepos: map[string]string{
+				"gcr.io":             "distroless/static:nonroot",
+				"registry.k8s.io":    "pause:3.9",
+				"*.pkg.dev":          "google-samples/containers/gke/hello-app:1.0",
+				"quay.io":            "prometheus/busybox:latest",
+				"mcr.microsoft.com":  "hello-world:latest",
+				"registry.gitlab.com": "gitlab-org/cli:latest",
+				"public.ecr.aws":     "docker/library/alpine:latest",
+				"cgr.dev":            "chainguard/static:latest",
+				"lscr.io":            "linuxserver/traefik",
+			},
+			HostProbeIntervalSec: 21600,
+			HostProbeScanSec:     30,
+		},
 		Auth:    Auth{RequireToken: false},
 		Limits:  limits.Default(),
 		Backup:  Backup{Enabled: true, Keep: 7},
@@ -462,6 +486,23 @@ func Default() *Config {
 		Metrics: Metrics{Enabled: true},
 		CDN:     CDN{Enabled: false, MaxAge: 300},
 	}
+}
+
+// requireHostProbeFields 检查已有配置文件是否显式给出三个 Host Probe 必需字段。
+// 全新安装（无配置文件，走 Default()）不经过这里。
+func requireHostProbeFields(b []byte) error {
+	var doc struct {
+		Probe map[string]any `yaml:"probe"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil // 交给后续 yaml.Unmarshal 报具体错误
+	}
+	for _, key := range []string{"host_probe_repos", "host_probe_interval_sec", "host_probe_scan_sec"} {
+		if _, ok := doc.Probe[key]; !ok {
+			return fmt.Errorf("配置缺少 probe.%s；3.5.25 起该字段为必需（全新安装请用 Default() 生成配置）", key)
+		}
+	}
+	return nil
 }
 
 // Load 读配置文件，不存在则用默认值（path 为空也一样）。
@@ -478,6 +519,13 @@ func Load(path string, required bool) (*Config, error) {
 		}
 		return nil, err
 	}
+	// D-CONFIG-4：已有配置文件缺少三个必需字段时 fail-fast，
+	// 不从 Default()/旧字段/环境变量静默补齐。
+	if err := requireHostProbeFields(b); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// 显式空 map 不能被 Default() 的预置表污染：Unmarshal 到已有 map 不会清空它。
+	c.Probe.HostProbeRepos = nil
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -491,7 +539,53 @@ func Load(path string, required bool) (*Config, error) {
 	return c, nil
 }
 
+func (c *Config) validateHostProbe() error {
+	// D-CONFIG-3：两个周期必须为正、且秒数转 time.Duration 不溢出。
+	const maxSeconds = int64(^uint64(0)>>1) / int64(time.Second)
+	for name, sec := range map[string]int{
+		"host_probe_interval_sec": c.Probe.HostProbeIntervalSec,
+		"host_probe_scan_sec":     c.Probe.HostProbeScanSec,
+	} {
+		if sec <= 0 {
+			return fmt.Errorf("probe.%s 必须大于 0", name)
+		}
+		if int64(sec) > maxSeconds {
+			return fmt.Errorf("probe.%s 超出 time.Duration 上限", name)
+		}
+	}
+	// D-CONFIG-1 + D-RESOLVE：键规范化顺序——字面 *.pkg.dev 走专用规则，
+	// 其余键一律 registryhost.Normalize，错误或空结果均拒绝；其他通配表达式拒绝。
+	normalized := make(map[string]string, len(c.Probe.HostProbeRepos))
+	for raw, repo := range c.Probe.HostProbeRepos {
+		if strings.TrimSpace(repo) == "" {
+			return fmt.Errorf("probe.host_probe_repos[%q] 的仓库不能为空", raw)
+		}
+		var key string
+		if raw == "*.pkg.dev" {
+			key = raw
+		} else {
+			if strings.Contains(raw, "*") {
+				return fmt.Errorf("probe.host_probe_repos 中 %q 不是允许的通配键（仅允许 *.pkg.dev）", raw)
+			}
+			n, err := registryhost.Normalize(raw)
+			if err != nil || n == "" {
+				return fmt.Errorf("probe.host_probe_repos 中 Host %q 无效", raw)
+			}
+			key = n
+		}
+		if _, dup := normalized[key]; dup {
+			return fmt.Errorf("probe.host_probe_repos 规范化后键冲突：%q", key)
+		}
+		normalized[key] = repo
+	}
+	c.Probe.HostProbeRepos = normalized
+	return nil
+}
+
 func (c *Config) Validate() error {
+	if err := c.validateHostProbe(); err != nil {
+		return err
+	}
 	if c.Addr == "" {
 		return fmt.Errorf("addr 不能为空")
 	}
@@ -716,6 +810,9 @@ func unknownYAMLFields(b []byte) []string {
 		return nil
 	}
 	known := yamlPaths(reflect.TypeOf(Config{}))
+	// map 字段的子键是动态的，不能按结构体路径校验；但不递归会漏掉更深层的
+	// 拼写错误，这里只跳过 map 自身的子树。
+	mapPaths := yamlMapPaths(reflect.TypeOf(Config{}))
 	var out []string
 	var walk func(*yaml.Node, string)
 	walk = func(n *yaml.Node, prefix string) {
@@ -732,11 +829,52 @@ func unknownYAMLFields(b []byte) []string {
 				out = append(out, p)
 				continue
 			}
+			if mapPaths[p] {
+				continue
+			}
 			walk(v, p)
 		}
 	}
 	walk(doc.Content[0], "")
 	sort.Strings(out)
+	return out
+}
+
+// yamlMapPaths 返回所有 map[string]... 字段的完整 yaml 路径。
+func yamlMapPaths(t reflect.Type) map[string]bool {
+	out := map[string]bool{}
+	var walk func(reflect.Type, string)
+	walk = func(t reflect.Type, prefix string) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if t == reflect.TypeOf(Duration{}) || t.Kind() != reflect.Struct {
+			return
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			p := name
+			if prefix != "" {
+				p = prefix + "." + name
+			}
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Map {
+				out[p] = true
+			}
+			walk(ft, p)
+		}
+	}
+	walk(t, "")
 	return out
 }
 

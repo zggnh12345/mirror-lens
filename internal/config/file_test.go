@@ -53,7 +53,7 @@ func TestWriteTemplatePerm(t *testing.T) {
 // 文件已存在时绝不覆盖。
 func TestWriteTemplateDoesNotOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("cache:\n  max_gb: 7\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("cache:\n  max_gb: 7\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wrote, err := WriteTemplate(path, Default())

@@ -470,7 +470,11 @@ func TestMigrateLoadFloor(t *testing.T) {
 	if _, err := MigrateFile(path); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path, true)
+		// 3.5.25 fail-fast：补上必需字段后再加载。
+	if b, e := os.ReadFile(path); e == nil && !strings.Contains(string(b), "probe:") {
+		os.WriteFile(path, append(b, []byte("\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n")...), 0o600)
+	}
+cfg, err := Load(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}

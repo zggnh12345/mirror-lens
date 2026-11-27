@@ -3,12 +3,16 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func write(t *testing.T, body string) string {
 	t.Helper()
+	if !strings.Contains(body, "probe:") {
+		body += "\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"
+	}
 	p := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -121,6 +125,7 @@ func TestRegistryHostPolicyDefaults(t *testing.T) {
 		"registry.gitlab.com",
 		"public.ecr.aws",
 		"cgr.dev",
+		"lscr.io",
 	}
 	if len(c.Registry.MultiOriginHosts) != len(want) {
 		t.Fatalf("默认多源范围: %v", c.Registry.MultiOriginHosts)

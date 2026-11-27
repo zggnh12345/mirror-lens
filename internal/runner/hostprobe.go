@@ -107,17 +107,16 @@ type probeState struct {
 	running bool
 }
 
+// 以下两个周期值仅为测试/离线构造的兜底，不是生产配置来源。
+// 生产装配由 main.go 从 config.Probe 显式注入（D-CONFIG-4）。
 const (
-	// defaultHostProbeInterval 是「全量对账」周期（reconcileRepos）。
-	defaultHostProbeInterval = 6 * time.Hour
-	// defaultHostProbeScan 是捞到期任务的节拍。恢复延迟上界由它决定，
-	// 与 6h 对账周期无关。
-	defaultHostProbeScan = 30 * time.Second
+	fallbackHostProbeInterval = 6 * time.Hour
+	fallbackHostProbeScan     = 30 * time.Second
 )
 
 func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 	if o.Interval <= 0 {
-		o.Interval = defaultHostProbeInterval
+		o.Interval = fallbackHostProbeInterval
 	}
 	if o.Timeout <= 0 {
 		o.Timeout = 25 * time.Second
@@ -129,7 +128,7 @@ func NewHostProbeRunner(o HostProbeOptions) *HostProbeRunner {
 		o.RecoveryTTL = store.RecoveryDefaultTTL
 	}
 	if o.ScanInterval <= 0 {
-		o.ScanInterval = defaultHostProbeScan
+		o.ScanInterval = fallbackHostProbeScan
 	}
 	if o.Probe == nil {
 		o.Probe = probe.ProbeRegistryHost
@@ -232,6 +231,23 @@ func (r *HostProbeRunner) Once(ctx context.Context) {
 	}
 }
 
+// resolveProbeRepo 是 Host → 代表性仓库的统一解析入口。
+// reconcileRepos 与 jobs 必须共用，避免对账和任务构造得出不同结论（D-RESOLVE）。
+// 顺序：精确键优先；未命中且 Host 是受限 Artifact Registry 时回退 "*.pkg.dev"。
+func (r *HostProbeRunner) resolveProbeRepo(host string) (string, bool) {
+	h, err := registryhost.Normalize(host)
+	if err != nil || h == "" {
+		return "", false
+	}
+	if repo, ok := r.o.Repos[h]; ok && repo != "" {
+		return repo, true
+	}
+	if repo, ok := r.o.Repos["*.pkg.dev"]; ok && repo != "" && registryhost.IsArtifactRegistry(h) {
+		return repo, true
+	}
+	return "", false
+}
+
 // reconcileRepos 在启动时对账「结论是用哪个代表性仓库测出来的」。
 // 仓库映射变了（含映射被删掉），旧结论立即失效：它可能只是另一个仓库
 // 的性质，继续拿它选路等于没验证。
@@ -252,7 +268,7 @@ func (r *HostProbeRunner) reconcileRepos() {
 		if x.Cap == store.RegistryCapUnknown {
 			continue
 		}
-		want, ok := r.o.Repos[x.RepoHost]
+		want, ok := r.resolveProbeRepo(x.RepoHost)
 		var d probe.Diagnostics
 		// 只有明确的 v2 诊断才算「有 repo」；v1 没有这个字段，未知版本
 		// 更不能当成可信证据。
@@ -298,7 +314,7 @@ func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJ
 		var missing []string
 		seen := map[string]bool{}
 		for _, x := range rows {
-			repo := r.o.Repos[x.RepoHost]
+			repo, _ := r.resolveProbeRepo(x.RepoHost)
 			if repo == "" {
 				if !seen[x.RepoHost] {
 					seen[x.RepoHost] = true
@@ -316,7 +332,7 @@ func (r *HostProbeRunner) jobs(ctx context.Context, now time.Time) ([]HostProbeJ
 			})
 		}
 		if len(missing) > 0 {
-			log.Printf("Host 探测缺少仓库配置，已跳过这些 Host: %v（用 ML_HOSTPROBE_REPOS=host=repo,... 配置）", missing)
+			log.Printf("Host 探测缺少仓库配置，已跳过这些 Host: %v（用 probe.host_probe_repos 配置）", missing)
 		}
 	}
 	return r.filterAllowed(out), nil

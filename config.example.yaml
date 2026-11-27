@@ -98,6 +98,7 @@ registry:
     - registry.gitlab.com
     - public.ecr.aws
     - cgr.dev
+    - lscr.io
   # 访问拒绝列表；只写精确 Host，空 = 不关闭。禁用后缓存命中也会返回 404。
   disabled_hosts: []
   # 3.5.18 B 跨 Registry 调度：以 Web/设置页的三字段为准（存 settings 表），
@@ -250,6 +251,25 @@ hedge:
 probe:
   # 源就架在自己局域网（10.x / 192.168.x）时才打开。打开等于关掉这层防护。
   allow_private: false
+  # 通用探测节奏（与下面的 Host Probe 周期语义不同）。
+  interval_sec: 30
+  concurrency: 8
+  timeout_sec: 45
+  sample_mib: 4
+  # Foreign Host 探测仓库映射（唯一正式来源；*.pkg.dev 是唯一通配键）。
+  host_probe_repos:
+    gcr.io: distroless/static:nonroot
+    registry.k8s.io: pause:3.9
+    "*.pkg.dev": google-samples/containers/gke/hello-app:1.0
+    quay.io: prometheus/busybox:latest
+    mcr.microsoft.com: hello-world:latest
+    registry.gitlab.com: gitlab-org/cli:latest
+    public.ecr.aws: docker/library/alpine:latest
+    cgr.dev: chainguard/static:latest
+    lscr.io: linuxserver/traefik
+  # Host 能力全量对账周期（秒）与到期任务扫描周期（秒）。
+  host_probe_interval_sec: 21600
+  host_probe_scan_sec: 30
 
 # ── 访问控制 ────────────────────────────────────────────
 #
