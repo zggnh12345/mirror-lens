@@ -72,6 +72,22 @@
 - `g5-api-3.5.25-sources.json` 中 `last.docker.error` 精确记录 blob CDN URL、`last.github.error` 精确记录 404 —— UI 后端数据源准确报告唯一根因；
 - degraded 链路本身是 3.5.25 错误保真修复的正确行为（不再误报 TLS_HANDSHAKE_FAILED）。
 
+**2026-11-27 实测对照（用户要求「去试试」后，只读 GET，结果可复现）** —— 用完全相同的探测格式 `/https://raw.githubusercontent.com/octocat/Hello-World/762941318ee16e59dabbacb1b4049eec22f0d303/README`：
+
+| 目标 | 结果 | 定性 |
+|---|---|---|
+| 直连 raw.githubusercontent.com | 200，13 字节 | 探测样本本身有效 |
+| ghfast.top | 200，13 字节 `Hello World!` | 同格式在同类站可用 |
+| gh-proxy.com | 200，13 字节 `Hello World!` | 同格式在同类站可用 |
+| ghproxy.net | 200，13 字节 `Hello World!` | 同格式在同类站可用 |
+| SparkCR（docker.sparkcr.cn） | 307 把 `//` 折成 `/` → 404 `page not found` | 源站自身不提供该路由 |
+
+SparkCR 四种写法（`/https://...`、`/https:/...`、`/http/https://...`、裸路径）全部 404 `page not found`（Go `http.NotFound`），证明它压根没有 GitHub raw 代理路由，非格式兼容问题。生产数据中 SparkCR `github_cap=0`，而上述三站 `github_cap=1` 且探测成功——系统对 SparkCR 的能力判定本就正确。
+
+docker blob 失败的真实原因亦经实测纠正：非「CDN 404」，而是 SparkCR 把 blob 重定向到的第三方 CDN `cache-esa.cr.tongritech.com` **TLS 证书已过期**（curl `certificate has expired`）。属该 CDN 运营问题。
+
+两项均为源站自身问题，与 3.5.25 代码无关：`git diff 84b013d..HEAD -- internal/probe/{github,docker}.go` 显示 URL 拼法一字未改，3.5.25 仅改「错误保真」（`if res.Error == ""` 保护、TLS 错误不被后续 HTTP 错误覆盖）。`/<完整 URL>` 探测格式是本项目加速器协议约定（`docs/cache-regression-matrix.md`、`docs/accelerator.md`），在三个独立 GitHub 代理站上实测 200，格式无误。
+
 若产品语义要求 SparkCR 必须达到 `usable` 才算「真实验收通过」，则本项应回退为 FAIL 并重新定级。**用户已于 2026-11-27 确认采用标准 A（按错误保真判定），本项定为 PASS**，不影响其余 25 项判定。
 
 ## 结论
