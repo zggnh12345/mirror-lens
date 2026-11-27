@@ -72,7 +72,7 @@
 - `g5-api-3.5.25-sources.json` 中 `last.docker.error` 精确记录 blob CDN URL、`last.github.error` 精确记录 404 —— UI 后端数据源准确报告唯一根因；
 - degraded 链路本身是 3.5.25 错误保真修复的正确行为（不再误报 TLS_HANDSHAKE_FAILED）。
 
-若产品语义要求 SparkCR 必须达到 `usable` 才算「真实验收通过」，则本项应回退为 FAIL 并重新定级。此为需用户确认的口径，不影响其余 25 项判定。
+若产品语义要求 SparkCR 必须达到 `usable` 才算「真实验收通过」，则本项应回退为 FAIL 并重新定级。**用户已于 2026-11-27 确认采用标准 A（按错误保真判定），本项定为 PASS**，不影响其余 25 项判定。
 
 ## 结论
 
