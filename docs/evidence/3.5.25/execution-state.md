@@ -83,3 +83,23 @@
   - 原始数据 g6-raw-*.txt、统计 g6-comparison.md、方法 g6-methodology.md。
 - 未执行（NOT_RUN）：热缓存 P95≤2ms、冷缓存比值≤1.5、并发 Pull 成功率100% —— 这些是 gateway 缓存路径，本次隔离基准未覆盖，不能用 DB benchmark 冒充。
 - 阻塞：真实源站对照同 G5（无端点/无 NAS 权限），BLOCKED_REAL_ENV；不得宣称完整 G6 PASS。
+
+## G7 / G8 完成
+
+- G7：PASS。证据归档索引、发布就绪评估、SHA 对账齐全；区分事实/目标/未执行/阻塞。
+- G8：PASS（清理收尾）。代码残留审计：ML_HOSTPROBE_* 全清；See §2.3 UI/代码全清；legacy_field_not_supported 是任务书允许的负向拒绝逻辑；runner fallback 常量为测试兜底非生产第二来源（G1 已裁定）。工作树干净，22 个提交可追溯，锁释放记录归档。未推送/未合并/未部署/未发布（§19.2）。
+- §20 停止条件 12/13 触发：SparkCR/SUNBALCONY 缺证据、真实环境权限缺失——G5/G6 真实项保持 BLOCKED_REAL_ENV，不继续依赖真实环境的实施。
+
+## 阶段总表
+
+| 阶段 | 结果 |
+|---|---|
+| G0 基线取证 | PASS |
+| G1 设计冻结 | PASS |
+| G2 实施 | PASS |
+| G3 独立复核 | PASS（5 Finding 全 CLOSED） |
+| G4 全量测试 | PASS（证据链两轮复核关闭） |
+| G5 真实环境验收 | BLOCKED_REAL_ENV |
+| G6 性能对照 | PARTIAL（本地基准 PASS / 真实对照 BLOCKED） |
+| G7 文档证据归档 | PASS |
+| G8 清理收尾 | PASS |
