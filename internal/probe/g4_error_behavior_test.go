@@ -12,6 +12,9 @@ import (
 // 自签 HTTPS 源上，tlsInfo 先写入 TLS_CERT_UNTRUSTED；
 // 后续 /v2/ 请求同样因证书失败，但不得覆盖更具体的 TLS 根因。
 func TestG4TLSErrorNotOverwrittenByHTTP(t *testing.T) {
+	// 显式设置拨号策略，避免受其他测试 Configure 顺序影响。
+	ConfigureForTest(true, true)
+	defer ConfigureForTest(true, true)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
