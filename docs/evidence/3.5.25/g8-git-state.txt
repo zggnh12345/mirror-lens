@@ -1,0 +1,35 @@
+=== git status --short --branch ===
+## 3.5.25-fix
+?? docs/evidence/3.5.25/final-sha-reconciliation.md
+?? docs/evidence/3.5.25/lock-release.md
+
+=== git diff --check ===
+ (rc=0)
+=== diff --stat baseline..HEAD ===
+ internal/store/g6_bench_test.go                    |  22 ++
+ internal/store/hostcaps.go                         |  23 +-
+ internal/store/hostcaps_tx_test.go                 |  56 +++++
+ main.go                                            |  46 +---
+ 70 files changed, 2644 insertions(+), 487 deletions(-)
+
+=== git log baseline..HEAD ===
+714613b gates(3.5.25): G7 证据归档索引与发布就绪评估
+b27d83e gates(3.5.25): G6 本地隔离性能基准与边界归档
+78a403b gates(3.5.25): G5 真实环境验收 BLOCKED_REAL_ENV 取证归档
+98dc871 docs(3.5.25): 统一 execution-state G4 SHA 锚点
+e930921 gates(3.5.25): G4 门禁证据链重锚定 HEAD 0caf9da
+0caf9da gates(3.5.25): G4 门禁日志与阶段结论归档
+713b3ac test(3.5.25): G4 TLS 行为测试显式设置拨号策略消除顺序依赖
+544fb43 gates(3.5.25): 记录 G4 门禁锚定 SHA
+b1d4722 gates(3.5.25): G4 测试覆盖补齐（API/UI/配置/Host/TLS/事务）
+721d533 gates(3.5.25): G4 基础门禁 gofmt 与原始日志归档
+bb77821 gates(3.5.25): G3 独立复核 5 Finding 全 CLOSED
+7f169eb fix(3.5.25): F-REV-03 missed token error guard plus regression test
+5a6195a fix(3.5.25): review findings F-REV-01..05 (IPv6/error schema/error precedence/name/config fail-fast)
+0148992 gates(3.5.25): G2 integration and gate evidence
+410f56c impl(3.5.25): Agent4 TLS error fidelity chain and UI error codes
+d9808d7 impl(3.5.25): Agent3 AddSourceHost transaction-internal base_url read
+477764f impl(3.5.25): Agent2 host probe config migration and unified resolver
+733b1c3 impl(3.5.25): Agent1 API endpoint contract and UI form
+1146565 gates(3.5.25): 状态推进至 G1，记录 FREEZE_SHA
+74ef211 gates(3.5.25): G0 取证与 G1 冻结文件归档
