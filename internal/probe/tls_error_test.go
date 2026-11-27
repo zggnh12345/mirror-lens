@@ -2,10 +2,10 @@ package probe
 
 import (
 	"crypto/x509"
-	"errors"
 	"encoding/json"
-	"time"
+	"errors"
 	"testing"
+	"time"
 )
 
 func TestClassifyVerifyErrorPreservesType(t *testing.T) {

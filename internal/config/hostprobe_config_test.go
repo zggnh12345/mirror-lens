@@ -21,15 +21,21 @@ func TestHostProbeDefaultsAndCanonical(t *testing.T) {
 	}
 	found := false
 	for _, h := range c.Registry.MultiOriginHosts {
-		if h == "lscr.io" { found = true }
+		if h == "lscr.io" {
+			found = true
+		}
 	}
-	if !found { t.Fatal("multi_origin_hosts 默认缺 lscr.io") }
+	if !found {
+		t.Fatal("multi_origin_hosts 默认缺 lscr.io")
+	}
 }
 
 func writeCfg(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(p, []byte(body), 0600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 
@@ -49,7 +55,9 @@ func TestHostProbeFailFast(t *testing.T) {
 func TestHostProbeExplicitEmptyMap(t *testing.T) {
 	body := "addr: ':8080'\ndata: /data\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"
 	c, err := Load(writeCfg(t, body), false)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(c.Probe.HostProbeRepos) != 0 {
 		t.Fatalf("显式空 map 不应回退默认，得到 %d 行", len(c.Probe.HostProbeRepos))
 	}
@@ -58,8 +66,8 @@ func TestHostProbeExplicitEmptyMap(t *testing.T) {
 func TestHostProbeValidation(t *testing.T) {
 	base := "addr: ':8080'\ndata: /data\nprobe:\n  host_probe_repos: %s\n  host_probe_interval_sec: %d\n  host_probe_scan_sec: %d\n"
 	cases := []struct {
-		name string
-		repos string
+		name           string
+		repos          string
 		interval, scan int
 	}{
 		{"空键", `{"": "repo"}`, 21600, 30},
@@ -80,13 +88,16 @@ func TestHostProbeValidation(t *testing.T) {
 
 func TestHostProbeExampleMatchesDefault(t *testing.T) {
 	b, err := os.ReadFile("../../config.example.yaml")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := string(b)
 	for _, key := range []string{"host_probe_repos:", "host_probe_interval_sec: 21600", "host_probe_scan_sec: 30"} {
-		if !strings.Contains(s, key) { t.Fatalf("config.example.yaml 缺 %s", key) }
+		if !strings.Contains(s, key) {
+			t.Fatalf("config.example.yaml 缺 %s", key)
+		}
 	}
 }
-
 
 func TestRequireHostProbeFieldsExported(t *testing.T) {
 	if err := RequireHostProbeFields([]byte("probe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n")); err != nil {

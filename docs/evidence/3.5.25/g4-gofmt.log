@@ -1,0 +1,8 @@
+internal/api/hosts.go
+internal/config/config.go
+internal/config/docs.go
+internal/config/hostprobe_config_test.go
+internal/config/migrate_test.go
+internal/probe/tls_error_test.go
+internal/runner/hostprobe_resolver_test.go
+__RC__=0
