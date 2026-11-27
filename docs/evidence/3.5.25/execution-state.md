@@ -60,4 +60,5 @@
   - 403 verdict 负向。
 - 实现修正：probe.classifyDialError 对 net.DNSError → DNS_FAILED（避免误报 TLS_HANDSHAKE_FAILED）；UI 表单残留归属 option 与旧文案清理。
 - 未覆盖（显式标注，非缺陷）：重定向 Host/Scheme/Port 改变由 gateway 既有重定向策略测试覆盖；崩溃注入（提交前/后进程退出）不可单测，标 NOT_RUN；真实证书"正确 SAN 通过"依赖系统信任库，由 G5 真实环境验收覆盖。
-- 状态：G4 = PASS（待独立复核确认）。
+- 证据链修正（deleg_b8da3045 CHANGES_REQUIRED）：在 HEAD 0caf9da 重跑 build/vet/test(-count=1)/race(-count=1)/diff-check/gofmt，全部日志首行带 commit=0caf9da；33 个改动 Go 文件（含 8 个 g4_*_test.go）全部纳入 gofmt 范围；g4-final-sha.txt 重锚到 HEAD。
+- 状态：G4 = PASS（证据链已修正，待独立复核确认）。

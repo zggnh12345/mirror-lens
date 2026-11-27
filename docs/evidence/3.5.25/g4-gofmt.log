@@ -1,8 +1,3 @@
-internal/api/hosts.go
-internal/config/config.go
-internal/config/docs.go
-internal/config/hostprobe_config_test.go
-internal/config/migrate_test.go
-internal/probe/tls_error_test.go
-internal/runner/hostprobe_resolver_test.go
+commit=0caf9da177e0cf9988ebcd0f10f43c5fc2847802
+files=33
 __RC__=0
