@@ -1,0 +1,22 @@
+# 3.5.25 commit=0caf9da177e0cf9988ebcd0f10f43c5fc224
+goos: linux
+goarch: amd64
+pkg: github.com/zggnh12345/mirror-lens/internal/store
+cpu: 12th Gen Intel(R) Core(TM) i3-12300T
+BenchmarkRegistryCandidates300-8       	     100	   2010506 ns/op	  470115 B/op	    4853 allocs/op
+BenchmarkRegistryCandidates300-8       	     100	   1940261 ns/op	  470115 B/op	    4853 allocs/op
+BenchmarkRegistryCandidates300-8       	     100	   2039525 ns/op	  470113 B/op	    4853 allocs/op
+BenchmarkRegistryCandidates300-8       	     100	   2019215 ns/op	  470113 B/op	    4853 allocs/op
+BenchmarkRegistryCandidates300-8       	     100	   1940309 ns/op	  470113 B/op	    4853 allocs/op
+BenchmarkDockerCandidates300-8         	     100	   1635815 ns/op	  467697 B/op	    4551 allocs/op
+BenchmarkDockerCandidates300-8         	     100	   1667668 ns/op	  467697 B/op	    4551 allocs/op
+BenchmarkDockerCandidates300-8         	     100	   1766262 ns/op	  467698 B/op	    4551 allocs/op
+BenchmarkDockerCandidates300-8         	     100	   1771692 ns/op	  467697 B/op	    4551 allocs/op
+BenchmarkDockerCandidates300-8         	     100	   1588207 ns/op	  467699 B/op	    4551 allocs/op
+BenchmarkLegacyPerSourceSamples300-8   	     100	  20927692 ns/op	 1157521 B/op	   28080 allocs/op
+BenchmarkLegacyPerSourceSamples300-8   	     100	  20819893 ns/op	 1157521 B/op	   28080 allocs/op
+BenchmarkLegacyPerSourceSamples300-8   	     100	  20883776 ns/op	 1157521 B/op	   28080 allocs/op
+BenchmarkLegacyPerSourceSamples300-8   	     100	  20801166 ns/op	 1157522 B/op	   28080 allocs/op
+BenchmarkLegacyPerSourceSamples300-8   	     100	  20919923 ns/op	 1157520 B/op	   28080 allocs/op
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/store	18.110s

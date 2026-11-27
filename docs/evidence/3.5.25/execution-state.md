@@ -73,3 +73,13 @@
   - 无 NAS / 生产验收权限，无法取得 §9.6 要求的 11 项逐源证据（脱敏 Endpoint、DNS A/AAAA、Guard、拨号 IP、SNI、证书链/Subject/Issuer/SAN/有效期、系统根验证、HTTP 状态与内容、API JSON、UI 技术详情、三轮重复）。
 - 结论：不得宣称已定位 SparkCR/SUNBALCONY 真实根因或完成验收；保持 BLOCKED_REAL_ENV，待用户提供验收实例与脱敏端点后独立补验。
 - 两个 Source 的通过条件（任务书 §9.6）：真实健康时状态恢复正确；源站自身有问题时 UI 报唯一根因；证书错误不与连接错误混淆；不靠跳过验证变绿。
+
+## G6 性能对照
+
+- 状态：**PARTIAL（本地隔离基准 PASS；真实源站对照 BLOCKED_REAL_ENV）**。
+- 已执行（同 Go 1.27.3 / 同硬件 / benchtime=100x / count=5）：
+  - 现成 store benchmark 三项（RegistryCandidates/DockerCandidates/LegacyPerSourceSamples300）：P50 增幅 +3.8% 以内、P95 持平或下降，全 PASS。
+  - 针对性 `BenchmarkAddSourceHostG6`（事务内 vs 事务外读 base_url）：P50 -6.81%、P95 +5.04%，PASS。
+  - 原始数据 g6-raw-*.txt、统计 g6-comparison.md、方法 g6-methodology.md。
+- 未执行（NOT_RUN）：热缓存 P95≤2ms、冷缓存比值≤1.5、并发 Pull 成功率100% —— 这些是 gateway 缓存路径，本次隔离基准未覆盖，不能用 DB benchmark 冒充。
+- 阻塞：真实源站对照同 G5（无端点/无 NAS 权限），BLOCKED_REAL_ENV；不得宣称完整 G6 PASS。

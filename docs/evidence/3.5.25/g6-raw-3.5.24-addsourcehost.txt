@@ -1,0 +1,12 @@
+# 3.5.24
+goos: linux
+goarch: amd64
+pkg: github.com/zggnh12345/mirror-lens/internal/store
+cpu: 12th Gen Intel(R) Core(TM) i3-12300T
+BenchmarkAddSourceHostG6-8   	     100	    754644 ns/op	   10404 B/op	     262 allocs/op
+BenchmarkAddSourceHostG6-8   	     100	    797149 ns/op	   10368 B/op	     262 allocs/op
+BenchmarkAddSourceHostG6-8   	     100	    717822 ns/op	   10446 B/op	     262 allocs/op
+BenchmarkAddSourceHostG6-8   	     100	    705526 ns/op	   10347 B/op	     262 allocs/op
+BenchmarkAddSourceHostG6-8   	     100	    665969 ns/op	   10346 B/op	     262 allocs/op
+PASS
+ok  	github.com/zggnh12345/mirror-lens/internal/store	0.644s
