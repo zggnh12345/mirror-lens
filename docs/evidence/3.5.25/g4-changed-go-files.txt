@@ -17,6 +17,7 @@ internal/probe/error_precedence_test.go
 internal/probe/github.go
 internal/probe/probe.go
 internal/probe/tls_error_test.go
+internal/probe/verdict_test.go
 internal/runner/hostprobe.go
 internal/runner/hostprobe_resolver_test.go
 internal/store/hostcaps.go

@@ -253,21 +253,16 @@
       <h2>添加自定义加速</h2>
       <button class="iconbtn" data-close><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
     </div>
-    <p class="hint" style="margin-top:2px">分别指定协议、连接地址和归属 Registry；保存后会自动识别它支持 Docker Hub 还是 GitHub。</p>
+    <p class="hint" style="margin-top:2px">指定协议与连接地址（域名 / IPv4 / IPv6，可带端口），保存后自动识别实际能力。</p>
     <label for="addScheme">协议</label>
     <select id="addScheme">
       <option value="https" selected>HTTPS（默认，推荐）</option>
-      <option value="http">HTTP（明文，See §2.3 警告）</option>
+      <option value="http">HTTP（明文，不推荐）</option>
     </select>
-    <label for="addHost">连接地址（域名 / IPv4 / IPv6，不含协议和端口）</label>
-    <input type="text" id="addHost" placeholder="docker.1panel.live 或 gh-proxy.com" autocomplete="off" spellcheck="false">
-      <option value="docker.io">docker.io</option>
-      <option value="ghcr.io">ghcr.io</option>
-      <option value="quay.io">quay.io</option>
-      <option value="gcr.io">gcr.io</option>
-    </select>
-    <label for="addName">备注名（可选）</label>
-    <input type="text" id="addName" placeholder="不填就用域名" autocomplete="off">
+    <label for="addHost">连接地址（域名 / IPv4 / IPv6，可带端口，不含协议）</label>
+    <input type="text" id="addHost" placeholder="docker.1panel.live 或 gh-proxy.com:5000 或 [fd00::1]:5000" autocomplete="off" spellcheck="false">
+    <label for="addName">备注名（必填）</label>
+    <input type="text" id="addName" placeholder="例如 我的加速站" autocomplete="off">
     <label for="addGroup">所属分组（可选）</label>
     <select id="addGroup"></select>
     <div class="hint warn" id="addHttpWarn" style="display:none;color:var(--warn,#b26a00);font-weight:600">⚠ 已选 HTTP：认证信息与传输内容将以明文传输，可能被中间人窃取或篡改。生产环境请用 HTTPS。</div>
@@ -286,7 +281,7 @@
     <label>协议</label>
     <select id="editScheme">
       <option value="https">HTTPS（默认，推荐）</option>
-      <option value="http">HTTP（明文，See §2.3 警告）</option>
+      <option value="http">HTTP（明文，不推荐）</option>
     </select>
     <label>连接地址（域名 / IPv4 / IPv6）</label>
     <input type="text" id="editHost" autocomplete="off" spellcheck="false">

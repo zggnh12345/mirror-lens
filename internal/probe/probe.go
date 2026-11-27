@@ -189,6 +189,12 @@ func classifyVerifyError(err error) *TLSError {
 // classifyDialError 区分 DNS/TCP/TLS 握手/超时，避免一律归为证书问题。
 func classifyDialError(err error, stage string) *TLSError {
 	base := TLSError{Stage: stage, TLSApply: true, Retryable: true, Cause: err}
+	// DNS 解析失败单独分类：不要误报成 TLS 握手失败（§15.5 DNS NXDOMAIN）。
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		base.Code, base.Message = "DNS_FAILED", "域名解析失败"
+		return &base
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		base.Code, base.Message = "TIMEOUT", "连接或握手超时"

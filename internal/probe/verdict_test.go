@@ -19,6 +19,7 @@ func TestTransientFailuresAreNotConclusions(t *testing.T) {
 	}{
 		{"404 明确没有", http.StatusNotFound, "not found", nil, VerdictNo},
 		{"410 明确下线", http.StatusGone, "gone", nil, VerdictNo},
+		{"403 禁止访问", http.StatusForbidden, "forbidden", nil, VerdictUnknown},
 		{"429 限流", http.StatusTooManyRequests, "slow down", nil, VerdictUnknown},
 		{"500 上游坏了", http.StatusInternalServerError, "boom", nil, VerdictUnknown},
 		{"502 网关坏了", http.StatusBadGateway, "bad gateway", nil, VerdictUnknown},
