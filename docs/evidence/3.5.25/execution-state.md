@@ -41,3 +41,9 @@
 - 全部已修复，修复提交见 git log；集成 HEAD 待复核后推进。
 - 修复后门禁：go build/vet/test（35 包 OK，0 FAIL）、race（__RC__=0，0 DATA RACE）全绿。
 - 状态：5 项 GREEN_RETESTED，待原 Reviewer 对修复 SHA 复审（REVIEWED/CLOSED）。
+
+## G3 完成
+
+- deleg_bcd6e1aa（CHANGES_REQUIRED，5 Finding）→ deleg_689af327（4 PASS + 1 漏改）→ deleg_dff8c7a9（PASS，5 项全 CLOSED）。
+- 最终代码 SHA：`7f169ebb5152dce3d67b9f44b6c8b2aec8dff007`。
+- G3 = PASS。下一阶段 G4。
