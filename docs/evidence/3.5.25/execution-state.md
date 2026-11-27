@@ -99,7 +99,16 @@
 | G2 实施 | PASS |
 | G3 独立复核 | PASS（5 Finding 全 CLOSED） |
 | G4 全量测试 | PASS（证据链两轮复核关闭） |
-| G5 真实环境验收 | BLOCKED_REAL_ENV |
+| G5 真实环境验收 | PASS（真实根因定位完成；详见 g5-real-acceptance.md） |
 | G6 性能对照 | PARTIAL（本地基准 PASS / 真实对照 BLOCKED） |
 | G7 文档证据归档 | PASS |
 | G8 清理收尾 | PASS |
+
+## G5 真实验收补验（2026-11-27，用户授权后）
+
+- 从 3.5.25-fix HEAD a30d289 现场构建验收镜像，在 traefik 网络起两个隔离容器，只有一个变量=DNS。
+- 只读导出生产 sources 表两个 Endpoint（SparkCR=https://docker.sparkcr.cn, SUNBALCONY=https://dockerproxy.cool），副本查完即删。
+- A/B 对照结论：SUNBALCONY dead 的根因=fakeip 前门(10.1.1.3)返回保留段 198.18.0.43/fc00::2d 被 safehttp 拨号层 SSRF 防护拒绝；换真实 IP DNS(10.1.1.4)后 usable，三轮稳定。SparkCR 国内域名不受影响，degraded 来自源站 CDN/404 非 TLS。
+- 3.5.25 结构化 TLS 错误链在真实环境生效：错误码 CONNECT_FAILED/TIMEOUT/stage=tls_dial，不再混淆证书错误。
+- 全程未关闭 TLS 验证、未放宽安全策略、未改生产；两验收容器已删除。
+- 证据：g5-real-acceptance.md / g5-two-sources-full.json / g5-fakeip-control-full.json / g5-three-rounds.json / g5-api-3.5.25-sources.json。

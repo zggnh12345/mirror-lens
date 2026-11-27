@@ -1,0 +1,7669 @@
+{
+  "busy": true,
+  "recent_n": 24,
+  "scores": {
+    "1": 0.6708731845554374,
+    "10": 0.41666666666666663,
+    "11": 0.41666666666666663,
+    "12": 0.41666666666666663,
+    "13": 0.41666666666666663,
+    "14": 0.41666666666666663,
+    "15": 0.41666666666666663,
+    "16": 0.5900856389986825,
+    "17": 0.6156897456071335,
+    "18": 0.5420854271356783,
+    "19": 0.41666666666666663,
+    "2": 0.6185897435897436,
+    "20": 0.41666666666666663,
+    "21": 0.41666666666666663,
+    "22": 0.41666666666666663,
+    "23": 0.41666666666666663,
+    "24": 0.41666666666666663,
+    "25": 0.41666666666666663,
+    "26": 0.5627719756309835,
+    "27": 0.5579101874781548,
+    "28": 0.5202575036744158,
+    "3": 0.5397665580890336,
+    "4": 0.4966328354398059,
+    "5": 0.41666666666666663,
+    "6": 0.41666666666666663,
+    "7": 0.41666666666666663,
+    "8": 0.41666666666666663,
+    "9": 0.41666666666666663
+  },
+  "scores_kind": {
+    "1": {
+      "docker": 0.6708731845554374
+    },
+    "10": {
+      "docker": 0.41666666666666663
+    },
+    "11": {
+      "docker": 0.41666666666666663
+    },
+    "12": {
+      "docker": 0.41666666666666663
+    },
+    "13": {
+      "docker": 0.41666666666666663
+    },
+    "14": {
+      "docker": 0.41666666666666663
+    },
+    "15": {
+      "docker": 0.41666666666666663
+    },
+    "16": {
+      "github": 0.5900856389986825
+    },
+    "17": {
+      "github": 0.6156897456071335
+    },
+    "18": {
+      "github": 0.5420854271356783
+    },
+    "19": {
+      "github": 0.41666666666666663
+    },
+    "2": {
+      "docker": 0.6185897435897436
+    },
+    "20": {
+      "github": 0.41666666666666663
+    },
+    "21": {
+      "github": 0.41666666666666663
+    },
+    "22": {
+      "github": 0.41666666666666663
+    },
+    "23": {
+      "github": 0.41666666666666663
+    },
+    "24": {
+      "github": 0.41666666666666663
+    },
+    "25": {
+      "ghcr": 0.41666666666666663
+    },
+    "26": {
+      "ghcr": 0.5627719756309835
+    },
+    "27": {
+      "docker": 0.5579845540607873,
+      "ghcr": 0.5578358208955223
+    },
+    "28": {
+      "docker": 0.49148433615116854,
+      "ghcr": 0.5176277300128471,
+      "github": 0.5516604448592316
+    },
+    "3": {
+      "docker": 0.5397665580890336
+    },
+    "4": {
+      "docker": 0.4966328354398059
+    },
+    "5": {
+      "docker": 0.41666666666666663
+    },
+    "6": {
+      "docker": 0.41666666666666663
+    },
+    "7": {
+      "docker": 0.41666666666666663
+    },
+    "8": {
+      "docker": 0.41666666666666663
+    },
+    "9": {
+      "docker": 0.41666666666666663
+    }
+  },
+  "sources": [
+    {
+      "id": 1,
+      "base_url": "https://docker.m.daocloud.io",
+      "name": "docker.m.daocloud.io",
+      "site_name": "DaoCloud",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，标准 /v2/",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 1,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 1,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 7,
+          "source_id": 1,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 141,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 17,
+          "http_code": 401,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 141
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "base_url": "https://docker.1ms.run",
+      "name": "docker.1ms.run",
+      "site_name": "毫秒镜像",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，token 在 /openapi/v1/auth/token",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 2,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 2,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 8,
+          "source_id": 2,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 448,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 60,
+          "http_code": 401,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 448
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "base_url": "https://ghfast.top",
+      "name": "ghfast.top",
+      "site_name": "GhFast",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测稳定",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 17,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 17,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 23,
+          "source_id": 17,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 471,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": 1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 64,
+          "http_code": 200,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 2,
+          "ok7": 1,
+          "digest7": 1,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 471
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "base_url": "https://gh-proxy.com",
+      "name": "gh-proxy.com",
+      "site_name": "gh-proxy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测最快",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 16,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 16,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 22,
+          "source_id": 16,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 718,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": 1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 85,
+          "http_code": 200,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 2,
+          "ok7": 1,
+          "digest7": 1,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 718
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "base_url": "https://ghcr.nju.edu.cn",
+      "name": "ghcr.nju.edu.cn",
+      "site_name": "未知",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，2.9s",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 0,
+      "github_cap": -1,
+      "ghcr_cap": 1,
+      "ghcr_prefix": false,
+      "repo_host": "ghcr.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 26,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Unsupported",
+          "effective_status": "Unsupported",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 26,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 33,
+          "source_id": 26,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 106,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 63,
+          "http_code": 404,
+          "error": "manifest 获取失败 (404) "
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "ghcr",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 1115
+        },
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 106
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "base_url": "https://docker.sparkcr.cn:443",
+      "name": "docker.sparkcr.cn",
+      "site_name": "SparkCR",
+      "origin": "manual",
+      "enabled": true,
+      "status": "usable",
+      "note": "",
+      "status_at": 1795759994,
+      "status_reason": "",
+      "probe_at": 1795759994,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": 0,
+      "ghcr_cap": 1,
+      "ghcr_prefix": true,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 27,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 27,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": true,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759974,
+      "last": {
+        "docker": {
+          "id": 1,
+          "source_id": 27,
+          "kind": "docker",
+          "ts": 1795759994,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 1207,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 79,
+          "http_code": 401,
+          "error": ""
+        },
+        "github": {
+          "id": 3,
+          "source_id": 27,
+          "kind": "github",
+          "ts": 1795759994,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 118,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 79,
+          "http_code": 404,
+          "error": "raw 文件返回 404"
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795759994,
+          "ok": false,
+          "latency_ms": 118
+        },
+        {
+          "kind": "ghcr",
+          "ts": 1795759994,
+          "ok": true,
+          "latency_ms": 1210
+        },
+        {
+          "kind": "docker",
+          "ts": 1795759994,
+          "ok": true,
+          "latency_ms": 1207
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "base_url": "https://ghproxy.net",
+      "name": "ghproxy.net",
+      "site_name": "GhProxy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，常慢一个量级",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 18,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 18,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 24,
+          "source_id": 18,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 1588,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": 1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 28,
+          "http_code": 200,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 2,
+          "ok7": 1,
+          "digest7": 1,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 1588
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "base_url": "https://dockerproxy.net",
+      "name": "dockerproxy.net",
+      "site_name": "DockerProxy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，无 challenge 直接 200",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 3,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 3,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 9,
+          "source_id": 3,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 1656,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 64,
+          "http_code": 200,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 1656
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "base_url": "https://dockerproxy.cool:443",
+      "name": "dockerproxy.cool",
+      "site_name": "SUNBALCONY",
+      "origin": "manual",
+      "enabled": true,
+      "status": "usable",
+      "note": "",
+      "status_at": 1795759999,
+      "status_reason": "",
+      "probe_at": 1795759999,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": 1,
+      "ghcr_cap": 1,
+      "ghcr_prefix": true,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 28,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 28,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": true,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759974,
+      "last": {
+        "docker": {
+          "id": 4,
+          "source_id": 28,
+          "kind": "docker",
+          "ts": 1795759999,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 5233,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 16,
+          "http_code": 200,
+          "error": ""
+        },
+        "github": {
+          "id": 6,
+          "source_id": 28,
+          "kind": "github",
+          "ts": 1795759999,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 1343,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": 1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 16,
+          "http_code": 200,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": 1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 2,
+          "ok7": 1,
+          "digest7": 1,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795759999,
+          "ok": true,
+          "latency_ms": 1343
+        },
+        {
+          "kind": "ghcr",
+          "ts": 1795759999,
+          "ok": true,
+          "latency_ms": 2573
+        },
+        {
+          "kind": "docker",
+          "ts": 1795759999,
+          "ok": true,
+          "latency_ms": 5233
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "base_url": "https://docker.xuanyuan.me",
+      "name": "docker.xuanyuan.me",
+      "site_name": "轩辕镜像",
+      "origin": "seed",
+      "enabled": true,
+      "status": "usable",
+      "note": "实测可用，标准 /v2/",
+      "status_at": 1795760015,
+      "status_reason": "",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 4,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 4,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 10,
+          "source_id": 4,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": true,
+          "latency_ms": 4422,
+          "speed_kbps": 0,
+          "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 63,
+          "http_code": 401,
+          "error": ""
+        }
+      },
+      "uptime": {
+        "docker": 1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 1,
+          "ok7": 1,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": true,
+          "latency_ms": 4422
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "base_url": "https://docker.1panel.dev",
+      "name": "docker.1panel.dev",
+      "site_name": "1Panel",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "连接被重置，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 6,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 6,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 12,
+          "source_id": 6,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 29,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TLS_HANDSHAKE_FAILED\",\"detail\":\"\",\"message\":\"TLS 握手失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 29
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "base_url": "https://docker.1panel.top",
+      "name": "docker.1panel.top",
+      "site_name": "1Panel",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "高负载常 429，等负载降下来",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 7,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 7,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 13,
+          "source_id": 7,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 2105,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 87,
+          "http_code": 429,
+          "error": "/v2/ 返回 429"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 2105
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "base_url": "https://docker.1panel.work",
+      "name": "docker.1panel.work",
+      "site_name": "1Panel",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 11,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 11,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 17,
+          "source_id": 11,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "base_url": "https://docker.anye.icu",
+      "name": "docker.anye.icu",
+      "site_name": "AnyE",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 12,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 12,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 18,
+          "source_id": 12,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "base_url": "https://docker.fxxk.dedyn.io",
+      "name": "docker.fxxk.dedyn.io",
+      "site_name": "FXXK",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "429 限流，等窗口",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 8,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 8,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 14,
+          "source_id": 8,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10002,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10002
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "base_url": "https://docker.hpcloud.cloud",
+      "name": "docker.hpcloud.cloud",
+      "site_name": "HPCloud",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 13,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 13,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 19,
+          "source_id": 13,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "base_url": "https://docker.rainbond.cc",
+      "name": "docker.rainbond.cc",
+      "site_name": "Rainbond",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 14,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 14,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 20,
+          "source_id": 14,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "base_url": "https://docker.unsee.tech",
+      "name": "docker.unsee.tech",
+      "site_name": "Unsee",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 15,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 15,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 21,
+          "source_id": 15,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 21,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"CONNECT_FAILED\",\"detail\":\"\",\"message\":\"TCP 连接失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 21
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "base_url": "https://dockerproxy.cn",
+      "name": "dockerproxy.cn",
+      "site_name": "DockerProxy CN",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "连接超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 9,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 9,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 15,
+          "source_id": 9,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10002,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10002
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "base_url": "https://dockerpull.org",
+      "name": "dockerpull.org",
+      "site_name": "DockerPull",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "响应超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 10,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 10,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 16,
+          "source_id": 10,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10001,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10001
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "base_url": "https://gh.jasonzeng.dev",
+      "name": "gh.jasonzeng.dev",
+      "site_name": "JasonZeng",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 23,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 23,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 29,
+          "source_id": 23,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "base_url": "https://gh.llkk.cc",
+      "name": "gh.llkk.cc",
+      "site_name": "LLKK",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "响应超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 19,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 19,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 25,
+          "source_id": 19,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 213,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 213
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "base_url": "https://gh.xxooo.cf",
+      "name": "gh.xxooo.cf",
+      "site_name": "XXOOO",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "待验证",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 24,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 24,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 30,
+          "source_id": 24,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"DNS_FAILED\",\"detail\":\"\",\"message\":\"域名解析失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "base_url": "https://ghcr.dockerproxy.com",
+      "name": "ghcr.dockerproxy.com",
+      "site_name": "未知",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "实测可用，2.2s",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 0,
+      "github_cap": -1,
+      "ghcr_cap": 1,
+      "ghcr_prefix": false,
+      "repo_host": "ghcr.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 25,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Unsupported",
+          "effective_status": "Unsupported",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 25,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 31,
+          "source_id": 25,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 212,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TLS_HANDSHAKE_FAILED\",\"detail\":\"\",\"message\":\"TLS 握手失败\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "ghcr",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 199
+        },
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 212
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "base_url": "https://ghproxy.com",
+      "name": "ghproxy.com",
+      "site_name": "GhProxy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "连接超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 20,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 20,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 26,
+          "source_id": 20,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10001,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10001
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "base_url": "https://github.moeyy.xyz",
+      "name": "github.moeyy.xyz",
+      "site_name": "Moeyy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "连接超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 22,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 22,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 28,
+          "source_id": 22,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10000,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10000
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "base_url": "https://hub1.nat.tf",
+      "name": "hub1.nat.tf",
+      "site_name": "NAT.TF",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "实测可用",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": 1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "docker.io",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 5,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Supported",
+          "effective_status": "Supported",
+          "registry_path_mode": "native",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 5,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "identified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "docker": {
+          "id": 11,
+          "source_id": 5,
+          "kind": "docker",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 1314,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": true,
+          "cert_days": 78,
+          "http_code": 502,
+          "error": "/v2/ 返回 502"
+        }
+      },
+      "uptime": {
+        "docker": 0,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "docker",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 1314
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "base_url": "https://mirror.ghproxy.com",
+      "name": "mirror.ghproxy.com",
+      "site_name": "GhProxy",
+      "origin": "seed",
+      "enabled": true,
+      "status": "degraded",
+      "note": "连接超时，等恢复",
+      "status_at": 1795760015,
+      "status_reason": "探测失败，未达判死阈值",
+      "probe_at": 1795760015,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": 1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 21,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 21,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795759972,
+      "last": {
+        "github": {
+          "id": 27,
+          "source_id": 21,
+          "kind": "github",
+          "ts": 1795760015,
+          "tier": 2,
+          "ok": false,
+          "latency_ms": 10000,
+          "speed_kbps": 0,
+          "digest": "",
+          "digest_ok": -1,
+          "blob_ok": -1,
+          "ttfb_ms": 0,
+          "tls_ok": false,
+          "cert_days": 0,
+          "http_code": 0,
+          "error": "{\"cause_type\":\"*net.OpError\",\"code\":\"TIMEOUT\",\"detail\":\"\",\"message\":\"连接或握手超时\",\"retryable\":true,\"stage\":\"tls_dial\",\"tls_applicable\":true}"
+        }
+      },
+      "uptime": {
+        "docker": -1,
+        "github": 0
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      },
+      "recent": [
+        {
+          "kind": "github",
+          "ts": 1795760015,
+          "ok": false,
+          "latency_ms": 10000
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "base_url": "https://atomhub.openatom.cn",
+      "name": "atomhub.openatom.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 29,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 29,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 30,
+      "base_url": "https://dhub.kubesre.xyz",
+      "name": "dhub.kubesre.xyz",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · kubesre/docker-registry-mirrors",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 30,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 30,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 31,
+      "base_url": "https://docker-0.unsee.tech",
+      "name": "docker-0.unsee.tech",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 31,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 31,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 32,
+      "base_url": "https://docker-registry.nmqu.com",
+      "name": "docker-registry.nmqu.com",
+      "site_name": "奶昔论坛",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 32,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 32,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 33,
+      "base_url": "https://docker.1panel.live",
+      "name": "docker.1panel.live",
+      "site_name": "1Panel",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 33,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 33,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 34,
+      "base_url": "https://docker.367231.xyz",
+      "name": "docker.367231.xyz",
+      "site_name": "1Panel 三方镜像源",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · AnyE 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 34,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 34,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 35,
+      "base_url": "https://docker.5z5f.com",
+      "name": "docker.5z5f.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 35,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 35,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 36,
+      "base_url": "https://docker.aityp.com",
+      "name": "docker.aityp.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 36,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 36,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 37,
+      "base_url": "https://docker.amingg.com",
+      "name": "docker.amingg.com",
+      "site_name": "爱铭网络 2",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · AnyE 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 37,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 37,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 38,
+      "base_url": "https://docker.anyhub.us.kg",
+      "name": "docker.anyhub.us.kg",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 38,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 38,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 39,
+      "base_url": "https://docker.apiba.cn",
+      "name": "docker.apiba.cn",
+      "site_name": "apiba",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 39,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 39,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 40,
+      "base_url": "https://docker.awsl9527.cn",
+      "name": "docker.awsl9527.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 40,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 40,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 41,
+      "base_url": "https://docker.bowen.games",
+      "name": "docker.bowen.games",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 41,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 41,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 42,
+      "base_url": "https://docker.chenby.cn",
+      "name": "docker.chenby.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 42,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 42,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 43,
+      "base_url": "https://docker.ckyl.me",
+      "name": "docker.ckyl.me",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 43,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 43,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 44,
+      "base_url": "https://docker.cloudlayer.icu",
+      "name": "docker.cloudlayer.icu",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 44,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 44,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 45,
+      "base_url": "https://docker.fnnas.com",
+      "name": "docker.fnnas.com",
+      "site_name": "飞牛NAS",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 45,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 45,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 46,
+      "base_url": "https://docker.foreverlink.love",
+      "name": "docker.foreverlink.love",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 46,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 46,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 47,
+      "base_url": "https://docker.hlmirror.com",
+      "name": "docker.hlmirror.com",
+      "site_name": "厚浪云",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 47,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 47,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 48,
+      "base_url": "https://docker.hlyun.org",
+      "name": "docker.hlyun.org",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 48,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 48,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 49,
+      "base_url": "https://docker.jiaxin.site",
+      "name": "docker.jiaxin.site",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 49,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 49,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 50,
+      "base_url": "https://docker.kubesre.xyz",
+      "name": "docker.kubesre.xyz",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · kubesre/docker-registry-mirrors",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 50,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 50,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 51,
+      "base_url": "https://docker.lefu.men",
+      "name": "docker.lefu.men",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 51,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 51,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 52,
+      "base_url": "https://docker.linkedbus.com",
+      "name": "docker.linkedbus.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 52,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 52,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 53,
+      "base_url": "https://docker.m.ixdev.cn",
+      "name": "docker.m.ixdev.cn",
+      "site_name": "CNIX Internal",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 53,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 53,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 54,
+      "base_url": "https://docker.mhtsec.com",
+      "name": "docker.mhtsec.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 54,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 54,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 55,
+      "base_url": "https://docker.mrxn.net",
+      "name": "docker.mrxn.net",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 55,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 55,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 56,
+      "base_url": "https://docker.mybacc.com",
+      "name": "docker.mybacc.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 56,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 56,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 57,
+      "base_url": "https://docker.shaunyang.site",
+      "name": "docker.shaunyang.site",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 57,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 57,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 58,
+      "base_url": "https://docker.wanpeng.top",
+      "name": "docker.wanpeng.top",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 58,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 58,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 59,
+      "base_url": "https://docker.wget.at",
+      "name": "docker.wget.at",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 59,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 59,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 60,
+      "base_url": "https://docker.xiaogenban1993.com",
+      "name": "docker.xiaogenban1993.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 60,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 60,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 61,
+      "base_url": "https://docker.xn--6oq72ry9d5zx.cn",
+      "name": "docker.xn--6oq72ry9d5zx.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 61,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 61,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 62,
+      "base_url": "https://docker.xpg666.xyz",
+      "name": "docker.xpg666.xyz",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 62,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 62,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 63,
+      "base_url": "https://docker.xuanyuan.dev",
+      "name": "docker.xuanyuan.dev",
+      "site_name": "轩辕镜像（专业版2）",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 63,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 63,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 64,
+      "base_url": "https://docker.xuanyuan.run",
+      "name": "docker.xuanyuan.run",
+      "site_name": "轩辕镜像",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 64,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 64,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 65,
+      "base_url": "https://docker.yomansunter.com",
+      "name": "docker.yomansunter.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 65,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 65,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 66,
+      "base_url": "https://docker.zhai.cm",
+      "name": "docker.zhai.cm",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 66,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 66,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 67,
+      "base_url": "https://dockerhub.icu",
+      "name": "dockerhub.icu",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 67,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 67,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 68,
+      "base_url": "https://dockerhub.jobcher.com",
+      "name": "dockerhub.jobcher.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 68,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 68,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 69,
+      "base_url": "https://dockerhub.websoft9.com",
+      "name": "dockerhub.websoft9.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 69,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 69,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 70,
+      "base_url": "https://dockerimage.gbfeng.com",
+      "name": "dockerimage.gbfeng.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · kubesre/docker-registry-mirrors",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 70,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 70,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 71,
+      "base_url": "https://dockerproxy.com",
+      "name": "dockerproxy.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · eryajf/Thanks-Mirror",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 71,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 71,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 72,
+      "base_url": "https://dockerproxy.link",
+      "name": "dockerproxy.link",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 72,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 72,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 73,
+      "base_url": "https://free.hubfast.cn",
+      "name": "free.hubfast.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 73,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 73,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 74,
+      "base_url": "https://gh.api.99988866.xyz",
+      "name": "gh.api.99988866.xyz",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · hunshcn/gh-proxy",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 74,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 74,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 75,
+      "base_url": "https://ghproxy.link",
+      "name": "ghproxy.link",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · eryajf/Thanks-Mirror",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 75,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 75,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 76,
+      "base_url": "https://github.hlyun.org",
+      "name": "github.hlyun.org",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 76,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 76,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 77,
+      "base_url": "https://hub.1panel.dev",
+      "name": "hub.1panel.dev",
+      "site_name": "1Panel三方镜像源2",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 77,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 77,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 78,
+      "base_url": "https://hub.amingg.com",
+      "name": "hub.amingg.com",
+      "site_name": "爱铭网络 1",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · AnyE 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 78,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 78,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 79,
+      "base_url": "https://hub.geekery.cn",
+      "name": "hub.geekery.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 79,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 79,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 80,
+      "base_url": "https://hub.gog.email",
+      "name": "hub.gog.email",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 80,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 80,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 81,
+      "base_url": "https://hub.rat.dev",
+      "name": "hub.rat.dev",
+      "site_name": "耗子面板",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 81,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 81,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 82,
+      "base_url": "https://hub.uuuadc.top",
+      "name": "hub.uuuadc.top",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 82,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 82,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 83,
+      "base_url": "https://hub4.nat.tf",
+      "name": "hub4.nat.tf",
+      "site_name": "棉花云 4",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 83,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 83,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 84,
+      "base_url": "https://hubfast.cn",
+      "name": "hubfast.cn",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 84,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 84,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 85,
+      "base_url": "https://image.jianmuhub.com",
+      "name": "image.jianmuhub.com",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 85,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 85,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 86,
+      "base_url": "https://mirror.ccs.tencentyun.com",
+      "name": "mirror.ccs.tencentyun.com",
+      "site_name": "腾讯云镜像仓库",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 86,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 86,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 87,
+      "base_url": "https://proxy.vvvv.ee",
+      "name": "proxy.vvvv.ee",
+      "site_name": "mxjia",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · 1Panel 状态页（在线）",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 87,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 87,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    },
+    {
+      "id": 88,
+      "base_url": "https://registry.cyou",
+      "name": "registry.cyou",
+      "site_name": "未知",
+      "origin": "discovered",
+      "enabled": true,
+      "status": "pending",
+      "note": "自动发现 · dongyubin/DockerHub",
+      "status_at": 1795760019,
+      "status_reason": "",
+      "probe_at": 0,
+      "trusted": false,
+      "docker_cap": -1,
+      "github_cap": -1,
+      "ghcr_cap": -1,
+      "ghcr_prefix": false,
+      "repo_host": "",
+      "registry_cap": -1,
+      "registry_path_mode": "",
+      "registry_probe_at": 0,
+      "registry_probe_error": "",
+      "hosts": [
+        {
+          "source_id": 88,
+          "host": "docker.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        },
+        {
+          "source_id": 88,
+          "host": "ghcr.io",
+          "enabled": true,
+          "last_verdict": "Inconclusive",
+          "effective_status": "Unknown",
+          "registry_path_mode": "",
+          "registry_prefix": false,
+          "policy_gen": 1
+        }
+      ],
+      "registry_identity_state": "unclassified",
+      "git_cap": 0,
+      "preferred": false,
+      "group_id": 0,
+      "created_at": 1795760019,
+      "uptime": {
+        "docker": -1,
+        "github": -1
+      },
+      "p95_ms": {
+        "docker": 0,
+        "github": 0
+      },
+      "rate429": {
+        "docker": null,
+        "github": null
+      },
+      "trust": {
+        "docker": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        },
+        "github": {
+          "level": 0,
+          "ok7": 0,
+          "digest7": 0,
+          "bad7": 0
+        }
+      }
+    }
+  ]
+}

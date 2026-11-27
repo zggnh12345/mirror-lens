@@ -1,0 +1,306 @@
+[
+  {
+    "id": 27,
+    "base_url": "https://docker.sparkcr.cn:443",
+    "name": "docker.sparkcr.cn",
+    "site_name": "SparkCR",
+    "origin": "manual",
+    "enabled": true,
+    "status": "degraded",
+    "note": "",
+    "status_at": 1795760134,
+    "status_reason": "探测失败，未达判死阈值",
+    "probe_at": 1795760134,
+    "trusted": false,
+    "docker_cap": 1,
+    "github_cap": 0,
+    "ghcr_cap": 1,
+    "ghcr_prefix": true,
+    "repo_host": "docker.io",
+    "registry_cap": -1,
+    "registry_path_mode": "",
+    "registry_probe_at": 0,
+    "registry_probe_error": "",
+    "hosts": [
+      {
+        "source_id": 27,
+        "host": "docker.io",
+        "enabled": true,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": false,
+        "policy_gen": 1
+      },
+      {
+        "source_id": 27,
+        "host": "ghcr.io",
+        "enabled": true,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": true,
+        "policy_gen": 1
+      }
+    ],
+    "registry_identity_state": "identified",
+    "git_cap": 0,
+    "preferred": false,
+    "group_id": 0,
+    "created_at": 1795759974,
+    "last": {
+      "docker": {
+        "id": 111,
+        "source_id": 27,
+        "kind": "docker",
+        "ts": 1795760134,
+        "tier": 3,
+        "ok": false,
+        "latency_ms": 360,
+        "speed_kbps": 0,
+        "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+        "digest_ok": -1,
+        "blob_ok": -1,
+        "ttfb_ms": 0,
+        "tls_ok": true,
+        "cert_days": 79,
+        "http_code": 401,
+        "error": "blob 下载失败: Get \"https://cache-esa.cr.tongritech.com/sparkcr-cache/blobs/ghcr/aaronps/modelscope-download/sha256%3A881fc932939efef04ca120ad44bbd2c0917851eb247aa4995428afb1e"
+      },
+      "github": {
+        "id": 113,
+        "source_id": 27,
+        "kind": "github",
+        "ts": 1795760134,
+        "tier": 3,
+        "ok": false,
+        "latency_ms": 123,
+        "speed_kbps": 0,
+        "digest": "",
+        "digest_ok": -1,
+        "blob_ok": -1,
+        "ttfb_ms": 0,
+        "tls_ok": true,
+        "cert_days": 79,
+        "http_code": 404,
+        "error": "raw 文件返回 404"
+      }
+    },
+    "uptime": {
+      "docker": 0.5,
+      "github": 0
+    },
+    "p95_ms": {
+      "docker": 0,
+      "github": 0
+    },
+    "rate429": {
+      "docker": null,
+      "github": null
+    },
+    "trust": {
+      "docker": {
+        "level": 1,
+        "ok7": 1,
+        "digest7": 0,
+        "bad7": 0
+      },
+      "github": {
+        "level": 0,
+        "ok7": 0,
+        "digest7": 0,
+        "bad7": 0
+      }
+    },
+    "recent": [
+      {
+        "kind": "github",
+        "ts": 1795759994,
+        "ok": false,
+        "latency_ms": 118
+      },
+      {
+        "kind": "ghcr",
+        "ts": 1795759994,
+        "ok": true,
+        "latency_ms": 1210
+      },
+      {
+        "kind": "docker",
+        "ts": 1795759994,
+        "ok": true,
+        "latency_ms": 1207
+      },
+      {
+        "kind": "github",
+        "ts": 1795760134,
+        "ok": false,
+        "latency_ms": 123
+      },
+      {
+        "kind": "ghcr",
+        "ts": 1795760134,
+        "ok": false,
+        "latency_ms": 355
+      },
+      {
+        "kind": "docker",
+        "ts": 1795760134,
+        "ok": false,
+        "latency_ms": 360
+      }
+    ]
+  },
+  {
+    "id": 28,
+    "base_url": "https://dockerproxy.cool:443",
+    "name": "dockerproxy.cool",
+    "site_name": "SUNBALCONY",
+    "origin": "manual",
+    "enabled": true,
+    "status": "usable",
+    "note": "",
+    "status_at": 1795759999,
+    "status_reason": "",
+    "probe_at": 1795760134,
+    "trusted": false,
+    "docker_cap": 1,
+    "github_cap": 1,
+    "ghcr_cap": 1,
+    "ghcr_prefix": true,
+    "repo_host": "docker.io",
+    "registry_cap": -1,
+    "registry_path_mode": "",
+    "registry_probe_at": 0,
+    "registry_probe_error": "",
+    "hosts": [
+      {
+        "source_id": 28,
+        "host": "docker.io",
+        "enabled": true,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": false,
+        "policy_gen": 1
+      },
+      {
+        "source_id": 28,
+        "host": "ghcr.io",
+        "enabled": true,
+        "last_verdict": "Supported",
+        "effective_status": "Supported",
+        "registry_path_mode": "native",
+        "registry_prefix": true,
+        "policy_gen": 1
+      }
+    ],
+    "registry_identity_state": "identified",
+    "git_cap": 0,
+    "preferred": false,
+    "group_id": 0,
+    "created_at": 1795759974,
+    "last": {
+      "docker": {
+        "id": 114,
+        "source_id": 28,
+        "kind": "docker",
+        "ts": 1795760134,
+        "tier": 3,
+        "ok": true,
+        "latency_ms": 3005,
+        "speed_kbps": 953,
+        "digest": "sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf",
+        "digest_ok": 1,
+        "blob_ok": 1,
+        "ttfb_ms": 644,
+        "tls_ok": true,
+        "cert_days": 16,
+        "http_code": 200,
+        "error": ""
+      },
+      "github": {
+        "id": 116,
+        "source_id": 28,
+        "kind": "github",
+        "ts": 1795760134,
+        "tier": 3,
+        "ok": true,
+        "latency_ms": 1009,
+        "speed_kbps": 462,
+        "digest": "",
+        "digest_ok": 1,
+        "blob_ok": -1,
+        "ttfb_ms": 1059,
+        "tls_ok": true,
+        "cert_days": 16,
+        "http_code": 200,
+        "error": ""
+      }
+    },
+    "uptime": {
+      "docker": 1,
+      "github": 1
+    },
+    "p95_ms": {
+      "docker": 0,
+      "github": 0
+    },
+    "rate429": {
+      "docker": null,
+      "github": null
+    },
+    "trust": {
+      "docker": {
+        "level": 2,
+        "ok7": 2,
+        "digest7": 1,
+        "bad7": 0
+      },
+      "github": {
+        "level": 2,
+        "ok7": 2,
+        "digest7": 2,
+        "bad7": 0
+      }
+    },
+    "recent": [
+      {
+        "kind": "github",
+        "ts": 1795759999,
+        "ok": true,
+        "latency_ms": 1343
+      },
+      {
+        "kind": "ghcr",
+        "ts": 1795759999,
+        "ok": true,
+        "latency_ms": 2573
+      },
+      {
+        "kind": "docker",
+        "ts": 1795759999,
+        "ok": true,
+        "latency_ms": 5233
+      },
+      {
+        "kind": "github",
+        "ts": 1795760134,
+        "ok": true,
+        "latency_ms": 1009
+      },
+      {
+        "kind": "ghcr",
+        "ts": 1795760134,
+        "ok": true,
+        "latency_ms": 3132
+      },
+      {
+        "kind": "docker",
+        "ts": 1795760134,
+        "ok": true,
+        "latency_ms": 3005
+      }
+    ]
+  }
+]
