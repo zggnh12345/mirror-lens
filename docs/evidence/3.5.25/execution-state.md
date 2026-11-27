@@ -34,3 +34,10 @@
 - UI 检查：表单新契约生效、旧端口/归属控件已移除、错误码分类已加入。
 - 独立复核：deleg_bcd6e1aa 已派发，结果待回收。
 - 当前状态：G2 PASS（待复核）；G3–G8 未开始。
+
+## Finding 闭环（2026-11-27）
+
+- 独立复核 deleg_bcd6e1aa 判定 CHANGES_REQUIRED，5 项 Finding（F-REV-01..05）。
+- 全部已修复，修复提交见 git log；集成 HEAD 待复核后推进。
+- 修复后门禁：go build/vet/test（35 包 OK，0 FAIL）、race（__RC__=0，0 DATA RACE）全绿。
+- 状态：5 项 GREEN_RETESTED，待原 Reviewer 对修复 SHA 复审（REVIEWED/CLOSED）。

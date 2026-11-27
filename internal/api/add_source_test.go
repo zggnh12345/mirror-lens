@@ -117,3 +117,29 @@ func TestUIFormNoLegacyControls(t *testing.T) {
 		t.Fatal("新增表单仍含旧端口/归属控件")
 	}
 }
+
+// F1 RED：IPv6 字面量带/不带端口都必须正确解析；name 必填。
+func TestParseEndpointAddressIPv6(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"[fd00::1]", "https://[fd00::1]:443"},
+		{"[fd00::1]:5000", "https://[fd00::1]:5000"},
+		{"mirror.example.org", "https://mirror.example.org:443"},
+		{"mirror.example.org:5000", "https://mirror.example.org:5000"},
+	} {
+		ep, err := parseEndpointAddress("https", tc.in)
+		if err != nil {
+			t.Fatalf("parseEndpointAddress(%q) 失败: %v", tc.in, err)
+		}
+		if ep.Origin() != tc.want {
+			t.Fatalf("parseEndpointAddress(%q)=%q，期望 %q", tc.in, ep.Origin(), tc.want)
+		}
+	}
+}
+
+func TestAddSourceNameRequired(t *testing.T) {
+	_, h := newTestServer(t)
+	ck := setupPanel(t, h)
+	if rec := postJSON(h, "/api/sources", `{"name":"","endpoint":{"scheme":"https","address":"example.com"}}`, ck); rec.Code != http.StatusBadRequest {
+		t.Fatalf("空 name 应 400，得 %d %s", rec.Code, rec.Body.String())
+	}
+}

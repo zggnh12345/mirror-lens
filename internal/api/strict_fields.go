@@ -3,6 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/zggnh12345/mirror-lens/internal/endpoint"
 )
 
 // firstLegacyField 按给定顺序检查 JSON 顶层是否出现旧字段，返回第一个命中的字段名。
@@ -52,4 +56,18 @@ func firstUnknownField(raw []byte, allowed []string, path []string) string {
 // rawEqualNull 判断原始 JSON 值是否为显式 null。
 func rawEqualNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+// parseEndpointAddress 把地址栏输入（Host 或 Host:Port，支持 IPv6 方括号）
+// 统一解析为 Endpoint。裸 IPv6 [fd00::1] 不带端口时补 Scheme 默认端口。
+func parseEndpointAddress(scheme, address string) (endpoint.Endpoint, error) {
+	raw := strings.TrimSpace(address)
+	if raw == "" || strings.Contains(raw, "://") || strings.ContainsAny(raw, "/@?#\t\r\n") {
+		return endpoint.Endpoint{}, fmt.Errorf("address 只接受 Host 与可选 Port，不含 Scheme")
+	}
+	ep, err := endpoint.ParseOrigin(scheme + "://" + raw)
+	if err != nil {
+		return endpoint.Endpoint{}, err
+	}
+	return ep, nil
 }

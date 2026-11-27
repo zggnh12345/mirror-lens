@@ -684,6 +684,11 @@ func readConfigForUpdate(path string) (*config.Config, *yaml.Node, bool, error) 
 		// 空文件不能当成"不存在"：它可能是写坏的产物，直接拒绝，避免用默认值覆盖现场。
 		return nil, nil, false, fmt.Errorf("配置文件为空，已拒绝写入以保护原文件；请手工写入有效配置或删除该文件")
 	}
+	// D-CONFIG-4：已有配置缺三个必需 Host Probe 字段时拒绝写入，
+	// 不能让 config.Default() 静默补齐并写回。
+	if err := config.RequireHostProbeFields(b); err != nil {
+		return nil, nil, false, fmt.Errorf("配置文件校验失败，已拒绝写入以保护原文件：%w", err)
+	}
 	base := config.Default()
 	if err := yaml.Unmarshal(b, base); err != nil {
 		return nil, nil, false, fmt.Errorf("配置文件解析失败，已拒绝写入以保护原文件：%w", err)

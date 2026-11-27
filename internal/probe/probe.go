@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,9 +135,18 @@ type TLSError struct {
 }
 
 func (e *TLSError) Error() string {
-	// cause 通过 Unwrap 保留给 errors.As/日志，不在 Error() 里展开，
-	// 避免某些 x509 错误零值在 Error() 时 panic，也避免敏感细节外泄。
-	return e.Code + "|" + e.Stage + "|" + e.Message
+	// 结构化错误对象以 JSON 透传到 store/API/UI，不依赖错误文本正则分类。
+	// cause 只在 Unwrap 中保留给内部日志，对外只给类型名，避免细节外泄。
+	causeType := ""
+	if e.Cause != nil {
+		causeType = fmt.Sprintf("%T", e.Cause)
+	}
+	b, _ := json.Marshal(map[string]any{
+		"code": e.Code, "stage": e.Stage, "message": e.Message,
+		"detail": "", "retryable": e.Retryable, "tls_applicable": e.TLSApply,
+		"cause_type": causeType,
+	})
+	return string(b)
 }
 
 func (e *TLSError) Unwrap() error { return e.Cause }
@@ -309,6 +319,10 @@ func readCapped(r io.Reader, max int64) ([]byte, error) {
 func errStr(err error) string {
 	if err == nil {
 		return ""
+	}
+	var te *TLSError
+	if errors.As(err, &te) {
+		return te.Error()
 	}
 	s := err.Error()
 	if len(s) > 160 {

@@ -87,3 +87,12 @@ func TestHostProbeExampleMatchesDefault(t *testing.T) {
 	}
 }
 
+
+func TestRequireHostProbeFieldsExported(t *testing.T) {
+	if err := RequireHostProbeFields([]byte("probe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n")); err != nil {
+		t.Fatalf("完整配置应通过: %v", err)
+	}
+	if err := RequireHostProbeFields([]byte("probe:\n  host_probe_repos: {}\n")); err == nil {
+		t.Fatal("缺字段应报错")
+	}
+}

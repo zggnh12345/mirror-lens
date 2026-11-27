@@ -141,6 +141,10 @@ cache:
   warn_at: 0.9
 logging:
   level: info
+probe:
+  host_probe_repos: {}
+  host_probe_interval_sec: 21600
+  host_probe_scan_sec: 30
 `
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -228,6 +232,10 @@ limits:
   enabled: true
   trusted_proxies:
     - 10.0.0.0/8
+probe:
+  host_probe_repos: {}
+  host_probe_interval_sec: 21600
+  host_probe_scan_sec: 30
 `
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -251,7 +259,7 @@ limits:
 func TestGitHubTokenEncryptedAtRest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	src := "data: " + dir + "\ngithub:\n  enabled: true\n"
+	src := "data: " + dir + "\ngithub:\n  enabled: true\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}

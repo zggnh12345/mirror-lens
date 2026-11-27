@@ -3,7 +3,7 @@ package probe
 import (
 	"crypto/x509"
 	"errors"
-	"strings"
+	"encoding/json"
 	"time"
 	"testing"
 )
@@ -25,8 +25,9 @@ func TestClassifyVerifyErrorPreservesType(t *testing.T) {
 			if got.Code != tc.code {
 				t.Fatalf("code=%s 期望 %s", got.Code, tc.code)
 			}
-			if !strings.HasPrefix(got.Error(), tc.code+"|") {
-				t.Fatalf("Error() 未以稳定 code 开头: %s", got.Error())
+			var obj map[string]any
+			if json.Unmarshal([]byte(got.Error()), &obj) != nil || obj["code"] != tc.code {
+				t.Fatalf("Error() 不是含稳定 code 的结构化对象: %s", got.Error())
 			}
 			var te *TLSError
 			if !errors.As(error(got), &te) {

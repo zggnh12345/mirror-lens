@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"log"
 	"log/slog"
 	"net/http"
@@ -636,27 +635,7 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "scheme 只能是 http 或 https", "field": "endpoint.scheme"})
 		return
 	}
-	address := strings.TrimSpace(in.Endpoint.Address)
-	if address == "" || strings.Contains(address, "://") || strings.ContainsAny(address, "/@?#\t\r\n") {
-		writeJSON(w, 400, map[string]string{"error": "address 只接受 Host 与可选 Port，不含 Scheme", "field": "endpoint.address"})
-		return
-	}
-	port := 0
-	if strings.Contains(address, ":") {
-		h, p, perr := net.SplitHostPort(address)
-		if perr != nil {
-			writeJSON(w, 400, map[string]string{"error": "address 含非法端口", "field": "endpoint.address"})
-			return
-		}
-		address = h
-		n, aerr := strconv.Atoi(p)
-		if aerr != nil || n < 1 || n > 65535 {
-			writeJSON(w, 400, map[string]string{"error": "端口不合法", "field": "endpoint.address"})
-			return
-		}
-		port = n
-	}
-	ep, err := endpoint.New(endpoint.Scheme(scheme), address, port)
+	ep, err := parseEndpointAddress(scheme, in.Endpoint.Address)
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error(), "field": "endpoint.address"})
 		return
@@ -670,7 +649,8 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
-		name = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+		writeJSON(w, 400, map[string]string{"error": "name 必填且非空", "field": "name"})
+		return
 	}
 	// F1: 归属不再必选、不再强制推断能力；未知地址由独立 Hosts API 登记。
 	dockerCap, githubCap := store.CapUnknown, store.CapUnknown
@@ -917,27 +897,7 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, 400, map[string]string{"error": "scheme 只能是 http 或 https", "field": "endpoint.scheme"})
 				return
 			}
-			address := strings.TrimSpace(in.Endpoint.Address)
-			if address == "" || strings.Contains(address, "://") || strings.ContainsAny(address, "/@?#\t\r\n") {
-				writeJSON(w, 400, map[string]string{"error": "address 只接受 Host 与可选 Port，不含 Scheme", "field": "endpoint.address"})
-				return
-			}
-			port := 0
-			if strings.Contains(address, ":") {
-				h, p, perr := net.SplitHostPort(address)
-				if perr != nil {
-					writeJSON(w, 400, map[string]string{"error": "address 含非法端口", "field": "endpoint.address"})
-					return
-				}
-				address = h
-				n, aerr := strconv.Atoi(p)
-				if aerr != nil || n < 1 || n > 65535 {
-					writeJSON(w, 400, map[string]string{"error": "端口不合法", "field": "endpoint.address"})
-					return
-				}
-				port = n
-			}
-			ep, eerr := endpoint.New(endpoint.Scheme(scheme), address, port)
+			ep, eerr := parseEndpointAddress(scheme, in.Endpoint.Address)
 			if eerr != nil {
 				writeJSON(w, 400, map[string]string{"error": "地址无效：" + eerr.Error(), "field": "endpoint.address"})
 				return

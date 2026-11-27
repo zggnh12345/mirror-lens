@@ -76,7 +76,9 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		case http.StatusNotFound, http.StatusGone:
 			res.Verdict = VerdictNo
 		}
-		res.Error = fmt.Sprintf("raw 文件返回 %d", resp.StatusCode)
+		if res.Error == "" {
+			res.Error = fmt.Sprintf("raw 文件返回 %d", resp.StatusCode)
+		}
 		if len(body) > 0 && len(body) < 200 {
 			res.Detail = strings.TrimSpace(string(body))
 		}
@@ -84,7 +86,9 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 	}
 	if strings.Contains(ct, "text/html") && !strings.Contains(string(body), "Hello World") {
 		res.Verdict = VerdictNo
-		res.Error = "返回 HTML 页面，不是代理"
+		if res.Error == "" {
+			res.Error = "返回 HTML 页面，不是代理"
+		}
 		return res
 	}
 
@@ -95,7 +99,9 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 			res.DigestOK = 1
 		} else {
 			res.DigestOK = 0
-			res.Error = "raw 文件哈希不符"
+			if res.Error == "" {
+				res.Error = "raw 文件哈希不符"
+			}
 		}
 		if res.DigestOK == 0 {
 			return res
@@ -128,14 +134,18 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		// 否则 release 拉不动也叫「通过」，探测就成了假阳性。
 		res.OK = false
 		res.DigestOK = -1
-		res.Error = "release 下载失败: " + errStr(err)
+		if res.Error == "" {
+			res.Error = "release 下载失败: " + errStr(err)
+		}
 		return res
 	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != 200 {
 		res.OK = false
 		res.DigestOK = -1
-		res.Error = fmt.Sprintf("release 返回 %d", resp2.StatusCode)
+		if res.Error == "" {
+			res.Error = fmt.Sprintf("release 返回 %d", resp2.StatusCode)
+		}
 		return res
 	}
 	h := sha256.New()
@@ -151,12 +161,16 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 			// 网络中断/超时：是"慢到不可用"，不是投毒。
 			res.OK = false
 			res.DigestOK = -1
-			res.Error = fmt.Sprintf("下载中断 %d/%d 字节", n, ghBigSize)
+			if res.Error == "" {
+				res.Error = fmt.Sprintf("下载中断 %d/%d 字节", n, ghBigSize)
+			}
 			return res
 		}
 		res.OK = false
 		res.DigestOK = 0
-		res.Error = fmt.Sprintf("内容大小异常 %d/%d，疑似被替换", n, ghBigSize)
+		if res.Error == "" {
+			res.Error = fmt.Sprintf("内容大小异常 %d/%d，疑似被替换", n, ghBigSize)
+		}
 		return res
 	}
 	big := hex.EncodeToString(h.Sum(nil))
@@ -169,7 +183,9 @@ func GitHub(ctx context.Context, base string, tier int, expectedHash string) Res
 		res.Detail = fmt.Sprintf("%.1f MB 实测", float64(n)/1024/1024)
 	} else {
 		res.DigestOK = 0
-		res.Error = "release 哈希不符，内容可能被替换"
+		if res.Error == "" {
+			res.Error = "release 哈希不符，内容可能被替换"
+		}
 	}
 	return res
 }

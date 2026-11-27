@@ -132,7 +132,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode == 200 && strings.Contains(ct, "text/html") {
 		res.Verdict = VerdictNo
-		res.Error = "返回 HTML 页面，不是 registry"
+		if res.Error == "" {
+			res.Error = "返回 HTML 页面，不是 registry"
+		}
 		res.Detail = "假站点"
 		return res
 	}
@@ -142,14 +144,18 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 		case http.StatusNotFound, http.StatusGone:
 			res.Verdict = VerdictNo
 		}
-		res.Error = fmt.Sprintf("/v2/ 返回 %d", resp.StatusCode)
+		if res.Error == "" {
+			res.Error = fmt.Sprintf("/v2/ 返回 %d", resp.StatusCode)
+		}
 		res.Detail = string(body[:min(len(body), 80)])
 		return res
 	}
 	if tier <= 1 {
 		res.OK = resp.StatusCode == 401 || resp.StatusCode == 200
 		if !res.OK {
-			res.Error = fmt.Sprintf("/v2/ 返回 %d", resp.StatusCode)
+			if res.Error == "" {
+				res.Error = fmt.Sprintf("/v2/ 返回 %d", resp.StatusCode)
+			}
 		}
 		return res
 	}
@@ -159,7 +165,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 	if resp.StatusCode == 401 {
 		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
 		if ch.Realm == "" {
-			res.Error = "401 但未给出认证地址"
+			if res.Error == "" {
+				res.Error = "401 但未给出认证地址"
+			}
 			return res
 		}
 		if ch.Scope == "" {
@@ -176,7 +184,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 	mf, digest, hdrBad, code, mtype, err := fetchManifest(ctx, client, base, tok, image+"/manifests/"+probeTag)
 	if err != nil || code != 200 {
 		res.HTTPCode = code
-		res.Error = fmt.Sprintf("manifest 获取失败 (%d) %s", code, errStr(err))
+		if res.Error == "" {
+			res.Error = fmt.Sprintf("manifest 获取失败 (%d) %s", code, errStr(err))
+		}
 		return res
 	}
 	// 校验基准用索引（multi-arch list）的 digest：官方与各镜像站返回的都是它。
@@ -227,7 +237,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 			if err != nil || n == 0 {
 				// 连第一层都拿不下来，对 Docker 客户端来说这台源就是用不了。
 				res.OK = false
-				res.Error = "blob 下载失败: " + errStr(err)
+				if res.Error == "" {
+					res.Error = "blob 下载失败: " + errStr(err)
+				}
 				return res
 			}
 			res.TTFBMS = ttfb
@@ -235,7 +247,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 				if sum != d {
 					res.BlobOK = 0
 					res.OK = false
-					res.Error = "layer 内容与 digest 不符"
+					if res.Error == "" {
+						res.Error = "layer 内容与 digest 不符"
+					}
 					return res
 				}
 				res.BlobOK = 1

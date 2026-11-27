@@ -742,9 +742,12 @@ var TLS_ERROR_LABELS = {
 };
 function errHuman(e){
   var r = errReason(e);
-  /* 结构化错误码优先：CODE|stage|message|cause。不使用正则猜证书原因。 */
-  var m = r.match(/^([A-Z][A-Z0-9_]*)\|/);
-  if (m && TLS_ERROR_LABELS[m[1]]) return TLS_ERROR_LABELS[m[1]];
+  /* 结构化错误对象优先：后端以 JSON 下发 code/stage/message，
+     不再靠错误文本正则猜证书原因。旧格式仅作兜底。 */
+  try{
+    var o = JSON.parse(r);
+    if (o && o.code && TLS_ERROR_LABELS[o.code]) return TLS_ERROR_LABELS[o.code];
+  }catch(_){}
   if (/no such host|server misbehaving/i.test(r)) return '域名解析失败';
   if (/TLS handshake timeout/i.test(r)) return 'TLS 握手超时';
   if (/x509|certificate|证书/i.test(r)) return 'TLS 证书校验失败';

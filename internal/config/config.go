@@ -490,7 +490,7 @@ func Default() *Config {
 
 // requireHostProbeFields 检查已有配置文件是否显式给出三个 Host Probe 必需字段。
 // 全新安装（无配置文件，走 Default()）不经过这里。
-func requireHostProbeFields(b []byte) error {
+func RequireHostProbeFields(b []byte) error {
 	var doc struct {
 		Probe map[string]any `yaml:"probe"`
 	}
@@ -521,7 +521,7 @@ func Load(path string, required bool) (*Config, error) {
 	}
 	// D-CONFIG-4：已有配置文件缺少三个必需字段时 fail-fast，
 	// 不从 Default()/旧字段/环境变量静默补齐。
-	if err := requireHostProbeFields(b); err != nil {
+	if err := RequireHostProbeFields(b); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	// 显式空 map 不能被 Default() 的预置表污染：Unmarshal 到已有 map 不会清空它。

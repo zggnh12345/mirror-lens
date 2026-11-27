@@ -201,7 +201,7 @@ func TestSaveConfigRenameFailureKeepsOldState(t *testing.T) {
 // Node 级写盘：注释和面板不认识的未来字段都要保留。
 func TestSaveConfigKeepsCommentsAndUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	src := "# 手写注释\ncache:\n  max_gb: 50 # 行尾注释\nfuture_key: 42\n"
+	src := "# 手写注释\ncache:\n  max_gb: 50 # 行尾注释\nfuture_key: 42\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"
 	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestConfigPutBodyTooLarge(t *testing.T) {
 // 面板保存后文件应包含全部生效参数，而不是只写改动的那一项。
 func TestSaveConfigWritesFullConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("cache:\n  max_gb: 10\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("cache:\n  max_gb: 10\nprobe:\n  host_probe_repos: {}\n  host_probe_interval_sec: 21600\n  host_probe_scan_sec: 30\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	s := newCfgServer(t, path)
