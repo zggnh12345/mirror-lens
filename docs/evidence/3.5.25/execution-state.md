@@ -47,3 +47,17 @@
 - deleg_bcd6e1aa（CHANGES_REQUIRED，5 Finding）→ deleg_689af327（4 PASS + 1 漏改）→ deleg_dff8c7a9（PASS，5 项全 CLOSED）。
 - 最终代码 SHA：`7f169ebb5152dce3d67b9f44b6c8b2aec8dff007`。
 - G3 = PASS。下一阶段 G4。
+
+## G4 完成（713b3ac8bc586d57fa97000897e4c1ea2e2e20a8）
+
+- 基础门禁：gofmt -w（24+10 Go 文件）、git diff --check、go build、go vet、go test（35 包 OK，0 FAIL）、go test -race（0 DATA RACE）全绿，原始日志在 g4-*.log，锚定 commit=713b3ac8bc586d57fa97000897e4c1ea2e2e20a8。
+- 测试覆盖补齐（两份只读审查 deleg_deb83899 报 CHANGES_REQUIRED 后）：
+  - API/UI：旧字段 6+4 个逐字段断言 legacy_field_not_supported、顶层/嵌套 unknown_field 断言、地址前缀、name 必填/省略、endpoint 部分拒绝、Host extra_realms 完整矩阵、UI 删除残留归属 option 与 See §2.3 文案、下拉框保留。
+  - 配置：example 与 Default 9 行映射逐值比对、周期溢出、非法键（冲突/端口/路径/userinfo/空白/点键）。
+  - Host/能力：精确键优先、evil 后缀拒绝、两路径一致性、jobs 跳过。
+  - 事务：AddSourceHost 逐写入失败回滚（SQLite 触发器注入 caps/policy/event 三处）。
+  - TLS：SAN 错配/IP SAN/过期/未生效/未知 CA/缺中间证书、classifyDialError 四码（新增 DNS_FAILED 分类修正）、凭据不泄露、TLS 错误不被 HTTP 覆盖（行为级）。
+  - 403 verdict 负向。
+- 实现修正：probe.classifyDialError 对 net.DNSError → DNS_FAILED（避免误报 TLS_HANDSHAKE_FAILED）；UI 表单残留归属 option 与旧文案清理。
+- 未覆盖（显式标注，非缺陷）：重定向 Host/Scheme/Port 改变由 gateway 既有重定向策略测试覆盖；崩溃注入（提交前/后进程退出）不可单测，标 NOT_RUN；真实证书"正确 SAN 通过"依赖系统信任库，由 G5 真实环境验收覆盖。
+- 状态：G4 = PASS（待独立复核确认）。

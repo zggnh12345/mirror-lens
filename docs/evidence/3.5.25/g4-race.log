@@ -1,4 +1,4 @@
-commit=bb77821c603f07b18b109124e2acf25199200fe9
+commit=713b3ac8bc586d57fa97000897e4c1ea2e2e20a8
 __RC__=0
 0
 0
@@ -11,10 +11,10 @@ ok  	github.com/zggnh12345/mirror-lens/internal/adapter/httpadapter	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/adapter/raw	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/adapter/registryadapter	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/alert	(cached)
-ok  	github.com/zggnh12345/mirror-lens/internal/api	(cached)
+ok  	github.com/zggnh12345/mirror-lens/internal/api	140.233s
 ok  	github.com/zggnh12345/mirror-lens/internal/auth	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/cache	(cached)
-ok  	github.com/zggnh12345/mirror-lens/internal/config	1.197s
+ok  	github.com/zggnh12345/mirror-lens/internal/config	1.783s
 ok  	github.com/zggnh12345/mirror-lens/internal/dblock	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/discover	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/endpoint	(cached)
@@ -26,13 +26,13 @@ ok  	github.com/zggnh12345/mirror-lens/internal/keymutex	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/limits	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/logging	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/metrics	(cached)
-ok  	github.com/zggnh12345/mirror-lens/internal/probe	(cached)
+ok  	github.com/zggnh12345/mirror-lens/internal/probe	1.853s
 ok  	github.com/zggnh12345/mirror-lens/internal/registryhost	(cached)
-ok  	github.com/zggnh12345/mirror-lens/internal/runner	10.819s
+ok  	github.com/zggnh12345/mirror-lens/internal/runner	12.017s
 ok  	github.com/zggnh12345/mirror-lens/internal/safehttp	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/scheduler	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/secret	(cached)
-ok  	github.com/zggnh12345/mirror-lens/internal/store	58.236s
+ok  	github.com/zggnh12345/mirror-lens/internal/store	59.549s
 ok  	github.com/zggnh12345/mirror-lens/internal/store/schema	(cached)
 ok  	github.com/zggnh12345/mirror-lens/internal/sums	(cached)
 ?   	github.com/zggnh12345/mirror-lens/internal/tuning	[no test files]
