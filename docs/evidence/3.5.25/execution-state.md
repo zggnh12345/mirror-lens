@@ -62,3 +62,14 @@
 - 未覆盖（显式标注，非缺陷）：重定向 Host/Scheme/Port 改变由 gateway 既有重定向策略测试覆盖；崩溃注入（提交前/后进程退出）不可单测，标 NOT_RUN；真实证书"正确 SAN 通过"依赖系统信任库，由 G5 真实环境验收覆盖。
 - 证据链修正（deleg_b8da3045 CHANGES_REQUIRED）：在 HEAD 0caf9da 重跑 build/vet/test(-count=1)/race(-count=1)/diff-check/gofmt，全部日志首行带 commit=0caf9da；33 个改动 Go 文件（含 8 个 g4_*_test.go）全部纳入 gofmt 范围；g4-final-sha.txt 重锚到 HEAD。
 - 状态：G4 = PASS（deleg_b8da3045 首轮 CHANGES_REQUIRED → deleg_13287a17 PASS，证据链全部关闭）。
+
+## G5 真实环境验收
+
+- 状态：**BLOCKED_REAL_ENV**（任务书 §16.1 / §9.6）。
+- 取证（2026-11-27，只读）：
+  - 生产容器 `mirror-lens` 仍为 3.5.24（`mirror-lens 3.5.24 commit=84b013d…`），无 3.5.25 验收实例；
+  - 生产 `/config/config.yaml` 中 grep `SparkCR|SUNBALCONY` 无匹配；本轮按约束不连生产数据库、不读凭据；
+  - 任务书未冻结两个 Source 的真实 SourceEndpoint / DNS / 证书 / Token 流程；
+  - 无 NAS / 生产验收权限，无法取得 §9.6 要求的 11 项逐源证据（脱敏 Endpoint、DNS A/AAAA、Guard、拨号 IP、SNI、证书链/Subject/Issuer/SAN/有效期、系统根验证、HTTP 状态与内容、API JSON、UI 技术详情、三轮重复）。
+- 结论：不得宣称已定位 SparkCR/SUNBALCONY 真实根因或完成验收；保持 BLOCKED_REAL_ENV，待用户提供验收实例与脱敏端点后独立补验。
+- 两个 Source 的通过条件（任务书 §9.6）：真实健康时状态恢复正确；源站自身有问题时 UI 报唯一根因；证书错误不与连接错误混淆；不靠跳过验证变绿。
