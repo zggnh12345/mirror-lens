@@ -1,5 +1,7 @@
 # G7 Release Readiness（3.5.25，隔离实施分支）
 
+> **补验后状态更新（2026-11-27，最终裁定）：** 下方「结论/阻塞与缺口/发布前置条件」为 G7 当时（G5/G6 补验前）的时点快照，保留原貌不回改。其后已完成：G5 真实环境验收 PASS（`g5-real-acceptance.md`，SparkCR degraded 根因定位 + SUNBALCONY 三轮 usable）、G6 性能对照 PASS（`g6-real/result.json`，本地基准 + 真实环境缓存路径 8 项门禁全过）。以 `docs/evidence/3.5.25/execution-state.md` 阶段总表与 `docs/evidence/3.5.25/release-readiness-final.md` 的最终裁定为准。本文件下述 NOT READY 结论已被补验证据取代，不再代表最终状态。
+
 ## 结论
 - 代码实施与本地门禁：**READY**。
 - 真实环境验收：**NOT READY**（G5 BLOCKED_REAL_ENV）。

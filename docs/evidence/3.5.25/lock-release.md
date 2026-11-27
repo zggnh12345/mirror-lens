@@ -1,5 +1,7 @@
 # 执行锁释放记录
 
+> **补验后状态更新（2026-11-27，最终裁定）：** 下方状态为锁释放当时的时点快照，保留原貌。其后 G5/G6 真实环境项已完成并 PASS（见 `g5-real-acceptance.md`、`g6-real/result.json`），最终裁定见 `release-readiness-final.md`。本文件下述 BLOCKED_REAL_ENV 措辞不再代表最终状态。锁仍为 RELEASED，不因本次补验重开。
+
 - RUN_ID：`run-3.5.25-20261127T035047Z-9bee506a`
 - 锁文件：`docs/evidence/3.5.25/execution.lock`（保留，不删除，避免误识别）
 - 状态：**RELEASED**（无人值守实施已到 G8，G5/G6 真实环境项 BLOCKED_REAL_ENV，不再继续依赖真实环境的实施）

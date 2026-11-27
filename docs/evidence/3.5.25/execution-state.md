@@ -118,3 +118,10 @@
 - 3.5.25 结构化 TLS 错误链在真实环境生效：错误码 CONNECT_FAILED/TIMEOUT/stage=tls_dial，不再混淆证书错误。
 - 全程未关闭 TLS 验证、未放宽安全策略、未改生产；两验收容器已删除。
 - 证据：g5-real-acceptance.md / g5-two-sources-full.json / g5-fakeip-control-full.json / g5-three-rounds.json / g5-api-3.5.25-sources.json。
+
+## 发布就绪审查补验（2026-11-27，用户要求重审发布条件后）
+
+- 在最终 HEAD 干净导出上现场重跑四门禁 + diff-check，不沿用门禁日志锚定的旧 SHA：gofmt/build/vet/test/race/diff-check 全绿。
+- 发现并闭合 4 项证据链问题：① `internal/store/g6_bench_test.go` 未 gofmt（P0 发布阻塞，已 gofmt -w 修复并重跑门禁）；② `final-sha-reconciliation.md` G4 SHA 尾段 `fc224` 无效，更正为 `fc2847802`；③ g7-release-readiness/lock-release 补验前旧结论加「补验后状态更新」块指向最终裁定；④ findings.md 重复 CLOSED 链收敛。
+- 最终裁定见 `release-readiness-final.md`：第 21 节 26 项门禁全满足，`RELEASE_READY=true`（SparkCR 口径按 §9.6 错误保真判定，详见裁定文档说明）。
+- 边界不变：未推送/未合并/未打 tag/未建 Release/未部署，生产仍为 3.5.24（§19.2，需独立授权）。
