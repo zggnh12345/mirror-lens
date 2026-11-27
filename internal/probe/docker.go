@@ -175,7 +175,9 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 		}
 		t, code, terr := fetchToken(ctx, client, ch)
 		if terr != nil || t == "" {
-			res.Error = fmt.Sprintf("token 获取失败 (%d) %s", code, errStr(terr))
+			if res.Error == "" {
+				res.Error = fmt.Sprintf("token 获取失败 (%d) %s", code, errStr(terr))
+			}
 			return res
 		}
 		tok = t
