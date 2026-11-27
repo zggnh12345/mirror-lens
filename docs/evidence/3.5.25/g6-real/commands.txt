@@ -1,0 +1,55 @@
+# G6 真实环境对照采集命令
+
+## 容器与配对槽位
+
+```
+# 交替换镜像（基线/候选共用同一 IP 槽位 172.18.0.28，消除槽位变量）
+docker rm -f ml3525-g6-aa28
+docker run -d --name ml3525-g6-aa28 --network traefik --ip 172.18.0.28 \
+  --dns 10.1.1.4 --dns 223.5.5.5 -e DATA_DIR=/data -e TZ=Asia/Shanghai <IMAGE>
+docker cp /opt/data/cache/scratch/g6-config-nolimit.yaml ml3525-g6-aa28:/data/config.yaml
+docker restart ml3525-g6-aa28
+docker exec ml3525-g6-aa28 mirror-lens --version   # 逐轮记录 commit
+```
+
+`<IMAGE>` = `mirror-lens:3.5.24-g6`（84b013d）或 `mirror-lens:3.5.25-verify`（a30d289）。
+
+## 一次性账号（每次新容器）
+
+```
+python3 /opt/data/cache/scratch/g6_setup.py 172.18.0.28 <auth.json>
+# 内部：POST /api/setup → POST /api/login → GET /api/me 取 csrf；随机密码仅内存，不落盘、不回显
+```
+
+## 采集（harness: g6_harness.py 热缓存 / g6_harness2.py 冷+并发）
+
+```
+# 热缓存：每轮 500 次（5×100），3 轮交替
+python3 g6_harness.py hot 172.18.0.28 hot-<ver>-r<r>.json
+
+# 冷缓存：每轮 purge → 首次 MISS，warmup=3，正式 25 轮
+python3 g6_harness2.py cold 172.18.0.28 cold-<ver>.json <auth.json> 25
+
+# 并发 Pull：100 并发 × 5 批
+python3 g6_harness2.py concurrent 172.18.0.28 concurrent-<ver>.json 100 5
+```
+
+3 轮交替热缓存的驱动脚本：`g6_hot_paired.sh`；控制台输出见 `hot-paired-console.log`。
+
+## 资源采样
+
+```
+for i in 1..8: docker stats ml3525-g6-aa28 --no-stream --format '{{.CPUPerc}} {{.MemUsage}}'
+```
+
+## 结果生成（不手填）
+
+```
+python3 docs/evidence/3.5.25/g6-real/gen_result.py
+# 输出 result.json：各场景 P50/P95/成功率/错误类型、门禁判定、原始数据 SHA256
+```
+
+## 原始数据
+
+`hot-{324,325}-r{1,2,3}.json`、`cold-{324,325}.json`、`concurrent-{324,325}.json`、`hot-paired-console.log`。
+每份 JSON 含每轮 commit 无关的逐样本 ms/status/cache/bytes/err，P50/P95 由 gen_result.py 从全部样本重算。

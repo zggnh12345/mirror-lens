@@ -1,0 +1,12 @@
+=== round=1 ver=325 commit=a30d2893a7fa31a8651d91a387a3174882b4abb1 ===
+hot 172.18.0.28 n=500 p50=0.354 p95=0.854 min=0.266 max=11.563 succ=1.0000 errs=[] cache=['HIT']
+=== round=1 ver=324 commit=84b013d23f0c11eaf86de9d5e776789467cb4192 ===
+hot 172.18.0.28 n=500 p50=0.353 p95=1.208 min=0.278 max=18.741 succ=1.0000 errs=[] cache=['HIT']
+=== round=2 ver=325 commit=a30d2893a7fa31a8651d91a387a3174882b4abb1 ===
+hot 172.18.0.28 n=500 p50=0.337 p95=1.275 min=0.265 max=16.916 succ=1.0000 errs=[] cache=['HIT']
+=== round=2 ver=324 commit=84b013d23f0c11eaf86de9d5e776789467cb4192 ===
+hot 172.18.0.28 n=500 p50=0.520 p95=1.410 min=0.276 max=17.267 succ=1.0000 errs=[] cache=['HIT']
+=== round=3 ver=325 commit=a30d2893a7fa31a8651d91a387a3174882b4abb1 ===
+hot 172.18.0.28 n=500 p50=0.503 p95=1.575 min=0.292 max=17.323 succ=1.0000 errs=[] cache=['HIT']
+=== round=3 ver=324 commit=84b013d23f0c11eaf86de9d5e776789467cb4192 ===
+hot 172.18.0.28 n=500 p50=0.393 p95=0.979 min=0.270 max=18.862 succ=1.0000 errs=[] cache=['HIT']

@@ -76,19 +76,25 @@
 
 ## G6 性能对照
 
-- 状态：**PARTIAL（本地隔离基准 PASS；真实源站对照 BLOCKED_REAL_ENV）**。
-- 已执行（同 Go 1.27.3 / 同硬件 / benchtime=100x / count=5）：
+- 状态：**PASS（本地隔离基准 + 真实环境缓存路径对照全部通过；§17.2 旧门槛与 §17.3 新回归门槛同时满足）**。
+- 已执行·本地隔离基准（同 Go 1.27.3 / 同硬件 / benchtime=100x / count=5）：
   - 现成 store benchmark 三项（RegistryCandidates/DockerCandidates/LegacyPerSourceSamples300）：P50 增幅 +3.8% 以内、P95 持平或下降，全 PASS。
   - 针对性 `BenchmarkAddSourceHostG6`（事务内 vs 事务外读 base_url）：P50 -6.81%、P95 +5.04%，PASS。
   - 原始数据 g6-raw-*.txt、统计 g6-comparison.md、方法 g6-methodology.md。
-- 未执行（NOT_RUN）：热缓存 P95≤2ms、冷缓存比值≤1.5、并发 Pull 成功率100% —— 这些是 gateway 缓存路径，本次隔离基准未覆盖，不能用 DB benchmark 冒充。
-- 阻塞：真实源站对照同 G5（无端点/无 NAS 权限），BLOCKED_REAL_ENV；不得宣称完整 G6 PASS。
+- 已执行·真实环境缓存路径对照（隔离验收实例 + 真实公网源站回源；同一 IP 槽位交替换镜像配对；见 docs/evidence/3.5.25/g6-real/）：
+  - 热缓存（3 轮交替、合并 1500 样本）：P50 0.398→0.369ms（-7.3%）、P95 1.302→1.366ms（+4.9%，绝对值 <2ms），错误率 0 —— 旧门槛 + 新回归门槛均 PASS。
+  - 冷缓存（25 轮重采 P95，3 轮暖机排除冷启动假阴性）：基线 615.9ms / 候选 539.0ms，比值 0.875 ≤1.5 —— PASS（非沿用 3.5.24 中位数口径）。
+  - 并发 Pull（100 并发 × 5 批）：成功率 100%/100%，P95 23.98/17.55ms <50ms —— PASS。
+  - 资源（idle）：CPU 1.08%→0.86%、内存 16.7→12.2MiB，未增长，不触发 §17.3 根因分析。
+  - 根因分析：A/A 同镜像噪声地板（P95 差异 30-100%）+ 交叉互换 + 3 轮交替方向随机，证明初测“慢 40-60%”是微基准噪声假象，非代码退化；见 g6-real/README.md。
+- 结果数据：docs/evidence/3.5.25/g6-real/result.json（8 项门禁全 PASS，由 gen_result.py 从原始数据生成）。
+- 边界：隔离验收实例、非生产压测；§17.4 的 Source API/数据库/TLS/UI 逐项延迟由 G4 全量测试与本地 benchmark 覆盖。生产未触碰、未切换。
 
 ## G7 / G8 完成
 
 - G7：PASS。证据归档索引、发布就绪评估、SHA 对账齐全；区分事实/目标/未执行/阻塞。
 - G8：PASS（清理收尾）。代码残留审计：ML_HOSTPROBE_* 全清；See §2.3 UI/代码全清；legacy_field_not_supported 是任务书允许的负向拒绝逻辑；runner fallback 常量为测试兜底非生产第二来源（G1 已裁定）。工作树干净，22 个提交可追溯，锁释放记录归档。未推送/未合并/未部署/未发布（§19.2）。
-- §20 停止条件 12/13 触发：SparkCR/SUNBALCONY 缺证据、真实环境权限缺失——G5/G6 真实项保持 BLOCKED_REAL_ENV，不继续依赖真实环境的实施。
+- §20 停止条件：G5/G6 真实项已通过自建隔离验收实例 + 真实公网源站回源完成取证（用户授权只读导出端点、自建验收容器），不再 BLOCKED；生产仍未触碰/未切换（需另行授权）。
 
 ## 阶段总表
 
@@ -100,7 +106,7 @@
 | G3 独立复核 | PASS（5 Finding 全 CLOSED） |
 | G4 全量测试 | PASS（证据链两轮复核关闭） |
 | G5 真实环境验收 | PASS（真实根因定位完成；详见 g5-real-acceptance.md） |
-| G6 性能对照 | PARTIAL（本地基准 PASS / 真实对照 BLOCKED） |
+| G6 性能对照 | PASS（本地基准 PASS / 真实环境缓存路径对照 PASS；详见 g6-real/） |
 | G7 文档证据归档 | PASS |
 | G8 清理收尾 | PASS |
 
