@@ -1,23 +1,30 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-// 3.5.24 §2.3 收紧：未知连接地址无 host 必须拒绝；已知 Hub 域名自动归属；
-// 显式 host 原样交给 store。原「未知身份静默默认 docker.io」已被安全收紧取代。
-func TestAddSourceDefaultsToDockerHubIdentity(t *testing.T) {
+// 3.5.25 F1/F2：归属不再必选、不再推断；旧字段一律 400；endpoint.scheme+address 生效。
+func TestAddSourceEndpointContract(t *testing.T) {
 	st, h := newTestServer(t)
 	ck := setupPanel(t, h)
 
-	// 未知域名无 host：拒绝（不再静默默认 docker.io）。
-	if rec := postJSON(h, "/api/sources", `{"url":"https://example.com","name":"t"}`, ck); rec.Code != http.StatusBadRequest {
-		t.Fatalf("未知身份无 host 应 400，得到 %d %s", rec.Code, rec.Body.String())
+	for _, body := range []string{
+		`{"url":"https://example.com","name":"t"}`,
+		`{"name":"t","endpoint":{"scheme":"https","address":"example.com","host":"x"}}`,
+	} {
+		if rec := postJSON(h, "/api/sources", body, ck); rec.Code != http.StatusBadRequest {
+			t.Fatalf("旧/未知字段应 400，body=%s 得 %d %s", body, rec.Code, rec.Body.String())
+		}
 	}
-	// 已知 Hub 域名无 host：自动归属 docker.io。
-	if rec := postJSON(h, "/api/sources", `{"url":"https://registry-1.docker.io","name":"hub"}`, ck); rec.Code != http.StatusOK {
-		t.Fatalf("已知 Hub 域名新增失败 %d %s", rec.Code, rec.Body.String())
+
+	if rec := postJSON(h, "/api/sources", `{"name":"hub","endpoint":{"scheme":"https","address":"registry-1.docker.io"}}`, ck); rec.Code != http.StatusOK {
+		t.Fatalf("新契约新增失败 %d %s", rec.Code, rec.Body.String())
 	}
 	list, err := st.ListSources()
 	if err != nil {
@@ -25,10 +32,10 @@ func TestAddSourceDefaultsToDockerHubIdentity(t *testing.T) {
 	}
 	var got bool
 	for _, x := range list {
-		if x.BaseURL == "https://registry-1.docker.io" {
+		if strings.HasPrefix(x.BaseURL, "https://registry-1.docker.io") {
 			got = true
-			if x.RepoHost != "docker.io" || x.RegistryIdentity != "identified" {
-				t.Fatalf("默认身份=(%q,%q)，期望 (docker.io,identified)", x.RepoHost, x.RegistryIdentity)
+			if x.RepoHost != "" {
+				t.Fatalf("新源不应强制归属，得到 (%q,%q)", x.RepoHost, x.RegistryIdentity)
 			}
 		}
 	}
@@ -36,15 +43,77 @@ func TestAddSourceDefaultsToDockerHubIdentity(t *testing.T) {
 		t.Fatal("新增源没有落库")
 	}
 
-	if rec := postJSON(h, "/api/sources", `{"url":"https://example.org","name":"g","host":"ghcr.io"}`, ck); rec.Code != http.StatusOK {
-		t.Fatalf("显式 Host 新增失败 %d %s", rec.Code, rec.Body.String())
+	if rec := postJSON(h, "/api/sources", `{"name":"x","endpoint":{"scheme":"https","address":"https://example.com"}}`, ck); rec.Code != http.StatusBadRequest {
+		t.Fatalf("地址带 scheme 应 400，得 %d", rec.Code)
 	}
-	list, _ = st.ListSources()
-	for _, x := range list {
-		if x.BaseURL == "https://example.org" {
-			if x.RepoHost != "ghcr.io" || x.RegistryIdentity != "identified" {
-				t.Fatalf("显式身份=(%q,%q)，期望 (ghcr.io,identified)", x.RepoHost, x.RegistryIdentity)
-			}
+	if rec := postJSON(h, "/api/sources", `{"name":"x","endpoint":{"scheme":"http","address":"example.com:5000"}}`, ck); rec.Code != http.StatusOK {
+		t.Fatalf("显式端口新增失败 %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPatchSourceEndpointContract(t *testing.T) {
+	_, h := newTestServer(t)
+	ck := setupPanel(t, h)
+	rec := postJSON(h, "/api/sources", `{"name":"p","endpoint":{"scheme":"https","address":"mirror.example.org"}}`, ck)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("新增失败 %d %s", rec.Code, rec.Body.String())
+	}
+	var created struct{ ID int64 }
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	p := "/api/sources/" + strconv.FormatInt(created.ID, 10)
+
+	for _, body := range []string{
+		`{"base_url":"https://x"}`,
+		`{"endpoint":{"scheme":"https"}}`,
+		`{"endpoint":{"scheme":"https","address":"x","junk":1}}`,
+	} {
+		if rec := sendJSON(h, http.MethodPatch, p, body, ck); rec.Code != http.StatusBadRequest {
+			t.Fatalf("PATCH 非法输入应 400，body=%s 得 %d %s", body, rec.Code, rec.Body.String())
 		}
+	}
+	if rec := sendJSON(h, http.MethodPatch, p, `{"name":"renamed"}`, ck); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH 元数据失败 %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSON(h, http.MethodPatch, p, `{"endpoint":{"scheme":"http","address":"new.example.org:5000"}}`, ck); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH 完整 endpoint 失败 %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSourceHostsStrictFields(t *testing.T) {
+	_, h := newTestServer(t)
+	ck := setupPanel(t, h)
+	rec := postJSON(h, "/api/sources", `{"name":"h","endpoint":{"scheme":"https","address":"quay.io"}}`, ck)
+	var created struct{ ID int64 }
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	p := "/api/sources/" + strconv.FormatInt(created.ID, 10) + "/hosts"
+
+	for _, body := range []string{
+		`{"host":"quay.io"}`,
+		`{"host":"quay.io","primary_realm":"https://quay.io","extra_realms":null}`,
+		`{"host":"quay.io","primary_realm":"https://quay.io","extra_realms":"x"}`,
+		`{"host":"quay.io","primary_realm":"https://quay.io","extra_realms":["https://a.example.com","https://b.example.com","https://c.example.com","https://d.example.com"]}`,
+		`{"host":"quay.io","primary_realm":"https://quay.io","junk":1}`,
+	} {
+		if rec := postJSON(h, p, body, ck); rec.Code != http.StatusBadRequest {
+			t.Fatalf("Hosts 非法输入应 400，body=%s 得 %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	for _, body := range []string{
+		`{"host":"quay.io","primary_realm":"https://quay.io"}`,
+		`{"host":"quay.io","primary_realm":"https://quay.io","extra_realms":["https://a.example.com","https://b.example.com","https://c.example.com"]}`,
+	} {
+		if rec := postJSON(h, p, body, ck); rec.Code != http.StatusOK {
+			t.Fatalf("Hosts 合法输入失败 body=%s 得 %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestUIFormNoLegacyControls(t *testing.T) {
+	b, err := os.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "addPort") || strings.Contains(string(b), "addRepoHost") {
+		t.Fatal("新增表单仍含旧端口/归属控件")
 	}
 }

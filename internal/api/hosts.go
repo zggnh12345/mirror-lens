@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,28 +38,61 @@ func (s *Server) sourceHosts(w http.ResponseWriter, r *http.Request, rest string
 				return
 			}
 			writeJSON(w, 200, map[string]any{"source_id": id, "hosts": hosts})
-		case http.MethodPost:
-			var in struct {
-				Host         string   `json:"host"`
-				PrimaryRealm string   `json:"primary_realm"`
-				ExtraRealms  []string `json:"extra_realms"`
-			}
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
-				writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
-				return
-			}
-			if strings.TrimSpace(in.Host) == "" {
-				writeJSON(w, 400, map[string]string{"error": "缺少 host"})
-				return
-			}
-			if err := s.st.AddSourceHost(id, in.Host, in.PrimaryRealm, in.ExtraRealms); err != nil {
-				status := 400
-				if errors.Is(err, store.ErrSourceNotFound) {
-					status = 404
+			case http.MethodPost:
+				var in struct {
+					Host         string          `json:"host"`
+					PrimaryRealm string          `json:"primary_realm"`
+					ExtraRealms  json.RawMessage `json:"extra_realms"`
 				}
-				writeJSON(w, status, map[string]string{"error": err.Error()})
-				return
-			}
+				body := http.MaxBytesReader(w, r.Body, 8192)
+				raw, err := io.ReadAll(body)
+				if err != nil {
+					writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+					return
+				}
+				if unknown := firstUnknownField(raw, []string{"host", "primary_realm", "extra_realms"}, nil); unknown != "" {
+					writeJSON(w, 400, map[string]string{"error": "unknown_field", "field": unknown})
+					return
+				}
+				if err := json.Unmarshal(raw, &in); err != nil {
+					writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+					return
+				}
+				if strings.TrimSpace(in.Host) == "" {
+					writeJSON(w, 400, map[string]string{"error": "缺少 host", "field": "host"})
+					return
+				}
+				if strings.TrimSpace(in.PrimaryRealm) == "" {
+					writeJSON(w, 400, map[string]string{"error": "primary_realm is required", "field": "primary_realm"})
+					return
+				}
+				var extra []string
+				if rawEqualNull(in.ExtraRealms) {
+					writeJSON(w, 400, map[string]string{"error": "extra_realms 不接受 null", "field": "extra_realms"})
+					return
+				}
+				if len(in.ExtraRealms) > 0 {
+					if in.ExtraRealms[0] != '[' {
+						writeJSON(w, 400, map[string]string{"error": "extra_realms 必须是数组", "field": "extra_realms"})
+						return
+					}
+					if err := json.Unmarshal(in.ExtraRealms, &extra); err != nil {
+						writeJSON(w, 400, map[string]string{"error": "extra_realms 元素必须是字符串", "field": "extra_realms"})
+						return
+					}
+					if len(extra) > 3 {
+						writeJSON(w, 400, map[string]string{"error": "extra_realms 最多 3 个", "field": "extra_realms"})
+						return
+					}
+				}
+				if err := s.st.AddSourceHost(id, in.Host, in.PrimaryRealm, extra); err != nil {
+					status := 400
+					if errors.Is(err, store.ErrSourceNotFound) {
+						status = 404
+					}
+					writeJSON(w, status, map[string]string{"error": err.Error()})
+					return
+				}
 			s.eng.Changed()
 			s.audit(r, "source_host_add", strconv.FormatInt(id, 10), in.Host, true)
 			writeJSON(w, 200, map[string]any{"ok": true})

@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"log"
 	"log/slog"
 	"net/http"
@@ -31,7 +33,6 @@ import (
 	"github.com/zggnh12345/mirror-lens/internal/logging"
 	"github.com/zggnh12345/mirror-lens/internal/metrics"
 	"github.com/zggnh12345/mirror-lens/internal/probe"
-	"github.com/zggnh12345/mirror-lens/internal/registryhost"
 	"github.com/zggnh12345/mirror-lens/internal/runner"
 	"github.com/zggnh12345/mirror-lens/internal/scheduler"
 	"github.com/zggnh12345/mirror-lens/internal/secret"
@@ -598,70 +599,72 @@ func sortByScore(list []store.Source, scores map[int64]float64) {
 
 func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL  string `json:"url"`
-		Name string `json:"name"`
-		// Host 可选：显式声明源归属的 Registry Host（如 ghcr.io、quay.io）。
-		// 不传时按 Canonical 语义：只有已知 Hub/GitHub 域名可自动归属；
-		// 未知域名/IP 必须显式选择 host，否则 400（§2.3）。
-		Host string `json:"host"`
-		// 3.5.24 §2.3：协议/Host/端口三字段显式构造 SourceEndpoint。
-		// scheme 默认 https；port 为空用协议默认端口。
-		Scheme      string `json:"scheme"`
-		Port        string `json:"port"`
-		RepoHost    string `json:"repo_host"`
-		ConnectHost string `json:"connect_host"`
+		Name     string `json:"name"`
+		Endpoint *struct {
+			Scheme  string `json:"scheme"`
+			Address string `json:"address"`
+		} `json:"endpoint"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
+	body := http.MaxBytesReader(w, r.Body, 8192)
+	raw, err := io.ReadAll(body)
+	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 		return
 	}
-	// 归属 Registry：优先 host，其次 repo_host（UI 三字段表单）。
-	// host/repo_host 始终只表示归属（RegistryIdentity），不参与连接地址构造。
-	host := strings.TrimSpace(in.Host)
-	if host == "" {
-		host = strings.TrimSpace(in.RepoHost)
-	}
-	// 构造 SourceEndpoint：显式 connect_host + scheme + port 优先；
-	// 否则复用 url 字段（旧 API 调用兼容）。
-	var rawURL string
-	if strings.TrimSpace(in.ConnectHost) != "" || strings.TrimSpace(in.Scheme) != "" || strings.TrimSpace(in.Port) != "" {
-		epHost := strings.TrimSpace(in.ConnectHost)
-		if epHost == "" {
-			// 没有 connect_host 但给了 scheme/port：从 url 字段解析出 Host。
-			if u, perr := url.Parse(strings.TrimSpace(in.URL)); perr == nil && u.Hostname() != "" {
-				epHost = u.Hostname()
-			}
-		}
-		scheme := strings.TrimSpace(in.Scheme)
-		if scheme == "" {
-			scheme = "https"
-		}
-		port := 0
-		if p := strings.TrimSpace(in.Port); p != "" {
-			n, err := strconv.Atoi(p)
-			if err != nil || n < 1 || n > 65535 {
-				writeJSON(w, 400, map[string]string{"error": "端口不合法"})
-				return
-			}
-			port = n
-		}
-		ep, err := endpoint.New(endpoint.Scheme(strings.ToLower(scheme)), epHost, port)
-		if err != nil {
-			writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error()})
-			return
-		}
-		rawURL = ep.Origin()
-	} else {
-		rawURL = in.URL
-	}
-	base, err := normalizeURL(rawURL)
-	if err != nil {
-		writeJSON(w, 400, map[string]string{"error": err.Error()})
+	if legacy := firstLegacyField(raw, "url", "host", "scheme", "port", "repo_host", "connect_host"); legacy != "" {
+		writeJSON(w, 400, map[string]string{"error": "legacy_field_not_supported", "field": legacy})
 		return
 	}
+	if unknown := firstUnknownField(raw, []string{"name", "endpoint"}, nil); unknown != "" {
+		writeJSON(w, 400, map[string]string{"error": "unknown_field", "field": unknown})
+		return
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return
+	}
+	if in.Endpoint == nil {
+		writeJSON(w, 400, map[string]string{"error": "endpoint is required", "field": "endpoint"})
+		return
+	}
+	if unknown := firstUnknownField(raw, []string{"scheme", "address"}, []string{"endpoint"}); unknown != "" {
+		writeJSON(w, 400, map[string]string{"error": "unknown_field", "field": "endpoint." + unknown})
+		return
+	}
+	scheme := strings.ToLower(strings.TrimSpace(in.Endpoint.Scheme))
+	if scheme != "http" && scheme != "https" {
+		writeJSON(w, 400, map[string]string{"error": "scheme 只能是 http 或 https", "field": "endpoint.scheme"})
+		return
+	}
+	address := strings.TrimSpace(in.Endpoint.Address)
+	if address == "" || strings.Contains(address, "://") || strings.ContainsAny(address, "/@?#\t\r\n") {
+		writeJSON(w, 400, map[string]string{"error": "address 只接受 Host 与可选 Port，不含 Scheme", "field": "endpoint.address"})
+		return
+	}
+	port := 0
+	if strings.Contains(address, ":") {
+		h, p, perr := net.SplitHostPort(address)
+		if perr != nil {
+			writeJSON(w, 400, map[string]string{"error": "address 含非法端口", "field": "endpoint.address"})
+			return
+		}
+		address = h
+		n, aerr := strconv.Atoi(p)
+		if aerr != nil || n < 1 || n > 65535 {
+			writeJSON(w, 400, map[string]string{"error": "端口不合法", "field": "endpoint.address"})
+			return
+		}
+		port = n
+	}
+	ep, err := endpoint.New(endpoint.Scheme(scheme), address, port)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error(), "field": "endpoint.address"})
+		return
+	}
+	base := ep.Origin()
 	if u, perr := url.Parse(base); perr == nil {
-		if gerr := probe.CheckURL(u); gerr != nil {
-			writeJSON(w, 400, map[string]string{"error": "这个地址探测不了：" + gerr.Error()})
+		if err := probe.CheckURL(u); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "这个地址探测不了：" + err.Error()})
 			return
 		}
 	}
@@ -669,32 +672,9 @@ func (s *Server) addSource(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
 	}
-	// 显式 Host 优先；未传时只自动归属"已知身份"域名，未知域名/IP 拒绝（§2.3）。
+	// F1: 归属不再必选、不再强制推断能力；未知地址由独立 Hosts API 登记。
 	dockerCap, githubCap := store.CapUnknown, store.CapUnknown
-	if host == "" {
-		if u, perr := url.Parse(base); perr == nil {
-			switch strings.ToLower(u.Hostname()) {
-			case "github.com", "www.github.com", "raw.githubusercontent.com", "gist.githubusercontent.com":
-				githubCap, dockerCap = store.CapYes, store.CapNo
-			case "ghcr.io":
-				host = "ghcr.io"
-			case "docker.io", "hub.docker.com", "registry-1.docker.io", "index.docker.io":
-				host = "docker.io"
-			}
-		}
-		if host == "" && githubCap != store.CapYes {
-			writeJSON(w, 400, map[string]string{"error": "未知连接地址，请选择归属 Registry（host）"})
-			return
-		}
-	}
-	if host != "" {
-		h, err := registryhost.Check(host)
-		if err != nil {
-			writeJSON(w, 400, map[string]string{"error": err.Error()})
-			return
-		}
-		host = h
-	}
+	host := ""
 	id, err := s.st.AddSource(store.Source{
 		BaseURL: base, Name: name,
 		SiteName: discover.ResolveSiteName("", base),
@@ -902,60 +882,74 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 			Name      *string `json:"name"`
 			Note      *string `json:"note"`
 			Preferred *bool   `json:"preferred"`
-			// GroupID 0 表示移出分组。
-			GroupID *int64 `json:"group_id"`
-			// Status 只接受 archived/blocked/pending；usable 得靠探测。
-			Status *string `json:"status"`
-			// 3.5.24 §2.3 编辑链路：可改连接地址与归属 Registry。
-			BaseURL  *string `json:"base_url"`
-			RepoHost *string `json:"repo_host"`
-			Scheme   *string `json:"scheme"`
-			Port     *string `json:"port"`
+			GroupID   *int64  `json:"group_id"`
+			Status    *string `json:"status"`
+			Endpoint  *struct {
+				Scheme  string `json:"scheme"`
+				Address string `json:"address"`
+			} `json:"endpoint"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in); err != nil {
+		body := http.MaxBytesReader(w, r.Body, 8192)
+		raw, err := io.ReadAll(body)
+		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
 			return
 		}
-		// 编辑 Endpoint：base_url 或 scheme/host/port 任一给出即重建 SourceEndpoint。
-		// 统一经 normalizeURL + SetBaseURL（后者原子清旧 Realm 授权，§2.3）。
-		if in.BaseURL != nil || in.Scheme != nil || in.Port != nil || in.RepoHost != nil {
-			cur, err := s.st.GetSource(id)
-			if err != nil || cur == nil {
-				writeJSON(w, 404, map[string]string{"error": "源不存在"})
+		if legacy := firstLegacyField(raw, "base_url", "repo_host", "scheme", "port"); legacy != "" {
+			writeJSON(w, 400, map[string]string{"error": "legacy_field_not_supported", "field": legacy})
+			return
+		}
+		if unknown := firstUnknownField(raw, []string{"enabled", "name", "note", "preferred", "group_id", "status", "endpoint"}, nil); unknown != "" {
+			writeJSON(w, 400, map[string]string{"error": "unknown_field", "field": unknown})
+			return
+		}
+		if err := json.Unmarshal(raw, &in); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+			return
+		}
+		if in.Endpoint != nil {
+			if unknown := firstUnknownField(raw, []string{"scheme", "address"}, []string{"endpoint"}); unknown != "" {
+				writeJSON(w, 400, map[string]string{"error": "unknown_field", "field": "endpoint." + unknown})
 				return
 			}
-			newBase := cur.BaseURL
-			if in.BaseURL != nil && strings.TrimSpace(*in.BaseURL) != "" {
-				newBase = strings.TrimSpace(*in.BaseURL)
-			} else if in.Scheme != nil || in.Port != nil {
-				ep, err := endpoint.Parse(newBase)
-				if err != nil {
-					writeJSON(w, 400, map[string]string{"error": "当前地址无效：" + err.Error()})
-					return
-				}
-				scheme := ep.Scheme()
-				if in.Scheme != nil {
-					scheme = endpoint.Scheme(strings.ToLower(strings.TrimSpace(*in.Scheme)))
-				}
-				port := ep.Port()
-				if in.Port != nil && strings.TrimSpace(*in.Port) != "" {
-					n, err := strconv.Atoi(strings.TrimSpace(*in.Port))
-					if err != nil || n < 1 || n > 65535 {
-						writeJSON(w, 400, map[string]string{"error": "端口不合法"})
-						return
-					}
-					port = n
-				}
-				ep2, err := endpoint.New(scheme, ep.Host(), port)
-				if err != nil {
-					writeJSON(w, 400, map[string]string{"error": "地址无效：" + err.Error()})
-					return
-				}
-				newBase = ep2.Origin()
+			scheme := strings.ToLower(strings.TrimSpace(in.Endpoint.Scheme))
+			if scheme != "http" && scheme != "https" {
+				writeJSON(w, 400, map[string]string{"error": "scheme 只能是 http 或 https", "field": "endpoint.scheme"})
+				return
 			}
-			newBase, err = normalizeURL(newBase)
-			if err != nil {
-				writeJSON(w, 400, map[string]string{"error": err.Error()})
+			address := strings.TrimSpace(in.Endpoint.Address)
+			if address == "" || strings.Contains(address, "://") || strings.ContainsAny(address, "/@?#\t\r\n") {
+				writeJSON(w, 400, map[string]string{"error": "address 只接受 Host 与可选 Port，不含 Scheme", "field": "endpoint.address"})
+				return
+			}
+			port := 0
+			if strings.Contains(address, ":") {
+				h, p, perr := net.SplitHostPort(address)
+				if perr != nil {
+					writeJSON(w, 400, map[string]string{"error": "address 含非法端口", "field": "endpoint.address"})
+					return
+				}
+				address = h
+				n, aerr := strconv.Atoi(p)
+				if aerr != nil || n < 1 || n > 65535 {
+					writeJSON(w, 400, map[string]string{"error": "端口不合法", "field": "endpoint.address"})
+					return
+				}
+				port = n
+			}
+			ep, eerr := endpoint.New(endpoint.Scheme(scheme), address, port)
+			if eerr != nil {
+				writeJSON(w, 400, map[string]string{"error": "地址无效：" + eerr.Error(), "field": "endpoint.address"})
+				return
+			}
+			newBase, nerr := normalizeURL(ep.Origin())
+			if nerr != nil {
+				writeJSON(w, 400, map[string]string{"error": nerr.Error()})
+				return
+			}
+			cur, gerr := s.st.GetSource(id)
+			if gerr != nil || cur == nil {
+				writeJSON(w, 404, map[string]string{"error": "源不存在"})
 				return
 			}
 			if newBase != cur.BaseURL {
@@ -968,12 +962,6 @@ func (s *Server) sourceItem(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				go s.eng.RunSource(id)
-			}
-			if in.RepoHost != nil {
-				if err := s.st.SetRepoHost(id, strings.TrimSpace(*in.RepoHost)); err != nil {
-					writeJSON(w, 400, map[string]string{"error": err.Error()})
-					return
-				}
 			}
 		}
 		// 先落状态再落开关：恢复归档源必须同请求给 status=pending，

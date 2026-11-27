@@ -261,10 +261,6 @@
     </select>
     <label for="addHost">连接地址（域名 / IPv4 / IPv6，不含协议和端口）</label>
     <input type="text" id="addHost" placeholder="docker.1panel.live 或 gh-proxy.com" autocomplete="off" spellcheck="false">
-    <label for="addPort">端口（可选，留空按协议默认）</label>
-    <input type="text" id="addPort" placeholder="如 5000；HTTPS 默认 443，HTTP 默认 80" autocomplete="off">
-    <label for="addRepoHost">归属 Registry（必选）</label>
-    <select id="addRepoHost">
       <option value="docker.io">docker.io</option>
       <option value="ghcr.io">ghcr.io</option>
       <option value="quay.io">quay.io</option>
@@ -294,15 +290,6 @@
     </select>
     <label>连接地址（域名 / IPv4 / IPv6）</label>
     <input type="text" id="editHost" autocomplete="off" spellcheck="false">
-    <label>端口（可选）</label>
-    <input type="text" id="editPort" autocomplete="off">
-    <label>归属 Registry</label>
-    <select id="editRepoHost">
-      <option value="docker.io">docker.io</option>
-      <option value="ghcr.io">ghcr.io</option>
-      <option value="quay.io">quay.io</option>
-      <option value="gcr.io">gcr.io</option>
-    </select>
     <div class="hint warn" id="editHttpWarn" style="display:none;color:var(--warn,#b26a00);font-weight:600">⚠ 已选 HTTP：认证信息与传输内容将以明文传输，可能被中间人窃取或篡改。生产环境请用 HTTPS。</div>
     <div class="hint" id="editMsg"></div>
     <button class="btn primary full" id="btnEditGo">保存</button>
@@ -1219,12 +1206,10 @@ $('#list').addEventListener('click', async function(ev){
     try{
       var u = new URL(sx.base_url);
       $('#editScheme').value = u.protocol === 'http:' ? 'http' : 'https';
-      $('#editHost').value = u.hostname;
-      $('#editPort').value = u.port || '';
+      $('#editHost').value = u.hostname + (u.port ? ':' + u.port : '');
     }catch(e){
-      $('#editScheme').value = 'https'; $('#editHost').value = sx.base_url || ''; $('#editPort').value = '';
+      $('#editScheme').value = 'https'; $('#editHost').value = sx.base_url || '';
     }
-    $('#editRepoHost').value = sx.repo_host || 'docker.io';
     $('#editHttpWarn').style.display = ($('#editScheme').value === 'http') ? '' : 'none';
     $('#editMsg').textContent = ''; $('#editMsg').className = 'hint';
     openSheet('sheetEdit');
@@ -1473,8 +1458,8 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeS
 $('#btnAdd').addEventListener('click', function(){
   $('#addMsg').textContent = ''; $('#addMsg').className = 'hint';
   $('#addGroup').innerHTML = groupOptions(0, true);   // 每次都按当前分组刷新
-  $('#addHost').value = ''; $('#addPort').value = '';
-  $('#addScheme').value = 'https'; $('#addRepoHost').value = 'docker.io';
+  $('#addHost').value = '';
+  $('#addScheme').value = 'https';
   $('#addHttpWarn').style.display = 'none';
   openSheet('sheetAdd');
   setTimeout(function(){ $('#addHost').focus(); }, 240);
@@ -1486,18 +1471,17 @@ $('#addScheme').addEventListener('change', function(){
 $('#btnAddGo').addEventListener('click', async function(){
   var host = $('#addHost').value.trim(), msg = $('#addMsg'), btn = $('#btnAddGo');
   if (!host){ msg.className = 'hint bad'; msg.textContent = '先填连接地址'; return; }
-  var scheme = $('#addScheme').value, port = $('#addPort').value.trim();
-  var repoHost = $('#addRepoHost').value;
-  if (scheme === 'http' && !confirm('已选择 HTTP：认证信息与传输内容将以明文传输，可能被窃取或篡改。确认继续？')) return;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(host)){ msg.className = 'hint bad'; msg.textContent = '地址栏只填 Host 和可选端口，不要带 http:// 或 https://'; return; }
+  var scheme = $('#addScheme').value;
   btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在加入…';
   try{
     var d = await api('/api/sources', {method:'POST', body: JSON.stringify({
-      connect_host: host, scheme: scheme, port: port,
-      repo_host: repoHost, name: $('#addName').value.trim()
+      endpoint: {scheme: scheme, address: host},
+      name: $('#addName').value.trim()
     })});
     var gsel = Number($('#addGroup').value || 0);
     if (gsel) await api('/api/sources/'+d.id, {method:'PATCH', body: JSON.stringify({group_id: gsel})});
-    $('#addHost').value = ''; $('#addPort').value = ''; $('#addName').value = ''; $('#addGroup').value = '0';
+    $('#addHost').value = ''; $('#addName').value = ''; $('#addGroup').value = '0';
     closeSheets();
     toast('已加入，正在后台识别支持的协议');
     load(true);
@@ -1512,15 +1496,15 @@ $('#editScheme').addEventListener('change', function(){
 });
 $('#btnEditGo').addEventListener('click', async function(){
   if (!EDIT_ID) return;
-  var host = $('#editHost').value.trim(), scheme = $('#editScheme').value, port = $('#editPort').value.trim();
+  var host = $('#editHost').value.trim(), scheme = $('#editScheme').value;
   var msg = $('#editMsg'), btn = $('#btnEditGo');
   if (!host){ msg.className = 'hint bad'; msg.textContent = '连接地址不能为空'; return; }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(host)){ msg.className = 'hint bad'; msg.textContent = '地址栏只填 Host 和可选端口，不要带协议'; return; }
   if (scheme === 'http' && !confirm('已选择 HTTP：认证信息与传输内容将以明文传输，可能被窃取或篡改。确认继续？')) return;
-  var origin = scheme + '://' + host + (port ? (':' + port) : '');
   btn.disabled = true; msg.className = 'hint'; msg.textContent = '正在保存…';
   try{
     await api('/api/sources/'+EDIT_ID, {method:'PATCH', body: JSON.stringify({
-      base_url: origin, repo_host: $('#editRepoHost').value
+      endpoint: {scheme: scheme, address: host}
     })});
     closeSheets(); toast('已保存，正在重新识别'); EDIT_ID = null; load(true);
   }catch(e){ msg.className = 'hint bad'; msg.textContent = e.message; }
