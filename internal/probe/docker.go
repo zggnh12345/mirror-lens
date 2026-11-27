@@ -96,8 +96,13 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 		// 不代表证书正常（CertDays 保持 0）。UI 对 HTTP 源显示"明文连接，无 TLS"。
 		res.TLSOK = true
 	} else {
-		ok, days, _ := tlsInfo(ctx, base)
+		ok, days, terr := tlsInfo(ctx, base)
 		res.TLSOK, res.CertDays = ok, days
+		if terr != nil {
+			// 证书验证错误比后续 HTTP 错误更具体，先记下来，
+			// 后续 HTTP 失败不得覆盖它。
+			res.Error = errStr(terr)
+		}
 	}
 
 	client := newClient(25 * time.Second)
@@ -105,13 +110,17 @@ func DockerWithImage(ctx context.Context, base string, tier int, expectedDigest 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/", nil)
 	if err != nil {
-		res.Error = errStr(err)
+		if res.Error == "" {
+			res.Error = errStr(err)
+		}
 		return res
 	}
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		res.Error = errStr(err)
+		if res.Error == "" {
+			res.Error = errStr(err)
+		}
 		res.LatencyMS = time.Since(t0).Milliseconds()
 		return res
 	}

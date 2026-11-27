@@ -122,6 +122,79 @@ func newClient(timeout time.Duration) *http.Client {
 	return c
 }
 
+// TLSError 是 TLS 诊断的结构化错误。Error() 以稳定 code 开头，
+// 使 store/API 无需改 Schema 也能把错误码透传到 UI。
+type TLSError struct {
+	Code      string
+	Stage     string
+	Message   string
+	Retryable bool
+	TLSApply  bool
+	Cause     error
+}
+
+func (e *TLSError) Error() string {
+	// cause 通过 Unwrap 保留给 errors.As/日志，不在 Error() 里展开，
+	// 避免某些 x509 错误零值在 Error() 时 panic，也避免敏感细节外泄。
+	return e.Code + "|" + e.Stage + "|" + e.Message
+}
+
+func (e *TLSError) Unwrap() error { return e.Cause }
+
+func nowBefore(t time.Time) bool { return time.Now().Before(t) }
+
+// classifyVerifyError 按 Go x509 原始错误类型分类，不用错误字符串正则。
+func classifyVerifyError(err error) *TLSError {
+	base := TLSError{Stage: "tls_verify", TLSApply: true, Retryable: false, Cause: err}
+	var u x509.UnknownAuthorityError
+	if errors.As(err, &u) {
+		base.Code, base.Message = "TLS_CERT_UNTRUSTED", "证书不在系统信任链中"
+		return &base
+	}
+	var h x509.HostnameError
+	if errors.As(err, &h) {
+		base.Code, base.Message = "TLS_HOSTNAME_MISMATCH", "证书与访问域名不匹配"
+		return &base
+	}
+	var c x509.CertificateInvalidError
+	if errors.As(err, &c) {
+		if c.Cert != nil && nowBefore(c.Cert.NotBefore) {
+			base.Code, base.Message = "TLS_CERT_NOT_YET_VALID", "证书尚未生效"
+			return &base
+		}
+		switch c.Reason {
+		case x509.Expired:
+			base.Code, base.Message = "TLS_CERT_EXPIRED", "证书已过期"
+		case x509.NotAuthorizedToSign, x509.CANotAuthorizedForThisName, x509.IncompatibleUsage:
+			base.Code, base.Message = "TLS_CERT_UNTRUSTED", "证书验证失败"
+		default:
+			base.Code, base.Message = "TLS_CERT_UNTRUSTED", "证书验证失败"
+		}
+		return &base
+	}
+	base.Code, base.Message = "TLS_CERT_UNTRUSTED", "证书验证失败"
+	return &base
+}
+
+// classifyDialError 区分 DNS/TCP/TLS 握手/超时，避免一律归为证书问题。
+func classifyDialError(err error, stage string) *TLSError {
+	base := TLSError{Stage: stage, TLSApply: true, Retryable: true, Cause: err}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		base.Code, base.Message = "TIMEOUT", "连接或握手超时"
+		return &base
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" {
+			base.Code, base.Message = "CONNECT_FAILED", "TCP 连接失败"
+			return &base
+		}
+	}
+	base.Code, base.Message = "TLS_HANDSHAKE_FAILED", "TLS 握手失败"
+	return &base
+}
+
 // verifyChain 用系统根验证叶子证书，对端提供的其余证书只作为中间证书。
 func verifyChain(cs tls.ConnectionState, host string) error {
 	if len(cs.PeerCertificates) == 0 {
@@ -177,7 +250,7 @@ func tlsInfo(ctx context.Context, base string) (ok bool, days int, err error) {
 	defer cancel()
 	conn, derr := td.DialContext(cctx, "tcp", target)
 	if derr != nil {
-		return false, 0, derr
+		return false, 0, classifyDialError(derr, "tls_dial")
 	}
 	defer conn.Close()
 	cs := conn.(*tls.Conn).ConnectionState()
@@ -192,7 +265,10 @@ func tlsInfo(ctx context.Context, base string) (ok bool, days int, err error) {
 	// 关键：根必须是系统根，服务器发来的证书只能当中间证书。以前把对端
 	// 证书一股脑塞进 Roots，等于让服务器自己给自己作证。
 	verr := verifyChain(cs, host)
-	return verr == nil, days, nil
+	if verr != nil {
+		return false, days, classifyVerifyError(verr)
+	}
+	return true, days, nil
 }
 
 func trimBase(base string) string {

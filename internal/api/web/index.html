@@ -726,8 +726,25 @@ function errReason(e){
   var m = s.match(/^[A-Za-z ]*"[^"]*":\s*(.+)$/);
   return m ? m[1] : s;
 }
+var TLS_ERROR_LABELS = {
+  TLS_CERT_UNTRUSTED:'证书不受信任',
+  TLS_CERT_EXPIRED:'证书已过期',
+  TLS_CERT_NOT_YET_VALID:'证书尚未生效',
+  TLS_HOSTNAME_MISMATCH:'证书与域名不匹配',
+  TLS_HANDSHAKE_FAILED:'TLS 握手失败',
+  DNS_FAILED:'域名解析失败',
+  CONNECT_FAILED:'无法连接镜像源',
+  TIMEOUT:'请求超时',
+  NETWORK_BLOCKED:'被安全策略拦截',
+  HTTP_STATUS_ERROR:'源站返回异常状态',
+  CONTENT_INVALID:'内容校验失败',
+  TLS_NOT_APPLICABLE:'该源不适用 TLS'
+};
 function errHuman(e){
   var r = errReason(e);
+  /* 结构化错误码优先：CODE|stage|message|cause。不使用正则猜证书原因。 */
+  var m = r.match(/^([A-Z][A-Z0-9_]*)\|/);
+  if (m && TLS_ERROR_LABELS[m[1]]) return TLS_ERROR_LABELS[m[1]];
   if (/no such host|server misbehaving/i.test(r)) return '域名解析失败';
   if (/TLS handshake timeout/i.test(r)) return 'TLS 握手超时';
   if (/x509|certificate|证书/i.test(r)) return 'TLS 证书校验失败';
