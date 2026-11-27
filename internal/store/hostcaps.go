@@ -394,18 +394,6 @@ func (s *Store) AddSourceHost(sourceID int64, rawHost string, primary string, ex
 	if err != nil {
 		return err
 	}
-	var baseURL string
-	if err := s.db.QueryRow(`SELECT base_url FROM sources WHERE id=?`, sourceID).Scan(&baseURL); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrSourceNotFound
-		}
-		return err
-	}
-	allowPlain, origin := sourcePlainOrigin(baseURL)
-	primary, extra, err = normalizePolicyRealms(primary, extra, allowPlain, origin)
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
 	conn, err := beginImmediate(ctx, s.db)
 	if err != nil {
@@ -418,8 +406,10 @@ func (s *Store) AddSourceHost(sourceID int64, rawHost string, primary string, ex
 			rollbackConn(ctx, conn)
 		}
 	}()
-	var status string
-	if err := conn.QueryRowContext(ctx, `SELECT status FROM sources WHERE id=?`, sourceID).Scan(&status); err != nil {
+	// 事务内同时读 status 与 base_url：避免与 PATCH endpoint 并发时，
+	// 策略 Realm 用旧 origin 校验而关系却落在新 base_url 上（D-TX）。
+	var status, baseURL string
+	if err := conn.QueryRowContext(ctx, `SELECT status, base_url FROM sources WHERE id=?`, sourceID).Scan(&status, &baseURL); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSourceNotFound
 		}
@@ -427,6 +417,11 @@ func (s *Store) AddSourceHost(sourceID int64, rawHost string, primary string, ex
 	}
 	if status == "archived" {
 		return ErrArchived
+	}
+	allowPlain, origin := sourcePlainOrigin(baseURL)
+	primary, extra, err = normalizePolicyRealms(primary, extra, allowPlain, origin)
+	if err != nil {
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO source_host_caps
 (source_id,host,enabled,last_verdict,effective_status,registry_path_mode,registry_prefix)
